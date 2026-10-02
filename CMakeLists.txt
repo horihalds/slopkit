@@ -42,13 +42,15 @@ pkg_check_modules(ZYDIS REQUIRED IMPORTED_TARGET zydis)
 include(${CMAKE_SOURCE_DIR}/cmake/EmbedFont.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/EmbedIcon.cmake)
 
-# The icon PNG set and the embedded window icon are derived from data/icon.svg
-# at configure time, so ImageMagick is a hard build-time dependency.
+# The icon PNG set and the embedded window icon are derived from
+# assets/icons/icon.svg at configure time, so ImageMagick is a hard build-time
+# dependency.
 find_program(SLOPKIT_MAGICK_EXECUTABLE NAMES magick convert)
 if(NOT SLOPKIT_MAGICK_EXECUTABLE)
     message(FATAL_ERROR
-        "ImageMagick is required to generate the slopkit icon from data/icon.svg, "
-        "but neither `magick` nor `convert` was found on PATH. "
+        "ImageMagick is required to generate the slopkit icon from "
+        "assets/icons/icon.svg, but neither `magick` nor `convert` was found "
+        "on PATH. "
         "Install it (e.g. Fedora: `sudo dnf install ImageMagick`; "
         "Debian/Ubuntu: `sudo apt install imagemagick`) and re-run configure.")
 endif()
@@ -62,7 +64,7 @@ embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSansMono-Regular.
 # Hicolor PNG set for the desktop entry, embedded below as a Qt resource so
 # `QIcon` gets every size crisp.
 set(SLOPKIT_ICON_SIZES 16 24 32 48 64 128 256 512)
-slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/data/icon.svg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
+slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/assets/icons/icon.svg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
 
 # --- application -----------------------------------------------------------
 
@@ -193,7 +195,7 @@ catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offsc
 
 # The desktop entry bakes the absolute installed binary path; `install.sh`
 # therefore passes the prefix at configure time.
-configure_file(${CMAKE_SOURCE_DIR}/data/slopkit.desktop.in
+configure_file(${CMAKE_SOURCE_DIR}/assets/slopkit.desktop.in
     ${CMAKE_BINARY_DIR}/slopkit.desktop @ONLY)
 
 install(TARGETS slopkit RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -212,7 +214,7 @@ foreach(size IN LISTS SLOPKIT_ICON_SIZES)
 endforeach()
 
 # The vector is installed as well, so SVG-aware desktops get a crisp icon.
-install(FILES ${CMAKE_SOURCE_DIR}/data/icon.svg
+install(FILES ${CMAKE_SOURCE_DIR}/assets/icons/icon.svg
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps
     RENAME slopkit.svg)
 

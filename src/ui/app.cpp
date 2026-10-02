@@ -19,7 +19,7 @@ namespace slopkit::ui
         QApplication::setApplicationName(QStringLiteral("slopkit"));
         QApplication::setApplicationDisplayName(QStringLiteral("slopkit"));
         // Keeps the Wayland app-id in step with `StartupWMClass=slopkit` in
-        // data/slopkit.desktop.in.
+        // assets/slopkit.desktop.in.
         QGuiApplication::setDesktopFileName(QStringLiteral("slopkit"));
 
         // A single, predictable style makes the palette-only theming behave the

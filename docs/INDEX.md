@@ -9,12 +9,12 @@
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
-- `cmake/EmbedIcon.cmake` — `slopkit_icon_pngs()` helper that renders the hicolor PNG set from `data/icon.svg` (the set is also embedded as a Qt resource).
+- `cmake/EmbedIcon.cmake` — `slopkit_icon_pngs()` helper that renders the hicolor PNG set from `assets/icons/icon.svg` (the set is also embedded as a Qt resource).
 - `assets/fonts/NotoSans-Regular.ttf` — bundled UI font (Noto Sans Regular).
 - `assets/fonts/NotoSansMono-Regular.ttf` — bundled monospace UI font (Noto Sans Mono Regular).
 - `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
-- `data/icon.svg` — single vector source for the program icon.
-- `data/slopkit.desktop.in` — desktop entry template with the configured `Exec` path.
+- `assets/icons/icon.svg` — single vector source for the program icon.
+- `assets/slopkit.desktop.in` — desktop entry template with the configured `Exec` path.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.
 - `reference/README.md` — placeholder documenting the read-only `reference/` tree.

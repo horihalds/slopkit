@@ -172,14 +172,28 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::save_table()
     {
+        if (table_path_.isEmpty())
+        {
+            save_table_as();
+            return;
+        }
+        save_to_path(table_path_);
+    }
+
+    void AddressListPanel::save_table_as()
+    {
         const QString path = QFileDialog::getSaveFileName(
-            this, tr("Save Table"), table_path_, tr("Address tables (*.txt);;All files (*)"));
+            this, tr("Save Table As"), table_path_, tr("Address tables (*.txt);;All files (*)"));
         if (path.isEmpty())
         {
             return;
         }
         table_path_ = path;
+        save_to_path(path);
+    }
 
+    void AddressListPanel::save_to_path(const QString& path)
+    {
         if (const auto result = table::save(std::filesystem::path(path.toStdString()), table_); !result)
         {
             set_status(tr("Save failed: %1").arg(to_qstring(result.error())), true);

@@ -411,6 +411,7 @@ TEST_CASE("the main window shell is built", "[ui]")
           == QList<QString> {QStringLiteral("Open Process..."),
                              QStringLiteral("Open Table..."),
                              QStringLiteral("Save Table..."),
+                             QStringLiteral("Save Table As..."),
                              QStringLiteral("Quit")});
 
     // The toolbar is gone; the file commands live only in the menus now.
@@ -419,16 +420,17 @@ TEST_CASE("the main window shell is built", "[ui]")
     // The Edit menu is now the only route to the settings dialog.
     CHECK(menus[1]->menu()->actions().last()->text() == QStringLiteral("Settings..."));
 
-    // Ctrl+T / Ctrl+O / Ctrl+S are bound to the file commands.
+    // Ctrl+T / Ctrl+O / Ctrl+S / Ctrl+Shift+S are bound to the file commands.
     const QList<QAction*> file_actions = menus[0]->menu()->actions();
-    REQUIRE(file_actions.size() == 5);
+    REQUIRE(file_actions.size() == 6);
     CHECK(file_actions[0]->shortcut() == QKeySequence(QStringLiteral("Ctrl+T")));
     CHECK(file_actions[1]->shortcut() == QKeySequence(QKeySequence::Open));
     CHECK(file_actions[2]->shortcut() == QKeySequence(QKeySequence::Save));
+    CHECK(file_actions[3]->shortcut() == QKeySequence(QKeySequence::SaveAs));
 
-    // The Table menu reuses the very same save action, so its shortcut is not
+    // The Table menu reuses the very same save-as action, so its shortcut is not
     // registered twice.
-    CHECK(menus[2]->menu()->actions().last() == file_actions[2]);
+    CHECK(menus[2]->menu()->actions().last() == file_actions[3]);
 
     // The status bar shows the detached target and the scan progress.
     auto* process_label = window.statusBar()->findChild<QLabel*>();

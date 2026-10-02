@@ -85,6 +85,10 @@ namespace slopkit::ui
         save_table_action_->setShortcut(QKeySequence::Save);
         save_table_action_->setShortcutContext(Qt::WindowShortcut);
 
+        save_table_as_action_ = new QAction(tr("Save Table As..."), this);
+        save_table_as_action_->setShortcut(QKeySequence::SaveAs);
+        save_table_as_action_->setShortcutContext(Qt::WindowShortcut);
+
         undo_scan_action_ = new QAction(tr("Undo Scan"), this);
 
         add_address_action_ = new QAction(tr("Add Address Manually..."), this);
@@ -104,6 +108,7 @@ namespace slopkit::ui
         file_menu->addAction(open_process_action_);
         file_menu->addAction(open_table_action_);
         file_menu->addAction(save_table_action_);
+        file_menu->addAction(save_table_as_action_);
         file_menu->addSeparator();
         file_menu->addAction(quit_action_);
 
@@ -118,6 +123,7 @@ namespace slopkit::ui
         table_menu->addAction(freeze_selected_action_);
         table_menu->addSeparator();
         table_menu->addAction(save_table_action_);
+        table_menu->addAction(save_table_as_action_);
 
         QMenu* d3d_menu    = menuBar()->addMenu(tr("D3D"));
         auto*  placeholder = new QAction(tr("Placeholder"), this);
@@ -160,6 +166,7 @@ namespace slopkit::ui
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(open_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::open_table);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
+        connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
         connect(
             delete_selected_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::delete_selected);
         connect(freeze_selected_action_,

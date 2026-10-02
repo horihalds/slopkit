@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Configures, builds and installs slopkit together with its desktop entry and
 # hicolor icons. ImageMagick must be installed: the icon is generated from
-# data/icon.svg at configure time.
+# assets/icons/icon.svg at configure time.
 #
 # The install prefix defaults to ~/.local and can be overridden:
 #   PREFIX=/usr/local ./install.sh

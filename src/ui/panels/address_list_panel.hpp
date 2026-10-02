@@ -41,6 +41,7 @@ namespace slopkit::ui::panels
         // Entry points used by the menu bar and the toolbar.
         void open_table();
         void save_table();
+        void save_table_as();
         void delete_selected();
         void toggle_freeze_selected();
 
@@ -57,6 +58,7 @@ namespace slopkit::ui::panels
     private:
         void show_context_menu(const QPoint& position);
         void set_status(const QString& message, bool is_error);
+        void save_to_path(const QString& path);
 
         table::AddressTable&       table_;
         models::AddressTableModel* model_ {};

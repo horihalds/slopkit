@@ -123,7 +123,7 @@ Dependencies (from the system repositories):
 - Catch2
 - Qt 6 Widgets development packages (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`)
 - ImageMagick — build-time only: generates the icon set that is embedded into the
-  Qt resources from `data/icon.svg`
+  Qt resources from `assets/icons/icon.svg`
 
 Configure and build:
 

@@ -90,6 +90,7 @@ namespace slopkit::ui
         QAction* open_process_action_ {};
         QAction* open_table_action_ {};
         QAction* save_table_action_ {};
+        QAction* save_table_as_action_ {};
         QAction* undo_scan_action_ {};
         QAction* add_address_action_ {};
         QAction* settings_action_ {};
