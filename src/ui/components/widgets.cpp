@@ -1,5 +1,6 @@
 #include "ui/components/widgets.hpp"
 
+#include <QAbstractItemView>
 #include <QEvent>
 #include <QGuiApplication>
 #include <QPalette>
@@ -83,6 +84,42 @@ namespace slopkit::ui::widgets
     QPushButton* secondary_button(const QString& text, QWidget* parent)
     {
         return new QPushButton(text, parent);
+    }
+
+    ScrollingComboBox::ScrollingComboBox(int max_visible_items, QWidget* parent)
+        : QComboBox(parent), max_visible_items_(max_visible_items)
+    {
+        setMaxVisibleItems(max_visible_items);
+    }
+
+    void ScrollingComboBox::showPopup()
+    {
+        QComboBox::showPopup();
+
+        // Trim the popup to the visible rows so its list scrolls instead of
+        // growing over the screen. The chrome - frame, margins and scroll arrows
+        // - is whatever the popup spends beyond the list itself.
+        QAbstractItemView* view       = this->view();
+        QWidget*           popup      = view != nullptr ? view->window() : nullptr;
+        const int          row_height = view != nullptr ? view->sizeHintForRow(0) : 0;
+        if (popup == nullptr || popup == this || row_height <= 0)
+        {
+            return;
+        }
+
+        const int height = max_visible_items_ * row_height + (popup->height() - view->height());
+        if (popup->height() <= height)
+        {
+            return;
+        }
+
+        popup->resize(popup->width(), height);
+        // A popup opened above the combo box has to follow the shorter list.
+        if (popup->y() < mapToGlobal(QPoint(0, 0)).y())
+        {
+            popup->move(popup->x(), mapToGlobal(QPoint(0, 0)).y() - height);
+        }
+        view->scrollTo(view->currentIndex(), QAbstractItemView::PositionAtCenter);
     }
 
     Panel::Panel(const QString& title, QWidget* parent) : QFrame(parent)

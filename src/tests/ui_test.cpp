@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
@@ -27,6 +28,7 @@
 #include <QPalette>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QString>
@@ -1015,6 +1017,38 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     combo->setCurrentIndex(0);
     CHECK(start->text() == QStringLiteral("0x1000"));
     CHECK(stop->text() == QStringLiteral("0x3000"));
+}
+
+TEST_CASE("a long module list scrolls inside the scan-range dropdown", "[ui]")
+{
+    application();
+
+    slopkit::ui::widgets::ScrollingComboBox combo;
+    combo.resize(320, 30);
+    for (int i = 0; i < 40; ++i)
+    {
+        combo.addItem(
+            QStringLiteral("libmodule%1.so.6  0x7F0%2-0x7F1%2").arg(i).arg(i * 0x1000, 8, 16, QLatin1Char('0')));
+    }
+    combo.show();
+    QCoreApplication::processEvents();
+
+    combo.showPopup();
+    QCoreApplication::processEvents();
+
+    QAbstractItemView* view = combo.view();
+    REQUIRE(view != nullptr);
+    CHECK(view->window() != &combo);
+
+    const int row_height = view->sizeHintForRow(0);
+    REQUIRE(row_height > 0);
+
+    // The popup shows at most the visible rows and scrolls the rest instead of
+    // growing over the whole screen.
+    CHECK(view->height() <= row_height * combo.maxVisibleItems());
+    CHECK(view->verticalScrollBar()->maximum() > 0);
+
+    combo.hidePopup();
 }
 
 TEST_CASE("manual edits to the scan range survive refresh cycles", "[ui]")

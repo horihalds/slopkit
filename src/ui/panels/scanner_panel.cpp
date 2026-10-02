@@ -136,7 +136,7 @@ namespace slopkit::ui::panels
         auto* options_body = options->body();
 
         auto* range_row = new QHBoxLayout();
-        module_combo_   = new QComboBox();
+        module_combo_   = new widgets::ScrollingComboBox();
         module_combo_->addItem(tr("All memory"));
         module_combo_->setEnabled(false);
         module_combo_->setFont(mono_font());

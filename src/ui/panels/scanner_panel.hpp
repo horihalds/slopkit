@@ -26,6 +26,7 @@ namespace slopkit::ui::widgets
 {
     class CollapsibleSection;
     class PrimaryButton;
+    class ScrollingComboBox;
     class StatusLabel;
 } // namespace slopkit::ui::widgets
 
@@ -82,16 +83,16 @@ namespace slopkit::ui::panels
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
 
-        QLineEdit*   value_edit_ {};
-        QLineEdit*   value_upper_edit_ {};
-        QCheckBox*   hex_check_ {};
-        QComboBox*   scan_type_combo_ {};
-        QComboBox*   value_type_combo_ {};
-        QComboBox*   module_combo_ {};
-        QPushButton* scan_button_ {};
-        QPushButton* next_scan_button_ {};
-        QPushButton* undo_button_ {};
-        QPushButton* cancel_button_ {};
+        QLineEdit*                  value_edit_ {};
+        QLineEdit*                  value_upper_edit_ {};
+        QCheckBox*                  hex_check_ {};
+        QComboBox*                  scan_type_combo_ {};
+        QComboBox*                  value_type_combo_ {};
+        widgets::ScrollingComboBox* module_combo_ {};
+        QPushButton*                scan_button_ {};
+        QPushButton*                next_scan_button_ {};
+        QPushButton*                undo_button_ {};
+        QPushButton*                cancel_button_ {};
 
         QLineEdit* start_edit_ {};
         QLineEdit* stop_edit_ {};

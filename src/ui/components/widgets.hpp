@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QComboBox>
 #include <QFrame>
 #include <QIcon>
 #include <QLabel>
@@ -81,6 +82,24 @@ namespace slopkit::ui::widgets
         QToolButton* toggle_ {};
         QWidget*     content_ {};
         QVBoxLayout* body_ {};
+    };
+
+    // Combo box that keeps a long popup usable: it shows at most
+    // `max_visible_items` rows and scrolls the rest. The Fusion style reports
+    // `SH_ComboBox_Popup` for every non-editable combo box, and Qt then sizes the
+    // popup to the whole item list - `QComboBox::maxVisibleItems` is ignored and
+    // only the screen bounds the popup, which a long list would cover.
+    class ScrollingComboBox : public QComboBox
+    {
+        Q_OBJECT
+
+    public:
+        explicit ScrollingComboBox(int max_visible_items = 10, QWidget* parent = nullptr);
+
+        void showPopup() override;
+
+    private:
+        int max_visible_items_ {10};
     };
 
     // Wrapped status line coloured by kind; keeps its colour across theme
