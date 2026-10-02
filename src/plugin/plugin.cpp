@@ -125,7 +125,7 @@ namespace slopkit::plugin
         if (vtable->info == nullptr || vtable->precedence == nullptr || vtable->list_processes == nullptr
             || vtable->open_session == nullptr || vtable->close_session == nullptr || vtable->read_memory == nullptr
             || vtable->write_memory == nullptr || vtable->list_modules == nullptr || vtable->list_threads == nullptr
-            || vtable->access_methods == nullptr)
+            || vtable->list_regions == nullptr || vtable->access_methods == nullptr)
         {
             return std::unexpected("vtable has null function pointers");
         }
@@ -489,6 +489,52 @@ namespace slopkit::plugin
         }
         plugin_->dealloc(array);
         return threads;
+    }
+
+    std::expected<std::vector<process::RegionInfo>, process::AccessError> PluginSession::regions()
+    {
+        if (!valid())
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+
+        slopkit_region_info* array = nullptr;
+        std::size_t          count = 0;
+        slopkit_result       result {};
+        try
+        {
+            result = plugin_->vtable_->list_regions(handle_, &array, &count);
+        }
+        catch (...)
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (result.code != SLOPKIT_OK)
+        {
+            plugin_->dealloc(array);
+            return std::unexpected(Plugin::classify(result));
+        }
+
+        std::vector<process::RegionInfo> regions;
+        regions.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            process::RegionInfo region;
+            region.start      = array[i].start;
+            region.end        = array[i].end;
+            region.offset     = array[i].offset;
+            region.readable   = array[i].readable != 0;
+            region.writable   = array[i].writable != 0;
+            region.executable = array[i].executable != 0;
+            region.shared     = array[i].shared != 0;
+            if (array[i].path != nullptr)
+            {
+                region.path = array[i].path;
+            }
+            regions.push_back(std::move(region));
+        }
+        plugin_->dealloc(array);
+        return regions;
     }
 
 } // namespace slopkit::plugin

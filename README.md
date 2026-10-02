@@ -5,19 +5,23 @@ It targets Linux with **Wayland** as the primary display server (X11/XWayland is
 supported as a fallback), and it is being built around a single rule: every
 interaction with another process goes through a plugin.
 
-The project is young. What exists today is the application shell, the process-access
-plugin ABI and host, two bundled plugins, and one working tool — the process picker.
-The rest of the suite is planned but not implemented.
+The project is young. What exists today is the three-zone scanner shell, the
+plugin-first process-access ABI and host, two bundled plugins and a working scanner:
+attach a process, run first/next/undo scans, move results into an editable and
+freezable address list, save and reopen the table, and browse raw memory. The
+disassembler and debugger are still planned.
 
 ## Tools
 
 | Tool | Purpose | Status |
 | --- | --- | --- |
-| Process picker | Browse running processes, see which plugin claims each one, inspect it and attach/detach. | Implemented |
-| Memory scanner | Search a target's memory for values and refine the result set. | Planned |
-| Memory browser + disassembler | Hex view and instruction decoding (Zydis) of live memory. | Planned |
+| Process list | Browse running processes, see which plugin claims each one, inspect it and attach/detach. | Implemented |
+| Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans. | Implemented |
+| Address list | Track found addresses, edit and freeze their values, and save or reopen the table. | Implemented |
+| Memory browser | Hex dump of live memory around a chosen address. | Implemented |
+| Disassembler | Instruction decoding (Zydis) of live memory. | Planned |
 | Debugger | Breakpoints, stepping and register inspection. | Planned |
-| Module / thread views | Inspect loaded modules and threads of the attached target. | Planned |
+| Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
 
 ## Architecture
 
@@ -85,7 +89,7 @@ calls:
 - `list_processes` — the processes the plugin claims
 - `open_session` / `close_session`
 - `read_memory` / `write_memory`
-- `list_modules` / `list_threads`
+- `list_modules` / `list_threads` / `list_regions`
 - `access_methods` — the access primitives the plugin can use
 
 ## Anti-detection
@@ -142,9 +146,10 @@ Run:
 ./build/slopkit --version    # prints the version
 ./build/slopkit --list-plugins   # lists discovered plugins and diagnostics
 ./build/slopkit --list-processes # lists processes claimed by the loaded plugins
+./build/slopkit --scan <pid> 1234  # runs one exact-value scan and prints the hits
 ```
 
-The three flags work headlessly, with no display or GPU required.
+These flags work headlessly, with no display or GPU required.
 
 ## Installing
 
@@ -177,15 +182,18 @@ configure time (see the dependency list above).
 - `src/` — application sources.
 - `src/plugin/` — the plugin ABI, the loader and the host.
 - `src/plugins/` — the bundled plugins (`linux_proc`, `wine_proton`).
-- `src/platform/` — host-side platform libraries (procfs, memory, Wine detection).
-- `src/ui/` — the ImGui/GLFW shell, theme, scaling, fonts and panels.
+- `src/platform/` — host-side platform libraries (procfs, memory, Wine detection, desktop entries).
+- `src/process/` — the process-access seam, the shared attachment and the plugin-backed access.
+- `src/scan/` — the headless scan engine: value parsing, memory sources and the worker scan.
+- `src/table/` — the address-table model and its line-oriented file format.
+- `src/ui/` — the ImGui/GLFW shell, theme, scaling, fonts, panels and dialogs.
 - `docs/` — project documentation, including `docs/INDEX.md` and `docs/UI_DESIGN.md`.
 - `assets/` — embedded assets such as the UI font and its license.
 - `reference/` — read-only reference material; never modified.
 
 ## Roadmap
 
-1. Process picker — done.
-2. Memory scanner.
-3. Memory browser + disassembler.
+1. Process list — done.
+2. Memory scanner and address list — done.
+3. Memory browser (hex dump) — done; the disassembler is next.
 4. Debugger.

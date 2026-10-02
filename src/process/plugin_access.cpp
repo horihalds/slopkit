@@ -80,6 +80,11 @@ namespace slopkit::process
                 return session_.threads();
             }
 
+            std::expected<std::vector<RegionInfo>, AccessError> regions() override
+            {
+                return session_.regions();
+            }
+
         private:
             plugin::PluginSession session_;
             ProcessId             pid_ {};

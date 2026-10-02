@@ -34,15 +34,31 @@
 - `src/platform/linux/memory.cpp` — process_vm_* with a /proc/<pid>/mem fallback and per-call primitive reporting.
 - `src/platform/linux/wine.hpp` — Wine/Proton detection types and classification entry points.
 - `src/platform/linux/wine.cpp` — environ/cmdline/maps heuristics that classify a process as Wine or Proton.
+- `src/platform/linux/desktop_entry.hpp` — `.desktop` entry parser and the application-executable index.
+- `src/platform/linux/desktop_entry.cpp` — parses `Name`/`Exec`/`NoDisplay` and scans `$XDG_DATA_DIRS` for applications.
 - `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs.
 - `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes and exposing their PE images.
 - `src/process/types.hpp` — process/module/thread descriptors, access-method flags and `AccessError`.
 - `src/process/types.cpp` — human-readable descriptions of errors, module kinds and access methods.
 - `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the UI depends on.
+- `src/process/attachment.hpp` — `AttachedTarget`: the one attachment shared app-wide, with its label.
+- `src/process/attachment.cpp` — attaches/detaches and formats the process label.
 - `src/process/plugin_access.hpp` — embedded `ProcessAccess` implementation over `PluginHost`.
 - `src/process/plugin_access.cpp` — attaches through plugins and tracks the access method actually used.
-- `src/ui/app.hpp` — the `App`: owns the window, theme and scale, and drives the tool navigation.
-- `src/ui/app.cpp` — runs the window loop and draws the navigation and placeholder panels.
+- `src/scan/types.hpp` — the scan value/scan/state enums, the region filter and their descriptions.
+- `src/scan/types.cpp` — string descriptions for the scan enums.
+- `src/scan/value.hpp` — parsed scan values, literal parsing/formatting and the comparison predicates.
+- `src/scan/value.cpp` — implements value parsing (decimal, hex, string, byte array), formatting and matching.
+- `src/scan/source.hpp` — the `MemorySource` read/regions seam and its session and buffer constructors.
+- `src/scan/source.cpp` — builds a source over a live session or an owned test buffer.
+- `src/scan/engine.hpp` — `ScanConfig`/`ScanHit`/`ScanSnapshot` and the worker-threaded `ScanEngine`.
+- `src/scan/engine.cpp` — region filtering, chunked first scans, refinement scans, undo and cancellation.
+- `src/table/address_table.hpp` — `AddressEntry` and the `AddressTable` model with writes, freezing and selection.
+- `src/table/address_table.cpp` — parses and writes entry values, and rewrites the frozen entries on a tick.
+- `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
+- `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency.
+- `src/ui/app.hpp` — the `App`: owns the window, theme and scale, and lays out the top bar, split middle scan zone and bottom address list.
+- `src/ui/app.cpp` — runs the window loop, draws the three zones with draggable splitters and hosts all four dialogs.
 - `src/ui/app_window.hpp` — `AppWindow`: GLFW window, OpenGL context and ImGui backends.
 - `src/ui/app_window.cpp` — Wayland-first init with X11 fallback, X11 `WM_CLASS` hints, the embedded window icon, content-scale handling and frame rendering.
 - `src/ui/theme.hpp` — the `Theme` colour-role struct and the dark/light constructors.
@@ -51,16 +67,35 @@
 - `src/ui/scale.cpp` — base style values and non-compounding `ScaleAllSizes` application.
 - `src/ui/fonts.hpp` — embedded-font loading, the proportional/monospace accessors, the `ScopedMonoFont` guard and font scaling declarations.
 - `src/ui/fonts.cpp` — loads the embedded Noto Sans and Noto Sans Mono and applies `FontScaleDpi`.
-- `src/ui/components/widgets.hpp` — the first themed component set (headers, buttons, panels, status text).
+- `src/ui/components/widgets.hpp` — the themed component set (headers, buttons, panels, status text, progress bar, splitter, groups, toolbar button).
 - `src/ui/components/widgets.cpp` — implements the themed components from the active theme.
-- `src/ui/panels/process_picker.hpp` — the process picker panel state and API.
-- `src/ui/panels/process_picker.cpp` — searchable/sortable process table, detail pane and attach/detach.
+- `src/ui/panels/top_bar.hpp` — the top zone's menu bar, toolbar, process label and progress bar, reporting requested actions.
+- `src/ui/panels/top_bar.cpp` — draws the `File`/`Edit`/`Table`/`D3D`/`Help` menus, the toolbar and the scan progress.
+- `src/ui/panels/scanner_panel.hpp` — the scan controls, the worker session the engine reads through and the scan engine.
+- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the controls and starts first/next/undo scans.
+- `src/ui/panels/found_list_panel.hpp` — the `Found: N` result-list panel reading the scan engine's snapshot.
+- `src/ui/panels/found_list_panel.cpp` — renders the sortable, clipped Address/Value/Previous result table and truncation notice.
+- `src/ui/panels/address_list_panel.hpp` — the bottom address-list panel with editing, the context menu and the footer popups.
+- `src/ui/panels/address_list_panel.cpp` — renders the address table, inline edits, context menu and the open/save table modals.
+- `src/ui/dialogs/process_list.hpp` — the Process List dialog over `ProcessAccess` and the shared `AttachedTarget`.
+- `src/ui/dialogs/process_list.cpp` — Applications/Processes tabs, filtering, detail probe and attach/detach.
+- `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable`.
+- `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
+- `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment.
+- `src/ui/dialogs/memory_viewer.cpp` — paged address/bytes/ASCII dump with unreadable-range markers.
+- `src/ui/dialogs/settings.hpp` — the Settings categories and the changes it reports back to the App.
+- `src/ui/dialogs/settings.cpp` — Appearance, Scanning, Plugins and About panels, including the live theme switch.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
 - `src/tests/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
+- `src/tests/desktop_entry_test.cpp` — `.desktop` parsing, exec basename and application classification tests.
+- `src/tests/scan_test.cpp` — value parsing, scan predicates, first/next/undo, region filtering and cancellation.
+- `src/tests/scan_integration_test.cpp` — self-scans the test process through the built plugin and the `--scan` command.
+- `src/tests/address_table_test.cpp` — address model edit/freeze tests plus the table-file save/load round-trip.
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
 - `src/tests/ui_test.cpp` — theme, scaling and embedded-font unit tests that need no window.
 - `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.
+- `src/tests/fixtures/missing_regions_plugin.cpp` — fixture plugin whose vtable predates `list_regions` and is too small.

@@ -41,6 +41,20 @@ TEST_CASE("PluginHost diagnoses broken plugin libraries", "[plugin]")
     REQUIRE(saw_entry);
 }
 
+TEST_CASE("A plugin without the regions entry point is rejected", "[plugin]")
+{
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_TEST_PLUGIN_DIR});
+
+    bool saw_small_struct = false;
+    for (const auto& diagnostic : host.diagnostics())
+    {
+        saw_small_struct = saw_small_struct || diagnostic.message.find("struct too small") != std::string::npos;
+    }
+    REQUIRE(saw_small_struct);
+    REQUIRE(host.find("old-abi") == nullptr);
+}
+
 TEST_CASE("A missing plugin directory is not fatal", "[plugin]")
 {
     slopkit::plugin::PluginHost host;

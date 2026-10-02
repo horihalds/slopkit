@@ -81,7 +81,7 @@ TEST_CASE("linux-proc lists the current process", "[linux_proc]")
     REQUIRE(found);
 }
 
-TEST_CASE("linux-proc lists modules and threads of the current process", "[linux_proc]")
+TEST_CASE("linux-proc lists modules, threads and regions of the current process", "[linux_proc]")
 {
     slopkit::plugin::PluginHost host;
     host.discover({SLOPKIT_PLUGIN_DIR});
@@ -97,6 +97,19 @@ TEST_CASE("linux-proc lists modules and threads of the current process", "[linux
     const auto threads = session->threads();
     REQUIRE(threads.has_value());
     CHECK_FALSE(threads->empty());
+
+    const auto regions = session->regions();
+    REQUIRE(regions.has_value());
+    CHECK_FALSE(regions->empty());
+    for (const auto& region : *regions)
+    {
+        CHECK(region.start < region.end);
+    }
+    CHECK(std::ranges::any_of(*regions,
+                              [](const auto& region)
+                              {
+                                  return region.readable;
+                              }));
 }
 
 TEST_CASE("linux-proc reads and writes target memory", "[linux_proc]")

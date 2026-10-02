@@ -29,6 +29,7 @@ namespace slopkit::process
                                                                           std::span<const std::byte> data)        = 0;
         virtual std::expected<std::vector<ModuleInfo>, AccessError> modules()                                     = 0;
         virtual std::expected<std::vector<ThreadInfo>, AccessError> threads()                                     = 0;
+        virtual std::expected<std::vector<RegionInfo>, AccessError> regions()                                     = 0;
     };
 
     // Move-only handle to an attached process. All operations return
@@ -102,6 +103,15 @@ namespace slopkit::process
                 return std::unexpected(AccessError::internal);
             }
             return backend_->threads();
+        }
+
+        std::expected<std::vector<RegionInfo>, AccessError> regions()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->regions();
         }
 
         [[nodiscard]] explicit operator bool() const noexcept

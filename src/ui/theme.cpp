@@ -35,6 +35,8 @@ namespace slopkit::ui
             style.Colors[ImGuiCol_CheckMark]            = theme.accent;
             style.Colors[ImGuiCol_SliderGrab]           = theme.accent;
             style.Colors[ImGuiCol_SliderGrabActive]     = theme.accent_active;
+            style.Colors[ImGuiCol_PlotHistogram]        = theme.accent;
+            style.Colors[ImGuiCol_PlotHistogramHovered] = theme.accent_hover;
             style.Colors[ImGuiCol_Button]               = theme.surface;
             style.Colors[ImGuiCol_ButtonHovered]        = theme.surface_hover;
             style.Colors[ImGuiCol_ButtonActive]         = theme.accent_active;

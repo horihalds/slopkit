@@ -1,21 +1,19 @@
-#include "ui/panels/process_picker.hpp"
+#include "ui/dialogs/process_list.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
-#include <string>
-#include <string_view>
 #include <utility>
-#include <vector>
 
 #include <imgui.h>
 #include <imgui_stdlib.h>
 
+#include "platform/linux/desktop_entry.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 
-namespace slopkit::ui::panels
+namespace slopkit::ui::dialogs
 {
 
     namespace
@@ -33,15 +31,18 @@ namespace slopkit::ui::panels
         }
     } // namespace
 
-    ProcessPicker::ProcessPicker(process::ProcessAccess& access) : access_(access) {}
+    ProcessList::ProcessList(process::ProcessAccess& access, process::AttachedTarget& target)
+        : access_(access), target_(target)
+    {
+    }
 
-    void ProcessPicker::set_status(std::string message, bool is_error)
+    void ProcessList::set_status(std::string message, bool is_error)
     {
         status_          = std::move(message);
         status_is_error_ = is_error;
     }
 
-    const process::ProcessInfo* ProcessPicker::selected() const
+    const process::ProcessInfo* ProcessList::selected() const
     {
         if (selected_index_ < 0 || selected_index_ >= static_cast<int>(processes_.size()))
         {
@@ -50,7 +51,7 @@ namespace slopkit::ui::panels
         return &processes_[static_cast<std::size_t>(selected_index_)];
     }
 
-    std::string ProcessPicker::chosen_plugin(const process::ProcessInfo& info) const
+    std::string ProcessList::chosen_plugin(const process::ProcessInfo& info) const
     {
         if (!selected_plugin_.empty()
             && std::find(info.claimants.begin(), info.claimants.end(), selected_plugin_) != info.claimants.end())
@@ -60,7 +61,12 @@ namespace slopkit::ui::panels
         return info.plugin_id;
     }
 
-    void ProcessPicker::refresh()
+    bool ProcessList::is_application(const process::ProcessInfo& info) const
+    {
+        return platform::is_desktop_application(info.exe_path, application_executables_);
+    }
+
+    void ProcessList::refresh()
     {
         const auto*              previous     = selected();
         const process::ProcessId previous_pid = previous != nullptr ? previous->pid : 0;
@@ -103,7 +109,7 @@ namespace slopkit::ui::panels
         probe_needed_ = true;
     }
 
-    void ProcessPicker::maybe_auto_refresh()
+    void ProcessList::maybe_auto_refresh()
     {
         if (!auto_refresh_)
         {
@@ -118,7 +124,7 @@ namespace slopkit::ui::panels
         }
     }
 
-    void ProcessPicker::probe_selection()
+    void ProcessList::probe_selection()
     {
         detail_pid_          = -1;
         detail_methods_      = process::AccessMethod::none;
@@ -156,7 +162,7 @@ namespace slopkit::ui::panels
         }
     }
 
-    void ProcessPicker::attach_selected()
+    void ProcessList::attach_selected()
     {
         const auto* info = selected();
         if (info == nullptr)
@@ -165,7 +171,7 @@ namespace slopkit::ui::panels
             return;
         }
 
-        session_      = process::Session {};
+        target_.clear();
         auto attached = access_.attach(info->pid, chosen_plugin(*info));
         if (!attached)
         {
@@ -173,26 +179,50 @@ namespace slopkit::ui::panels
             return;
         }
 
-        session_ = std::move(*attached);
-        set_status("Attached to " + std::to_string(info->pid) + " via " + std::string(session_.plugin_id())
-                       + "; methods: " + process::describe(session_.advertised_methods()),
-                   false);
+        target_.session   = std::move(*attached);
+        target_.pid       = info->pid;
+        target_.name      = info->name;
+        target_.plugin_id = std::string(target_.session.plugin_id());
+        set_status(target_.label() + "; methods: " + process::describe(target_.session.advertised_methods()), false);
     }
 
-    void ProcessPicker::detach()
+    void ProcessList::detach()
     {
-        if (!session_)
+        if (!target_.valid())
         {
             set_status("Not attached.", true);
             return;
         }
-        session_ = process::Session {};
+        target_.clear();
         set_status("Detached.", false);
     }
 
-    void ProcessPicker::draw()
+    void ProcessList::draw(bool& open)
     {
+        ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 52.0f, ImGui::GetFontSize() * 34.0f),
+                                 ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin("Process List", &open))
+        {
+            ImGui::End();
+            return;
+        }
+
         maybe_auto_refresh();
+        if (!index_built_)
+        {
+            application_executables_ = platform::scan_desktop_executables(platform::default_application_dirs());
+            index_built_             = true;
+        }
+
+        if (!status_.empty())
+        {
+            widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
+                                 status_.c_str());
+        }
+        else
+        {
+            ImGui::TextDisabled("%zu process(es)", processes_.size());
+        }
 
         if (widgets::primary_button("Refresh"))
         {
@@ -200,36 +230,57 @@ namespace slopkit::ui::panels
         }
         ImGui::SameLine();
         ImGui::Checkbox("Auto-refresh", &auto_refresh_);
-
-        const float toolbar_width = ImGui::GetContentRegionAvail().x;
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(toolbar_width * 0.34f);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
         ImGui::InputTextWithHint("##process_search", "Filter by name, PID or path", &search_);
 
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(toolbar_width * 0.22f);
-        const char* filter_preview = plugin_filter_.empty() ? "All plugins" : plugin_filter_.c_str();
-        if (ImGui::BeginCombo("##plugin_filter", filter_preview))
+        if (!plugin_ids_.empty())
         {
-            if (ImGui::Selectable("All plugins", plugin_filter_.empty()))
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            const char* preview = plugin_filter_.empty() ? "All plugins" : plugin_filter_.c_str();
+            if (ImGui::BeginCombo("##plugin_filter", preview))
             {
-                plugin_filter_.clear();
-            }
-            for (const auto& id : plugin_ids_)
-            {
-                if (ImGui::Selectable(id.c_str(), plugin_filter_ == id))
+                if (ImGui::Selectable("All plugins", plugin_filter_.empty()))
                 {
-                    plugin_filter_ = id;
+                    plugin_filter_.clear();
                 }
+                for (const auto& id : plugin_ids_)
+                {
+                    if (ImGui::Selectable(id.c_str(), plugin_filter_ == id))
+                    {
+                        plugin_filter_ = id;
+                    }
+                }
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
         }
 
         ImGui::Spacing();
 
+        if (ImGui::BeginTabBar("##process_tabs"))
+        {
+            if (ImGui::BeginTabItem("Applications"))
+            {
+                draw_body(true);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Processes"))
+            {
+                draw_body(false);
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+
+        ImGui::End();
+    }
+
+    void ProcessList::draw_body(bool applications_only)
+    {
         const ImVec2 region      = ImGui::GetContentRegionAvail();
-        const float  body_height = region.y > 0.0f ? region.y - ImGui::GetFrameHeightWithSpacing() : 0.0f;
-        const float  list_width  = region.x * 0.62f;
+        const float  body_height = std::max(region.y, 1.0f);
+        const float  list_width  = std::max(region.x * 0.62f, 1.0f);
 
         ImGui::BeginChild("process_list", ImVec2(list_width, body_height), ImGuiChildFlags_Borders);
 
@@ -245,12 +296,16 @@ namespace slopkit::ui::panels
             ImGui::TableSetupScrollFreeze(0, 1);
             ImGui::TableHeadersRow();
 
-            // Apply the search and plugin filters.
+            // Apply the tab, search and plugin filters.
             visible_.clear();
             const std::string needle = lowercase(search_);
             for (int index = 0; index < static_cast<int>(processes_.size()); ++index)
             {
                 const auto& process = processes_[static_cast<std::size_t>(index)];
+                if (is_application(process) != applications_only)
+                {
+                    continue;
+                }
                 if (!plugin_filter_.empty()
                     && std::find(process.claimants.begin(), process.claimants.end(), plugin_filter_)
                            == process.claimants.end())
@@ -340,6 +395,13 @@ namespace slopkit::ui::panels
                 ImGui::PopID();
             }
 
+            if (visible_.empty())
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextDisabled(applications_only ? "No applications found." : "No processes found.");
+            }
+
             ImGui::EndTable();
         }
 
@@ -355,85 +417,75 @@ namespace slopkit::ui::panels
 
         ImGui::SameLine();
         ImGui::BeginChild("process_detail", ImVec2(0.0f, body_height), ImGuiChildFlags_Borders);
-
-        widgets::section_header("Details");
-        if (const auto* info = selected(); info == nullptr)
+        if (const auto* info = selected(); info != nullptr)
         {
-            ImGui::TextUnformatted("Select a process to see its details.");
+            draw_detail(*info);
         }
         else
         {
-            {
-                ui::ScopedMonoFont mono;
-                ImGui::Text("PID: %u", info->pid);
-            }
-            ImGui::Text("Name: %s", info->name.c_str());
-            {
-                ui::ScopedMonoFont mono;
-                ImGui::TextWrapped("Executable: %s", info->exe_path.empty() ? "(unknown)" : info->exe_path.c_str());
-            }
-            ImGui::Text("Default plugin: %s", info->plugin_id.c_str());
+            ImGui::TextUnformatted("Select a process to see its details.");
+        }
+        ImGui::EndChild();
+    }
 
-            if (info->claimants.size() > 1)
-            {
-                ImGui::Spacing();
-                ImGui::TextUnformatted("Claimed by:");
-                for (const auto& claimant : info->claimants)
-                {
-                    const bool        is_default = claimant == info->plugin_id;
-                    const std::string label      = claimant + (is_default ? " (default)" : "");
-                    if (ImGui::RadioButton(label.c_str(), chosen_plugin(*info) == claimant))
-                    {
-                        selected_plugin_ = claimant;
-                        probe_needed_    = true;
-                    }
-                }
-            }
+    void ProcessList::draw_detail(const process::ProcessInfo& info)
+    {
+        widgets::section_header("Details");
 
+        {
+            ui::ScopedMonoFont mono;
+            ImGui::Text("PID: %u", info.pid);
+        }
+        ImGui::Text("Name: %s", info.name.c_str());
+        {
+            ui::ScopedMonoFont mono;
+            ImGui::TextWrapped("Executable: %s", info.exe_path.empty() ? "(unknown)" : info.exe_path.c_str());
+        }
+        ImGui::Text("Default plugin: %s", info.plugin_id.c_str());
+
+        if (info.claimants.size() > 1)
+        {
             ImGui::Spacing();
+            ImGui::TextUnformatted("Claimed by:");
+            for (const auto& claimant : info.claimants)
             {
-                ui::ScopedMonoFont mono;
-                ImGui::Text("Access methods: %s", process::describe(detail_methods_).c_str());
-                ImGui::Text("Modules: %zu", detail_module_count_);
-                ImGui::Text("Threads: %zu", detail_thread_count_);
-            }
-
-            if (!detail_error_.empty())
-            {
-                widgets::status_text(widgets::StatusKind::warning, detail_error_.c_str());
-            }
-
-            ImGui::Spacing();
-            if (session_ && session_.pid() == info->pid)
-            {
-                if (widgets::secondary_button("Detach"))
+                const bool        is_default = claimant == info.plugin_id;
+                const std::string label      = claimant + (is_default ? " (default)" : "");
+                if (ImGui::RadioButton(label.c_str(), chosen_plugin(info) == claimant))
                 {
-                    detach();
+                    selected_plugin_ = claimant;
+                    probe_needed_    = true;
                 }
-                ImGui::SameLine();
-                widgets::status_text(widgets::StatusKind::success, "attached");
-            }
-            else if (widgets::primary_button("Attach"))
-            {
-                attach_selected();
             }
         }
 
-        ImGui::EndChild();
-
-        ImGui::Separator();
+        ImGui::Spacing();
         {
             ui::ScopedMonoFont mono;
-            if (!status_.empty())
+            ImGui::Text("Access methods: %s", process::describe(detail_methods_).c_str());
+            ImGui::Text("Modules: %zu", detail_module_count_);
+            ImGui::Text("Threads: %zu", detail_thread_count_);
+        }
+
+        if (!detail_error_.empty())
+        {
+            widgets::status_text(widgets::StatusKind::warning, detail_error_.c_str());
+        }
+
+        ImGui::Spacing();
+        if (target_.valid() && target_.pid == info.pid)
+        {
+            if (widgets::secondary_button("Detach"))
             {
-                widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                     status_.c_str());
+                detach();
             }
-            else
-            {
-                ImGui::TextDisabled("%zu process(es)", processes_.size());
-            }
+            ImGui::SameLine();
+            widgets::status_text(widgets::StatusKind::success, "attached");
+        }
+        else if (widgets::primary_button("Attach"))
+        {
+            attach_selected();
         }
     }
 
-} // namespace slopkit::ui::panels
+} // namespace slopkit::ui::dialogs

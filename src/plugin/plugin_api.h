@@ -38,7 +38,7 @@ extern "C"
 #endif
 
 #define SLOPKIT_PLUGIN_ABI_VERSION_MAJOR 1
-#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 0
+#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 1
 #define SLOPKIT_PLUGIN_ABI_VERSION       ((SLOPKIT_PLUGIN_ABI_VERSION_MAJOR << 16) | SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
 
     /* Status codes carried in `slopkit_result::code`. */
@@ -118,6 +118,19 @@ extern "C"
         const char* name;
     } slopkit_thread_info;
 
+    typedef struct slopkit_region_info
+    {
+        uint64_t    start;
+        uint64_t    end;
+        uint64_t    offset;
+        int32_t     readable;
+        int32_t     writable;
+        int32_t     executable;
+        /* Non-zero when the mapping is shared; false plus a path is copy-on-write. */
+        int32_t     shared;
+        const char* path;
+    } slopkit_region_info;
+
     typedef struct slopkit_plugin_info
     {
         const char* id;
@@ -151,6 +164,7 @@ extern "C"
                                        uint32_t*   out_method);
         slopkit_result (*list_modules)(void* session, slopkit_module_info** out, size_t* out_count);
         slopkit_result (*list_threads)(void* session, slopkit_thread_info** out, size_t* out_count);
+        slopkit_result (*list_regions)(void* session, slopkit_region_info** out, size_t* out_count);
         uint32_t (*access_methods)(void);
     } slopkit_plugin_vtable;
 

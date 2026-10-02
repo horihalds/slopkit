@@ -5,20 +5,21 @@
 #include <vector>
 
 #include "process/access.hpp"
+#include "process/attachment.hpp"
 #include "process/types.hpp"
 
-namespace slopkit::ui::panels
+namespace slopkit::ui::dialogs
 {
 
-    // The process picker: the first real tool. It lists processes, inspects the
-    // selection and attaches/detaches, and talks to the plugin layer only
-    // through the process::ProcessAccess seam.
-    class ProcessPicker
+    // The Process List dialog. It lists processes split into Applications
+    // (desktop-entry-backed) and Processes, probes the selection and writes the
+    // app-wide AttachedTarget on attach/detach.
+    class ProcessList
     {
     public:
-        explicit ProcessPicker(process::ProcessAccess& access);
+        ProcessList(process::ProcessAccess& access, process::AttachedTarget& target);
 
-        void draw();
+        void draw(bool& open);
 
     private:
         void refresh();
@@ -26,16 +27,22 @@ namespace slopkit::ui::panels
         void attach_selected();
         void detach();
         void maybe_auto_refresh();
+        void draw_body(bool applications_only);
+        void draw_detail(const process::ProcessInfo& info);
 
         [[nodiscard]] const process::ProcessInfo* selected() const;
         [[nodiscard]] std::string                 chosen_plugin(const process::ProcessInfo& info) const;
+        [[nodiscard]] bool                        is_application(const process::ProcessInfo& info) const;
         void                                      set_status(std::string message, bool is_error);
 
-        process::ProcessAccess& access_;
+        process::ProcessAccess&  access_;
+        process::AttachedTarget& target_;
 
         std::vector<process::ProcessInfo> processes_;
         std::vector<int>                  visible_;
         std::vector<std::string>          plugin_ids_;
+        std::vector<std::string>          application_executables_;
+        bool                              index_built_ {false};
 
         std::string search_;
         std::string plugin_filter_;
@@ -50,12 +57,11 @@ namespace slopkit::ui::panels
         std::size_t           detail_thread_count_ {0};
         std::string           detail_error_;
 
-        process::Session session_;
-        std::string      status_;
-        bool             status_is_error_ {false};
+        std::string status_;
+        bool        status_is_error_ {false};
 
         bool   auto_refresh_ {true};
         double next_refresh_time_ {0.0};
     };
 
-} // namespace slopkit::ui::panels
+} // namespace slopkit::ui::dialogs

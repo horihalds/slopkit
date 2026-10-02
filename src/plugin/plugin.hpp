@@ -65,6 +65,7 @@ namespace slopkit::plugin
         write(std::uint64_t address, std::span<const std::byte> data, process::AccessMethod& used);
         std::expected<std::vector<process::ModuleInfo>, process::AccessError> modules();
         std::expected<std::vector<process::ThreadInfo>, process::AccessError> threads();
+        std::expected<std::vector<process::RegionInfo>, process::AccessError> regions();
 
     private:
         void close() noexcept;

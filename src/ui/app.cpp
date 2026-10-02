@@ -1,5 +1,6 @@
 #include "ui/app.hpp"
 
+#include <algorithm>
 #include <cfloat>
 #include <iostream>
 #include <utility>
@@ -9,6 +10,7 @@
 #include "app/cli.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
+#include "ui/panels/top_bar.hpp"
 
 namespace slopkit::ui
 {
@@ -34,7 +36,7 @@ namespace slopkit::ui
 
         host_.discover(app::plugin_search_directories());
 
-        while (!window_->should_close())
+        while (!window_->should_close() && !should_quit_)
         {
             window_->poll_events();
 
@@ -45,6 +47,15 @@ namespace slopkit::ui
             }
 
             window_->begin_frame();
+
+            if (target_.valid())
+            {
+                if (const auto frozen = address_table_.tick_freeze(target_.session, ImGui::GetTime()); !frozen)
+                {
+                    address_list_.report_freeze_error(process::describe(frozen.error()));
+                }
+            }
+
             draw_ui();
             window_->end_frame();
         }
@@ -61,17 +72,6 @@ namespace slopkit::ui
         apply_font_scale(scale_.factor());
     }
 
-    void App::draw_nav_entry(const char* label, Tool tool)
-    {
-        const ImVec2 size(-FLT_MIN, 0.0f);
-        const bool   pressed =
-            selected_ == tool ? widgets::primary_button(label, size) : widgets::secondary_button(label, size);
-        if (pressed)
-        {
-            selected_ = tool;
-        }
-    }
-
     void App::draw_ui()
     {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -80,44 +80,149 @@ namespace slopkit::ui
 
         constexpr ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
                                                 | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings
-                                                | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+                                                | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus
+                                                | ImGuiWindowFlags_MenuBar;
 
         ImGui::Begin("slopkit", nullptr, window_flags);
 
-        const float nav_width = 190.0f * scale_.factor();
+        // Top bar.
+        panels::TopBar::Model top_model;
+        top_model.process_label               = target_.label();
+        top_model.progress                    = scanner_.engine().snapshot().progress;
+        top_model.scanning                    = scanner_.engine().is_running();
+        const panels::TopBar::Actions actions = top_bar_.draw(top_model);
 
-        ImGui::BeginChild("navigation", ImVec2(nav_width, 0.0f), ImGuiChildFlags_Borders);
-        widgets::section_header("Tools");
-        draw_nav_entry("Processes", Tool::process_picker);
-        draw_nav_entry("Scanner", Tool::scanner);
-        draw_nav_entry("Browser", Tool::browser);
-        draw_nav_entry("Debugger", Tool::debugger);
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        ImGui::BeginChild("content", ImVec2(0.0f, 0.0f));
-        switch (selected_)
+        if (actions.open_process)
         {
-        case Tool::process_picker:
-            picker_.draw();
-            break;
-        case Tool::scanner:
-            widgets::section_header("Memory scanner");
-            ImGui::TextUnformatted("Planned: search the attached target's memory for values.");
-            break;
-        case Tool::browser:
-            widgets::section_header("Memory browser");
-            ImGui::TextUnformatted("Planned: hex view and disassembly of live memory.");
-            break;
-        case Tool::debugger:
-            widgets::section_header("Debugger");
-            ImGui::TextUnformatted("Planned: breakpoints, stepping and register inspection.");
-            break;
+            show_process_list_ = true;
+        }
+        if (actions.undo_scan)
+        {
+            scanner_.engine().undo();
+        }
+        if (actions.open_table)
+        {
+            address_list_.request_open();
+        }
+        if (actions.save_table)
+        {
+            address_list_.request_save();
+        }
+        if (actions.delete_selected)
+        {
+            address_list_.delete_selected();
+        }
+        if (actions.freeze_selected)
+        {
+            address_list_.toggle_freeze_selected();
+        }
+        if (actions.settings)
+        {
+            show_settings_ = true;
+        }
+        if (actions.add_address)
+        {
+            show_add_address_ = true;
+        }
+        if (actions.about)
+        {
+            settings_.select_about();
+            show_settings_ = true;
+        }
+        if (actions.quit)
+        {
+            should_quit_ = true;
+        }
+
+        // Middle and bottom zones, separated by draggable dividers.
+        const ImVec2 spacing  = ImGui::GetStyle().ItemSpacing;
+        const float  splitter = ImGui::GetFontSize() * 0.4f;
+        const ImVec2 region   = ImGui::GetContentRegionAvail();
+        const float  min_pane = ImGui::GetFontSize() * 3.0f;
+        float        usable_h = region.y - splitter - 2.0f * spacing.y;
+        if (usable_h < min_pane * 2.0f)
+        {
+            usable_h = std::max(region.y - splitter - 2.0f * spacing.y, 1.0f);
+        }
+        const float middle_h = usable_h * middle_ratio_;
+        const float bottom_h = std::max(usable_h - middle_h, 1.0f);
+
+        ImGui::BeginChild("zone_middle", ImVec2(0.0f, middle_h), ImGuiChildFlags_None);
+        {
+            const float mid_inner_h = ImGui::GetContentRegionAvail().y;
+            const float min_w       = ImGui::GetFontSize() * 6.0f;
+            float       usable_w    = ImGui::GetContentRegionAvail().x - splitter - 2.0f * spacing.x;
+            if (usable_w < min_w * 2.0f)
+            {
+                usable_w = std::max(ImGui::GetContentRegionAvail().x - splitter - 2.0f * spacing.x, 1.0f);
+            }
+            const float left_w  = usable_w * found_ratio_;
+            const float right_w = std::max(usable_w - left_w, 1.0f);
+
+            ImGui::BeginChild("zone_found", ImVec2(left_w, 0.0f), ImGuiChildFlags_None);
+            found_list_.draw();
+            ImGui::EndChild();
+
+            ImGui::SameLine();
+            widgets::splitter("split_found", true, found_ratio_, usable_w, mid_inner_h);
+
+            ImGui::SameLine();
+            ImGui::BeginChild("zone_scanner", ImVec2(right_w, 0.0f), ImGuiChildFlags_None);
+            scanner_.draw();
+            ImGui::EndChild();
         }
         ImGui::EndChild();
 
+        widgets::splitter("split_rows", false, middle_ratio_, usable_h, region.x);
+
+        ImGui::BeginChild("zone_address_list", ImVec2(0.0f, bottom_h), ImGuiChildFlags_None);
+        address_list_.draw();
+        ImGui::EndChild();
+
         ImGui::End();
+
+        // Requests raised by the panels while they were drawn this frame.
+        if (const auto address = scanner_.take_memory_view_request(); address.has_value())
+        {
+            memory_viewer_.set_address(*address);
+            show_memory_viewer_ = true;
+        }
+        if (scanner_.take_add_address_request())
+        {
+            show_add_address_ = true;
+        }
+        if (const auto address = address_list_.take_browse_request(); address.has_value())
+        {
+            memory_viewer_.set_address(*address);
+            show_memory_viewer_ = true;
+        }
+
+        if (show_process_list_)
+        {
+            process_list_.draw(show_process_list_);
+        }
+        if (show_add_address_)
+        {
+            add_address_.draw(show_add_address_);
+        }
+        if (show_memory_viewer_)
+        {
+            memory_viewer_.draw(show_memory_viewer_);
+        }
+        if (show_settings_)
+        {
+            const dialogs::Settings::Result result = settings_.draw(show_settings_, theme_is_dark_);
+            if (result.dark_theme.has_value())
+            {
+                theme_is_dark_ = *result.dark_theme;
+                theme_         = theme_is_dark_ ? dark_theme() : light_theme();
+                apply_active_style();
+            }
+            if (result.default_alignment.has_value())
+            {
+                scanner_.set_default_alignment(*result.default_alignment);
+            }
+        }
     }
 
 } // namespace slopkit::ui

@@ -1,16 +1,27 @@
 #include "app/cli.hpp"
 
 #include <array>
+#include <charconv>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <format>
 #include <iostream>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <thread>
+#include <utility>
 
 #include <unistd.h>
 
 #include "core/version.hpp"
 #include "plugin/plugin_host.hpp"
+#include "process/plugin_access.hpp"
+#include "scan/engine.hpp"
+#include "scan/source.hpp"
+#include "scan/value.hpp"
 #include "ui/app.hpp"
 
 namespace slopkit::app
@@ -35,6 +46,34 @@ namespace slopkit::app
             {
                 err << "skipped " << diagnostic.path.string() << ": " << diagnostic.message << '\n';
             }
+        }
+
+        // Infers the value type from the literal: a real when it has a fractional
+        // part or an exponent, a wide integer for long hex literals, otherwise the
+        // narrowest integer that fits.
+        scan::ValueType infer_value_type(std::string_view text)
+        {
+            std::string_view body = text;
+            if (!body.empty() && (body.front() == '-' || body.front() == '+'))
+            {
+                body.remove_prefix(1);
+            }
+            if (body.size() > 1 && body[0] == '0' && (body[1] == 'x' || body[1] == 'X'))
+            {
+                const auto        digits = body.substr(2);
+                const auto        first  = digits.find_first_not_of('0');
+                const std::size_t count  = first == std::string_view::npos ? 1 : digits.size() - first;
+                return count > 8 ? scan::ValueType::int64 : scan::ValueType::int32;
+            }
+            if (body.find_first_of(".eE") != std::string_view::npos)
+            {
+                return scan::ValueType::float64;
+            }
+            if (scan::parse_value(scan::ValueType::int32, text, false).has_value())
+            {
+                return scan::ValueType::int32;
+            }
+            return scan::ValueType::int64;
         }
     } // namespace
 
@@ -88,13 +127,95 @@ namespace slopkit::app
         return 0;
     }
 
+    int scan_process(std::ostream& out, std::ostream& err, std::uint32_t pid, std::string_view value_text)
+    {
+        plugin::PluginHost host;
+        host.discover(plugin_search_directories());
+        report_diagnostics(err, host);
+
+        process::PluginAccess access(host);
+
+        const auto processes = access.list_processes();
+        if (!processes)
+        {
+            err << "could not list processes: " << process::describe(processes.error()) << '\n';
+            return 1;
+        }
+        std::string plugin_id;
+        for (const auto& process : *processes)
+        {
+            if (process.pid == pid)
+            {
+                plugin_id = process.plugin_id;
+                break;
+            }
+        }
+        if (plugin_id.empty())
+        {
+            err << "no loaded plugin claims pid " << pid << '\n';
+            return 1;
+        }
+
+        auto session = access.attach(pid, plugin_id);
+        if (!session)
+        {
+            err << "attach failed: " << process::describe(session.error()) << '\n';
+            return 1;
+        }
+
+        const scan::ValueType value_type = infer_value_type(value_text);
+        auto                  value      = scan::parse_value(value_type, value_text, false);
+        if (!value)
+        {
+            err << "invalid value: " << value.error().message << '\n';
+            return 2;
+        }
+
+        scan::ScanConfig config;
+        config.type                 = scan::ScanType::exact_value;
+        config.value_type           = value_type;
+        config.value                = std::move(*value);
+        config.filter.writable      = true;
+        config.filter.copy_on_write = true;
+
+        scan::ScanEngine engine;
+        engine.first_scan(config, scan::make_session_source(*session));
+        while (engine.is_running())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+
+        const scan::ScanSnapshot snapshot = engine.snapshot();
+        if (snapshot.state != scan::ScanState::done)
+        {
+            err << "scan failed: " << snapshot.message << '\n';
+            return 1;
+        }
+        if (snapshot.hits.empty())
+        {
+            out << "no matches\n";
+            return 0;
+        }
+
+        for (const auto& hit : snapshot.hits)
+        {
+            out << std::format("0x{:X}\t{}\t{}\n",
+                               hit.address,
+                               scan::describe(value_type),
+                               scan::format_value(value_type, hit.value, false));
+        }
+        out << snapshot.hit_count << " hit(s)\n";
+        return 0;
+    }
+
     int run(int argc, char** argv)
     {
         const std::vector<std::string_view> args(argv + 1, argv + argc);
         bool                                handled = false;
 
-        for (const auto& arg : args)
+        for (std::size_t index = 0; index < args.size(); ++index)
         {
+            const auto arg = args[index];
             if (arg == "--version" || arg == "-v")
             {
                 handled = true;
@@ -119,10 +240,35 @@ namespace slopkit::app
                     return code;
                 }
             }
+            else if (arg == "--scan")
+            {
+                handled = true;
+                if (index + 2 >= args.size())
+                {
+                    std::cerr << "--scan needs a pid and a value\n";
+                    return 2;
+                }
+                const auto pid_text   = args[++index];
+                const auto value_text = args[++index];
+
+                std::uint32_t pid       = 0;
+                const auto [end, error] = std::from_chars(pid_text.data(), pid_text.data() + pid_text.size(), pid);
+                if (error != std::errc {} || end != pid_text.data() + pid_text.size())
+                {
+                    std::cerr << "invalid pid: " << pid_text << '\n';
+                    return 2;
+                }
+                if (const int code = scan_process(std::cout, std::cerr, pid, value_text); code != 0)
+                {
+                    return code;
+                }
+            }
             else if (arg == "--help" || arg == "-h")
             {
                 handled = true;
                 std::cout << "usage: slopkit [--version] [--list-plugins] [--list-processes]\n"
+                             "               [--scan <pid> <value>] [--help]\n"
+                             "  --scan runs one exact-value scan and prints address<TAB>type<TAB>value\n"
                              "  no flags launches the GUI\n";
             }
             else

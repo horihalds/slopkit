@@ -44,6 +44,20 @@ namespace slopkit::process
         std::string   name;
     };
 
+    // One mapped memory region of a target, mirroring slopkit_region_info in the
+    // C ABI. `shared` false with a non-empty path marks a copy-on-write mapping.
+    struct RegionInfo
+    {
+        std::uint64_t start {};
+        std::uint64_t end {};
+        std::uint64_t offset {};
+        bool          readable {};
+        bool          writable {};
+        bool          executable {};
+        bool          shared {};
+        std::string   path; // Empty for anonymous mappings.
+    };
+
     // Bit flags describing how a plugin can reach a target, mirroring
     // slopkit_access_method in the C ABI.
     enum class AccessMethod : std::uint32_t

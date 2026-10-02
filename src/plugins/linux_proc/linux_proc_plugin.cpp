@@ -454,6 +454,55 @@ namespace
         }
     }
 
+    slopkit_result plugin_list_regions(void* handle, slopkit_region_info** out, std::size_t* out_count) noexcept
+    {
+        try
+        {
+            if (out == nullptr || out_count == nullptr)
+            {
+                return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "null output pointer");
+            }
+            *out       = nullptr;
+            *out_count = 0;
+
+            auto* session = lookup(handle);
+            if (session == nullptr)
+            {
+                return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
+            }
+            reset_arena();
+
+            const auto regions = platform::read_maps(session->pid);
+            auto* array = static_cast<slopkit_region_info*>(host_alloc(sizeof(slopkit_region_info) * regions.size()));
+            if (array == nullptr && !regions.empty())
+            {
+                return fail(SLOPKIT_ERR_INTERNAL, "allocation failed");
+            }
+
+            std::size_t count = 0;
+            for (const auto& region : regions)
+            {
+                array[count].start      = region.start;
+                array[count].end        = region.end;
+                array[count].offset     = region.offset;
+                array[count].readable   = region.readable ? 1 : 0;
+                array[count].writable   = region.writable ? 1 : 0;
+                array[count].executable = region.executable ? 1 : 0;
+                array[count].shared     = region.shared ? 1 : 0;
+                array[count].path       = region.path.empty() ? nullptr : intern(region.path);
+                ++count;
+            }
+
+            *out       = array;
+            *out_count = count;
+            return ok();
+        }
+        catch (...)
+        {
+            return fail(SLOPKIT_ERR_INTERNAL, "unhandled exception");
+        }
+    }
+
     const slopkit_plugin_vtable g_vtable {
         SLOPKIT_PLUGIN_ABI_VERSION,
         sizeof(slopkit_plugin_vtable),
@@ -466,6 +515,7 @@ namespace
         plugin_write_memory,
         plugin_list_modules,
         plugin_list_threads,
+        plugin_list_regions,
         plugin_access_methods,
     };
 } // namespace
