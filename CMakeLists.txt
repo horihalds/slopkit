@@ -5,6 +5,34 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# --- dependencies ----------------------------------------------------------
+#
+# Third-party sources are fetched and pinned to a commit hash.
+
+include(FetchContent)
+
+FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG f1cc2ae15e53a861a874c3034aae6798fde194ab)
+
+FetchContent_Declare(zydis
+    GIT_REPOSITORY https://github.com/zyantific/zydis.git
+    GIT_TAG a2278f1d254e492f6a6b39f6cb5d1f5d515659dc)
+
+FetchContent_MakeAvailable(imgui zydis)
+
+# Dear ImGui ships no CMakeLists.txt, so FetchContent only populates its
+# sources. Expose the backend-agnostic core as a library target.
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp)
+target_include_directories(imgui PUBLIC
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends)
+
 # --- application -----------------------------------------------------------
 
 file(GLOB_RECURSE SLOPKIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
@@ -13,6 +41,7 @@ list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/tests/.*")
 add_executable(slopkit ${SLOPKIT_SOURCES})
 target_include_directories(slopkit PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit PRIVATE -Wall -Wextra)
+target_link_libraries(slopkit PRIVATE imgui Zydis)
 
 # --- tests -----------------------------------------------------------------
 
@@ -39,7 +68,7 @@ list(FILTER SLOPKIT_TEST_SUPPORT_SOURCES EXCLUDE REGEX ".*/main\\.cpp$")
 file(GLOB SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/tests/*.cpp)
 add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES})
 target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(slopkit_tests PRIVATE Catch2::Catch2)
+target_link_libraries(slopkit_tests PRIVATE Catch2::Catch2 imgui Zydis)
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)
