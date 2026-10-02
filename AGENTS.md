@@ -9,6 +9,19 @@ them for every task in this repository.
 - This project is a C++23 project.
 - Build it with CMake and Ninja.
 
+## C++ Standard
+
+- Target C++23 (`-std=c++23`). Prefer modern C++ idioms over legacy ones.
+- Use standard library features first: `std::expected`, `std::optional`, `std::variant`, `std::span`, `std::string_view`, `std::format` / `std::print`, `std::ranges` and views, `std::flat_map`, `std::mdspan`.
+- Use language features where they simplify code: concepts, `constexpr`/`consteval`, structured bindings, designated initializers, `if consteval`, deducing `this`, `[[nodiscard]]`, `std::unreachable`.
+- Prefer RAII and value semantics; use `std::unique_ptr` / `std::make_unique` and avoid raw `new`/`delete`.
+- Avoid C-style casts, raw arrays, `NULL`, and C string/IO functions when a standard C++ alternative exists.
+- If a C++23 feature isn't available in the project's compiler or standard library version, fall back to the closest C++20/17 equivalent rather than hand-rolling a workaround, and mention it.
+
+## UI & Design
+
+- Follow the guidelines in `UI_DESIGN.md`
+
 ## Build & test
 
 - Configure and build:
