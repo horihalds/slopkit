@@ -124,8 +124,9 @@ namespace slopkit::ui::panels
         std::string                   worker_plugin_;
         std::optional<process::JobId> handoff_pending_;
 
-        // The target's memory map, fetched once per attach so the scan range
-        // defaults to the process bounds. `map_pid_`/`map_plugin_` record which
+        // The target's memory map, fetched once per attach so the `All memory`
+        // range spans the whole process address space: its lowest mapped page
+        // up to the user-space ceiling. `map_pid_`/`map_plugin_` record which
         // target the pending or last request belongs to, so a completion for a
         // superseded target is dropped.
         std::optional<process::JobId>                          map_pending_;

@@ -875,14 +875,103 @@ TEST_CASE("the scanner range defaults to the target process bounds", "[ui]")
                         return !start->text().isEmpty();
                     }));
     CHECK(start->text() == QStringLiteral("0x1000"));
-    CHECK(stop->text() == QStringLiteral("0x5000"));
+    CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
 }
 
-TEST_CASE("the scanner range falls back to all regions and blanks an empty map", "[ui]")
+TEST_CASE("starting a scan hands the whole address space range to the engine", "[ui]")
 {
     application();
 
-    SECTION("no readable region falls back to every non-empty region")
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* start = address_field(panel, "Start address");
+    REQUIRE(start != nullptr);
+
+    // A first scan needs a value to search for; the range is what we assert.
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("10"));
+
+    QPushButton* scan_button = nullptr;
+    for (auto* button : panel.findChildren<QPushButton*>())
+    {
+        if (button->text() == QStringLiteral("First Scan"))
+        {
+            scan_button = button;
+            break;
+        }
+    }
+    REQUIRE(scan_button != nullptr);
+
+    // Wait until the map and the session handoff land: a refresh then enables
+    // scanning.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return start->text() == QStringLiteral("0x1000") && scan_button->isEnabled();
+                    }));
+    scan_button->click();
+
+    const auto config = panel.engine().config();
+    CHECK(config.filter.start == 0x1000);
+    CHECK(config.filter.stop == slopkit::scan::kMaxUserAddress);
+}
+
+TEST_CASE("the scanner range spans every region and blanks an empty map", "[ui]")
+{
+    application();
+
+    SECTION("the lowest non-readable region still bounds the start")
+    {
+        UiFakeAccess access;
+
+        slopkit::process::RegionInfo guard;
+        guard.start    = 0x1000;
+        guard.end      = 0x2000;
+        guard.readable = false;
+
+        slopkit::process::RegionInfo readable;
+        readable.start    = 0x3000;
+        readable.end      = 0x6000;
+        readable.readable = true;
+
+        access.regions = {readable, guard};
+
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = fake_target();
+
+        attach_app_session(worker);
+
+        slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+        auto* start = address_field(panel, "Start address");
+        auto* stop  = address_field(panel, "Stop address");
+        REQUIRE(start != nullptr);
+        REQUIRE(stop != nullptr);
+
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return !start->text().isEmpty();
+                        }));
+        CHECK(start->text() == QStringLiteral("0x1000"));
+        CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
+    }
+
+    SECTION("a lone non-readable region still bounds the range")
     {
         UiFakeAccess access;
 
@@ -910,7 +999,7 @@ TEST_CASE("the scanner range falls back to all regions and blanks an empty map",
                             return !start->text().isEmpty();
                         }));
         CHECK(start->text() == QStringLiteral("0x2000"));
-        CHECK(stop->text() == QStringLiteral("0x6000"));
+        CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
     }
 
     SECTION("an empty map leaves the fields blank")
@@ -999,7 +1088,7 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     // anonymous mapping stays out of the list.
     REQUIRE(combo->count() == 3);
     CHECK(combo->itemText(0).startsWith(QStringLiteral("All memory")));
-    CHECK(combo->itemText(0).contains(QStringLiteral("0x1000-0x3000")));
+    CHECK(combo->itemText(0).contains(QStringLiteral("0x1000-0x7FFFFFFFFFFF")));
     CHECK(combo->itemText(1).contains(QStringLiteral("low")));
     CHECK(combo->itemText(2).contains(QStringLiteral("high")));
     CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("/opt/low"));
@@ -1016,7 +1105,7 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     // Back to the whole process.
     combo->setCurrentIndex(0);
     CHECK(start->text() == QStringLiteral("0x1000"));
-    CHECK(stop->text() == QStringLiteral("0x3000"));
+    CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
 }
 
 TEST_CASE("a long module list scrolls inside the scan-range dropdown", "[ui]")
@@ -1138,7 +1227,7 @@ TEST_CASE("detaching resets the scan range and re-attaching repopulates it", "[u
                         return combo->isEnabled() && !start->text().isEmpty();
                     }));
     CHECK(start->text() == QStringLiteral("0x1000"));
-    CHECK(stop->text() == QStringLiteral("0x3000"));
+    CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
 }
 
 TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")

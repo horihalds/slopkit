@@ -428,37 +428,22 @@ namespace slopkit::ui::panels
     {
         modules_ = std::move(result.modules);
 
-        const auto bounds_of = [&result](bool readable_only) -> std::optional<std::pair<std::uint64_t, std::uint64_t>>
+        // The beginning of the process memory space: its lowest mapped page,
+        // readable or not. The end is the user-space ceiling; the engine walks
+        // the mapped regions and stops after the last one, so the ceiling costs
+        // no reads.
+        std::optional<std::uint64_t> lowest;
+        for (const auto& region : result.regions)
         {
-            std::optional<std::pair<std::uint64_t, std::uint64_t>> bounds;
-            for (const auto& region : result.regions)
+            if (region.end <= region.start)
             {
-                if (region.end <= region.start)
-                {
-                    continue;
-                }
-                if (readable_only && !region.readable)
-                {
-                    continue;
-                }
-                if (!bounds)
-                {
-                    bounds = std::pair {region.start, region.end};
-                    continue;
-                }
-                bounds->first  = std::min(bounds->first, region.start);
-                bounds->second = std::max(bounds->second, region.end);
+                continue;
             }
-            return bounds;
-        };
-
-        // Mirror the engine's span choice: prefer the readable, non-empty
-        // regions and fall back to every region when none is readable.
-        process_bounds_ = bounds_of(true);
-        if (!process_bounds_)
-        {
-            process_bounds_ = bounds_of(false);
+            lowest = lowest ? std::min(*lowest, region.start) : std::optional {region.start};
         }
+
+        process_bounds_ =
+            lowest ? std::optional {std::pair {*lowest, scan::kMaxUserAddress}} : std::nullopt;
 
         if (process_bounds_)
         {

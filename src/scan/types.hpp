@@ -72,6 +72,11 @@ namespace slopkit::scan
         "Unknown initial value",
     };
 
+    // Highest canonical user-space address on x86-64. The `All memory` scan
+    // range ends here; the target's mapped regions decide where a scan actually
+    // stops, so this ceiling never turns into reads of unmapped memory.
+    inline constexpr std::uint64_t kMaxUserAddress = 0x7FFFFFFFFFFF;
+
     // The region filter and fast-scan alignment applied to a scan. When none of
     // the attribute flags is set every readable region is scanned; setting any
     // of them keeps regions matching at least one checked attribute.

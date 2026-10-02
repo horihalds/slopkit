@@ -434,6 +434,38 @@ TEST_CASE("region flags, address range and alignment restrict the scan", "[scan]
     }
 }
 
+TEST_CASE("a whole-address-space scan stops at the last mapped region", "[scan]")
+{
+    // A sparse space: the region list decides where the scan reads, so the
+    // user-space ceiling passed in the filter never becomes a stray read.
+    FakeSpace space;
+    space.bytes.assign(0x6000, std::byte {});
+    space.regions = {
+        RegionInfo {0x1000, 0x2000, 0, true, true, false, false, ""},
+        RegionInfo {0x5000, 0x6000, 0, true, true, false, false, ""},
+    };
+    space.put_int32(0x1100, 0x11223344);
+    space.put_int32(0x5100, 0x11223344);
+
+    ScanConfig config   = exact_config(ValueType::int32, 0x11223344);
+    config.filter.start = 0x1000;
+    config.filter.stop  = slopkit::scan::kMaxUserAddress;
+
+    ScanEngine engine;
+    engine.first_scan(config, space.source());
+
+    const auto snapshot = wait(engine);
+    REQUIRE(snapshot.state == ScanState::done);
+    CHECK(snapshot.total_bytes == 0x2000);
+    REQUIRE(snapshot.hit_count == 2);
+    for (const auto& hit : snapshot.hits)
+    {
+        const bool mapped =
+            (hit.address >= 0x1000 && hit.address < 0x2000) || (hit.address >= 0x5000 && hit.address < 0x6000);
+        CHECK(mapped);
+    }
+}
+
 TEST_CASE("cancelling a scan keeps the previous results", "[scan]")
 {
     std::vector<std::byte> small(32);
