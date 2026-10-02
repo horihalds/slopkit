@@ -11,6 +11,7 @@
 #include <imgui_impl_opengl3.h>
 
 #include "slopkit_icon_rgba.h"
+#include "ui/viewports.hpp"
 
 namespace slopkit::ui
 {
@@ -91,6 +92,7 @@ namespace slopkit::ui
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.IniFilename = nullptr; // No settings persistence yet.
+        configure_viewports(io);  // Dialogs become real OS windows.
 
         if (ImGui_ImplGlfw_InitForOpenGL(window->window_, true) == false)
         {
@@ -103,6 +105,13 @@ namespace slopkit::ui
             return std::unexpected("failed to initialize the ImGui OpenGL3 backend");
         }
         window->imgui_opengl_ = true;
+
+        // Viewports need backend and renderer support; without it the dialogs
+        // silently stay inside the main window.
+        if (viewports_active() == false)
+        {
+            std::fprintf(stderr, "slopkit: ImGui multi-viewport is unavailable, dialogs stay in the main window\n");
+        }
 
         return window;
     }
@@ -189,6 +198,17 @@ namespace slopkit::ui
         glClear(GL_COLOR_BUFFER_BIT);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        // Draw the dialogs that live in their own OS windows and restore the
+        // GL context of the main window before presenting it.
+        if ((ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) != 0)
+        {
+            GLFWwindow* backup = glfwGetCurrentContext();
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+            glfwMakeContextCurrent(backup);
+        }
+
         glfwSwapBuffers(window_);
     }
 

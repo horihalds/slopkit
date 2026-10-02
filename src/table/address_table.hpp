@@ -8,7 +8,8 @@
 #include <string_view>
 #include <vector>
 
-#include "process/access.hpp"
+#include "process/access_worker.hpp"
+#include "process/types.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 
@@ -18,6 +19,7 @@ namespace slopkit::table
     // One tracked address. The Active checkbox doubles as the freeze toggle.
     struct AddressEntry
     {
+        std::uint64_t          id {}; // Stable identity, assigned by AddressTable::add.
         bool                   active {false};
         std::string            description;
         std::uint64_t          address {};
@@ -26,8 +28,8 @@ namespace slopkit::table
         bool                   hex {false};
     };
 
-    // The address list shown in the bottom zone. It owns no session: callers
-    // pass the shared one in for reads and writes.
+    // The address list shown in the bottom zone. It owns no session: writes are
+    // encoded here and executed by the AccessWorker.
     class AddressTable
     {
     public:
@@ -47,20 +49,24 @@ namespace slopkit::table
         // The value text shown in the table.
         [[nodiscard]] std::string display_value(std::size_t index) const;
 
-        // Parses `text` for the entry's type, writes it into the target and
-        // updates the cached bytes. Malformed input returns invalid_argument.
-        std::expected<void, process::AccessError>
-        write_value(std::size_t index, std::string_view text, process::Session& session);
+        // Parses `text` for the entry's type and encodes it. Malformed input
+        // returns invalid_argument; no target access happens here.
+        [[nodiscard]] std::expected<std::vector<std::byte>, process::AccessError>
+        encode_value(std::size_t index, std::string_view text) const;
 
-        // Rewrites the frozen entries at most every `interval` seconds. Returns
-        // how many entries were written, or the first write failure.
-        [[nodiscard]] std::expected<std::size_t, process::AccessError>
-        tick_freeze(process::Session& session, double now, double interval = 0.1);
+        // The items a freeze pass must write at most every `interval` seconds:
+        // one per active entry with cached bytes. Advances the timer.
+        [[nodiscard]] std::vector<process::WriteItem> freeze_items(double now, double interval = 0.1);
+
+        // Caches the bytes of an entry after a successful write. Unknown ids are
+        // ignored, so a completion for a removed entry is harmless.
+        void apply_write(std::uint64_t entry_id, std::vector<std::byte> bytes);
 
     private:
         std::vector<AddressEntry> entries_;
         int                       selected_ {-1};
         double                    next_freeze_time_ {0.0};
+        std::uint64_t             next_id_ {1};
     };
 
 } // namespace slopkit::table

@@ -20,8 +20,10 @@
 namespace slopkit::ui::panels
 {
 
-    AddressListPanel::AddressListPanel(table::AddressTable& table, process::AttachedTarget& target)
-        : table_(table), target_(target)
+    AddressListPanel::AddressListPanel(table::AddressTable&     table,
+                                       process::AccessWorker&   worker,
+                                       process::AttachedTarget& target)
+        : table_(table), worker_(worker), target_(target)
     {
     }
 
@@ -131,20 +133,61 @@ namespace slopkit::ui::panels
             set_status("Not attached; cannot write.", true);
             return;
         }
-        const auto& entry  = table_.entries()[row];
-        auto        parsed = scan::parse_value(entry.type, text, entry.hex);
-        if (!parsed)
+        if (write_pending_.has_value())
+        {
+            set_status("A write is already in progress.", true);
+            return;
+        }
+
+        const auto& entry = table_.entries()[row];
+        // Parse here as well so a malformed value keeps its detailed message.
+        if (const auto parsed = scan::parse_value(entry.type, text, entry.hex); !parsed)
         {
             set_status("Value: " + parsed.error().message, true);
             return;
         }
-        const auto result = table_.write_value(row, text, target_.session);
-        if (!result)
+        auto encoded = table_.encode_value(row, text);
+        if (!encoded)
         {
-            set_status(std::string("Write failed: ") + std::string(process::describe(result.error())), true);
+            set_status("Value: invalid value.", true);
             return;
         }
-        set_status("Value written.", false);
+
+        const std::uint64_t  entry_id = entry.id;
+        const std::uint64_t  address  = entry.address;
+        const process::JobId job_id   = worker_.next_job_id();
+        write_pending_                = job_id;
+        writing_entry_                = entry_id;
+
+        const bool submitted = worker_.submit_write(
+            job_id,
+            entry_id,
+            address,
+            std::move(*encoded),
+            [this, entry_id, job_id, cached = *encoded](process::JobResult&& result)
+            {
+                if (write_pending_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                write_pending_.reset();
+                writing_entry_.reset();
+
+                const auto& write = std::get<process::WriteResult>(result);
+                if (write.error)
+                {
+                    set_status(std::string("Write failed: ") + std::string(process::describe(*write.error)), true);
+                    return;
+                }
+                table_.apply_write(entry_id, std::move(cached));
+                set_status("Value written.", false);
+            });
+        if (!submitted)
+        {
+            write_pending_.reset();
+            writing_entry_.reset();
+            set_status("Write unavailable.", true);
+        }
     }
 
     void AddressListPanel::draw()
@@ -261,6 +304,10 @@ namespace slopkit::ui::panels
                 {
                     commit_edit();
                 }
+            }
+            else if (writing_entry_.has_value() && *writing_entry_ == entry.id)
+            {
+                ImGui::TextDisabled("Writing...");
             }
             else
             {

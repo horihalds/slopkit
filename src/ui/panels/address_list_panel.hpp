@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "table/address_table.hpp"
 
@@ -14,12 +15,12 @@ namespace slopkit::ui::panels
 {
 
     // The bottom zone: the editable address list with its context menu and the
-    // footer popups. It owns no session; the shared attached target is used for
-    // writes.
+    // footer popups. It owns no session; edits are encoded locally and the
+    // writes are submitted to the access worker.
     class AddressListPanel
     {
     public:
-        AddressListPanel(table::AddressTable& table, process::AttachedTarget& target);
+        AddressListPanel(table::AddressTable& table, process::AccessWorker& worker, process::AttachedTarget& target);
 
         void draw();
 
@@ -53,6 +54,7 @@ namespace slopkit::ui::panels
         void set_status(std::string message, bool is_error);
 
         table::AddressTable&     table_;
+        process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
 
         std::size_t           editing_row_ {0};
@@ -61,6 +63,9 @@ namespace slopkit::ui::panels
         std::array<char, 256> edit_buffer_ {};
 
         int pending_delete_ {-1};
+
+        std::optional<process::JobId> write_pending_;
+        std::optional<std::uint64_t>  writing_entry_;
 
         std::optional<std::uint64_t> browse_request_;
 

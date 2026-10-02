@@ -8,6 +8,7 @@ namespace slopkit::table
 
     void AddressTable::add(AddressEntry entry)
     {
+        entry.id = next_id_++;
         entries_.push_back(std::move(entry));
         selected_ = static_cast<int>(entries_.size()) - 1;
     }
@@ -81,14 +82,14 @@ namespace slopkit::table
         return scan::format_value(entry.type, entry.bytes, entry.hex);
     }
 
-    std::expected<void, process::AccessError>
-    AddressTable::write_value(std::size_t index, std::string_view text, process::Session& session)
+    std::expected<std::vector<std::byte>, process::AccessError> AddressTable::encode_value(std::size_t      index,
+                                                                                           std::string_view text) const
     {
         if (!valid_index(index))
         {
             return std::unexpected(process::AccessError::invalid_argument);
         }
-        auto& entry = entries_[index];
+        const auto& entry = entries_[index];
 
         auto parsed = scan::parse_value(entry.type, text, entry.hex);
         if (!parsed)
@@ -100,49 +101,39 @@ namespace slopkit::table
         {
             return std::unexpected(process::AccessError::invalid_argument);
         }
-
-        const auto written = session.write(entry.address, bytes);
-        if (!written)
-        {
-            return std::unexpected(written.error());
-        }
-        if (*written != bytes.size())
-        {
-            return std::unexpected(process::AccessError::io_error);
-        }
-
-        entry.bytes = std::move(bytes);
-        return {};
+        return bytes;
     }
 
-    std::expected<std::size_t, process::AccessError>
-    AddressTable::tick_freeze(process::Session& session, double now, double interval)
+    std::vector<process::WriteItem> AddressTable::freeze_items(double now, double interval)
     {
+        std::vector<process::WriteItem> items;
         if (now < next_freeze_time_)
         {
-            return 0;
+            return items;
         }
         next_freeze_time_ = now + (interval > 0.0 ? interval : 0.1);
 
-        std::size_t written = 0;
-        for (auto& entry : entries_)
+        for (const auto& entry : entries_)
         {
             if (!entry.active || entry.bytes.empty())
             {
                 continue;
             }
-            const auto result = session.write(entry.address, entry.bytes);
-            if (!result)
-            {
-                return std::unexpected(result.error());
-            }
-            if (*result != entry.bytes.size())
-            {
-                return std::unexpected(process::AccessError::io_error);
-            }
-            ++written;
+            items.push_back(process::WriteItem {.id = entry.id, .address = entry.address, .bytes = entry.bytes});
         }
-        return written;
+        return items;
+    }
+
+    void AddressTable::apply_write(std::uint64_t entry_id, std::vector<std::byte> bytes)
+    {
+        for (auto& entry : entries_)
+        {
+            if (entry.id == entry_id)
+            {
+                entry.bytes = std::move(bytes);
+                return;
+            }
+        }
     }
 
 } // namespace slopkit::table

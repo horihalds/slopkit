@@ -31,8 +31,8 @@ namespace slopkit::ui::dialogs
         }
     } // namespace
 
-    ProcessList::ProcessList(process::ProcessAccess& access, process::AttachedTarget& target)
-        : access_(access), target_(target)
+    ProcessList::ProcessList(process::AccessWorker& worker, process::AttachedTarget& target)
+        : worker_(worker), target_(target)
     {
     }
 
@@ -68,45 +68,69 @@ namespace slopkit::ui::dialogs
 
     void ProcessList::refresh()
     {
+        if (list_pending_.has_value())
+        {
+            return; // A list job is already in flight.
+        }
+
         const auto*              previous     = selected();
         const process::ProcessId previous_pid = previous != nullptr ? previous->pid : 0;
 
-        auto listed = access_.list_processes();
-        if (!listed)
-        {
-            set_status(std::string("could not list processes: ") + std::string(process::describe(listed.error())),
-                       true);
-            return;
-        }
-        processes_ = std::move(*listed);
+        const process::JobId job_id = worker_.next_job_id();
+        list_pending_               = job_id;
 
-        plugin_ids_.clear();
-        for (const auto& process : processes_)
-        {
-            for (const auto& claimant : process.claimants)
+        const bool submitted = worker_.submit_list(
+            job_id,
+            [this, previous_pid, job_id](process::JobResult&& result)
             {
-                if (std::find(plugin_ids_.begin(), plugin_ids_.end(), claimant) == plugin_ids_.end())
+                if (list_pending_ != job_id)
                 {
-                    plugin_ids_.push_back(claimant);
+                    return; // Superseded or shut down.
                 }
-            }
-        }
-        std::ranges::sort(plugin_ids_);
+                list_pending_.reset();
 
-        // Keep the selection on the same pid across refreshes.
-        selected_index_ = -1;
-        if (previous_pid != 0)
-        {
-            for (std::size_t i = 0; i < processes_.size(); ++i)
-            {
-                if (processes_[i].pid == previous_pid)
+                auto& listed = std::get<process::ListResult>(result);
+                if (listed.error)
                 {
-                    selected_index_ = static_cast<int>(i);
-                    break;
+                    set_status(std::string("could not list processes: ")
+                                   + std::string(process::describe(*listed.error)),
+                               true);
+                    return;
                 }
-            }
+                processes_ = std::move(listed.processes);
+
+                plugin_ids_.clear();
+                for (const auto& process : processes_)
+                {
+                    for (const auto& claimant : process.claimants)
+                    {
+                        if (std::find(plugin_ids_.begin(), plugin_ids_.end(), claimant) == plugin_ids_.end())
+                        {
+                            plugin_ids_.push_back(claimant);
+                        }
+                    }
+                }
+                std::ranges::sort(plugin_ids_);
+
+                // Keep the selection on the same pid across refreshes.
+                selected_index_ = -1;
+                if (previous_pid != 0)
+                {
+                    for (std::size_t i = 0; i < processes_.size(); ++i)
+                    {
+                        if (processes_[i].pid == previous_pid)
+                        {
+                            selected_index_ = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                }
+                probe_needed_ = true;
+            });
+        if (!submitted)
+        {
+            list_pending_.reset();
         }
-        probe_needed_ = true;
     }
 
     void ProcessList::maybe_auto_refresh()
@@ -119,46 +143,110 @@ namespace slopkit::ui::dialogs
         const double now = ImGui::GetTime();
         if (now >= next_refresh_time_)
         {
-            refresh();
+            refresh(); // No-ops while a list job is already pending.
             next_refresh_time_ = now + 2.0;
+        }
+    }
+
+    void ProcessList::request_application_index()
+    {
+        if (index_built_ || index_pending_.has_value())
+        {
+            return;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        index_pending_              = job_id;
+
+        const bool submitted =
+            worker_.submit_application_index(job_id,
+                                             [this, job_id](process::JobResult&& result)
+                                             {
+                                                 if (index_pending_ != job_id)
+                                                 {
+                                                     return;
+                                                 }
+                                                 index_pending_.reset();
+                                                 application_executables_ =
+                                                     std::move(std::get<process::AppIndexResult>(result).executables);
+                                                 index_built_ = true;
+                                             });
+        if (!submitted)
+        {
+            index_pending_.reset();
         }
     }
 
     void ProcessList::probe_selection()
     {
-        detail_pid_          = -1;
+        const auto* info = selected();
+        if (info == nullptr)
+        {
+            detail_pid_          = -1;
+            detail_methods_      = process::AccessMethod::none;
+            detail_module_count_ = 0;
+            detail_thread_count_ = 0;
+            detail_error_.clear();
+            return;
+        }
+        if (probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info->pid))
+        {
+            return; // Already inspecting this process.
+        }
+
+        const process::ProcessId pid    = info->pid;
+        const std::string        plugin = chosen_plugin(*info);
+
+        // Clear the cached detail and show the placeholder until it lands.
+        detail_pid_          = static_cast<int>(pid);
         detail_methods_      = process::AccessMethod::none;
         detail_module_count_ = 0;
         detail_thread_count_ = 0;
         detail_error_.clear();
 
-        const auto* info = selected();
-        if (info == nullptr)
-        {
-            return;
-        }
-        detail_pid_ = static_cast<int>(info->pid);
+        const process::JobId job_id = worker_.next_job_id();
+        probe_pending_              = job_id;
+        probe_pending_pid_          = static_cast<int>(pid);
 
-        auto probe = access_.attach(info->pid, chosen_plugin(*info));
-        if (!probe)
-        {
-            detail_error_ = std::string("cannot inspect: ") + std::string(process::describe(probe.error()));
-            return;
-        }
+        const bool submitted = worker_.submit_probe(
+            job_id,
+            pid,
+            plugin,
+            [this, pid, job_id](process::JobResult&& result)
+            {
+                if (probe_pending_ != job_id)
+                {
+                    return; // Superseded by a newer probe.
+                }
+                probe_pending_.reset();
+                probe_pending_pid_ = -1;
 
-        detail_methods_ = probe->advertised_methods();
+                // Drop a result whose selection changed while it was in flight.
+                const auto* current = selected();
+                if (detail_pid_ != static_cast<int>(pid) || current == nullptr || current->pid != pid)
+                {
+                    return;
+                }
 
-        if (const auto modules = probe->modules())
+                auto& probe = std::get<process::ProbeResult>(result);
+                if (probe.error)
+                {
+                    detail_error_ = std::string("cannot inspect: ") + std::string(process::describe(*probe.error));
+                    return;
+                }
+                detail_methods_      = probe.method;
+                detail_module_count_ = probe.modules;
+                detail_thread_count_ = probe.threads;
+                if (probe.modules_error)
+                {
+                    detail_error_ =
+                        std::string("modules unavailable: ") + std::string(process::describe(*probe.modules_error));
+                }
+            });
+        if (!submitted)
         {
-            detail_module_count_ = modules->size();
-        }
-        else
-        {
-            detail_error_ = std::string("modules unavailable: ") + std::string(process::describe(modules.error()));
-        }
-        if (const auto threads = probe->threads())
-        {
-            detail_thread_count_ = threads->size();
+            probe_pending_.reset();
+            probe_pending_pid_ = -1;
         }
     }
 
@@ -170,20 +258,51 @@ namespace slopkit::ui::dialogs
             set_status("Select a process first.", true);
             return;
         }
-
-        target_.clear();
-        auto attached = access_.attach(info->pid, chosen_plugin(*info));
-        if (!attached)
+        if (attach_pending_.has_value())
         {
-            set_status(std::string("attach failed: ") + std::string(process::describe(attached.error())), true);
             return;
         }
 
-        target_.session   = std::move(*attached);
-        target_.pid       = info->pid;
-        target_.name      = info->name;
-        target_.plugin_id = std::string(target_.session.plugin_id());
-        set_status(target_.label() + "; methods: " + process::describe(target_.session.advertised_methods()), false);
+        const process::ProcessId pid    = info->pid;
+        const std::string        name   = info->name;
+        const std::string        plugin = chosen_plugin(*info);
+
+        const process::JobId job_id = worker_.next_job_id();
+        attach_pending_             = job_id;
+
+        const bool submitted = worker_.submit_attach_app(
+            job_id,
+            pid,
+            plugin,
+            [this, pid, name, job_id](process::JobResult&& result)
+            {
+                if (attach_pending_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                attach_pending_.reset();
+
+                const auto& attached = std::get<process::AttachResult>(result);
+                if (attached.error)
+                {
+                    target_.clear();
+                    set_status(std::string("attach failed: ") + std::string(process::describe(*attached.error)), true);
+                    return;
+                }
+
+                target_.clear();
+                target_.pid          = pid;
+                target_.name         = name;
+                target_.plugin_id    = attached.info->plugin_id;
+                target_.method       = attached.info->method;
+                target_.session_live = true;
+                set_status(target_.label() + "; methods: " + process::describe(target_.method), false);
+            });
+        if (!submitted)
+        {
+            attach_pending_.reset();
+            set_status("Attach unavailable.", true);
+        }
     }
 
     void ProcessList::detach()
@@ -193,8 +312,30 @@ namespace slopkit::ui::dialogs
             set_status("Not attached.", true);
             return;
         }
-        target_.clear();
-        set_status("Detached.", false);
+        if (detach_pending_.has_value())
+        {
+            return;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        detach_pending_             = job_id;
+
+        const bool submitted = worker_.submit_detach(job_id,
+                                                     [this, job_id](process::JobResult&&)
+                                                     {
+                                                         if (detach_pending_ != job_id)
+                                                         {
+                                                             return;
+                                                         }
+                                                         detach_pending_.reset();
+                                                         target_.clear();
+                                                         set_status("Detached.", false);
+                                                     });
+        if (!submitted)
+        {
+            detach_pending_.reset();
+            set_status("Detach unavailable.", true);
+        }
     }
 
     void ProcessList::draw(bool& open)
@@ -208,11 +349,7 @@ namespace slopkit::ui::dialogs
         }
 
         maybe_auto_refresh();
-        if (!index_built_)
-        {
-            application_executables_ = platform::scan_desktop_executables(platform::default_application_dirs());
-            index_built_             = true;
-        }
+        request_application_index();
 
         if (!status_.empty())
         {
@@ -224,10 +361,13 @@ namespace slopkit::ui::dialogs
             ImGui::TextDisabled("%zu process(es)", processes_.size());
         }
 
-        if (widgets::primary_button("Refresh"))
+        const bool refreshing = list_pending_.has_value();
+        ImGui::BeginDisabled(refreshing);
+        if (widgets::primary_button(refreshing ? "Refreshing..." : "Refresh"))
         {
             refresh();
         }
+        ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::Checkbox("Auto-refresh", &auto_refresh_);
         ImGui::SameLine();
@@ -284,10 +424,14 @@ namespace slopkit::ui::dialogs
 
         ImGui::BeginChild("process_list", ImVec2(list_width, body_height), ImGuiChildFlags_Borders);
 
-        if (ImGui::BeginTable("processes",
-                              4,
-                              ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable
-                                  | ImGuiTableFlags_Sortable | ImGuiTableFlags_SizingFixedFit))
+        if (applications_only && !index_built_)
+        {
+            ImGui::TextDisabled("Indexing applications...");
+        }
+        else if (ImGui::BeginTable("processes",
+                                   4,
+                                   ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable
+                                       | ImGuiTableFlags_Sortable | ImGuiTableFlags_SizingFixedFit))
         {
             ImGui::TableSetupColumn("PID", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort);
             ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
@@ -460,6 +604,11 @@ namespace slopkit::ui::dialogs
         }
 
         ImGui::Spacing();
+        if (probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info.pid))
+        {
+            ImGui::TextDisabled("Inspecting...");
+        }
+        else
         {
             ui::ScopedMonoFont mono;
             ImGui::Text("Access methods: %s", process::describe(detail_methods_).c_str());
@@ -475,16 +624,25 @@ namespace slopkit::ui::dialogs
         ImGui::Spacing();
         if (target_.valid() && target_.pid == info.pid)
         {
-            if (widgets::secondary_button("Detach"))
+            const bool pending = detach_pending_.has_value();
+            ImGui::BeginDisabled(pending);
+            if (widgets::secondary_button(pending ? "Detaching..." : "Detach"))
             {
                 detach();
             }
+            ImGui::EndDisabled();
             ImGui::SameLine();
             widgets::status_text(widgets::StatusKind::success, "attached");
         }
-        else if (widgets::primary_button("Attach"))
+        else
         {
-            attach_selected();
+            const bool pending = attach_pending_.has_value();
+            ImGui::BeginDisabled(pending);
+            if (widgets::primary_button(pending ? "Attaching..." : "Attach"))
+            {
+                attach_selected();
+            }
+            ImGui::EndDisabled();
         }
     }
 

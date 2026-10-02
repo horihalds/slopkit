@@ -7,6 +7,7 @@
 #include <string>
 
 #include "process/access.hpp"
+#include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "scan/engine.hpp"
 #include "scan/types.hpp"
@@ -21,7 +22,7 @@ namespace slopkit::ui::panels
     class ScannerPanel
     {
     public:
-        ScannerPanel(process::ProcessAccess& access, process::AttachedTarget& target);
+        ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target);
 
         void draw();
 
@@ -40,7 +41,7 @@ namespace slopkit::ui::panels
         [[nodiscard]] bool take_add_address_request();
 
     private:
-        void sync_worker_session();
+        void request_scan_session();
         void start_first_scan();
         void start_next_scan();
 
@@ -48,7 +49,7 @@ namespace slopkit::ui::panels
         [[nodiscard]] scan::ValueType                              current_value_type() const noexcept;
         [[nodiscard]] std::expected<scan::ScanConfig, std::string> build_config() const;
 
-        process::ProcessAccess&  access_;
+        process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
 
         // Inputs.
@@ -82,11 +83,13 @@ namespace slopkit::ui::panels
         // A session separate from the app-wide one, used only by the scan
         // worker so the shared session is never touched from two threads. It is
         // declared before the engine so the engine joins its worker before the
-        // session is destroyed.
-        process::Session   worker_session_;
-        process::ProcessId worker_pid_ {0};
-        std::string        worker_plugin_;
-        scan::ScanEngine   engine_;
+        // session is destroyed. The session is created by an access-worker
+        // handoff job and applied when that completion is drained.
+        process::Session              worker_session_;
+        process::ProcessId            worker_pid_ {0};
+        std::string                   worker_plugin_;
+        std::optional<process::JobId> handoff_pending_;
+        scan::ScanEngine              engine_;
     };
 
 } // namespace slopkit::ui::panels

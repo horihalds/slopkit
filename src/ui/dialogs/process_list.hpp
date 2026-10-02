@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "process/access.hpp"
+#include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
 
@@ -17,7 +18,7 @@ namespace slopkit::ui::dialogs
     class ProcessList
     {
     public:
-        ProcessList(process::ProcessAccess& access, process::AttachedTarget& target);
+        ProcessList(process::AccessWorker& worker, process::AttachedTarget& target);
 
         void draw(bool& open);
 
@@ -27,6 +28,7 @@ namespace slopkit::ui::dialogs
         void attach_selected();
         void detach();
         void maybe_auto_refresh();
+        void request_application_index();
         void draw_body(bool applications_only);
         void draw_detail(const process::ProcessInfo& info);
 
@@ -35,7 +37,7 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] bool                        is_application(const process::ProcessInfo& info) const;
         void                                      set_status(std::string message, bool is_error);
 
-        process::ProcessAccess&  access_;
+        process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
 
         std::vector<process::ProcessInfo> processes_;
@@ -59,6 +61,13 @@ namespace slopkit::ui::dialogs
 
         std::string status_;
         bool        status_is_error_ {false};
+
+        std::optional<process::JobId> attach_pending_;
+        std::optional<process::JobId> detach_pending_;
+        std::optional<process::JobId> list_pending_;
+        std::optional<process::JobId> probe_pending_;
+        std::optional<process::JobId> index_pending_;
+        int                           probe_pending_pid_ {-1};
 
         bool   auto_refresh_ {true};
         double next_refresh_time_ {0.0};

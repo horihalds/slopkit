@@ -67,10 +67,12 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 - Set the application ID with `glfwWindowHintString(GLFW_WAYLAND_APP_ID, "<app-id>")` so compositors, taskbars, and desktop entries match the window correctly. The ID must match the `.desktop` file name.
 - Respect Wayland limitations; do not write code that depends on them:
   - No programmatic window positioning (`glfwSetWindowPos` is a no-op). Never rely on or persist window position.
+  - A dialog in its own OS window is positioned by the compositor at first show; do not compute, save or restore its geometry.
   - No global cursor positioning or warping outside the window. Use `GLFW_CURSOR_DISABLED` for relative-motion needs.
   - Window focus requests and raising may be ignored by the compositor.
   - Clipboard and drag-and-drop go through GLFW and ImGui's standard paths. Do not talk to the display server directly.
 - Window decorations may be client-side (libdecor) or server-side depending on the compositor. Do not draw custom title bars unless explicitly requested, and do not assume a fixed decoration size.
+- ImGui's GLFW backend does not enable multi-viewport on Wayland, so dialogs stay inside the main window there; keep the single-window layout fully usable and surface the limitation instead of assuming each dialog is a separate OS window.
 - Scaling on Wayland is per-output and can change at runtime. Follow section 6 and test with fractional scaling enabled.
 - Do not use X11-specific APIs (`glfwGetX11Window`, Xlib, `GLFW_EXPOSE_NATIVE_X11`) in UI code. Keep any platform-specific code isolated behind a small interface.
 
@@ -81,8 +83,18 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 - Set a sensible minimum window size with `glfwSetWindowSizeLimits`, expressed in logical units and scaled by the current content scale.
 - Keep rendering correct and responsive during interactive resize (redraw from the resize callback if needed, and avoid layout jumps).
 - Restore window size (not position) between sessions if persistence is implemented.
+- The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Settings`) are real OS windows via ImGui multi-viewport, not views clipped to the main window: they have their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and never merge back into the main window.
+- Treat a dialog's position and size as compositor-owned: never save, restore or compute them, and keep `io.IniFilename` unset.
+- Do not draw custom title bars for dialogs (see section 7). The OS close button has the same effect as the in-dialog close and clears the dialog's `show_*` flag.
 
-## 9. Working Rules for Agents
+## 9. Threading and Target Access
+
+- UI code must never touch a `process::Session` and must never call a plugin or perform a syscall during a frame. Every target access — process listing, attach, module/thread probing, the desktop-entry index, memory reads, memory writes and the freeze pass — is submitted to the background `process::AccessWorker`.
+- Submit a job and keep rendering: the last known data stays visible while a job is in flight, the affected control is disabled and relabelled (for example `Refresh` shows `Refreshing...`), and the completion is applied by the once-per-frame `drain()`.
+- Match every completion against the pending job id and ignore stale results (a changed selection, target, page or removed entry), so an out-of-order result never corrupts the view.
+- Only the UI thread touches ImGui and OpenGL; the worker thread touches neither.
+
+## 10. Working Rules for Agents
 
 - Reuse existing components and theme colors before writing new UI code. Add to the component library rather than inlining.
 - Do not restyle or refactor existing UI that is unrelated to the task; apply these rules to new and modified code.

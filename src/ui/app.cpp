@@ -4,6 +4,7 @@
 #include <cfloat>
 #include <iostream>
 #include <utility>
+#include <variant>
 
 #include <imgui.h>
 
@@ -48,11 +49,36 @@ namespace slopkit::ui
 
             window_->begin_frame();
 
-            if (target_.valid())
+            // Apply finished background jobs before the panels read the model.
+            access_worker_.drain();
+
+            if (target_.valid() && !freeze_pending_.has_value())
             {
-                if (const auto frozen = address_table_.tick_freeze(target_.session, ImGui::GetTime()); !frozen)
+                auto items = address_table_.freeze_items(ImGui::GetTime());
+                if (!items.empty())
                 {
-                    address_list_.report_freeze_error(process::describe(frozen.error()));
+                    const process::JobId job_id = access_worker_.next_job_id();
+                    freeze_pending_             = job_id;
+                    const bool submitted        = access_worker_.submit_freeze(
+                        job_id,
+                        std::move(items),
+                        [this, job_id](process::JobResult&& result)
+                        {
+                            if (freeze_pending_ != job_id)
+                            {
+                                return;
+                            }
+                            freeze_pending_.reset();
+                            const auto& frozen = std::get<process::FreezeResult>(result);
+                            if (frozen.error)
+                            {
+                                address_list_.report_freeze_error(process::describe(*frozen.error));
+                            }
+                        });
+                    if (!submitted)
+                    {
+                        freeze_pending_.reset();
+                    }
                 }
             }
 

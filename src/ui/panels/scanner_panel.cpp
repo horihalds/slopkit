@@ -40,8 +40,8 @@ namespace slopkit::ui::panels
         }
     } // namespace
 
-    ScannerPanel::ScannerPanel(process::ProcessAccess& access, process::AttachedTarget& target)
-        : access_(access), target_(target)
+    ScannerPanel::ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target)
+        : worker_(worker), target_(target)
     {
     }
 
@@ -55,17 +55,17 @@ namespace slopkit::ui::panels
         return static_cast<scan::ValueType>(value_type_);
     }
 
-    void ScannerPanel::sync_worker_session()
+    void ScannerPanel::request_scan_session()
     {
         const bool changed = target_.pid != worker_pid_ || target_.plugin_id != worker_plugin_;
-        if (!changed)
+        if (!changed || handoff_pending_.has_value())
         {
             return;
         }
         if (engine_.is_running())
         {
             engine_.cancel();
-            return; // retry once the worker has stopped
+            return; // Retry once the engine has stopped.
         }
 
         worker_session_ = process::Session {};
@@ -78,19 +78,49 @@ namespace slopkit::ui::panels
             return;
         }
 
-        worker_pid_    = target_.pid;
-        worker_plugin_ = target_.plugin_id;
+        const process::ProcessId pid    = target_.pid;
+        const std::string        plugin = target_.plugin_id;
+        worker_pid_                     = pid;
+        worker_plugin_                  = plugin;
 
-        auto attached = access_.attach(target_.pid, target_.plugin_id);
-        if (!attached)
+        const process::JobId job_id = worker_.next_job_id();
+        handoff_pending_            = job_id;
+
+        const bool submitted = worker_.submit_attach_handoff(
+            job_id,
+            pid,
+            plugin,
+            [this, job_id, pid, plugin](process::JobResult&& result)
+            {
+                if (handoff_pending_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                handoff_pending_.reset();
+
+                auto& attached = std::get<process::AttachResult>(result);
+                // Drop a session whose target changed while the handoff ran;
+                // worker_pid_ still reflects the request, so the next frame
+                // requests the new target.
+                if (!target_.valid() || target_.pid != pid || target_.plugin_id != plugin)
+                {
+                    return;
+                }
+                if (attached.error)
+                {
+                    status_ = std::string("Scan session failed: ") + std::string(process::describe(*attached.error));
+                    status_is_error_ = true;
+                    return;
+                }
+
+                worker_session_  = std::move(*attached.handed_session);
+                status_          = std::string();
+                status_is_error_ = false;
+            });
+        if (!submitted)
         {
-            status_          = std::string("Scan session failed: ") + std::string(process::describe(attached.error()));
-            status_is_error_ = true;
-            return;
+            handoff_pending_.reset();
         }
-        worker_session_  = std::move(*attached);
-        status_          = std::string();
-        status_is_error_ = false;
     }
 
     std::expected<scan::ScanConfig, std::string> ScannerPanel::build_config() const
@@ -224,12 +254,13 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::draw()
     {
-        sync_worker_session();
+        request_scan_session();
 
         const scan::ScanSnapshot snapshot    = engine_.snapshot();
         const bool               running     = snapshot.state == scan::ScanState::running;
         const bool               has_results = engine_.has_results();
-        const bool               attached    = target_.valid() && static_cast<bool>(worker_session_);
+        const bool               preparing   = handoff_pending_.has_value();
+        const bool               attached    = target_.valid() && static_cast<bool>(worker_session_) && !preparing;
         const scan::ScanType     scan_type   = current_scan_type();
         const bool wants_value = scan::needs_value(scan_type) || scan_type == scan::ScanType::value_between;
 
@@ -370,6 +401,10 @@ namespace slopkit::ui::panels
         {
             widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
                                  status_.c_str());
+        }
+        else if (preparing)
+        {
+            widgets::status_text(widgets::StatusKind::info, "Preparing scan session...");
         }
         else if (!snapshot.message.empty())
         {

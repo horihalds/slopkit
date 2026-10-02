@@ -5,7 +5,7 @@
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
 - `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included.
-- `CMakeLists.txt` — CMake build: fetches pinned imgui, links system Zydis/GLFW/OpenGL via pkg-config, compiles the ImGui backends, generates and embeds the UI font and the program icon from `data/`, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs.
+- `CMakeLists.txt` — CMake build: fetches the pinned imgui docking branch (for multi-viewport), links system Zydis/GLFW/OpenGL via pkg-config, compiles the ImGui backends, generates and embeds the UI font and the program icon from `data/`, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs.
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
@@ -40,9 +40,11 @@
 - `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes and exposing their PE images.
 - `src/process/types.hpp` — process/module/thread descriptors, access-method flags and `AccessError`.
 - `src/process/types.cpp` — human-readable descriptions of errors, module kinds and access methods.
-- `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the UI depends on.
-- `src/process/attachment.hpp` — `AttachedTarget`: the one attachment shared app-wide, with its label.
-- `src/process/attachment.cpp` — attaches/detaches and formats the process label.
+- `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the access worker depends on.
+- `src/process/access_worker.hpp` — job/result types and the background `AccessWorker` that serializes all target access.
+- `src/process/access_worker.cpp` — the worker thread, request/completion queues, worker-owned session and the job bodies.
+- `src/process/attachment.hpp` — `AttachedTarget`: metadata-only identity of the app-wide attachment (the session lives in the access worker).
+- `src/process/attachment.cpp` — formats the process label and clears the metadata.
 - `src/process/plugin_access.hpp` — embedded `ProcessAccess` implementation over `PluginHost`.
 - `src/process/plugin_access.cpp` — attaches through plugins and tracks the access method actually used.
 - `src/scan/types.hpp` — the scan value/scan/state enums, the region filter and their descriptions.
@@ -53,14 +55,16 @@
 - `src/scan/source.cpp` — builds a source over a live session or an owned test buffer.
 - `src/scan/engine.hpp` — `ScanConfig`/`ScanHit`/`ScanSnapshot` and the worker-threaded `ScanEngine`.
 - `src/scan/engine.cpp` — region filtering, chunked first scans, refinement scans, undo and cancellation.
-- `src/table/address_table.hpp` — `AddressEntry` and the `AddressTable` model with writes, freezing and selection.
-- `src/table/address_table.cpp` — parses and writes entry values, and rewrites the frozen entries on a tick.
+- `src/table/address_table.hpp` — `AddressEntry` with a stable id and the `AddressTable` model: value encoding, freeze snapshots and selection, no session.
+- `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
 - `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency.
-- `src/ui/app.hpp` — the `App`: owns the window, theme and scale, and lays out the top bar, split middle scan zone and bottom address list.
-- `src/ui/app.cpp` — runs the window loop, draws the three zones with draggable splitters and hosts all four dialogs.
+- `src/ui/app.hpp` — the `App`: owns the window, theme, scale and access worker, and lays out the top bar, split middle scan zone and bottom address list.
+- `src/ui/app.cpp` — runs the window loop, drains access-worker completions, submits the freeze pass and hosts all four dialogs.
 - `src/ui/app_window.hpp` — `AppWindow`: GLFW window, OpenGL context and ImGui backends.
-- `src/ui/app_window.cpp` — Wayland-first init with X11 fallback, X11 `WM_CLASS` hints, the embedded window icon, content-scale handling and frame rendering.
+- `src/ui/app_window.cpp` — Wayland-first init with X11 fallback, X11 `WM_CLASS` hints, the embedded window icon, content-scale handling, viewport setup and frame rendering including platform windows.
+- `src/ui/viewports.hpp` — multi-viewport configuration declarations and the backend-support probe.
+- `src/ui/viewports.cpp` — enables ImGui multi-viewport (independent, non-merging dialogs) without docking.
 - `src/ui/theme.hpp` — the `Theme` colour-role struct and the dark/light constructors.
 - `src/ui/theme.cpp` — theme values and `apply_theme`, mapping roles onto `ImGuiStyle`.
 - `src/ui/scale.hpp` — the unscaled base style and the `Scale` DPI helper.
@@ -71,18 +75,18 @@
 - `src/ui/components/widgets.cpp` — implements the themed components from the active theme.
 - `src/ui/panels/top_bar.hpp` — the top zone's menu bar, toolbar, process label and progress bar, reporting requested actions.
 - `src/ui/panels/top_bar.cpp` — draws the `File`/`Edit`/`Table`/`D3D`/`Help` menus, the toolbar and the scan progress.
-- `src/ui/panels/scanner_panel.hpp` — the scan controls, the worker session the engine reads through and the scan engine.
-- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the controls and starts first/next/undo scans.
+- `src/ui/panels/scanner_panel.hpp` — the scan controls, the handoff-created scan session and the scan engine.
+- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the controls, applies the handed-over session and starts first/next/undo scans.
 - `src/ui/panels/found_list_panel.hpp` — the `Found: N` result-list panel reading the scan engine's snapshot.
 - `src/ui/panels/found_list_panel.cpp` — renders the sortable, clipped Address/Value/Previous result table and truncation notice.
 - `src/ui/panels/address_list_panel.hpp` — the bottom address-list panel with editing, the context menu and the footer popups.
-- `src/ui/panels/address_list_panel.cpp` — renders the address table, inline edits, context menu and the open/save table modals.
-- `src/ui/dialogs/process_list.hpp` — the Process List dialog over `ProcessAccess` and the shared `AttachedTarget`.
-- `src/ui/dialogs/process_list.cpp` — Applications/Processes tabs, filtering, detail probe and attach/detach.
+- `src/ui/panels/address_list_panel.cpp` — renders the address table, inline edits and their async writes, the context menu and the open/save table modals.
+- `src/ui/dialogs/process_list.hpp` — the Process List dialog over the access worker and the shared `AttachedTarget`.
+- `src/ui/dialogs/process_list.cpp` — Applications/Processes tabs, filtering, async listing/probe/index and attach/detach with inline busy states.
 - `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable`.
 - `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
-- `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment.
-- `src/ui/dialogs/memory_viewer.cpp` — paged address/bytes/ASCII dump with unreadable-range markers.
+- `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker.
+- `src/ui/dialogs/memory_viewer.cpp` — one cached page of address/bytes/ASCII dump with unreadable-range markers, refreshed asynchronously.
 - `src/ui/dialogs/settings.hpp` — the Settings categories and the changes it reports back to the App.
 - `src/ui/dialogs/settings.cpp` — Appearance, Scanning, Plugins and About panels, including the live theme switch.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
@@ -91,10 +95,12 @@
 - `src/tests/desktop_entry_test.cpp` — `.desktop` parsing, exec basename and application classification tests.
 - `src/tests/scan_test.cpp` — value parsing, scan predicates, first/next/undo, region filtering and cancellation.
 - `src/tests/scan_integration_test.cpp` — self-scans the test process through the built plugin and the `--scan` command.
-- `src/tests/address_table_test.cpp` — address model edit/freeze tests plus the table-file save/load round-trip.
+- `src/tests/access_worker_test.cpp` — background access worker tests: non-blocking submits, ordering, session ownership, handoff, detach and shutdown safety.
+- `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
 - `src/tests/ui_test.cpp` — theme, scaling and embedded-font unit tests that need no window.
+- `src/tests/viewports_test.cpp` — multi-viewport configuration and docking-branch support-guard tests.
 - `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.

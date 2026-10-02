@@ -1,116 +1,28 @@
 #include <catch2/catch.hpp>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <memory>
-#include <span>
+#include <initializer_list>
 #include <string>
-#include <string_view>
 #include <vector>
 
-#include "process/access.hpp"
-#include "process/types.hpp"
+#include "process/access_worker.hpp"
 #include "scan/types.hpp"
 #include "table/address_table.hpp"
 #include "table/serializer.hpp"
 
 namespace
 {
-    using slopkit::process::AccessError;
-    using slopkit::process::AccessMethod;
+    using slopkit::process::WriteItem;
     using slopkit::scan::ValueType;
     using slopkit::table::AddressEntry;
     using slopkit::table::AddressTable;
 
-    // A tiny in-memory target at a fixed base address.
-    class FakeBackend : public slopkit::process::SessionBackend
-    {
-    public:
-        static constexpr std::uint64_t kBase = 0x1000;
-
-        std::vector<std::byte> memory = std::vector<std::byte>(0x40);
-
-        [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
-        {
-            return 7;
-        }
-
-        [[nodiscard]] std::string_view plugin_id() const noexcept override
-        {
-            return "fake";
-        }
-
-        [[nodiscard]] AccessMethod advertised_methods() const noexcept override
-        {
-            return AccessMethod::procfs_mem;
-        }
-
-        [[nodiscard]] AccessMethod last_method() const noexcept override
-        {
-            return AccessMethod::procfs_mem;
-        }
-
-        std::expected<std::vector<std::byte>, AccessError> read(std::uint64_t address, std::size_t size) override
-        {
-            if (address < kBase || address - kBase + size > memory.size())
-            {
-                return std::unexpected(AccessError::not_found);
-            }
-            const auto offset = static_cast<std::size_t>(address - kBase);
-            return std::vector<std::byte>(memory.begin() + static_cast<std::ptrdiff_t>(offset),
-                                          memory.begin() + static_cast<std::ptrdiff_t>(offset + size));
-        }
-
-        std::expected<std::size_t, AccessError> write(std::uint64_t address, std::span<const std::byte> data) override
-        {
-            if (address < kBase || address - kBase + data.size() > memory.size())
-            {
-                return std::unexpected(AccessError::not_found);
-            }
-            const auto offset = static_cast<std::size_t>(address - kBase);
-            std::copy(data.begin(), data.end(), memory.begin() + static_cast<std::ptrdiff_t>(offset));
-            return data.size();
-        }
-
-        std::expected<std::vector<slopkit::process::ModuleInfo>, AccessError> modules() override
-        {
-            return std::vector<slopkit::process::ModuleInfo> {};
-        }
-
-        std::expected<std::vector<slopkit::process::ThreadInfo>, AccessError> threads() override
-        {
-            return std::vector<slopkit::process::ThreadInfo> {};
-        }
-
-        std::expected<std::vector<slopkit::process::RegionInfo>, AccessError> regions() override
-        {
-            return std::vector<slopkit::process::RegionInfo> {};
-        }
-    };
-
-    struct FakeSession
-    {
-        FakeBackend*              backend {};
-        slopkit::process::Session session;
-
-        FakeSession()
-        {
-            auto owned = std::make_unique<FakeBackend>();
-            backend    = owned.get();
-            session    = slopkit::process::Session {std::move(owned)};
-        }
-
-        [[nodiscard]] std::int32_t int32_at(std::size_t offset) const
-        {
-            std::int32_t value = 0;
-            std::memcpy(&value, backend->memory.data() + offset, sizeof(value));
-            return value;
-        }
-    };
+    // The base address the fixture entries use; no target is required since the
+    // model only encodes and caches.
+    constexpr std::uint64_t kBase = 0x1000;
 
     AddressEntry make_entry(std::uint64_t address, ValueType type, std::initializer_list<int> bytes)
     {
@@ -137,6 +49,11 @@ TEST_CASE("address entries are added, selected and removed", "[table]")
     REQUIRE(table.size() == 2);
     CHECK(table.selected() == 1);
 
+    // Every entry gets a non-zero, unique id assigned by the table.
+    CHECK(table.entries()[0].id != 0);
+    CHECK(table.entries()[1].id != 0);
+    CHECK(table.entries()[0].id != table.entries()[1].id);
+
     table.set_selected(0);
     table.remove(0);
     REQUIRE(table.size() == 1);
@@ -150,66 +67,71 @@ TEST_CASE("address entries are added, selected and removed", "[table]")
     CHECK(table.empty());
 }
 
-TEST_CASE("write_value writes the parsed bytes and caches them", "[table]")
+TEST_CASE("encode_value encodes the parsed bytes", "[table]")
 {
-    FakeSession  target;
     AddressTable table;
-    table.add(make_entry(FakeBackend::kBase, ValueType::int32, {}));
+    table.add(make_entry(kBase, ValueType::int32, {}));
 
-    REQUIRE(table.write_value(0, "1234", target.session).has_value());
-    CHECK(target.int32_at(0) == 1234);
-    REQUIRE(table.entries()[0].bytes.size() == 4);
+    const auto encoded = table.encode_value(0, "1234");
+    REQUIRE(encoded.has_value());
+    REQUIRE(encoded->size() == 4);
+    table.apply_write(table.entries()[0].id, *encoded);
     CHECK(table.display_value(0) == "1234");
 
     table.entries()[0].hex = true;
-    REQUIRE(table.write_value(0, "0x2A", target.session).has_value());
-    CHECK(target.int32_at(0) == 42);
+    const auto hexed       = table.encode_value(0, "0x2A");
+    REQUIRE(hexed.has_value());
+    table.apply_write(table.entries()[0].id, *hexed);
     CHECK(table.display_value(0) == "0x0000002A");
 }
 
-TEST_CASE("write_value rejects malformed input and detached sessions", "[table]")
+TEST_CASE("encode_value rejects malformed input and unknown indices", "[table]")
 {
-    FakeSession  target;
     AddressTable table;
-    table.add(make_entry(FakeBackend::kBase, ValueType::int32, {}));
+    table.add(make_entry(kBase, ValueType::int32, {}));
 
-    CHECK_FALSE(table.write_value(0, "not a number", target.session).has_value());
-    CHECK(target.int32_at(0) == 0);
-
-    CHECK_FALSE(table.write_value(9, "1", target.session).has_value());
-
-    slopkit::process::Session detached;
-    CHECK_FALSE(table.write_value(0, "1", detached).has_value());
+    CHECK_FALSE(table.encode_value(0, "not a number").has_value());
+    CHECK_FALSE(table.encode_value(9, "1").has_value());
 }
 
-TEST_CASE("tick_freeze rewrites only the active entries and honours the interval", "[table]")
+TEST_CASE("apply_write updates only the matching entry", "[table]")
 {
-    FakeSession  target;
+    AddressTable table;
+    table.add(make_entry(kBase, ValueType::int32, {}));
+    const std::uint64_t id = table.entries()[0].id;
+    REQUIRE(id != 0);
+
+    // An unknown id, e.g. a write for a removed entry, is ignored.
+    table.apply_write(id + 12345, std::vector<std::byte> {std::byte {0x01}});
+    CHECK(table.entries()[0].bytes.empty());
+
+    table.apply_write(id, std::vector<std::byte> {std::byte {0x2A}, std::byte {0}, std::byte {0}, std::byte {0}});
+    CHECK(table.display_value(0) == "42");
+}
+
+TEST_CASE("freeze_items returns only the active entries and honours the interval", "[table]")
+{
     AddressTable table;
 
-    auto active   = make_entry(FakeBackend::kBase, ValueType::int32, {42, 0, 0, 0});
+    auto active   = make_entry(kBase, ValueType::int32, {42, 0, 0, 0});
     active.active = true;
     table.add(active);
 
-    auto inactive   = make_entry(FakeBackend::kBase + 4, ValueType::int32, {55, 0, 0, 0});
+    auto inactive   = make_entry(kBase + 4, ValueType::int32, {55, 0, 0, 0});
     inactive.active = false;
     table.add(inactive);
 
-    const auto first = table.tick_freeze(target.session, 0.0, 0.1);
-    REQUIRE(first.has_value());
-    CHECK(*first == 1);
-    CHECK(target.int32_at(0) == 42);
-    CHECK(target.int32_at(4) == 0);
+    const std::vector<WriteItem> first = table.freeze_items(0.0, 0.1);
+    REQUIRE(first.size() == 1);
+    CHECK(first[0].id == table.entries()[0].id);
+    CHECK(first[0].address == kBase);
+    CHECK(first[0].bytes.size() == 4);
 
-    // Inside the interval nothing is rewritten.
-    const auto early = table.tick_freeze(target.session, 0.05, 0.1);
-    REQUIRE(early.has_value());
-    CHECK(*early == 0);
+    // Inside the interval nothing is returned.
+    CHECK(table.freeze_items(0.05, 0.1).empty());
 
-    // Once the target changes the frozen value, the next tick restores it.
-    target.backend->memory[0] = std::byte {0};
-    REQUIRE(table.tick_freeze(target.session, 0.2, 0.1).has_value());
-    CHECK(target.int32_at(0) == 42);
+    // Once the interval elapsed the active entry is returned again.
+    CHECK(table.freeze_items(0.2, 0.1).size() == 1);
 }
 
 TEST_CASE("an address table round-trips through the serializer", "[table]")
@@ -246,6 +168,11 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     CHECK_FALSE(loaded.entries()[1].active);
     CHECK(loaded.entries()[1].hex);
     CHECK(loaded.entries()[1].bytes == original.entries()[1].bytes);
+
+    // Ids are not persisted; the loader regenerates non-zero, unique ids.
+    CHECK(loaded.entries()[0].id != 0);
+    CHECK(loaded.entries()[1].id != 0);
+    CHECK(loaded.entries()[0].id != loaded.entries()[1].id);
 }
 
 TEST_CASE("the serializer rejects malformed files", "[table]")

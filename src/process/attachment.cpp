@@ -21,10 +21,11 @@ namespace slopkit::process
 
     void AttachedTarget::clear()
     {
-        session = Session {};
-        pid     = 0;
+        pid = 0;
         name.clear();
         plugin_id.clear();
+        method       = AccessMethod::none;
+        session_live = false;
     }
 
 } // namespace slopkit::process

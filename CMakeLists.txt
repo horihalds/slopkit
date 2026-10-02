@@ -22,17 +22,22 @@ set(SLOPKIT_PLUGIN_RELATIVE_DIR "../${CMAKE_INSTALL_LIBDIR}/slopkit/plugins")
 #
 # The only third-party source that is fetched and pinned to a commit hash is
 # Dear ImGui. Zydis, GLFW and OpenGL come from the system packages (see below).
+#
+# The pin is the docking-branch release `v1.92.9b-docking` (peeled commit
+# below), which matches the previously used 1.92.9b and adds the multi-viewport
+# support the dialogs need. The core source list is identical on both branches.
 
 include(FetchContent)
 
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG f1cc2ae15e53a861a874c3034aae6798fde194ab)
+    GIT_TAG b48d1afbe8ee8b238e2961dc363a949dd7304e23)
 
 FetchContent_MakeAvailable(imgui)
 
 # Dear ImGui ships no CMakeLists.txt, so FetchContent only populates its
-# sources. Expose the backend-agnostic core as a library target.
+# sources. Expose the backend-agnostic core as a library target. The docking
+# branch uses the same core file list as master.
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp

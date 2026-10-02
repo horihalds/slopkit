@@ -21,6 +21,7 @@ them for every task in this repository.
 ## UI & Design
 
 - Follow the guidelines in `docs/UI_DESIGN.md`
+- Never perform target access on the UI thread. UI code must not touch a `process::Session`, call a plugin or make a syscall during a frame; process listing, attach, probing, the desktop-entry index, memory reads/writes and the freeze pass all go through `process::AccessWorker` and are applied by its once-per-frame drain.
 
 ## Build & test
 
