@@ -20,7 +20,7 @@ them for every task in this repository.
 
 ## UI & Design
 
-- Follow the guidelines in `UI_DESIGN.md`
+- Follow the guidelines in `docs/UI_DESIGN.md`
 
 ## Build & test
 
@@ -73,9 +73,9 @@ them for every task in this repository.
 
 ## Project index
 
-- `INDEX.md` at the repository root indexes every file in the project: what it
-  is and what it does.
-- Whenever a task adds, removes, renames or repurposes a file, update `INDEX.md`
+- `docs/INDEX.md` at the repository root indexes every file in the project: what
+  it is and what it does.
+- Whenever a task adds, removes, renames or repurposes a file, update `docs/INDEX.md`
   in the same change so every file stays indexed exactly once.
 - Be terse when writing the index
 
