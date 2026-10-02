@@ -691,3 +691,82 @@ TEST_CASE("detaching does not close the process list dialog", "[ui]")
 
     dialog.close();
 }
+
+TEST_CASE("the process model keeps desktop applications in the processes view", "[ui]")
+{
+    application();
+
+    slopkit::ui::dialogs::ProcessListModel model;
+
+    slopkit::process::ProcessInfo mumble;
+    mumble.pid      = 100;
+    mumble.name     = "Mumble";
+    mumble.exe_path = "/usr/bin/mumble";
+
+    slopkit::process::ProcessInfo shell;
+    shell.pid      = 200;
+    shell.name     = "bash";
+    shell.exe_path = "/usr/bin/bash";
+
+    model.set_processes({mumble, shell});
+    model.set_application_index({"mumble"});
+
+    // The Processes view lists everything, desktop application included.
+    CHECK(model.rowCount() == 2);
+    CHECK(model.row_for_pid(100) >= 0);
+    CHECK(model.row_for_pid(200) >= 0);
+
+    // ...so a name filter finds the application there too.
+    model.set_search(QStringLiteral("mumble"));
+    CHECK(model.rowCount() == 1);
+    REQUIRE(model.process_at(0) != nullptr);
+    CHECK(model.process_at(0)->pid == 100);
+
+    model.set_search(QString());
+
+    // The Applications view restricts to desktop entries.
+    model.set_applications_only(true);
+    CHECK(model.rowCount() == 1);
+    REQUIRE(model.process_at(0) != nullptr);
+    CHECK(model.process_at(0)->pid == 100);
+}
+
+TEST_CASE("typing in the filter selects the first result", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2;
+                    }));
+
+    // Park the selection on the second row...
+    table->setCurrentIndex(table->model()->index(1, slopkit::ui::dialogs::ProcessListModel::pid));
+    REQUIRE(table->currentIndex().row() == 1);
+
+    // ...then type a filter that still matches both rows.
+    search->setText(QStringLiteral("usr/bin"));
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+    CHECK(table->currentIndex().row() == 0);
+
+    dialog.close();
+}

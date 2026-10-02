@@ -218,7 +218,9 @@ namespace slopkit::ui::dialogs
         for (int index = 0; index < static_cast<int>(processes_.size()); ++index)
         {
             const auto& info = processes_[static_cast<std::size_t>(index)];
-            if (platform::is_desktop_application(info.exe_path, application_executables_) != applications_only_)
+            // The Applications view keeps only desktop entries; the Processes
+            // view keeps everything.
+            if (applications_only_ && !platform::is_desktop_application(info.exe_path, application_executables_))
             {
                 continue;
             }
@@ -425,6 +427,7 @@ namespace slopkit::ui::dialogs
                 {
                     restoring_ = true;
                     model_->set_search(text);
+                    selected_pid_ = 0; // A fresh filter always selects the top result.
                     after_model_change();
                 });
 
