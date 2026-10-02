@@ -37,6 +37,9 @@ them for every task in this repository.
 
 - Never add any other dependency without consulting the owner first.
 - When a dependency is required, prefer packages that are available in the system repositories.
+- Tying into that, the build links the system Zydis through `pkg-config`; it
+  needs the distro Zydis development package (e.g. Fedora's `zydis-devel`) and
+  `pkg-config` installed, and does not vendor Zydis.
 
 ## Reference tree
 
