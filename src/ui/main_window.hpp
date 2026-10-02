@@ -32,9 +32,9 @@ namespace slopkit::ui::panels
 namespace slopkit::ui
 {
 
-    // The application window: menu bar, toolbar, status bar and the three split
-    // zones. It owns the address table and forwards every target access to the
-    // shared AccessWorker.
+    // The application window: menu bar, status bar and the three split zones. It
+    // owns the address table and forwards every target access to the shared
+    // AccessWorker.
     class MainWindow : public QMainWindow
     {
         Q_OBJECT
@@ -52,7 +52,6 @@ namespace slopkit::ui
     private:
         void build_actions();
         void build_menus();
-        void build_toolbar();
         void build_status_bar();
         void build_central();
         void build_dialogs();

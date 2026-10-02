@@ -7,13 +7,11 @@
 
 #include <QAction>
 #include <QCoreApplication>
+#include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
-#include <QSizePolicy>
 #include <QSplitter>
 #include <QStatusBar>
-#include <QToolBar>
-#include <QWidget>
 
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
@@ -49,7 +47,6 @@ namespace slopkit::ui
 
         build_actions();
         build_menus();
-        build_toolbar();
         build_status_bar();
         build_central();
         build_dialogs();
@@ -74,17 +71,25 @@ namespace slopkit::ui
                     QCoreApplication::quit();
                 });
 
-        open_process_action_ = widgets::toolbar_action(tr("Open Process"), tr("Open Process..."), this);
+        open_process_action_ = new QAction(tr("Open Process..."), this);
+        // No standard key exists for "pick a process".
+        open_process_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+T")));
+        open_process_action_->setShortcutContext(Qt::WindowShortcut);
 
-        open_table_action_ = widgets::toolbar_action(tr("Open Table"), tr("Open Table..."), this);
+        open_table_action_ = new QAction(tr("Open Table..."), this);
+        open_table_action_->setShortcut(QKeySequence::Open);
+        open_table_action_->setShortcutContext(Qt::WindowShortcut);
 
-        save_table_action_ = widgets::toolbar_action(tr("Save Table"), tr("Save Table..."), this);
+        save_table_action_ = new QAction(tr("Save Table..."), this);
+        // Shared by the File and Table menus; one action, so no shortcut ambiguity.
+        save_table_action_->setShortcut(QKeySequence::Save);
+        save_table_action_->setShortcutContext(Qt::WindowShortcut);
 
         undo_scan_action_ = new QAction(tr("Undo Scan"), this);
 
         add_address_action_ = new QAction(tr("Add Address Manually..."), this);
 
-        settings_action_ = widgets::toolbar_action(tr("Settings"), tr("Settings..."), this);
+        settings_action_ = new QAction(tr("Settings..."), this);
 
         about_action_ = new QAction(tr("About slopkit"), this);
 
@@ -121,23 +126,6 @@ namespace slopkit::ui
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
         help_menu->addAction(about_action_);
-    }
-
-    void MainWindow::build_toolbar()
-    {
-        QToolBar* toolbar = addToolBar(tr("Main"));
-        toolbar->setObjectName(QStringLiteral("main_toolbar"));
-        toolbar->setMovable(false);
-        toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        toolbar->addAction(open_process_action_);
-        toolbar->addAction(open_table_action_);
-        toolbar->addAction(save_table_action_);
-
-        auto* spacer = new QWidget(toolbar);
-        spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-        toolbar->addWidget(spacer);
-
-        toolbar->addAction(settings_action_);
     }
 
     void MainWindow::build_status_bar()

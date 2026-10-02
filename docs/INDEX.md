@@ -63,13 +63,13 @@
 - `src/ui/app.cpp` — builds the `QApplication`, applies the Fusion style, the theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
 - `src/ui/completion_notifier.hpp` — `CompletionNotifier`: the coalescing, thread-safe bridge from the access worker's completion hook to the Qt event loop.
 - `src/ui/completion_notifier.cpp` — posts at most one queued wake-up per drain and emits `completionsAvailable()` on the UI thread.
-- `src/ui/main_window.hpp` — `MainWindow`: menus, toolbar, status bar, the splitter zones, the owned address table and the four dialogs.
-- `src/ui/main_window.cpp` — builds the action set and the layout, polls the panels on a 50 ms tick and submits the freeze pass to the worker.
+- `src/ui/main_window.hpp` — `MainWindow`: the menu bar, status bar and splitter zones, the owned address table and the four dialogs.
+- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, polls the panels on a 50 ms tick and submits the freeze pass to the worker.
 - `src/ui/theme.hpp` — the `Theme` colour-role struct, the dark/light constructors, `make_palette()` and `apply_theme()`.
 - `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
 - `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
 - `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
-- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, collapsible section, toolbar action, icon).
+- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, collapsible section, icon).
 - `src/ui/components/widgets.cpp` — implements the helpers, re-applying their themed palettes when the application palette changes.
 - `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over one `scan::ScanSnapshot` page with Address/Value/Previous columns and sorting.
 - `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font and keeps the display order.

@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QKeySequence>
 #include <QLabel>
 #include <QList>
 #include <QMenu>
@@ -278,23 +279,22 @@ TEST_CASE("the main window shell is built", "[ui]")
                              QStringLiteral("Save Table..."),
                              QStringLiteral("Quit")});
 
-    // The toolbar carries the four shortcuts; the labels drop the ellipsis.
-    auto* toolbar = window.findChild<QToolBar*>(QStringLiteral("main_toolbar"));
-    REQUIRE(toolbar != nullptr);
-    QList<QString> toolbar_labels;
-    for (QAction* action : toolbar->actions())
-    {
-        // The toolbar also carries the spacer widget, which has no label.
-        if (!action->isSeparator() && !action->iconText().isEmpty())
-        {
-            toolbar_labels.append(action->iconText());
-        }
-    }
-    CHECK(toolbar_labels
-          == QList<QString> {QStringLiteral("Open Process"),
-                             QStringLiteral("Open Table"),
-                             QStringLiteral("Save Table"),
-                             QStringLiteral("Settings")});
+    // The toolbar is gone; the file commands live only in the menus now.
+    CHECK(window.findChild<QToolBar*>(QStringLiteral("main_toolbar")) == nullptr);
+
+    // The Edit menu is now the only route to the settings dialog.
+    CHECK(menus[1]->menu()->actions().last()->text() == QStringLiteral("Settings..."));
+
+    // Ctrl+T / Ctrl+O / Ctrl+S are bound to the file commands.
+    const QList<QAction*> file_actions = menus[0]->menu()->actions();
+    REQUIRE(file_actions.size() == 5);
+    CHECK(file_actions[0]->shortcut() == QKeySequence(QStringLiteral("Ctrl+T")));
+    CHECK(file_actions[1]->shortcut() == QKeySequence(QKeySequence::Open));
+    CHECK(file_actions[2]->shortcut() == QKeySequence(QKeySequence::Save));
+
+    // The Table menu reuses the very same save action, so its shortcut is not
+    // registered twice.
+    CHECK(menus[2]->menu()->actions().last() == file_actions[2]);
 
     // The status bar shows the detached target and the scan progress.
     auto* process_label = window.statusBar()->findChild<QLabel*>();

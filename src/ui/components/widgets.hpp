@@ -8,7 +8,6 @@
 #include <QString>
 #include <QWidget>
 
-class QAction;
 class QToolButton;
 class QVBoxLayout;
 
@@ -109,9 +108,5 @@ namespace slopkit::ui::widgets
     // Multi-size application icon assembled from the generated
     // `:/icons/<N>x<N>/apps/slopkit.png` resources.
     [[nodiscard]] QIcon application_icon();
-
-    // Toolbar action: the toolbar shows `text`, the menus show `menu_text`
-    // (which carries the ellipsis where the command opens something).
-    [[nodiscard]] QAction* toolbar_action(const QString& text, const QString& menu_text, QWidget* parent);
 
 } // namespace slopkit::ui::widgets

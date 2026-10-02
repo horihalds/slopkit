@@ -29,7 +29,7 @@ These rules apply to all user interface work in this project. Read this file bef
 
 ## 4. Custom Components
 
-- Build reusable widgets instead of repeating raw Qt calls. Put them in a dedicated module (`ui/components/`): buttons, panels, collapsible sections, section headers, status labels, toolbar actions and icon loading.
+- Build reusable widgets instead of repeating raw Qt calls. Put them in a dedicated module (`ui/components/`): buttons, panels, collapsible sections, section headers, status labels and icon loading.
 - Components take their styling from the active theme, expose a small and consistent API, and keep no hidden global state.
 - Prefer composing existing components over adding one-off widgets. If similar Qt code appears twice, extract it into a component.
 - Let Qt do the work: use `QSplitter` for dividers, `QGroupBox`/`CollapsibleSection` for groups, `QProgressBar` for progress and `QTableView` with a `QAbstractTableModel` for tabular data rather than custom-painted equivalents.
@@ -78,7 +78,8 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 
 ## 8. Window and Layout
 
-- The main window is a `QMainWindow` with a menu bar, a toolbar, a status bar and the splitter-based central widget; the window must be resizable and carry a sensible minimum size.
+- The main window is a `QMainWindow` with a menu bar, a status bar and the splitter-based central widget; the window must be resizable and carry a sensible minimum size.
+- The file commands are reachable from the menus and carry window-scoped shortcuts: `Ctrl+T` picks the process, `Ctrl+O` opens an address table and `Ctrl+S` saves it; they fire only while the main window is focused.
 - Layouts must adapt to window size: use layouts and `QSplitter` stretch factors rather than fixed sizes, and keep the previous zone proportions (62 % scan zone / 38 % address list; the scan zone splits 50/50 between the found list and the scanner).
 - The status bar shows the attached-process label and the scan progress; the process list and other dialogs never duplicate them.
 - The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Settings`) are non-modal `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window.

@@ -1,6 +1,5 @@
 #include "ui/components/widgets.hpp"
 
-#include <QAction>
 #include <QEvent>
 #include <QGuiApplication>
 #include <QPalette>
@@ -199,13 +198,6 @@ namespace slopkit::ui::widgets
             icon.addFile(QStringLiteral(":/icons/%1x%1/apps/slopkit.png").arg(size));
         }
         return icon;
-    }
-
-    QAction* toolbar_action(const QString& text, const QString& menu_text, QWidget* parent)
-    {
-        auto* action = new QAction(menu_text, parent);
-        action->setIconText(text);
-        return action;
     }
 
 } // namespace slopkit::ui::widgets
