@@ -1,32 +1,44 @@
 #pragma once
 
-#include <array>
-#include <string>
-
 #include "table/address_table.hpp"
+
+#include <QDialog>
+#include <QString>
+
+class QCheckBox;
+class QComboBox;
+class QLineEdit;
+
+namespace slopkit::ui::widgets
+{
+    class StatusLabel;
+} // namespace slopkit::ui::widgets
 
 namespace slopkit::ui::dialogs
 {
 
-    // The Add Address dialog: description, address, value type and, for the
-    // dynamic types, the number of bytes to track.
-    class AddAddress
+    // The Add Address dialog: description, address, value type, the dynamic
+    // types' size and the hex toggle. It appends a table::AddressEntry.
+    class AddAddressDialog : public QDialog
     {
-    public:
-        explicit AddAddress(table::AddressTable& table);
+        Q_OBJECT
 
-        void draw(bool& open);
+    public:
+        explicit AddAddressDialog(table::AddressTable& table, QWidget* parent = nullptr);
 
     private:
         void commit();
+        void update_size_row();
 
-        table::AddressTable&  table_;
-        std::array<char, 128> description_ {};
-        std::array<char, 32>  address_ {};
-        std::array<char, 16>  size_ {"32"};
-        int                   type_index_ {2};
-        bool                  hex_ {false};
-        std::string           status_;
+        table::AddressTable& table_;
+
+        QLineEdit*            description_edit_ {};
+        QLineEdit*            address_edit_ {};
+        QComboBox*            type_combo_ {};
+        QLineEdit*            size_edit_ {};
+        QWidget*              size_row_ {};
+        QCheckBox*            hex_check_ {};
+        widgets::StatusLabel* status_ {};
     };
 
 } // namespace slopkit::ui::dialogs

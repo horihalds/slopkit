@@ -3,25 +3,55 @@
 #include "scan/engine.hpp"
 #include "table/address_table.hpp"
 
+#include <QWidget>
+
+class QLabel;
+class QTableView;
+
+namespace slopkit::ui::models
+{
+    class FoundResultsModel;
+} // namespace slopkit::ui::models
+
+namespace slopkit::ui::widgets
+{
+    class StatusLabel;
+} // namespace slopkit::ui::widgets
+
 namespace slopkit::ui::panels
 {
 
     // The left half of the middle zone: the `Found: N` result list. It only
     // reads the engine's snapshot and appends double-clicked hits to the address
     // table.
-    class FoundListPanel
+    class FoundListPanel : public QWidget
     {
-    public:
-        FoundListPanel(scan::ScanEngine& engine, table::AddressTable& table);
+        Q_OBJECT
 
-        void draw();
+    public:
+        FoundListPanel(scan::ScanEngine& engine, table::AddressTable& table, QWidget* parent = nullptr);
+
+        // Polled by the window's tick; only a changed snapshot reaches the model,
+        // so the selection and the sort survive an idle poll.
+        void refresh();
 
     private:
-        void add_to_table(const scan::ScanHit& hit, const scan::ScanConfig& config);
+        void add_to_table(int row);
+        void show_context_menu(const QPoint& position);
 
         scan::ScanEngine&    engine_;
         table::AddressTable& table_;
-        int                  selected_ {-1};
+
+        QLabel*                    header_ {};
+        widgets::StatusLabel*      note_ {};
+        QTableView*                table_view_ {};
+        models::FoundResultsModel* model_ {};
+
+        // The snapshot currently shown, so an unchanged poll does not reset the
+        // model (a reset would drop the selection and re-run the sort).
+        scan::ScanSnapshot last_snapshot_;
+        scan::ScanConfig   last_config_;
+        bool               has_last_ {false};
     };
 
 } // namespace slopkit::ui::panels

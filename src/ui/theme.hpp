@@ -1,6 +1,7 @@
 #pragma once
 
-#include <imgui.h>
+#include <QColor>
+#include <QPalette>
 
 namespace slopkit::ui
 {
@@ -9,26 +10,31 @@ namespace slopkit::ui
     // code must read colours from the active theme rather than hard-coding them.
     struct Theme
     {
-        ImVec4 background;
-        ImVec4 surface;
-        ImVec4 surface_hover;
-        ImVec4 text;
-        ImVec4 text_muted;
-        ImVec4 accent;
-        ImVec4 accent_hover;
-        ImVec4 accent_active;
-        ImVec4 border;
-        ImVec4 success;
-        ImVec4 warning;
-        ImVec4 error;
+        QColor background;
+        QColor surface;
+        QColor surface_hover;
+        QColor text;
+        QColor text_muted;
+        QColor accent;
+        QColor accent_hover;
+        QColor accent_active;
+        QColor on_accent;
+        QColor border;
+        QColor success;
+        QColor warning;
+        QColor error;
     };
 
     [[nodiscard]] Theme dark_theme();
     [[nodiscard]] Theme light_theme();
 
-    // Applies a theme to a style and makes it the active theme the component
-    // library reads from.
-    void apply_theme(ImGuiStyle& style, const Theme& theme);
+    // Maps the semantic roles onto the palette roles Qt's Fusion style paints
+    // from, for every colour group.
+    [[nodiscard]] QPalette make_palette(const Theme& theme);
+
+    // Makes `theme` the active theme the component library reads from and
+    // installs its palette application-wide; requires a QApplication.
+    void apply_theme(const Theme& theme);
 
     [[nodiscard]] const Theme& active_theme();
 

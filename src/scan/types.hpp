@@ -46,8 +46,8 @@ namespace slopkit::scan
         cancelled,
     };
 
-    // The UI labels, in enum declaration order, so an enum value can index
-    // ImGui::Combo's item array directly.
+    // The UI labels, in enum declaration order, so an enum value can index a
+    // combo box's item array directly.
     inline constexpr const char* kValueTypeNames[] = {
         "Byte",
         "2 Bytes",

@@ -284,7 +284,7 @@ namespace slopkit::app
         }
 
         ui::App app;
-        return app.run();
+        return app.run(argc, argv);
     }
 
 } // namespace slopkit::app

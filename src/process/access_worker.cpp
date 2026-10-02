@@ -38,6 +38,7 @@ namespace slopkit::process
         const std::lock_guard lock(mutex_);
         completions_.clear(); // Pending callbacks are dropped, never invoked.
         requests_.clear();
+        completion_hook_ = nullptr;
     }
 
     void AccessWorker::run(std::stop_token token)
@@ -71,6 +72,12 @@ namespace slopkit::process
 
             const std::lock_guard lock(mutex_);
             completions_.push_back(Completion {std::move(request.on_done), std::move(result)});
+            if (completion_hook_)
+            {
+                // Worker thread: the hook only posts a wake-up, it never touches
+                // the UI.
+                completion_hook_();
+            }
         }
     }
 
@@ -113,6 +120,12 @@ namespace slopkit::process
             ++drained;
         }
         return drained;
+    }
+
+    void AccessWorker::set_completion_hook(CompletionHook hook)
+    {
+        const std::lock_guard lock(mutex_);
+        completion_hook_ = std::move(hook);
     }
 
     bool AccessWorker::attached() const noexcept

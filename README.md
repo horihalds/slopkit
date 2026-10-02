@@ -121,10 +121,9 @@ Dependencies (from the system repositories):
 - A C++23 compiler
 - Zydis development package (e.g. Fedora's `zydis-devel`) and `pkg-config`
 - Catch2
-- GLFW 3.4 or newer, built with Wayland support
-- OpenGL development files (e.g. Fedora's `mesa-libGL-devel`)
-- ImageMagick — build-time only: generates the icon set and the embedded window
-  icon from `data/icon.svg`
+- Qt 6 Widgets development packages (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`)
+- ImageMagick — build-time only: generates the icon set that is embedded into the
+  Qt resources from `data/icon.svg`
 
 Configure and build:
 
@@ -186,7 +185,7 @@ configure time (see the dependency list above).
 - `src/process/` — the process-access seam, the shared attachment and the plugin-backed access.
 - `src/scan/` — the headless scan engine: value parsing, memory sources and the worker scan.
 - `src/table/` — the address-table model and its line-oriented file format.
-- `src/ui/` — the ImGui/GLFW shell, theme, scaling, fonts, panels and dialogs.
+- `src/ui/` — the Qt 6 Widgets shell: main window, theme/palette, fonts, panels, dialogs and table models.
 - `docs/` — project documentation, including `docs/INDEX.md` and `docs/UI_DESIGN.md`.
 - `assets/` — embedded assets such as the UI font and its license.
 - `reference/` — read-only reference material; never modified.

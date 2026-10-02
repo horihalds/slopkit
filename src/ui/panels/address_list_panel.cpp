@@ -1,494 +1,296 @@
 #include "ui/panels/address_list_panel.hpp"
 
-#include <algorithm>
-#include <cfloat>
-#include <cstdio>
+#include <cstddef>
 #include <filesystem>
-#include <format>
 #include <string>
+#include <string_view>
 #include <utility>
 
-#include <imgui.h>
+#include <QAction>
+#include <QFileDialog>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QItemSelectionModel>
+#include <QMenu>
+#include <QMessageBox>
+#include <QTableView>
+#include <QVBoxLayout>
 
-#include "process/types.hpp"
-#include "scan/types.hpp"
-#include "scan/value.hpp"
 #include "table/serializer.hpp"
 #include "ui/components/widgets.hpp"
-#include "ui/fonts.hpp"
+#include "ui/models/address_table_model.hpp"
 
 namespace slopkit::ui::panels
 {
 
+    namespace
+    {
+        QString to_qstring(std::string_view text)
+        {
+            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
+        }
+
+        // A menu entry that stays visible but explains why it is unavailable.
+        QAction* disabled_action(QMenu& menu, const QString& text, const QString& reason)
+        {
+            QAction* action = menu.addAction(text);
+            action->setEnabled(false);
+            action->setToolTip(reason);
+            return action;
+        }
+    } // namespace
+
     AddressListPanel::AddressListPanel(table::AddressTable&     table,
                                        process::AccessWorker&   worker,
-                                       process::AttachedTarget& target)
-        : table_(table), worker_(worker), target_(target)
+                                       process::AttachedTarget& target,
+                                       QWidget*                 parent)
+        : QWidget(parent), table_(table)
     {
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(8, 8, 8, 8);
+        layout->setSpacing(6);
+
+        model_      = new models::AddressTableModel(table_, worker, target, this);
+        table_view_ = new QTableView(this);
+        table_view_->setModel(model_);
+        table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
+        table_view_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+        table_view_->setAlternatingRowColors(true);
+        table_view_->verticalHeader()->setVisible(false);
+        table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::description,
+                                                              QHeaderView::Stretch);
+        table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::address,
+                                                              QHeaderView::ResizeToContents);
+        table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::type,
+                                                              QHeaderView::ResizeToContents);
+        table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::value, QHeaderView::Stretch);
+        table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::frozen,
+                                                              QHeaderView::ResizeToContents);
+        layout->addWidget(table_view_, 1);
+
+        connect(table_view_->selectionModel(),
+                &QItemSelectionModel::currentRowChanged,
+                this,
+                [this](const QModelIndex& current)
+                {
+                    table_.set_selected(current.isValid() ? current.row() : -1);
+                    refresh();
+                });
+
+        connect(model_,
+                &models::AddressTableModel::statusChanged,
+                this,
+                [this](const QString& message, bool is_error)
+                {
+                    set_status(message, is_error);
+                });
+
+        table_view_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(table_view_,
+                &QWidget::customContextMenuRequested,
+                this,
+                [this](const QPoint& position)
+                {
+                    show_context_menu(position);
+                });
+
+        auto* footer   = new QHBoxLayout();
+        auto* advanced = widgets::secondary_button(tr("Advanced Options"), this);
+        auto* extras   = widgets::secondary_button(tr("Table Extras"), this);
+        footer->addWidget(advanced);
+        footer->addStretch(1);
+        footer->addWidget(extras);
+        layout->addLayout(footer);
+
+        connect(advanced,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    QMessageBox::information(
+                        this, tr("Advanced Options"), tr("Advanced options are not implemented yet."));
+                });
+        connect(extras,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    QMessageBox::information(this, tr("Table Extras"), tr("Table extras are not implemented yet."));
+                });
+
+        status_label_ = new widgets::StatusLabel(this);
+        layout->addWidget(status_label_);
+
+        refresh();
     }
 
-    void AddressListPanel::set_status(std::string message, bool is_error)
+    void AddressListPanel::set_status(const QString& message, bool is_error)
     {
-        status_          = std::move(message);
+        status_          = message;
         status_is_error_ = is_error;
+        refresh();
     }
 
-    void AddressListPanel::request_open()
+    void AddressListPanel::refresh()
     {
-        open_requested_ = true;
+        model_->refresh();
+
+        if (!status_.isEmpty())
+        {
+            status_label_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
+                                      status_);
+        }
+        else if (table_.empty())
+        {
+            status_label_->set_status(widgets::StatusKind::info,
+                                      tr("The address list is empty; double-click a Found row to add an entry."));
+        }
+        else
+        {
+            status_label_->clear_status();
+        }
     }
 
-    void AddressListPanel::request_save()
+    void AddressListPanel::open_table()
     {
-        save_requested_ = true;
+        const QString path = QFileDialog::getOpenFileName(
+            this, tr("Open Table"), table_path_, tr("Address tables (*.txt);;All files (*)"));
+        if (path.isEmpty())
+        {
+            return;
+        }
+        table_path_ = path;
+
+        if (const auto result = table::load(std::filesystem::path(path.toStdString()), table_); !result)
+        {
+            set_status(tr("Open failed: %1").arg(to_qstring(result.error())), true);
+            return;
+        }
+        set_status(tr("Loaded %1 entries.").arg(static_cast<qulonglong>(table_.size())), false);
     }
 
-    void AddressListPanel::report_freeze_error(std::string_view message)
+    void AddressListPanel::save_table()
     {
-        set_status("Freeze failed: " + std::string(message), true);
-    }
+        const QString path = QFileDialog::getSaveFileName(
+            this, tr("Save Table"), table_path_, tr("Address tables (*.txt);;All files (*)"));
+        if (path.isEmpty())
+        {
+            return;
+        }
+        table_path_ = path;
 
-    std::optional<std::uint64_t> AddressListPanel::take_browse_request()
-    {
-        auto request = browse_request_;
-        browse_request_.reset();
-        return request;
+        if (const auto result = table::save(std::filesystem::path(path.toStdString()), table_); !result)
+        {
+            set_status(tr("Save failed: %1").arg(to_qstring(result.error())), true);
+            return;
+        }
+        set_status(tr("Saved %1 entries.").arg(static_cast<qulonglong>(table_.size())), false);
     }
 
     void AddressListPanel::delete_selected()
     {
-        const int index = table_.selected();
-        if (index < 0)
+        const int row = table_.selected();
+        if (row < 0)
         {
-            set_status("Select an entry to delete.", true);
+            set_status(tr("Select an entry to delete."), true);
             return;
         }
-        table_.remove(static_cast<std::size_t>(index));
-        set_status("Entry deleted.", false);
+
+        const auto& entry   = table_.entries()[static_cast<std::size_t>(row)];
+        const auto  address = QStringLiteral("0x") + QString::number(entry.address, 16).toUpper();
+        const auto  label   = entry.description.empty() ? address : to_qstring(entry.description);
+
+        const auto answer = QMessageBox::question(
+            this, tr("Delete Entry"), tr("Delete %1?").arg(label), QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes)
+        {
+            return;
+        }
+
+        table_.remove(static_cast<std::size_t>(row));
+        set_status(tr("Entry deleted."), false);
     }
 
     void AddressListPanel::toggle_freeze_selected()
     {
-        const int index = table_.selected();
-        if (index < 0)
+        const int row = table_.selected();
+        if (row < 0)
         {
-            set_status("Select an entry to freeze.", true);
+            set_status(tr("Select an entry to freeze."), true);
             return;
         }
-        auto& entry  = table_.entries()[static_cast<std::size_t>(index)];
+
+        auto& entry  = table_.entries()[static_cast<std::size_t>(row)];
         entry.active = !entry.active;
-        set_status(entry.active ? "Entry frozen." : "Entry unfrozen.", false);
+        set_status(entry.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
     }
 
-    void AddressListPanel::start_edit(std::size_t row, EditField field)
+    void AddressListPanel::report_freeze_error(std::string_view message)
     {
+        set_status(tr("Freeze failed: %1").arg(to_qstring(message)), true);
+    }
+
+    void AddressListPanel::show_context_menu(const QPoint& position)
+    {
+        const QModelIndex index = table_view_->indexAt(position);
+        if (!index.isValid())
+        {
+            return;
+        }
+
+        const auto row = static_cast<std::size_t>(index.row());
         if (!table_.valid_index(row))
         {
             return;
         }
-        editing_row_        = row;
-        editing_field_      = field;
-        edit_focus_pending_ = true;
-        table_.set_selected(static_cast<int>(row));
+        table_.set_selected(index.row());
 
-        const auto&       entry = table_.entries()[row];
-        const std::string text  = field == EditField::description ? entry.description : table_.display_value(row);
-        std::snprintf(edit_buffer_.data(), edit_buffer_.size(), "%s", text.c_str());
-    }
-
-    void AddressListPanel::commit_edit()
-    {
-        if (editing_field_ == EditField::none)
-        {
-            return;
-        }
-        const std::size_t row   = editing_row_;
-        const EditField   field = editing_field_;
-        editing_field_          = EditField::none;
-        edit_focus_pending_     = false;
-
-        if (!table_.valid_index(row))
-        {
-            return;
-        }
-        if (field == EditField::description)
-        {
-            table_.entries()[row].description = edit_buffer_.data();
-            set_status("Description updated.", false);
-        }
-        else
-        {
-            write_value_at(row, edit_buffer_.data());
-        }
-    }
-
-    void AddressListPanel::write_value_at(std::size_t row, std::string_view text)
-    {
-        if (!table_.valid_index(row))
-        {
-            return;
-        }
-        if (!target_.valid())
-        {
-            set_status("Not attached; cannot write.", true);
-            return;
-        }
-        if (write_pending_.has_value())
-        {
-            set_status("A write is already in progress.", true);
-            return;
-        }
-
-        const auto& entry = table_.entries()[row];
-        // Parse here as well so a malformed value keeps its detailed message.
-        if (const auto parsed = scan::parse_value(entry.type, text, entry.hex); !parsed)
-        {
-            set_status("Value: " + parsed.error().message, true);
-            return;
-        }
-        auto encoded = table_.encode_value(row, text);
-        if (!encoded)
-        {
-            set_status("Value: invalid value.", true);
-            return;
-        }
-
-        const std::uint64_t  entry_id = entry.id;
-        const std::uint64_t  address  = entry.address;
-        const process::JobId job_id   = worker_.next_job_id();
-        write_pending_                = job_id;
-        writing_entry_                = entry_id;
-
-        const bool submitted = worker_.submit_write(
-            job_id,
-            entry_id,
-            address,
-            std::move(*encoded),
-            [this, entry_id, job_id, cached = *encoded](process::JobResult&& result)
-            {
-                if (write_pending_ != job_id)
-                {
-                    return; // Superseded or shut down.
-                }
-                write_pending_.reset();
-                writing_entry_.reset();
-
-                const auto& write = std::get<process::WriteResult>(result);
-                if (write.error)
-                {
-                    set_status(std::string("Write failed: ") + std::string(process::describe(*write.error)), true);
-                    return;
-                }
-                table_.apply_write(entry_id, std::move(cached));
-                set_status("Value written.", false);
-            });
-        if (!submitted)
-        {
-            write_pending_.reset();
-            writing_entry_.reset();
-            set_status("Write unavailable.", true);
-        }
-    }
-
-    void AddressListPanel::draw()
-    {
-        draw_table();
-        draw_footer();
-        draw_file_popups();
-
-        if (!status_.empty())
-        {
-            widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                 status_.c_str());
-        }
-        else if (table_.empty())
-        {
-            widgets::status_text(widgets::StatusKind::info,
-                                 "The address list is empty; double-click a Found row to add an entry.");
-        }
-    }
-
-    void AddressListPanel::draw_table()
-    {
-        constexpr ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV
-                                        | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable
-                                        | ImGuiTableFlags_SizingFixedFit;
-        if (!ImGui::BeginTable("address_list", 5, flags))
-        {
-            return;
-        }
-        ImGui::TableSetupColumn("Active", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("Description", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableHeadersRow();
-
-        for (std::size_t row = 0; row < table_.size(); ++row)
-        {
-            auto& entry = table_.entries()[row];
-            ImGui::TableNextRow();
-            ImGui::PushID(static_cast<int>(row));
-
-            ImGui::TableSetColumnIndex(0);
-            bool active = entry.active;
-            if (ImGui::Checkbox("##active", &active))
-            {
-                entry.active = active;
-            }
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("Freeze this value");
-            }
-
-            ImGui::TableSetColumnIndex(1);
-            if (editing_row_ == row && editing_field_ == EditField::description)
-            {
-                ImGui::SetNextItemWidth(-FLT_MIN);
-                if (edit_focus_pending_)
-                {
-                    ImGui::SetKeyboardFocusHere();
-                }
-                const bool finished = ImGui::InputText("##description_edit",
-                                                       edit_buffer_.data(),
-                                                       edit_buffer_.size(),
-                                                       ImGuiInputTextFlags_EnterReturnsTrue);
-                edit_focus_pending_ = false;
-                if (finished || ImGui::IsItemDeactivated())
-                {
-                    commit_edit();
-                }
-            }
-            else
-            {
-                const bool  selected = table_.selected() == static_cast<int>(row);
-                const char* label    = entry.description.empty() ? " " : entry.description.c_str();
-                if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(-FLT_MIN, 0.0f)))
-                {
-                    table_.set_selected(static_cast<int>(row));
-                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                    {
-                        start_edit(row, EditField::description);
-                    }
-                }
-                if (ImGui::BeginPopupContextItem("##row_menu_description"))
-                {
-                    table_.set_selected(static_cast<int>(row));
-                    draw_context_menu(row);
-                    ImGui::EndPopup();
-                }
-            }
-
-            ImGui::TableSetColumnIndex(2);
-            {
-                ui::ScopedMonoFont mono;
-                ImGui::Text("0x%llX", static_cast<unsigned long long>(entry.address));
-            }
-
-            ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted(scan::describe(entry.type).data());
-
-            ImGui::TableSetColumnIndex(4);
-            if (editing_row_ == row && editing_field_ == EditField::value)
-            {
-                ImGui::SetNextItemWidth(-FLT_MIN);
-                if (edit_focus_pending_)
-                {
-                    ImGui::SetKeyboardFocusHere();
-                }
-                const bool finished = ImGui::InputText(
-                    "##value_edit", edit_buffer_.data(), edit_buffer_.size(), ImGuiInputTextFlags_EnterReturnsTrue);
-                edit_focus_pending_ = false;
-                if (finished || ImGui::IsItemDeactivated())
-                {
-                    commit_edit();
-                }
-            }
-            else if (writing_entry_.has_value() && *writing_entry_ == entry.id)
-            {
-                ImGui::TextDisabled("Writing...");
-            }
-            else
-            {
-                const std::string value    = table_.display_value(row);
-                const bool        selected = table_.selected() == static_cast<int>(row);
-                {
-                    ui::ScopedMonoFont mono;
-                    if (ImGui::Selectable(value.empty() ? " " : value.c_str(),
-                                          selected,
-                                          ImGuiSelectableFlags_AllowDoubleClick,
-                                          ImVec2(-FLT_MIN, 0.0f)))
-                    {
-                        table_.set_selected(static_cast<int>(row));
-                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        {
-                            start_edit(row, EditField::value);
-                        }
-                    }
-                }
-                if (ImGui::BeginPopupContextItem("##row_menu_value"))
-                {
-                    table_.set_selected(static_cast<int>(row));
-                    draw_context_menu(row);
-                    ImGui::EndPopup();
-                }
-            }
-
-            ImGui::PopID();
-        }
-
-        ImGui::EndTable();
-
-        if (pending_delete_ >= 0)
-        {
-            table_.remove(static_cast<std::size_t>(pending_delete_));
-            pending_delete_ = -1;
-            set_status("Entry deleted.", false);
-        }
-    }
-
-    void AddressListPanel::draw_context_menu(std::size_t row)
-    {
-        if (!table_.valid_index(row))
-        {
-            return;
-        }
         auto& entry = table_.entries()[row];
 
-        if (ImGui::MenuItem("Change value"))
-        {
-            start_edit(row, EditField::value);
-        }
+        QMenu menu(this);
+        menu.setToolTipsVisible(true);
 
-        bool frozen = entry.active;
-        if (ImGui::MenuItem("Freeze", nullptr, &frozen))
-        {
-            entry.active = frozen;
-        }
+        QAction* change_value = menu.addAction(tr("Change value"));
+        QAction* freeze       = menu.addAction(tr("Freeze"));
+        freeze->setCheckable(true);
+        freeze->setChecked(entry.active);
+        QAction* show_hex = menu.addAction(tr("Show as hex"));
+        show_hex->setCheckable(true);
+        show_hex->setChecked(entry.hex);
+        QAction* browse = menu.addAction(tr("Browse this memory region"));
 
-        bool show_hex = entry.hex;
-        if (ImGui::MenuItem("Show as hex", nullptr, &show_hex))
-        {
-            entry.hex = show_hex;
-        }
+        menu.addSeparator();
+        disabled_action(
+            menu, tr("Find out what writes to this address"), tr("Disabled: needs hardware watchpoints or ptrace"));
+        disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
 
-        if (ImGui::MenuItem("Browse this memory region"))
-        {
-            browse_request_ = entry.address;
-        }
+        menu.addSeparator();
+        QAction* remove = menu.addAction(tr("Delete"));
 
-        ImGui::Separator();
+        QAction* chosen = menu.exec(table_view_->viewport()->mapToGlobal(position));
 
-        ImGui::MenuItem("Find out what writes to this address", nullptr, false, false);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        if (chosen == change_value)
         {
-            ImGui::SetTooltip("Disabled: needs hardware watchpoints or ptrace");
+            table_view_->edit(model_->index(index.row(), models::AddressTableModel::value));
         }
-
-        ImGui::MenuItem("Group", nullptr, false, false);
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        else if (chosen == freeze)
         {
-            ImGui::SetTooltip("Disabled: address groups are not implemented");
+            entry.active = freeze->isChecked();
+            set_status(entry.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
         }
-
-        ImGui::Separator();
-
-        if (ImGui::MenuItem("Delete"))
+        else if (chosen == show_hex)
         {
-            pending_delete_ = static_cast<int>(row);
+            entry.hex = show_hex->isChecked();
+            set_status(tr("Display format updated."), false);
         }
-    }
-
-    void AddressListPanel::draw_footer()
-    {
-        ImGui::Spacing();
-
-        if (widgets::secondary_button("Advanced Options"))
+        else if (chosen == browse)
         {
-            ImGui::OpenPopup("##advanced_options");
+            emit browseRequested(entry.address);
         }
-        const float extras_width = ImGui::CalcTextSize("Table Extras").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImGui::SameLine();
-        ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - extras_width));
-        if (widgets::secondary_button("Table Extras"))
+        else if (chosen == remove)
         {
-            ImGui::OpenPopup("##table_extras");
-        }
-
-        if (ImGui::BeginPopup("##advanced_options"))
-        {
-            ImGui::TextDisabled("Advanced options are not implemented yet.");
-            ImGui::EndPopup();
-        }
-        if (ImGui::BeginPopup("##table_extras"))
-        {
-            ImGui::TextDisabled("Table extras are not implemented yet.");
-            ImGui::EndPopup();
-        }
-    }
-
-    void AddressListPanel::draw_file_popups()
-    {
-        if (open_requested_)
-        {
-            ImGui::OpenPopup("Open Table File");
-            open_requested_ = false;
-        }
-        if (save_requested_)
-        {
-            ImGui::OpenPopup("Save Table File");
-            save_requested_ = false;
-        }
-
-        if (ImGui::BeginPopupModal("Open Table File", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            ImGui::TextUnformatted("Load an address table from a file.");
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24.0f);
-            ImGui::InputTextWithHint("##open_path", "/path/to/table.txt", table_path_.data(), table_path_.size());
-            if (widgets::primary_button("Open"))
-            {
-                if (const auto result = table::load(std::filesystem::path(table_path_.data()), table_); !result)
-                {
-                    set_status("Open failed: " + result.error(), true);
-                }
-                else
-                {
-                    set_status(std::format("Loaded {} entries.", table_.size()), false);
-                }
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (widgets::secondary_button("Cancel"))
-            {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        }
-
-        if (ImGui::BeginPopupModal("Save Table File", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            ImGui::TextUnformatted("Save the address table to a file.");
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24.0f);
-            ImGui::InputTextWithHint("##save_path", "/path/to/table.txt", table_path_.data(), table_path_.size());
-            if (widgets::primary_button("Save"))
-            {
-                if (const auto result = table::save(std::filesystem::path(table_path_.data()), table_); !result)
-                {
-                    set_status("Save failed: " + result.error(), true);
-                }
-                else
-                {
-                    set_status(std::format("Saved {} entries.", table_.size()), false);
-                }
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (widgets::secondary_button("Cancel"))
-            {
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
+            delete_selected();
         }
     }
 

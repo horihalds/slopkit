@@ -3,215 +3,298 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <utility>
 
-#include <imgui.h>
+#include <QButtonGroup>
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPlainTextEdit>
+#include <QPushButton>
+#include <QRadioButton>
+#include <QStackedWidget>
+#include <QVBoxLayout>
 
 #include "core/version.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/fonts.hpp"
 
 namespace slopkit::ui::dialogs
 {
 
     namespace
     {
-        constexpr const char* kCategories[] = {"Appearance", "Scanning", "Plugins", "About"};
-        constexpr int         kAboutIndex   = 3;
-
-        bool parse_number(const char* text, std::uint64_t& out)
+        bool parse_number(std::string_view text, std::uint64_t& out)
         {
-            const std::string_view view(text);
-            if (view.empty())
+            if (text.empty())
             {
                 return false;
             }
-            const auto [end, error] = std::from_chars(view.data(), view.data() + view.size(), out);
-            return error == std::errc {} && end == view.data() + view.size();
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), out);
+            return error == std::errc {} && end == text.data() + text.size();
+        }
+
+        QString to_qstring(std::string_view text)
+        {
+            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
         }
     } // namespace
 
-    Settings::Settings(plugin::PluginHost& host, scan::ScanEngine& engine) : host_(host), engine_(engine) {}
-
-    void Settings::select_about()
+    SettingsDialog::SettingsDialog(plugin::PluginHost& host, scan::ScanEngine& engine, QWidget* parent)
+        : QDialog(parent), host_(host), engine_(engine)
     {
-        category_ = kAboutIndex;
+        setWindowTitle(tr("Settings"));
+        resize(760, 520);
+
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(10, 10, 10, 10);
+        layout->setSpacing(8);
+
+        auto* body = new QHBoxLayout();
+
+        categories_ = new QListWidget(this);
+        categories_->addItem(tr("Appearance"));
+        categories_->addItem(tr("Scanning"));
+        categories_->addItem(tr("Plugins"));
+        categories_->addItem(tr("About"));
+        categories_->setMaximumWidth(180);
+        body->addWidget(categories_);
+
+        pages_ = new QStackedWidget(this);
+        pages_->addWidget(build_appearance_page());
+        pages_->addWidget(build_scanning_page());
+        pages_->addWidget(build_plugins_page());
+        pages_->addWidget(build_about_page());
+        body->addWidget(pages_, 1);
+
+        layout->addLayout(body, 1);
+
+        status_ = new widgets::StatusLabel(this);
+        layout->addWidget(status_);
+
+        connect(categories_,
+                &QListWidget::currentRowChanged,
+                this,
+                [this](int row)
+                {
+                    if (row >= 0)
+                    {
+                        pages_->setCurrentIndex(row);
+                    }
+                });
+        categories_->setCurrentRow(0);
     }
 
-    void Settings::set_status(std::string message, bool is_error)
+    QWidget* SettingsDialog::build_appearance_page()
     {
-        status_          = std::move(message);
-        status_is_error_ = is_error;
+        auto* page   = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        layout->addWidget(widgets::section_header(tr("Appearance"), page));
+
+        layout->addWidget(new QLabel(tr("Theme"), page));
+
+        auto* theme_group = new QButtonGroup(page);
+        auto* buttons_row = new QHBoxLayout();
+        dark_button_      = new QRadioButton(tr("Dark"), page);
+        light_button_     = new QRadioButton(tr("Light"), page);
+        dark_button_->setChecked(true);
+        theme_group->addButton(dark_button_, 0);
+        theme_group->addButton(light_button_, 1);
+        buttons_row->addWidget(dark_button_);
+        buttons_row->addWidget(light_button_);
+        buttons_row->addStretch(1);
+        layout->addLayout(buttons_row);
+
+        // idClicked fires only for user input, so programmatic updates (and the
+        // palette re-application) cannot loop back into this signal.
+        connect(theme_group,
+                &QButtonGroup::idClicked,
+                this,
+                [this](int id)
+                {
+                    emit darkThemeChanged(id == 0);
+                });
+
+        auto* note = new QLabel(tr("The theme applies live and is not persisted between runs."), page);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+        layout->addStretch(1);
+        return page;
     }
 
-    Settings::Result Settings::draw(bool& open, bool dark_theme)
+    QWidget* SettingsDialog::build_scanning_page()
     {
-        Result result;
+        auto* page   = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
 
-        ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 46.0f, ImGui::GetFontSize() * 24.0f),
-                                 ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Settings", &open))
-        {
-            ImGui::End();
-            return result;
-        }
+        layout->addWidget(widgets::section_header(tr("Scanning"), page));
 
-        const float list_width  = ImGui::GetFontSize() * 11.0f;
-        const float body_height = ImGui::GetContentRegionAvail().y;
+        auto* form = new QFormLayout();
+        form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
-        ImGui::BeginChild("settings_categories", ImVec2(list_width, body_height), ImGuiChildFlags_Borders);
-        for (int index = 0; index < IM_ARRAYSIZE(kCategories); ++index)
-        {
-            if (ImGui::Selectable(kCategories[index], category_ == index))
-            {
-                category_ = index;
-            }
-        }
-        ImGui::EndChild();
+        alignment_edit_ = new QLineEdit(QStringLiteral("4"), page);
+        alignment_edit_->setFont(mono_font());
+        alignment_edit_->setMaximumWidth(160);
+        alignment_edit_->setToolTip(tr("Used when the scan controls' alignment field is left blank"));
+        form->addRow(tr("Default fast-scan alignment (bytes)"), alignment_edit_);
 
-        ImGui::SameLine();
-        ImGui::BeginChild("settings_body", ImVec2(0.0f, body_height), ImGuiChildFlags_Borders);
-        switch (category_)
-        {
-        case 0:
-            draw_appearance(result, dark_theme);
-            break;
-        case 1:
-            draw_scanning(result);
-            break;
-        case 2:
-            draw_plugins();
-            break;
-        default:
-            draw_about();
-            break;
-        }
-        ImGui::EndChild();
+        result_cap_edit_ = new QLineEdit(QStringLiteral("1000000"), page);
+        result_cap_edit_->setFont(mono_font());
+        result_cap_edit_->setMaximumWidth(200);
+        form->addRow(tr("Stored result cap"), result_cap_edit_);
 
-        if (!status_.empty())
-        {
-            widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                 status_.c_str());
-        }
+        layout->addLayout(form);
 
-        ImGui::End();
-        return result;
+        auto* apply_row = new QHBoxLayout();
+        auto* apply     = new widgets::PrimaryButton(tr("Apply"), page);
+        apply_row->addWidget(apply);
+        apply_row->addStretch(1);
+        layout->addLayout(apply_row);
+        connect(apply, &QPushButton::clicked, this, &SettingsDialog::apply_scanning);
+
+        auto* note = new QLabel(tr("Defaults apply to this session; nothing is persisted between runs."), page);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+        layout->addStretch(1);
+        return page;
     }
 
-    void Settings::draw_appearance(Result& result, bool dark_theme)
+    QWidget* SettingsDialog::build_plugins_page()
     {
-        widgets::section_header("Appearance");
+        auto* page   = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
 
-        ImGui::TextUnformatted("Theme");
-        const int theme = dark_theme ? 0 : 1;
-        if (ImGui::RadioButton("Dark", theme == 0))
-        {
-            result.dark_theme = true;
-        }
-        if (ImGui::RadioButton("Light", theme == 1))
-        {
-            result.dark_theme = false;
-        }
+        layout->addWidget(widgets::section_header(tr("Plugins"), page));
 
-        ImGui::Spacing();
-        ImGui::TextDisabled("The theme applies live and is not persisted between runs.");
+        plugins_view_ = new QPlainTextEdit(page);
+        plugins_view_->setReadOnly(true);
+        plugins_view_->setFont(mono_font());
+        layout->addWidget(plugins_view_, 1);
+        return page;
     }
 
-    void Settings::draw_scanning(Result& result)
+    QWidget* SettingsDialog::build_about_page()
     {
-        widgets::section_header("Scanning");
+        auto* page   = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
 
-        ImGui::TextUnformatted("Default fast-scan alignment (bytes)");
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
-        ImGui::InputText("##default_alignment", alignment_.data(), alignment_.size());
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Used when the scan controls' alignment field is left blank");
-        }
+        layout->addWidget(widgets::section_header(tr("About"), page));
 
-        ImGui::TextUnformatted("Stored result cap");
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
-        ImGui::InputText("##result_cap", result_cap_.data(), result_cap_.size());
+        about_title_ = new QLabel(tr("slopkit %1").arg(to_qstring(slopkit::version())), page);
+        layout->addWidget(about_title_);
 
-        ImGui::Spacing();
-        if (widgets::primary_button("Apply"))
-        {
-            apply_scanning(result);
-        }
+        auto* description =
+            new QLabel(tr("A plugin-first memory scanner and debugger front end. The host never touches "
+                          "another process directly: all access is provided by plugins."),
+                       page);
+        description->setWordWrap(true);
+        layout->addWidget(description);
 
-        ImGui::Spacing();
-        ImGui::TextDisabled("Defaults apply to this session; nothing is persisted between runs.");
+        auto* note = new QLabel(tr("Theme: dark/light, applied live from the Appearance category."), page);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+
+        about_plugins_ = new QLabel(page);
+        layout->addWidget(about_plugins_);
+        layout->addStretch(1);
+        return page;
     }
 
-    void Settings::apply_scanning(Result& result)
+    void SettingsDialog::showEvent(QShowEvent* event)
+    {
+        QDialog::showEvent(event);
+        refresh_plugins();
+    }
+
+    void SettingsDialog::select_about()
+    {
+        categories_->setCurrentRow(3);
+    }
+
+    void SettingsDialog::set_dark_theme(bool dark)
+    {
+        if (dark)
+        {
+            dark_button_->setChecked(true);
+        }
+        else
+        {
+            light_button_->setChecked(true);
+        }
+    }
+
+    void SettingsDialog::apply_scanning()
     {
         std::uint64_t alignment = 0;
-        if (!parse_number(alignment_.data(), alignment) || alignment == 0)
+        if (!parse_number(alignment_edit_->text().toStdString(), alignment) || alignment == 0)
         {
-            set_status("Alignment must be a positive number.", true);
+            status_->set_status(widgets::StatusKind::error, tr("Alignment must be a positive number."));
             return;
         }
         std::uint64_t cap = 0;
-        if (!parse_number(result_cap_.data(), cap) || cap == 0)
+        if (!parse_number(result_cap_edit_->text().toStdString(), cap) || cap == 0)
         {
-            set_status("The result cap must be a positive number.", true);
+            status_->set_status(widgets::StatusKind::error, tr("The result cap must be a positive number."));
             return;
         }
 
         engine_.set_max_stored_hits(static_cast<std::size_t>(cap));
-        result.default_alignment = alignment;
-        set_status("Scanning defaults applied.", false);
+        emit alignmentChanged(static_cast<quint64>(alignment));
+        status_->set_status(widgets::StatusKind::info, tr("Scanning defaults applied."));
     }
 
-    void Settings::draw_plugins()
+    void SettingsDialog::refresh_plugins()
     {
-        widgets::section_header("Plugins");
-
         const auto plugins = host_.plugins();
+
+        QString text;
         if (plugins.empty())
         {
-            widgets::status_text(widgets::StatusKind::warning, "No plugins were loaded.");
+            status_->set_status(widgets::StatusKind::warning, tr("No plugins were loaded."));
         }
         for (const auto& plugin : plugins)
         {
-            ImGui::Text("%s v%s (precedence %d)",
-                        std::string(plugin->id()).c_str(),
-                        std::string(plugin->version()).c_str(),
-                        plugin->precedence());
-            ImGui::TextDisabled("  %s", std::string(plugin->name()).c_str());
-            ImGui::TextDisabled("  %s", plugin->path().string().c_str());
+            text += tr("%1 v%2 (precedence %3)")
+                        .arg(to_qstring(plugin->id()))
+                        .arg(to_qstring(plugin->version()))
+                        .arg(plugin->precedence());
+            text += QLatin1Char('\n');
+            text += QStringLiteral("  ") + to_qstring(plugin->name()) + QLatin1Char('\n');
+            text += QStringLiteral("  ") + to_qstring(plugin->path().string()) + QLatin1Char('\n');
             if (!plugin->description().empty())
             {
-                ImGui::TextDisabled("  %s", std::string(plugin->description()).c_str());
+                text += QStringLiteral("  ") + to_qstring(plugin->description()) + QLatin1Char('\n');
             }
-            ImGui::Spacing();
+            text += QLatin1Char('\n');
         }
 
         if (!host_.diagnostics().empty())
         {
-            widgets::section_header("Diagnostics");
+            text += tr("Diagnostics") + QLatin1Char('\n');
             for (const auto& diagnostic : host_.diagnostics())
             {
-                widgets::status_text(widgets::StatusKind::warning,
-                                     (diagnostic.path.string() + ": " + diagnostic.message).c_str());
+                text += to_qstring((diagnostic.path.string() + ": " + diagnostic.message)) + QLatin1Char('\n');
             }
         }
-    }
+        plugins_view_->setPlainText(text);
 
-    void Settings::draw_about()
-    {
-        widgets::section_header("About");
-
-        ImGui::Text("slopkit %s", std::string(slopkit::version()).c_str());
-        ImGui::Spacing();
-        ImGui::TextWrapped("A plugin-first memory scanner and debugger front end. The host never touches another "
-                           "process directly: all access is provided by plugins.");
-        ImGui::Spacing();
-        ImGui::TextDisabled("Theme: dark/light, applied live from the Appearance category.");
-        ImGui::TextDisabled("Plugins loaded: %zu", host_.plugins().size());
+        if (about_plugins_ != nullptr)
+        {
+            about_plugins_->setText(tr("Plugins loaded: %1").arg(static_cast<int>(plugins.size())));
+        }
     }
 
 } // namespace slopkit::ui::dialogs

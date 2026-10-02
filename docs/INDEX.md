@@ -5,11 +5,11 @@
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
 - `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included.
-- `CMakeLists.txt` — CMake build: fetches the pinned imgui docking branch (for multi-viewport), links system Zydis/GLFW/OpenGL via pkg-config, compiles the ImGui backends, generates and embeds the UI font and the program icon from `data/`, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs.
+- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs.
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
-- `cmake/EmbedIcon.cmake` — icon helpers: the hicolor PNG set and the embedded RGBA window icon derived from `data/icon.svg`.
+- `cmake/EmbedIcon.cmake` — `slopkit_icon_pngs()` helper that renders the hicolor PNG set from `data/icon.svg` (the set is also embedded as a Qt resource).
 - `assets/fonts/NotoSans-Regular.ttf` — bundled UI font (Noto Sans Regular).
 - `assets/fonts/NotoSansMono-Regular.ttf` — bundled monospace UI font (Noto Sans Mono Regular).
 - `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
@@ -59,36 +59,36 @@
 - `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
 - `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency.
-- `src/ui/app.hpp` — the `App`: owns the window, theme, scale and access worker, and lays out the top bar, split middle scan zone and bottom address list.
-- `src/ui/app.cpp` — runs the window loop, drains access-worker completions, submits the freeze pass and hosts all four dialogs.
-- `src/ui/app_window.hpp` — `AppWindow`: GLFW window, OpenGL context and ImGui backends.
-- `src/ui/app_window.cpp` — Wayland-first init with X11 fallback, X11 `WM_CLASS` hints, the embedded window icon, content-scale handling, viewport setup and frame rendering including platform windows.
-- `src/ui/viewports.hpp` — multi-viewport configuration declarations and the backend-support probe.
-- `src/ui/viewports.cpp` — enables ImGui multi-viewport (independent, non-merging dialogs) without docking.
-- `src/ui/theme.hpp` — the `Theme` colour-role struct and the dark/light constructors.
-- `src/ui/theme.cpp` — theme values and `apply_theme`, mapping roles onto `ImGuiStyle`.
-- `src/ui/scale.hpp` — the unscaled base style and the `Scale` DPI helper.
-- `src/ui/scale.cpp` — base style values and non-compounding `ScaleAllSizes` application.
-- `src/ui/fonts.hpp` — embedded-font loading, the proportional/monospace accessors, the `ScopedMonoFont` guard and font scaling declarations.
-- `src/ui/fonts.cpp` — loads the embedded Noto Sans and Noto Sans Mono and applies `FontScaleDpi`.
-- `src/ui/components/widgets.hpp` — the themed component set (headers, buttons, panels, status text, progress bar, splitter, groups, toolbar button).
-- `src/ui/components/widgets.cpp` — implements the themed components from the active theme.
-- `src/ui/panels/top_bar.hpp` — the top zone's menu bar, toolbar, process label and progress bar, reporting requested actions.
-- `src/ui/panels/top_bar.cpp` — draws the `File`/`Edit`/`Table`/`D3D`/`Help` menus, the toolbar and the scan progress.
+- `src/ui/app.hpp` — the `App`: owns the plugin host, the access worker, the attached target and the main window, and runs the Qt event loop.
+- `src/ui/app.cpp` — builds the `QApplication`, applies the Fusion style, the theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
+- `src/ui/completion_notifier.hpp` — `CompletionNotifier`: the coalescing, thread-safe bridge from the access worker's completion hook to the Qt event loop.
+- `src/ui/completion_notifier.cpp` — posts at most one queued wake-up per drain and emits `completionsAvailable()` on the UI thread.
+- `src/ui/main_window.hpp` — `MainWindow`: menus, toolbar, status bar, the splitter zones, the owned address table and the four dialogs.
+- `src/ui/main_window.cpp` — builds the action set and the layout, polls the panels on a 50 ms tick and submits the freeze pass to the worker.
+- `src/ui/theme.hpp` — the `Theme` colour-role struct, the dark/light constructors, `make_palette()` and `apply_theme()`.
+- `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
+- `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
+- `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
+- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, collapsible section, toolbar action, icon).
+- `src/ui/components/widgets.cpp` — implements the helpers, re-applying their themed palettes when the application palette changes.
+- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over one `scan::ScanSnapshot` page with Address/Value/Previous columns and sorting.
+- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font and keeps the display order.
+- `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox and the async write.
+- `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value` and submits one write job with the pending-job-id guard.
 - `src/ui/panels/scanner_panel.hpp` — the scan controls, the handoff-created scan session and the scan engine.
-- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the controls, applies the handed-over session and starts first/next/undo scans.
-- `src/ui/panels/found_list_panel.hpp` — the `Found: N` result-list panel reading the scan engine's snapshot.
-- `src/ui/panels/found_list_panel.cpp` — renders the sortable, clipped Address/Value/Previous result table and truncation notice.
-- `src/ui/panels/address_list_panel.hpp` — the bottom address-list panel with editing, the context menu and the footer popups.
-- `src/ui/panels/address_list_panel.cpp` — renders the address table, inline edits and their async writes, the context menu and the open/save table modals.
-- `src/ui/dialogs/process_list.hpp` — the Process List dialog over the access worker and the shared `AttachedTarget`.
-- `src/ui/dialogs/process_list.cpp` — Applications/Processes tabs, filtering, async listing/probe/index and attach/detach with inline busy states.
+- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, applies the handed-over session and starts first/next/undo scans.
+- `src/ui/panels/found_list_panel.hpp` — the `Found: N` result list over the scan engine's snapshot and the address table.
+- `src/ui/panels/found_list_panel.cpp` — shows the hits, the truncation notes and adds double-clicked hits to the address table.
+- `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu, the footer popups and open/save.
+- `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions, toggles freezes and loads/saves through native file dialogs.
+- `src/ui/dialogs/process_list.hpp` — the Process List dialog and its filtered, sortable process model.
+- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states.
 - `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable`.
 - `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
 - `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker.
-- `src/ui/dialogs/memory_viewer.cpp` — one cached page of address/bytes/ASCII dump with unreadable-range markers, refreshed asynchronously.
-- `src/ui/dialogs/settings.hpp` — the Settings categories and the changes it reports back to the App.
-- `src/ui/dialogs/settings.cpp` — Appearance, Scanning, Plugins and About panels, including the live theme switch.
+- `src/ui/dialogs/memory_viewer.cpp` — one cached page of address/bytes/ASCII rows with unreadable-range markers, refreshed asynchronously.
+- `src/ui/dialogs/settings.hpp` — the Settings categories and the changes it reports to the window (theme, alignment).
+- `src/ui/dialogs/settings.cpp` — Appearance, Scanning, Plugins and About pages, including the live theme switch.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
 - `src/tests/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
@@ -99,8 +99,7 @@
 - `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
-- `src/tests/ui_test.cpp` — theme, scaling and embedded-font unit tests that need no window.
-- `src/tests/viewports_test.cpp` — multi-viewport configuration and docking-branch support-guard tests.
+- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the found-results model and the address-table model.
 - `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.

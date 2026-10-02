@@ -3,11 +3,25 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
-#include <cstdint>
+#include <ranges>
+#include <string>
+#include <string_view>
 #include <utility>
 
-#include <imgui.h>
-#include <imgui_stdlib.h>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QItemSelectionModel>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QRadioButton>
+#include <QSignalBlocker>
+#include <QTabBar>
+#include <QTableView>
+#include <QTimer>
+#include <QVBoxLayout>
 
 #include "platform/linux/desktop_entry.hpp"
 #include "ui/components/widgets.hpp"
@@ -18,6 +32,11 @@ namespace slopkit::ui::dialogs
 
     namespace
     {
+        QString to_qstring(std::string_view text)
+        {
+            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
+        }
+
         std::string lowercase(std::string_view value)
         {
             std::string result(value);
@@ -31,27 +50,468 @@ namespace slopkit::ui::dialogs
         }
     } // namespace
 
-    ProcessList::ProcessList(process::AccessWorker& worker, process::AttachedTarget& target)
-        : worker_(worker), target_(target)
+    ProcessListModel::ProcessListModel(QObject* parent) : QAbstractTableModel(parent) {}
+
+    int ProcessListModel::rowCount(const QModelIndex& parent) const
     {
+        return parent.isValid() ? 0 : static_cast<int>(visible_.size());
     }
 
-    void ProcessList::set_status(std::string message, bool is_error)
+    int ProcessListModel::columnCount(const QModelIndex& parent) const
     {
-        status_          = std::move(message);
-        status_is_error_ = is_error;
+        return parent.isValid() ? 0 : column_count;
     }
 
-    const process::ProcessInfo* ProcessList::selected() const
+    QVariant ProcessListModel::data(const QModelIndex& index, int role) const
     {
-        if (selected_index_ < 0 || selected_index_ >= static_cast<int>(processes_.size()))
+        if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(visible_.size()))
+        {
+            return {};
+        }
+
+        const auto& info = processes_[static_cast<std::size_t>(visible_[static_cast<std::size_t>(index.row())])];
+
+        switch (role)
+        {
+        case Qt::DisplayRole:
+        case Qt::ToolTipRole:
+            switch (index.column())
+            {
+            case pid:
+                return QString::number(static_cast<qulonglong>(info.pid));
+            case name:
+                return to_qstring(info.name);
+            case plugin:
+                return to_qstring(info.plugin_id);
+            case executable:
+                return info.exe_path.empty() ? tr("(unknown)") : to_qstring(info.exe_path);
+            default:
+                break;
+            }
+            break;
+        case Qt::FontRole:
+            if (index.column() == pid || index.column() == executable)
+            {
+                return QVariant::fromValue(mono_font());
+            }
+            break;
+        case Qt::TextAlignmentRole:
+            return static_cast<int>(Qt::AlignLeft | Qt::AlignVCenter);
+        default:
+            break;
+        }
+        return {};
+    }
+
+    QVariant ProcessListModel::headerData(int section, Qt::Orientation orientation, int role) const
+    {
+        if (orientation == Qt::Horizontal && role == Qt::DisplayRole)
+        {
+            switch (section)
+            {
+            case pid:
+                return tr("PID");
+            case name:
+                return tr("Name");
+            case plugin:
+                return tr("Plugin");
+            case executable:
+                return tr("Executable");
+            default:
+                break;
+            }
+        }
+        return QAbstractTableModel::headerData(section, orientation, role);
+    }
+
+    void ProcessListModel::sort(int column, Qt::SortOrder order)
+    {
+        sort_column_ = column;
+        sort_order_  = order;
+
+        beginResetModel();
+        apply_sort();
+        endResetModel();
+    }
+
+    void ProcessListModel::set_processes(std::vector<process::ProcessInfo> processes)
+    {
+        beginResetModel();
+        processes_ = std::move(processes);
+        rebuild();
+        endResetModel();
+    }
+
+    void ProcessListModel::set_application_index(std::vector<std::string> executables)
+    {
+        beginResetModel();
+        application_executables_ = std::move(executables);
+        rebuild();
+        endResetModel();
+    }
+
+    void ProcessListModel::set_applications_only(bool applications_only)
+    {
+        if (applications_only_ == applications_only)
+        {
+            return;
+        }
+        applications_only_ = applications_only;
+
+        beginResetModel();
+        rebuild();
+        endResetModel();
+    }
+
+    void ProcessListModel::set_search(const QString& text)
+    {
+        if (search_ == text)
+        {
+            return;
+        }
+        search_ = text;
+
+        beginResetModel();
+        rebuild();
+        endResetModel();
+    }
+
+    void ProcessListModel::set_plugin_filter(const QString& plugin_id)
+    {
+        if (plugin_filter_ == plugin_id)
+        {
+            return;
+        }
+        plugin_filter_ = plugin_id;
+
+        beginResetModel();
+        rebuild();
+        endResetModel();
+    }
+
+    const process::ProcessInfo* ProcessListModel::process_at(int row) const
+    {
+        if (row < 0 || row >= static_cast<int>(visible_.size()))
         {
             return nullptr;
         }
-        return &processes_[static_cast<std::size_t>(selected_index_)];
+        return &processes_[static_cast<std::size_t>(visible_[static_cast<std::size_t>(row)])];
     }
 
-    std::string ProcessList::chosen_plugin(const process::ProcessInfo& info) const
+    int ProcessListModel::row_for_pid(process::ProcessId pid) const
+    {
+        for (int row = 0; row < static_cast<int>(visible_.size()); ++row)
+        {
+            if (processes_[static_cast<std::size_t>(visible_[static_cast<std::size_t>(row)])].pid == pid)
+            {
+                return row;
+            }
+        }
+        return -1;
+    }
+
+    void ProcessListModel::rebuild()
+    {
+        visible_.clear();
+        const std::string needle = lowercase(search_.toStdString());
+
+        for (int index = 0; index < static_cast<int>(processes_.size()); ++index)
+        {
+            const auto& info = processes_[static_cast<std::size_t>(index)];
+            if (platform::is_desktop_application(info.exe_path, application_executables_) != applications_only_)
+            {
+                continue;
+            }
+            if (!plugin_filter_.isEmpty()
+                && std::find(info.claimants.begin(), info.claimants.end(), plugin_filter_.toStdString())
+                       == info.claimants.end())
+            {
+                continue;
+            }
+            if (!needle.empty())
+            {
+                const auto pid_text = std::to_string(info.pid);
+                if (lowercase(info.name).find(needle) == std::string::npos
+                    && lowercase(info.exe_path).find(needle) == std::string::npos
+                    && pid_text.find(needle) == std::string::npos)
+                {
+                    continue;
+                }
+            }
+            visible_.push_back(index);
+        }
+
+        apply_sort();
+    }
+
+    void ProcessListModel::apply_sort()
+    {
+        std::ranges::sort(visible_,
+                          [&](int lhs, int rhs)
+                          {
+                              const auto& left  = processes_[static_cast<std::size_t>(lhs)];
+                              const auto& right = processes_[static_cast<std::size_t>(rhs)];
+
+                              int order = 0;
+                              switch (sort_column_)
+                              {
+                              case name:
+                                  order = left.name.compare(right.name);
+                                  break;
+                              case plugin:
+                                  order = left.plugin_id.compare(right.plugin_id);
+                                  break;
+                              case executable:
+                                  order = left.exe_path.compare(right.exe_path);
+                                  break;
+                              default:
+                                  order = left.pid < right.pid ? -1 : (left.pid > right.pid ? 1 : 0);
+                                  break;
+                              }
+                              if (order == 0)
+                              {
+                                  order = left.pid < right.pid ? -1 : (left.pid > right.pid ? 1 : 0);
+                              }
+                              return sort_order_ == Qt::AscendingOrder ? order < 0 : order > 0;
+                          });
+    }
+
+    ProcessListDialog::ProcessListDialog(process::AccessWorker&   worker,
+                                         process::AttachedTarget& target,
+                                         QWidget*                 parent)
+        : QDialog(parent), worker_(worker), target_(target)
+    {
+        setWindowTitle(tr("Process List"));
+        resize(900, 560);
+
+        build_layout();
+
+        auto_refresh_timer_ = new QTimer(this);
+        auto_refresh_timer_->setInterval(2000);
+        connect(auto_refresh_timer_,
+                &QTimer::timeout,
+                this,
+                [this]
+                {
+                    if (isVisible())
+                    {
+                        refresh(); // No-ops while a list job is already pending.
+                    }
+                });
+        auto_refresh_timer_->start();
+
+        update_detail();
+        update_buttons();
+        update_status();
+    }
+
+    void ProcessListDialog::build_layout()
+    {
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(10, 10, 10, 10);
+        layout->setSpacing(8);
+
+        status_ = new widgets::StatusLabel(this);
+        layout->addWidget(status_);
+
+        auto* controls      = new QHBoxLayout();
+        refresh_button_     = new widgets::PrimaryButton(tr("Refresh"), this);
+        auto_refresh_check_ = new QCheckBox(tr("Auto-refresh"), this);
+        auto_refresh_check_->setChecked(true);
+        search_edit_ = new QLineEdit(this);
+        search_edit_->setPlaceholderText(tr("Filter by name, PID or path"));
+        search_edit_->setClearButtonEnabled(true);
+        plugin_combo_ = new QComboBox(this);
+        controls->addWidget(refresh_button_);
+        controls->addWidget(auto_refresh_check_);
+        controls->addWidget(search_edit_, 1);
+        controls->addWidget(plugin_combo_);
+        layout->addLayout(controls);
+
+        view_tabs_ = new QTabBar(this);
+        view_tabs_->addTab(tr("Applications"));
+        view_tabs_->addTab(tr("Processes"));
+        view_tabs_->setCurrentIndex(1); // The Processes view is the default.
+        layout->addWidget(view_tabs_);
+
+        auto* body  = new QHBoxLayout();
+        model_      = new ProcessListModel(this);
+        table_view_ = new QTableView(this);
+        table_view_->setModel(model_);
+        table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
+        table_view_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table_view_->setAlternatingRowColors(true);
+        table_view_->setSortingEnabled(true);
+        table_view_->sortByColumn(ProcessListModel::pid, Qt::AscendingOrder);
+        table_view_->verticalHeader()->setVisible(false);
+        table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::pid, QHeaderView::ResizeToContents);
+        table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::name, QHeaderView::Stretch);
+        table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::plugin, QHeaderView::ResizeToContents);
+        table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::executable, QHeaderView::Stretch);
+        body->addWidget(table_view_, 3);
+
+        auto* detail_panel = new widgets::Panel(tr("Details"), this);
+        detail_hint_       = new QLabel(tr("Select a process to see its details."), detail_panel);
+        detail_hint_->setWordWrap(true);
+        detail_panel->body()->addWidget(detail_hint_);
+
+        detail_body_        = new QWidget(detail_panel);
+        auto* detail_layout = new QVBoxLayout(detail_body_);
+        detail_layout->setContentsMargins(0, 0, 0, 0);
+        detail_layout->setSpacing(4);
+
+        detail_pid_ = new QLabel(detail_body_);
+        detail_pid_->setFont(mono_font());
+        detail_layout->addWidget(detail_pid_);
+
+        detail_name_ = new QLabel(detail_body_);
+        detail_name_->setWordWrap(true);
+        detail_layout->addWidget(detail_name_);
+
+        detail_executable_ = new QLabel(detail_body_);
+        detail_executable_->setFont(mono_font());
+        detail_executable_->setWordWrap(true);
+        detail_layout->addWidget(detail_executable_);
+
+        detail_plugin_ = new QLabel(detail_body_);
+        detail_plugin_->setWordWrap(true);
+        detail_layout->addWidget(detail_plugin_);
+
+        claimants_area_   = new QWidget(detail_body_);
+        claimants_layout_ = new QVBoxLayout(claimants_area_);
+        claimants_layout_->setContentsMargins(0, 0, 0, 0);
+        claimants_layout_->setSpacing(2);
+        detail_layout->addWidget(claimants_area_);
+
+        detail_inspecting_ = new QLabel(tr("Inspecting..."), detail_body_);
+        detail_layout->addWidget(detail_inspecting_);
+
+        detail_access_ = new QLabel(detail_body_);
+        detail_access_->setFont(mono_font());
+        detail_access_->setWordWrap(true);
+        detail_layout->addWidget(detail_access_);
+
+        detail_modules_ = new QLabel(detail_body_);
+        detail_modules_->setFont(mono_font());
+        detail_layout->addWidget(detail_modules_);
+
+        detail_threads_ = new QLabel(detail_body_);
+        detail_threads_->setFont(mono_font());
+        detail_layout->addWidget(detail_threads_);
+
+        detail_error_ = new widgets::StatusLabel(detail_body_);
+        detail_layout->addWidget(detail_error_);
+
+        attach_button_   = new widgets::PrimaryButton(tr("Attach"), detail_body_);
+        auto* attach_row = new QHBoxLayout();
+        attach_row->addWidget(attach_button_);
+        attached_label_ = new widgets::StatusLabel(detail_body_);
+        attach_row->addWidget(attached_label_);
+        attach_row->addStretch(1);
+        detail_layout->addLayout(attach_row);
+        detail_layout->addStretch(1);
+
+        detail_panel->body()->addWidget(detail_body_);
+        body->addWidget(detail_panel, 2);
+        layout->addLayout(body, 1);
+
+        connect(refresh_button_, &QPushButton::clicked, this, &ProcessListDialog::refresh);
+
+        connect(search_edit_,
+                &QLineEdit::textChanged,
+                this,
+                [this](const QString& text)
+                {
+                    restoring_ = true;
+                    model_->set_search(text);
+                    after_model_change();
+                });
+
+        connect(plugin_combo_,
+                &QComboBox::currentIndexChanged,
+                this,
+                [this]
+                {
+                    restoring_ = true;
+                    model_->set_plugin_filter(plugin_combo_->currentData().toString());
+                    after_model_change();
+                });
+
+        connect(view_tabs_,
+                &QTabBar::currentChanged,
+                this,
+                [this](int index)
+                {
+                    restoring_ = true;
+                    model_->set_applications_only(index == 0);
+                    after_model_change();
+                    if (index == 0)
+                    {
+                        request_application_index();
+                    }
+                });
+
+        connect(table_view_->selectionModel(),
+                &QItemSelectionModel::currentRowChanged,
+                this,
+                [this]
+                {
+                    if (restoring_)
+                    {
+                        return;
+                    }
+                    if (const auto* info = selected(); info != nullptr)
+                    {
+                        selected_pid_ = info->pid;
+                    }
+                    else
+                    {
+                        selected_pid_ = 0;
+                    }
+                    selected_plugin_.clear();
+                    probe_selection();
+                    update_detail();
+                    update_buttons();
+                });
+
+        connect(attach_button_,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    const auto* info = selected();
+                    if (info != nullptr && target_.valid() && target_.pid == info->pid)
+                    {
+                        detach_selected();
+                    }
+                    else
+                    {
+                        attach_selected();
+                    }
+                });
+    }
+
+    void ProcessListDialog::showEvent(QShowEvent* event)
+    {
+        QDialog::showEvent(event);
+        request_application_index();
+        refresh();
+    }
+
+    void ProcessListDialog::set_status(std::string message, bool is_error)
+    {
+        status_text_     = std::move(message);
+        status_is_error_ = is_error;
+        update_status();
+    }
+
+    const process::ProcessInfo* ProcessListDialog::selected() const
+    {
+        return model_->process_at(table_view_->currentIndex().row());
+    }
+
+    std::string ProcessListDialog::chosen_plugin(const process::ProcessInfo& info) const
     {
         if (!selected_plugin_.empty()
             && std::find(info.claimants.begin(), info.claimants.end(), selected_plugin_) != info.claimants.end())
@@ -61,33 +521,29 @@ namespace slopkit::ui::dialogs
         return info.plugin_id;
     }
 
-    bool ProcessList::is_application(const process::ProcessInfo& info) const
-    {
-        return platform::is_desktop_application(info.exe_path, application_executables_);
-    }
-
-    void ProcessList::refresh()
+    void ProcessListDialog::refresh()
     {
         if (list_pending_.has_value())
         {
             return; // A list job is already in flight.
         }
 
-        const auto*              previous     = selected();
-        const process::ProcessId previous_pid = previous != nullptr ? previous->pid : 0;
-
         const process::JobId job_id = worker_.next_job_id();
         list_pending_               = job_id;
+        refresh_button_->setText(tr("Refreshing..."));
+        refresh_button_->setEnabled(false);
 
         const bool submitted = worker_.submit_list(
             job_id,
-            [this, previous_pid, job_id](process::JobResult&& result)
+            [this, job_id](process::JobResult&& result)
             {
                 if (list_pending_ != job_id)
                 {
                     return; // Superseded or shut down.
                 }
                 list_pending_.reset();
+                refresh_button_->setText(tr("Refresh"));
+                refresh_button_->setEnabled(true);
 
                 auto& listed = std::get<process::ListResult>(result);
                 if (listed.error)
@@ -97,12 +553,11 @@ namespace slopkit::ui::dialogs
                                true);
                     return;
                 }
-                processes_ = std::move(listed.processes);
 
                 plugin_ids_.clear();
-                for (const auto& process : processes_)
+                for (const auto& info : listed.processes)
                 {
-                    for (const auto& claimant : process.claimants)
+                    for (const auto& claimant : info.claimants)
                     {
                         if (std::find(plugin_ids_.begin(), plugin_ids_.end(), claimant) == plugin_ids_.end())
                         {
@@ -112,43 +567,40 @@ namespace slopkit::ui::dialogs
                 }
                 std::ranges::sort(plugin_ids_);
 
-                // Keep the selection on the same pid across refreshes.
-                selected_index_ = -1;
-                if (previous_pid != 0)
-                {
-                    for (std::size_t i = 0; i < processes_.size(); ++i)
-                    {
-                        if (processes_[i].pid == previous_pid)
-                        {
-                            selected_index_ = static_cast<int>(i);
-                            break;
-                        }
-                    }
-                }
-                probe_needed_ = true;
+                restoring_ = true;
+                rebuild_plugin_filter();
+                model_->set_processes(std::move(listed.processes));
+                after_model_change();
             });
         if (!submitted)
         {
             list_pending_.reset();
+            refresh_button_->setText(tr("Refresh"));
+            refresh_button_->setEnabled(true);
+            set_status("List unavailable.", true);
         }
     }
 
-    void ProcessList::maybe_auto_refresh()
+    void ProcessListDialog::rebuild_plugin_filter()
     {
-        if (!auto_refresh_)
-        {
-            return;
-        }
+        const QString        previous = plugin_combo_->currentData().toString();
+        const QSignalBlocker blocker(plugin_combo_);
 
-        const double now = ImGui::GetTime();
-        if (now >= next_refresh_time_)
+        plugin_combo_->clear();
+        plugin_combo_->addItem(tr("All plugins"), QString());
+        for (const auto& id : plugin_ids_)
         {
-            refresh(); // No-ops while a list job is already pending.
-            next_refresh_time_ = now + 2.0;
+            plugin_combo_->addItem(to_qstring(id), to_qstring(id));
         }
+        const int index = plugin_combo_->findData(previous);
+        plugin_combo_->setCurrentIndex(index >= 0 ? index : 0);
+        plugin_combo_->setVisible(!plugin_ids_.empty());
+
+        // Keep the model's filter in step with the combo.
+        model_->set_plugin_filter(plugin_combo_->currentData().toString());
     }
 
-    void ProcessList::request_application_index()
+    void ProcessListDialog::request_application_index()
     {
         if (index_built_ || index_pending_.has_value())
         {
@@ -158,35 +610,68 @@ namespace slopkit::ui::dialogs
         const process::JobId job_id = worker_.next_job_id();
         index_pending_              = job_id;
 
-        const bool submitted =
-            worker_.submit_application_index(job_id,
-                                             [this, job_id](process::JobResult&& result)
-                                             {
-                                                 if (index_pending_ != job_id)
-                                                 {
-                                                     return;
-                                                 }
-                                                 index_pending_.reset();
-                                                 application_executables_ =
-                                                     std::move(std::get<process::AppIndexResult>(result).executables);
-                                                 index_built_ = true;
-                                             });
+        const bool submitted = worker_.submit_application_index(
+            job_id,
+            [this, job_id](process::JobResult&& result)
+            {
+                if (index_pending_ != job_id)
+                {
+                    return;
+                }
+                index_pending_.reset();
+                index_built_ = true;
+
+                restoring_ = true;
+                model_->set_application_index(std::move(std::get<process::AppIndexResult>(result).executables));
+                after_model_change();
+            });
         if (!submitted)
         {
             index_pending_.reset();
         }
     }
 
-    void ProcessList::probe_selection()
+    void ProcessListDialog::after_model_change()
+    {
+        restore_selection();
+        if (const auto* info = selected(); info != nullptr)
+        {
+            selected_pid_ = info->pid;
+        }
+        else
+        {
+            selected_pid_ = 0;
+        }
+        restoring_ = false;
+
+        probe_selection();
+        update_detail();
+        update_buttons();
+        update_status();
+    }
+
+    void ProcessListDialog::restore_selection()
+    {
+        const int row = model_->row_for_pid(selected_pid_);
+        if (row < 0)
+        {
+            selected_pid_ = 0;
+            table_view_->selectionModel()->clearCurrentIndex();
+            return;
+        }
+        table_view_->setCurrentIndex(model_->index(row, ProcessListModel::pid));
+    }
+
+    void ProcessListDialog::probe_selection()
     {
         const auto* info = selected();
         if (info == nullptr)
         {
-            detail_pid_          = -1;
+            detail_pid_value_    = -1;
             detail_methods_      = process::AccessMethod::none;
             detail_module_count_ = 0;
             detail_thread_count_ = 0;
-            detail_error_.clear();
+            detail_error_message_.clear();
             return;
         }
         if (probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info->pid))
@@ -198,11 +683,11 @@ namespace slopkit::ui::dialogs
         const std::string        plugin = chosen_plugin(*info);
 
         // Clear the cached detail and show the placeholder until it lands.
-        detail_pid_          = static_cast<int>(pid);
+        detail_pid_value_    = static_cast<int>(pid);
         detail_methods_      = process::AccessMethod::none;
         detail_module_count_ = 0;
         detail_thread_count_ = 0;
-        detail_error_.clear();
+        detail_error_message_.clear();
 
         const process::JobId job_id = worker_.next_job_id();
         probe_pending_              = job_id;
@@ -223,7 +708,7 @@ namespace slopkit::ui::dialogs
 
                 // Drop a result whose selection changed while it was in flight.
                 const auto* current = selected();
-                if (detail_pid_ != static_cast<int>(pid) || current == nullptr || current->pid != pid)
+                if (detail_pid_value_ != static_cast<int>(pid) || current == nullptr || current->pid != pid)
                 {
                     return;
                 }
@@ -231,17 +716,21 @@ namespace slopkit::ui::dialogs
                 auto& probe = std::get<process::ProbeResult>(result);
                 if (probe.error)
                 {
-                    detail_error_ = std::string("cannot inspect: ") + std::string(process::describe(*probe.error));
-                    return;
+                    detail_error_message_ =
+                        std::string("cannot inspect: ") + std::string(process::describe(*probe.error));
                 }
-                detail_methods_      = probe.method;
-                detail_module_count_ = probe.modules;
-                detail_thread_count_ = probe.threads;
-                if (probe.modules_error)
+                else
                 {
-                    detail_error_ =
-                        std::string("modules unavailable: ") + std::string(process::describe(*probe.modules_error));
+                    detail_methods_      = probe.method;
+                    detail_module_count_ = probe.modules;
+                    detail_thread_count_ = probe.threads;
+                    if (probe.modules_error)
+                    {
+                        detail_error_message_ =
+                            std::string("modules unavailable: ") + std::string(process::describe(*probe.modules_error));
+                    }
                 }
+                update_detail();
             });
         if (!submitted)
         {
@@ -250,7 +739,7 @@ namespace slopkit::ui::dialogs
         }
     }
 
-    void ProcessList::attach_selected()
+    void ProcessListDialog::attach_selected()
     {
         const auto* info = selected();
         if (info == nullptr)
@@ -269,6 +758,7 @@ namespace slopkit::ui::dialogs
 
         const process::JobId job_id = worker_.next_job_id();
         attach_pending_             = job_id;
+        update_buttons();
 
         const bool submitted = worker_.submit_attach_app(
             job_id,
@@ -287,6 +777,8 @@ namespace slopkit::ui::dialogs
                 {
                     target_.clear();
                     set_status(std::string("attach failed: ") + std::string(process::describe(*attached.error)), true);
+                    update_buttons();
+                    emit targetChanged();
                     return;
                 }
 
@@ -297,15 +789,18 @@ namespace slopkit::ui::dialogs
                 target_.method       = attached.info->method;
                 target_.session_live = true;
                 set_status(target_.label() + "; methods: " + process::describe(target_.method), false);
+                update_buttons();
+                emit targetChanged();
             });
         if (!submitted)
         {
             attach_pending_.reset();
             set_status("Attach unavailable.", true);
+            update_buttons();
         }
     }
 
-    void ProcessList::detach()
+    void ProcessListDialog::detach_selected()
     {
         if (!target_.valid())
         {
@@ -319,6 +814,7 @@ namespace slopkit::ui::dialogs
 
         const process::JobId job_id = worker_.next_job_id();
         detach_pending_             = job_id;
+        update_buttons();
 
         const bool submitted = worker_.submit_detach(job_id,
                                                      [this, job_id](process::JobResult&&)
@@ -330,320 +826,117 @@ namespace slopkit::ui::dialogs
                                                          detach_pending_.reset();
                                                          target_.clear();
                                                          set_status("Detached.", false);
+                                                         update_buttons();
+                                                         emit targetChanged();
                                                      });
         if (!submitted)
         {
             detach_pending_.reset();
             set_status("Detach unavailable.", true);
+            update_buttons();
         }
     }
 
-    void ProcessList::draw(bool& open)
+    void ProcessListDialog::update_buttons()
     {
-        ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 52.0f, ImGui::GetFontSize() * 34.0f),
-                                 ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Process List", &open))
+        const auto* info        = selected();
+        const bool  is_attached = info != nullptr && target_.valid() && target_.pid == info->pid;
+
+        if (is_attached)
         {
-            ImGui::End();
+            attach_button_->setText(detach_pending_.has_value() ? tr("Detaching...") : tr("Detach"));
+        }
+        else
+        {
+            attach_button_->setText(attach_pending_.has_value() ? tr("Attaching...") : tr("Attach"));
+        }
+        attach_button_->setEnabled(info != nullptr && !attach_pending_.has_value() && !detach_pending_.has_value());
+        attached_label_->setVisible(is_attached);
+        if (is_attached)
+        {
+            attached_label_->set_status(widgets::StatusKind::success, tr("attached"));
+        }
+    }
+
+    void ProcessListDialog::update_detail()
+    {
+        const auto* info = selected();
+        detail_hint_->setVisible(info == nullptr);
+        detail_body_->setVisible(info != nullptr);
+        if (info == nullptr)
+        {
             return;
         }
 
-        maybe_auto_refresh();
-        request_application_index();
+        detail_pid_->setText(tr("PID: %1").arg(static_cast<qulonglong>(info->pid)));
+        detail_name_->setText(tr("Name: %1").arg(to_qstring(info->name)));
+        detail_executable_->setText(
+            tr("Executable: %1").arg(info->exe_path.empty() ? tr("(unknown)") : to_qstring(info->exe_path)));
+        detail_plugin_->setText(tr("Default plugin: %1").arg(to_qstring(info->plugin_id)));
 
-        if (!status_.empty())
+        update_claimants(*info);
+
+        const bool inspecting = probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info->pid);
+        detail_inspecting_->setVisible(inspecting);
+        detail_access_->setVisible(!inspecting);
+        detail_modules_->setVisible(!inspecting);
+        detail_threads_->setVisible(!inspecting);
+
+        detail_access_->setText(tr("Access methods: %1").arg(to_qstring(process::describe(detail_methods_))));
+        detail_modules_->setText(tr("Modules: %1").arg(static_cast<qulonglong>(detail_module_count_)));
+        detail_threads_->setText(tr("Threads: %1").arg(static_cast<qulonglong>(detail_thread_count_)));
+
+        detail_error_->setVisible(!detail_error_message_.empty());
+        if (!detail_error_message_.empty())
         {
-            widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                 status_.c_str());
+            detail_error_->set_status(widgets::StatusKind::warning, to_qstring(detail_error_message_));
         }
-        else
-        {
-            ImGui::TextDisabled("%zu process(es)", processes_.size());
-        }
-
-        const bool refreshing = list_pending_.has_value();
-        ImGui::BeginDisabled(refreshing);
-        if (widgets::primary_button(refreshing ? "Refreshing..." : "Refresh"))
-        {
-            refresh();
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::Checkbox("Auto-refresh", &auto_refresh_);
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
-        ImGui::InputTextWithHint("##process_search", "Filter by name, PID or path", &search_);
-
-        if (!plugin_ids_.empty())
-        {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-            const char* preview = plugin_filter_.empty() ? "All plugins" : plugin_filter_.c_str();
-            if (ImGui::BeginCombo("##plugin_filter", preview))
-            {
-                if (ImGui::Selectable("All plugins", plugin_filter_.empty()))
-                {
-                    plugin_filter_.clear();
-                }
-                for (const auto& id : plugin_ids_)
-                {
-                    if (ImGui::Selectable(id.c_str(), plugin_filter_ == id))
-                    {
-                        plugin_filter_ = id;
-                    }
-                }
-                ImGui::EndCombo();
-            }
-        }
-
-        ImGui::Spacing();
-
-        if (ImGui::BeginTabBar("##process_tabs"))
-        {
-            if (ImGui::BeginTabItem("Applications"))
-            {
-                draw_body(true);
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem("Processes"))
-            {
-                draw_body(false);
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-
-        ImGui::End();
     }
 
-    void ProcessList::draw_body(bool applications_only)
+    void ProcessListDialog::update_claimants(const process::ProcessInfo& info)
     {
-        const ImVec2 region      = ImGui::GetContentRegionAvail();
-        const float  body_height = std::max(region.y, 1.0f);
-        const float  list_width  = std::max(region.x * 0.62f, 1.0f);
-
-        ImGui::BeginChild("process_list", ImVec2(list_width, body_height), ImGuiChildFlags_Borders);
-
-        if (applications_only && !index_built_)
+        while (QLayoutItem* item = claimants_layout_->takeAt(0))
         {
-            ImGui::TextDisabled("Indexing applications...");
+            delete item->widget();
+            delete item;
         }
-        else if (ImGui::BeginTable("processes",
-                                   4,
-                                   ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable
-                                       | ImGuiTableFlags_Sortable | ImGuiTableFlags_SizingFixedFit))
-        {
-            ImGui::TableSetupColumn("PID", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort);
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Plugin", ImGuiTableColumnFlags_WidthFixed);
-            ImGui::TableSetupColumn("Executable", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupScrollFreeze(0, 1);
-            ImGui::TableHeadersRow();
 
-            // Apply the tab, search and plugin filters.
-            visible_.clear();
-            const std::string needle = lowercase(search_);
-            for (int index = 0; index < static_cast<int>(processes_.size()); ++index)
-            {
-                const auto& process = processes_[static_cast<std::size_t>(index)];
-                if (is_application(process) != applications_only)
-                {
-                    continue;
-                }
-                if (!plugin_filter_.empty()
-                    && std::find(process.claimants.begin(), process.claimants.end(), plugin_filter_)
-                           == process.claimants.end())
-                {
-                    continue;
-                }
-                if (!needle.empty())
-                {
-                    const auto pid_text = std::to_string(process.pid);
-                    const bool matches  = lowercase(process.name).find(needle) != std::string::npos
-                                       || lowercase(process.exe_path).find(needle) != std::string::npos
-                                       || pid_text.find(needle) != std::string::npos;
-                    if (!matches)
+        const bool multiple = info.claimants.size() > 1;
+        claimants_area_->setVisible(multiple);
+        if (!multiple)
+        {
+            return;
+        }
+
+        for (const auto& claimant : info.claimants)
+        {
+            const bool is_default = claimant == info.plugin_id;
+            const auto label      = to_qstring(claimant) + (is_default ? tr(" (default)") : QString());
+            auto*      button     = new QRadioButton(label, claimants_area_);
+            button->setChecked(chosen_plugin(info) == claimant);
+            connect(button,
+                    &QRadioButton::clicked,
+                    this,
+                    [this, claimant]
                     {
-                        continue;
-                    }
-                }
-                visible_.push_back(index);
-            }
-
-            // Apply the table sort spec.
-            int  sort_column = 0;
-            bool ascending   = true;
-            if (const ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
-                specs != nullptr && specs->SpecsCount > 0)
-            {
-                sort_column = specs->Specs[0].ColumnIndex;
-                ascending   = specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending;
-            }
-            std::ranges::sort(visible_,
-                              [&](int lhs, int rhs)
-                              {
-                                  const auto& left  = processes_[static_cast<std::size_t>(lhs)];
-                                  const auto& right = processes_[static_cast<std::size_t>(rhs)];
-                                  int         order = 0;
-                                  switch (sort_column)
-                                  {
-                                  case 1:
-                                      order = left.name.compare(right.name);
-                                      break;
-                                  case 2:
-                                      order = left.plugin_id.compare(right.plugin_id);
-                                      break;
-                                  case 3:
-                                      order = left.exe_path.compare(right.exe_path);
-                                      break;
-                                  default:
-                                      order = left.pid < right.pid ? -1 : (left.pid > right.pid ? 1 : 0);
-                                      break;
-                                  }
-                                  if (order == 0)
-                                  {
-                                      order = left.pid < right.pid ? -1 : (left.pid > right.pid ? 1 : 0);
-                                  }
-                                  return ascending ? order < 0 : order > 0;
-                              });
-
-            for (const int index : visible_)
-            {
-                const auto& process = processes_[static_cast<std::size_t>(index)];
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::PushID(index);
-                const auto pid_text = std::to_string(process.pid);
-                {
-                    ui::ScopedMonoFont mono;
-                    if (ImGui::Selectable(
-                            pid_text.c_str(), selected_index_ == index, ImGuiSelectableFlags_SpanAllColumns))
-                    {
-                        if (selected_index_ != index)
-                        {
-                            selected_index_ = index;
-                            selected_plugin_.clear();
-                            probe_needed_ = true;
-                        }
-                    }
-                }
-                ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(process.name.c_str());
-                ImGui::TableSetColumnIndex(2);
-                ImGui::TextUnformatted(process.plugin_id.c_str());
-                ImGui::TableSetColumnIndex(3);
-                {
-                    ui::ScopedMonoFont mono;
-                    ImGui::TextUnformatted(process.exe_path.c_str());
-                }
-                ImGui::PopID();
-            }
-
-            if (visible_.empty())
-            {
-                ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0);
-                ImGui::TextDisabled(applications_only ? "No applications found." : "No processes found.");
-            }
-
-            ImGui::EndTable();
+                        selected_plugin_ = claimant;
+                        probe_selection();
+                        update_detail();
+                    });
+            claimants_layout_->addWidget(button);
         }
-
-        ImGui::EndChild();
-
-        // The selection may have changed while drawing the list; refresh the
-        // detail data before the detail pane renders.
-        if (probe_needed_)
-        {
-            probe_selection();
-            probe_needed_ = false;
-        }
-
-        ImGui::SameLine();
-        ImGui::BeginChild("process_detail", ImVec2(0.0f, body_height), ImGuiChildFlags_Borders);
-        if (const auto* info = selected(); info != nullptr)
-        {
-            draw_detail(*info);
-        }
-        else
-        {
-            ImGui::TextUnformatted("Select a process to see its details.");
-        }
-        ImGui::EndChild();
     }
 
-    void ProcessList::draw_detail(const process::ProcessInfo& info)
+    void ProcessListDialog::update_status()
     {
-        widgets::section_header("Details");
-
+        if (!status_text_.empty())
         {
-            ui::ScopedMonoFont mono;
-            ImGui::Text("PID: %u", info.pid);
+            status_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
+                                to_qstring(status_text_));
+            return;
         }
-        ImGui::Text("Name: %s", info.name.c_str());
-        {
-            ui::ScopedMonoFont mono;
-            ImGui::TextWrapped("Executable: %s", info.exe_path.empty() ? "(unknown)" : info.exe_path.c_str());
-        }
-        ImGui::Text("Default plugin: %s", info.plugin_id.c_str());
-
-        if (info.claimants.size() > 1)
-        {
-            ImGui::Spacing();
-            ImGui::TextUnformatted("Claimed by:");
-            for (const auto& claimant : info.claimants)
-            {
-                const bool        is_default = claimant == info.plugin_id;
-                const std::string label      = claimant + (is_default ? " (default)" : "");
-                if (ImGui::RadioButton(label.c_str(), chosen_plugin(info) == claimant))
-                {
-                    selected_plugin_ = claimant;
-                    probe_needed_    = true;
-                }
-            }
-        }
-
-        ImGui::Spacing();
-        if (probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info.pid))
-        {
-            ImGui::TextDisabled("Inspecting...");
-        }
-        else
-        {
-            ui::ScopedMonoFont mono;
-            ImGui::Text("Access methods: %s", process::describe(detail_methods_).c_str());
-            ImGui::Text("Modules: %zu", detail_module_count_);
-            ImGui::Text("Threads: %zu", detail_thread_count_);
-        }
-
-        if (!detail_error_.empty())
-        {
-            widgets::status_text(widgets::StatusKind::warning, detail_error_.c_str());
-        }
-
-        ImGui::Spacing();
-        if (target_.valid() && target_.pid == info.pid)
-        {
-            const bool pending = detach_pending_.has_value();
-            ImGui::BeginDisabled(pending);
-            if (widgets::secondary_button(pending ? "Detaching..." : "Detach"))
-            {
-                detach();
-            }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            widgets::status_text(widgets::StatusKind::success, "attached");
-        }
-        else
-        {
-            const bool pending = attach_pending_.has_value();
-            ImGui::BeginDisabled(pending);
-            if (widgets::primary_button(pending ? "Attaching..." : "Attach"))
-            {
-                attach_selected();
-            }
-            ImGui::EndDisabled();
-        }
+        status_->set_status(widgets::StatusKind::info,
+                            tr("%1 process(es) shown").arg(model_ != nullptr ? model_->rowCount() : 0));
     }
 
 } // namespace slopkit::ui::dialogs

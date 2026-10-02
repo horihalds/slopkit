@@ -1,161 +1,166 @@
 #include "ui/panels/found_list_panel.hpp"
 
-#include <algorithm>
 #include <cstddef>
-#include <format>
-#include <string>
 #include <utility>
-#include <vector>
 
-#include <imgui.h>
+#include <QAction>
+#include <QHeaderView>
+#include <QItemSelectionModel>
+#include <QLabel>
+#include <QMenu>
+#include <QTableView>
+#include <QVBoxLayout>
 
-#include "scan/types.hpp"
-#include "scan/value.hpp"
 #include "ui/components/widgets.hpp"
-#include "ui/fonts.hpp"
+#include "ui/models/found_results_model.hpp"
 
 namespace slopkit::ui::panels
 {
 
-    FoundListPanel::FoundListPanel(scan::ScanEngine& engine, table::AddressTable& table)
-        : engine_(engine), table_(table)
+    namespace
     {
+        // Compares the two snapshots' display data; the engine's snapshot is a
+        // copy, so identity cannot be used.
+        bool same_snapshot(const scan::ScanSnapshot& lhs, const scan::ScanSnapshot& rhs)
+        {
+            if (lhs.state != rhs.state || lhs.progress != rhs.progress || lhs.hit_count != rhs.hit_count
+                || lhs.truncated != rhs.truncated || lhs.message != rhs.message || lhs.hits.size() != rhs.hits.size())
+            {
+                return false;
+            }
+            for (std::size_t index = 0; index < lhs.hits.size(); ++index)
+            {
+                if (lhs.hits[index].address != rhs.hits[index].address || lhs.hits[index].value != rhs.hits[index].value
+                    || lhs.hits[index].previous != rhs.hits[index].previous)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool same_config(const scan::ScanConfig& lhs, const scan::ScanConfig& rhs)
+        {
+            return lhs.value_type == rhs.value_type && lhs.hex == rhs.hex;
+        }
+    } // namespace
+
+    FoundListPanel::FoundListPanel(scan::ScanEngine& engine, table::AddressTable& table, QWidget* parent)
+        : QWidget(parent), engine_(engine), table_(table)
+    {
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(8, 8, 8, 8);
+        layout->setSpacing(6);
+
+        header_ = widgets::section_header(tr("Found: 0"), this);
+        layout->addWidget(header_);
+
+        note_ = new widgets::StatusLabel(this);
+        note_->setVisible(false);
+        layout->addWidget(note_);
+
+        model_      = new models::FoundResultsModel(this);
+        table_view_ = new QTableView(this);
+        table_view_->setModel(model_);
+        table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
+        table_view_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table_view_->setAlternatingRowColors(true);
+        table_view_->setSortingEnabled(true);
+        table_view_->sortByColumn(models::FoundResultsModel::address, Qt::AscendingOrder);
+        table_view_->verticalHeader()->setVisible(false);
+        table_view_->horizontalHeader()->setStretchLastSection(true);
+        layout->addWidget(table_view_, 1);
+
+        connect(table_view_,
+                &QTableView::doubleClicked,
+                this,
+                [this](const QModelIndex& index)
+                {
+                    add_to_table(index.row());
+                });
+
+        table_view_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(table_view_,
+                &QWidget::customContextMenuRequested,
+                this,
+                [this](const QPoint& position)
+                {
+                    show_context_menu(position);
+                });
     }
 
-    void FoundListPanel::add_to_table(const scan::ScanHit& hit, const scan::ScanConfig& config)
-    {
-        table::AddressEntry entry;
-        entry.address = hit.address;
-        entry.type    = config.value_type;
-        entry.bytes   = hit.value;
-        entry.hex     = config.hex;
-        table_.add(std::move(entry));
-    }
-
-    void FoundListPanel::draw()
+    void FoundListPanel::refresh()
     {
         const scan::ScanSnapshot snapshot = engine_.snapshot();
         const scan::ScanConfig   config   = engine_.config();
 
-        const std::string header = std::format("Found: {}", snapshot.hit_count);
-        widgets::section_header(header.c_str());
+        header_->setText(tr("Found: %1").arg(static_cast<qulonglong>(snapshot.hit_count)));
 
         if (snapshot.hits.size() < snapshot.hit_count)
         {
-            std::string note =
-                std::format("Showing the first {} of {} matches", snapshot.hits.size(), snapshot.hit_count);
+            QString note = tr("Showing the first %1 of %2 matches")
+                               .arg(static_cast<qulonglong>(snapshot.hits.size()))
+                               .arg(static_cast<qulonglong>(snapshot.hit_count));
             if (snapshot.truncated)
             {
-                note += " (result cap reached)";
+                note += tr(" (result cap reached)");
             }
-            widgets::status_text(widgets::StatusKind::info, note.c_str());
+            note_->set_status(widgets::StatusKind::info, note);
         }
         else if (snapshot.truncated)
         {
-            widgets::status_text(widgets::StatusKind::warning,
-                                 "The result cap was reached; only the first matches are stored.");
+            note_->set_status(widgets::StatusKind::warning,
+                              tr("The result cap was reached; only the first matches are stored."));
         }
+        else
+        {
+            note_->clear_status();
+        }
+        note_->setVisible(!note_->text().isEmpty());
 
-        constexpr ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV
-                                        | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable
-                                        | ImGuiTableFlags_Sortable;
-        if (!ImGui::BeginTable("found_list", 3, flags))
+        if (has_last_ && same_config(last_config_, config) && same_snapshot(last_snapshot_, snapshot))
         {
             return;
         }
-        ImGui::TableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort);
-        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed);
-        ImGui::TableSetupColumn("Previous", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableHeadersRow();
+        last_snapshot_ = snapshot;
+        last_config_   = config;
+        has_last_      = true;
+        table_view_->clearSelection();
+        model_->set_snapshot(std::move(snapshot), std::move(config));
+    }
 
-        const auto&      hits = snapshot.hits;
-        std::vector<int> order(hits.size());
-        for (int i = 0; i < static_cast<int>(order.size()); ++i)
+    void FoundListPanel::add_to_table(int row)
+    {
+        const scan::ScanHit* hit = model_->hit_at(row);
+        if (hit == nullptr)
         {
-            order[static_cast<std::size_t>(i)] = i;
+            return;
         }
 
-        int  sort_column = 0;
-        bool ascending   = true;
-        if (const ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs(); specs != nullptr && specs->SpecsCount > 0)
+        const scan::ScanConfig config = engine_.config();
+        table::AddressEntry    entry;
+        entry.address = hit->address;
+        entry.type    = config.value_type;
+        entry.bytes   = hit->value;
+        entry.hex     = config.hex;
+        table_.add(std::move(entry));
+    }
+
+    void FoundListPanel::show_context_menu(const QPoint& position)
+    {
+        const QModelIndex index = table_view_->indexAt(position);
+        if (!index.isValid())
         {
-            sort_column = specs->Specs[0].ColumnIndex;
-            ascending   = specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending;
+            return;
         }
 
-        std::ranges::sort(order,
-                          [&](int lhs, int rhs)
-                          {
-                              const auto& left     = hits[static_cast<std::size_t>(lhs)];
-                              const auto& right    = hits[static_cast<std::size_t>(rhs)];
-                              int         order_by = 0;
-                              switch (sort_column)
-                              {
-                              case 1:
-                                  order_by = left.value < right.value ? -1 : (right.value < left.value ? 1 : 0);
-                                  break;
-                              case 2:
-                                  order_by =
-                                      left.previous < right.previous ? -1 : (right.previous < left.previous ? 1 : 0);
-                                  break;
-                              default:
-                                  order_by = left.address < right.address ? -1 : (left.address > right.address ? 1 : 0);
-                                  break;
-                              }
-                              if (order_by == 0)
-                              {
-                                  order_by = left.address < right.address ? -1 : (left.address > right.address ? 1 : 0);
-                              }
-                              return ascending ? order_by < 0 : order_by > 0;
-                          });
-
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(order.size()));
-        while (clipper.Step())
+        QMenu    menu(this);
+        QAction* add = menu.addAction(tr("Add to address table"));
+        if (menu.exec(table_view_->viewport()->mapToGlobal(position)) == add)
         {
-            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
-            {
-                const int   index = order[static_cast<std::size_t>(row)];
-                const auto& hit   = hits[static_cast<std::size_t>(index)];
-
-                ImGui::TableNextRow();
-                ImGui::PushID(index);
-
-                ImGui::TableSetColumnIndex(0);
-                const std::string address = std::format("0x{:X}", hit.address);
-                {
-                    ui::ScopedMonoFont mono;
-                    if (ImGui::Selectable(address.c_str(),
-                                          selected_ == index,
-                                          ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
-                    {
-                        selected_ = index;
-                        if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                        {
-                            add_to_table(hit, config);
-                        }
-                    }
-                }
-
-                ImGui::TableSetColumnIndex(1);
-                {
-                    ui::ScopedMonoFont mono;
-                    ImGui::TextUnformatted(scan::format_value(config.value_type, hit.value, config.hex).c_str());
-                }
-
-                ImGui::TableSetColumnIndex(2);
-                if (!hit.previous.empty())
-                {
-                    ui::ScopedMonoFont mono;
-                    ImGui::TextUnformatted(scan::format_value(config.value_type, hit.previous, config.hex).c_str());
-                }
-
-                ImGui::PopID();
-            }
+            add_to_table(index.row());
         }
-
-        ImGui::EndTable();
     }
 
 } // namespace slopkit::ui::panels

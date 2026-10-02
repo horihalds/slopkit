@@ -1,16 +1,16 @@
 #include "ui/panels/scanner_panel.hpp"
 
 #include <algorithm>
-#include <cfloat>
 #include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <iterator>
-#include <string>
-#include <string_view>
 #include <utility>
 
-#include <imgui.h>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QHBoxLayout>
+#include <QLineEdit>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QVBoxLayout>
 
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
@@ -20,16 +20,18 @@ namespace slopkit::ui::panels
 
     namespace
     {
-        // A disabled control that explains why it is unavailable.
-        void unavailable_checkbox(const char* label, bool* value, const char* reason)
+        QString to_qstring(std::string_view text)
         {
-            ImGui::BeginDisabled();
-            ImGui::Checkbox(label, value);
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            {
-                ImGui::SetTooltip("%s", reason);
-            }
+            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
+        }
+
+        // A disabled control that explains why it is unavailable.
+        QCheckBox* unavailable_checkbox(const QString& label, const QString& reason)
+        {
+            auto* box = new QCheckBox(label);
+            box->setEnabled(false);
+            box->setToolTip(reason);
+            return box;
         }
 
         // The alignment the fast scan uses when the field is left blank.
@@ -40,19 +42,244 @@ namespace slopkit::ui::panels
         }
     } // namespace
 
-    ScannerPanel::ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target)
-        : worker_(worker), target_(target)
+    ScannerPanel::ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent)
+        : QWidget(parent), worker_(worker), target_(target)
     {
+        setMinimumWidth(320);
+        build_layout();
+        connect_widgets();
+        refresh();
+    }
+
+    scan::ScanEngine& ScannerPanel::engine() noexcept
+    {
+        return engine_;
+    }
+
+    int ScannerPanel::progress_percent() const noexcept
+    {
+        return progress_percent_;
+    }
+
+    void ScannerPanel::build_layout()
+    {
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(8, 8, 8, 8);
+        layout->setSpacing(6);
+
+        layout->addWidget(widgets::section_header(tr("Scan"), this));
+
+        // Value (and, for "Value between", the upper bound) plus the Hex toggle.
+        auto* value_row = new QHBoxLayout();
+        value_edit_     = new QLineEdit(this);
+        value_edit_->setPlaceholderText(tr("Value"));
+        value_edit_->setFont(mono_font());
+        value_row->addWidget(value_edit_, 1);
+
+        value_upper_edit_ = new QLineEdit(this);
+        value_upper_edit_->setPlaceholderText(tr("Upper value"));
+        value_upper_edit_->setFont(mono_font());
+        value_upper_edit_->setVisible(false);
+        value_row->addWidget(value_upper_edit_, 1);
+
+        hex_check_ = new QCheckBox(tr("Hex"), this);
+        value_row->addWidget(hex_check_);
+        layout->addLayout(value_row);
+
+        scan_type_combo_ = new QComboBox(this);
+        for (const char* name : scan::kScanTypeNames)
+        {
+            scan_type_combo_->addItem(QString::fromUtf8(name));
+        }
+        layout->addWidget(scan_type_combo_);
+
+        value_type_combo_ = new QComboBox(this);
+        for (const char* name : scan::kValueTypeNames)
+        {
+            value_type_combo_->addItem(QString::fromUtf8(name));
+        }
+        value_type_combo_->setCurrentIndex(2); // 4 Bytes
+        layout->addWidget(value_type_combo_);
+
+        auto* action_row  = new QHBoxLayout();
+        scan_button_      = new widgets::PrimaryButton(tr("First Scan"), this);
+        next_scan_button_ = widgets::secondary_button(tr("Next Scan"), this);
+        undo_button_      = widgets::secondary_button(tr("Undo Scan"), this);
+        cancel_button_    = widgets::secondary_button(tr("Cancel"), this);
+        cancel_button_->setVisible(false);
+        action_row->addWidget(scan_button_, 36);
+        action_row->addWidget(next_scan_button_, 32);
+        action_row->addWidget(undo_button_, 32);
+        action_row->addWidget(cancel_button_, 16);
+        layout->addLayout(action_row);
+
+        scan_progress_ = new QProgressBar(this);
+        scan_progress_->setRange(0, 100);
+        scan_progress_->setValue(0);
+        scan_progress_->setFormat(QStringLiteral("%p%"));
+        layout->addWidget(scan_progress_);
+
+        auto* options = new widgets::CollapsibleSection(tr("Memory Scan Options"), true, this);
+        layout->addWidget(options);
+
+        auto* options_body = options->body();
+
+        auto* address_row = new QHBoxLayout();
+        start_edit_       = new QLineEdit();
+        start_edit_->setPlaceholderText(tr("Start address"));
+        start_edit_->setFont(mono_font());
+        address_row->addWidget(start_edit_, 1);
+
+        stop_edit_ = new QLineEdit();
+        stop_edit_->setPlaceholderText(tr("Stop address"));
+        stop_edit_->setFont(mono_font());
+        address_row->addWidget(stop_edit_, 1);
+        options_body->addLayout(address_row);
+
+        auto* filter_row = new QHBoxLayout();
+        writable_check_  = new QCheckBox(tr("Writable"));
+        writable_check_->setChecked(true);
+        executable_check_    = new QCheckBox(tr("Executable"));
+        copy_on_write_check_ = new QCheckBox(tr("CopyOnWrite"));
+        copy_on_write_check_->setChecked(true);
+        filter_row->addWidget(writable_check_);
+        filter_row->addWidget(executable_check_);
+        filter_row->addWidget(copy_on_write_check_);
+        filter_row->addStretch(1);
+        options_body->addLayout(filter_row);
+
+        auto* fast_row   = new QHBoxLayout();
+        fast_scan_check_ = new QCheckBox(tr("Fast Scan"));
+        fast_scan_check_->setChecked(true);
+        alignment_edit_ = new QLineEdit(QStringLiteral("4"));
+        alignment_edit_->setPlaceholderText(tr("Alignment"));
+        alignment_edit_->setFont(mono_font());
+        alignment_edit_->setMaximumWidth(96);
+        alignment_edit_->setToolTip(tr("Alignment step in bytes (decimal or 0x hex); blank uses the value size"));
+        fast_row->addWidget(fast_scan_check_);
+        fast_row->addWidget(alignment_edit_);
+        fast_row->addStretch(1);
+        options_body->addLayout(fast_row);
+
+        pause_scanning_check_ = new QCheckBox(tr("Pause the game while scanning"));
+        pause_scanning_check_->setToolTip(tr("Accepted as a setting; no effect until a plugin can suspend the target"));
+        options_body->addWidget(pause_scanning_check_);
+
+        layout->addWidget(widgets::section_header(tr("Extra options"), this));
+        auto* extra_row = new QHBoxLayout();
+        extra_row->addWidget(
+            unavailable_checkbox(tr("Lua formula"), tr("Disabled: a Lua interpreter is not a project dependency")));
+        extra_row->addWidget(
+            unavailable_checkbox(tr("Not"), tr("Disabled: the scan engine does not invert comparisons yet")));
+        extra_row->addWidget(unavailable_checkbox(tr("Unrandomizer"), tr("Disabled: requires code injection")));
+        extra_row->addWidget(unavailable_checkbox(tr("Enable Speedhack"), tr("Disabled: requires code injection")));
+        extra_row->addStretch(1);
+        layout->addLayout(extra_row);
+
+        auto* entry_row     = new QHBoxLayout();
+        memory_view_button_ = widgets::secondary_button(tr("Memory View"), this);
+        memory_view_button_->setToolTip(tr("Open the Memory Viewer at the start address (or address 0)"));
+        add_address_button_ = widgets::secondary_button(tr("Add Address Manually"), this);
+        entry_row->addWidget(memory_view_button_);
+        entry_row->addWidget(add_address_button_);
+        entry_row->addStretch(1);
+        layout->addLayout(entry_row);
+
+        status_label_ = new widgets::StatusLabel(this);
+        layout->addWidget(status_label_);
+        layout->addStretch(1);
+
+        update_value_inputs();
+    }
+
+    void ScannerPanel::connect_widgets()
+    {
+        connect(scan_button_,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    start_first_scan();
+                    refresh();
+                });
+        connect(next_scan_button_,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    start_next_scan();
+                    refresh();
+                });
+        connect(undo_button_,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    engine_.undo();
+                    refresh();
+                });
+        connect(cancel_button_,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    engine_.cancel();
+                    refresh();
+                });
+
+        connect(memory_view_button_,
+                &QPushButton::clicked,
+                this,
+                [this]
+                {
+                    const auto address = scan::parse_address(start_edit_->text().toStdString());
+                    emit       memoryViewRequested(address.has_value() ? *address : std::uint64_t {0});
+                });
+        connect(add_address_button_, &QPushButton::clicked, this, &ScannerPanel::addAddressRequested);
+
+        connect(scan_type_combo_,
+                &QComboBox::currentIndexChanged,
+                this,
+                [this]
+                {
+                    update_value_inputs();
+                });
+        connect(value_type_combo_,
+                &QComboBox::currentIndexChanged,
+                this,
+                [this]
+                {
+                    update_value_inputs();
+                });
+        connect(fast_scan_check_,
+                &QCheckBox::toggled,
+                this,
+                [this]
+                {
+                    update_value_inputs();
+                });
+    }
+
+    void ScannerPanel::update_value_inputs()
+    {
+        const scan::ScanType type        = current_scan_type();
+        const bool           wants_value = scan::needs_value(type) || type == scan::ScanType::value_between;
+
+        value_edit_->setEnabled(wants_value);
+        hex_check_->setEnabled(wants_value);
+        value_upper_edit_->setEnabled(wants_value);
+        value_upper_edit_->setVisible(type == scan::ScanType::value_between);
+        alignment_edit_->setEnabled(fast_scan_check_->isChecked());
     }
 
     scan::ScanType ScannerPanel::current_scan_type() const noexcept
     {
-        return static_cast<scan::ScanType>(scan_type_);
+        return static_cast<scan::ScanType>(scan_type_combo_->currentIndex());
     }
 
     scan::ValueType ScannerPanel::current_value_type() const noexcept
     {
-        return static_cast<scan::ValueType>(value_type_);
+        return static_cast<scan::ValueType>(value_type_combo_->currentIndex());
     }
 
     void ScannerPanel::request_scan_session()
@@ -100,7 +327,7 @@ namespace slopkit::ui::panels
 
                 auto& attached = std::get<process::AttachResult>(result);
                 // Drop a session whose target changed while the handoff ran;
-                // worker_pid_ still reflects the request, so the next frame
+                // worker_pid_ still reflects the request, so the next tick
                 // requests the new target.
                 if (!target_.valid() || target_.pid != pid || target_.plugin_id != plugin)
                 {
@@ -128,12 +355,14 @@ namespace slopkit::ui::panels
         scan::ScanConfig config;
         config.type       = current_scan_type();
         config.value_type = current_value_type();
-        config.hex        = hex_;
+        config.hex        = hex_check_->isChecked();
+
+        const std::string value_text = value_edit_->text().toStdString();
 
         const bool wants_value = scan::needs_value(config.type) || config.type == scan::ScanType::value_between;
         if (wants_value)
         {
-            auto value = scan::parse_value(config.value_type, value_buffer_.data(), hex_);
+            auto value = scan::parse_value(config.value_type, value_text, config.hex);
             if (!value)
             {
                 return std::unexpected("Value: " + value.error().message);
@@ -142,7 +371,7 @@ namespace slopkit::ui::panels
         }
         if (config.type == scan::ScanType::value_between)
         {
-            auto upper = scan::parse_value(config.value_type, value_upper_buffer_.data(), hex_);
+            auto upper = scan::parse_value(config.value_type, value_upper_edit_->text().toStdString(), config.hex);
             if (!upper)
             {
                 return std::unexpected("Upper value: " + upper.error().message);
@@ -150,18 +379,20 @@ namespace slopkit::ui::panels
             config.value_upper = std::move(*upper);
         }
 
-        if (start_address_[0] != '\0')
+        const std::string start_text = start_edit_->text().toStdString();
+        if (!start_text.empty())
         {
-            auto start = scan::parse_address(start_address_.data());
+            auto start = scan::parse_address(start_text);
             if (!start)
             {
                 return std::unexpected("Start address: " + start.error().message);
             }
             config.filter.start = *start;
         }
-        if (stop_address_[0] != '\0')
+        const std::string stop_text = stop_edit_->text().toStdString();
+        if (!stop_text.empty())
         {
-            auto stop = scan::parse_address(stop_address_.data());
+            auto stop = scan::parse_address(stop_text);
             if (!stop)
             {
                 return std::unexpected("Stop address: " + stop.error().message);
@@ -169,20 +400,20 @@ namespace slopkit::ui::panels
             config.filter.stop = *stop;
         }
 
-        config.filter.writable      = writable_;
-        config.filter.executable    = executable_;
-        config.filter.copy_on_write = copy_on_write_;
+        config.filter.writable      = writable_check_->isChecked();
+        config.filter.executable    = executable_check_->isChecked();
+        config.filter.copy_on_write = copy_on_write_check_->isChecked();
         config.filter.alignment     = 1;
-        if (fast_scan_)
+        if (fast_scan_check_->isChecked())
         {
-            const std::string_view text = alignment_.data();
-            if (text.empty())
+            const std::string alignment_text = alignment_edit_->text().toStdString();
+            if (alignment_text.empty())
             {
                 config.filter.alignment = default_alignment(config.value_type);
             }
             else
             {
-                auto alignment = scan::parse_alignment(text);
+                auto alignment = scan::parse_alignment(alignment_text);
                 if (!alignment)
                 {
                     return std::unexpected("Alignment: " + alignment.error().message);
@@ -235,24 +466,10 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::set_default_alignment(std::uint64_t alignment)
     {
-        std::snprintf(alignment_.data(), alignment_.size(), "%llu", static_cast<unsigned long long>(alignment));
+        alignment_edit_->setText(QString::number(alignment));
     }
 
-    std::optional<std::uint64_t> ScannerPanel::take_memory_view_request()
-    {
-        auto request = memory_view_request_;
-        memory_view_request_.reset();
-        return request;
-    }
-
-    bool ScannerPanel::take_add_address_request()
-    {
-        const bool request   = add_address_request_;
-        add_address_request_ = false;
-        return request;
-    }
-
-    void ScannerPanel::draw()
+    void ScannerPanel::refresh()
     {
         request_scan_session();
 
@@ -261,160 +478,39 @@ namespace slopkit::ui::panels
         const bool               has_results = engine_.has_results();
         const bool               preparing   = handoff_pending_.has_value();
         const bool               attached    = target_.valid() && static_cast<bool>(worker_session_) && !preparing;
-        const scan::ScanType     scan_type   = current_scan_type();
-        const bool wants_value = scan::needs_value(scan_type) || scan_type == scan::ScanType::value_between;
 
-        widgets::section_header("Scan");
+        scan_button_->setText(has_results ? tr("New Scan") : tr("First Scan"));
+        scan_button_->setEnabled(attached && !running);
+        next_scan_button_->setEnabled(attached && !running);
+        undo_button_->setEnabled(attached && !running);
+        cancel_button_->setVisible(running);
+        memory_view_button_->setEnabled(attached);
 
-        const float hex_width =
-            ImGui::CalcTextSize("Hex").x + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
-
-        ImGui::BeginDisabled(!wants_value);
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - hex_width);
-        {
-            ui::ScopedMonoFont mono;
-            ImGui::InputTextWithHint("##scan_value", "Value", value_buffer_.data(), value_buffer_.size());
-        }
-        if (scan_type == scan::ScanType::value_between)
-        {
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - hex_width);
-            ui::ScopedMonoFont mono;
-            ImGui::InputTextWithHint(
-                "##scan_value_upper", "Upper value", value_upper_buffer_.data(), value_upper_buffer_.size());
-        }
-        ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        ImGui::Checkbox("Hex", &hex_);
-
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::Combo(
-            "##scan_type", &scan_type_, scan::kScanTypeNames, static_cast<int>(std::size(scan::kScanTypeNames)));
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::Combo(
-            "##value_type", &value_type_, scan::kValueTypeNames, static_cast<int>(std::size(scan::kValueTypeNames)));
-
-        ImGui::Spacing();
-
-        // Scan actions.
-        const float spacing     = ImGui::GetStyle().ItemSpacing.x;
-        const float row_width   = ImGui::GetContentRegionAvail().x;
-        const float first_width = row_width * 0.36f;
-        const float next_width  = row_width * 0.32f;
-        const float undo_width  = std::max(row_width - first_width - next_width - 2.0f * spacing, 1.0f);
-
-        ImGui::BeginDisabled(!attached || running);
-        if (widgets::primary_button(has_results ? "New Scan" : "First Scan", ImVec2(first_width, 0.0f)))
-        {
-            start_first_scan();
-        }
-        ImGui::SameLine();
-        if (widgets::secondary_button("Next Scan", ImVec2(next_width, 0.0f)))
-        {
-            start_next_scan();
-        }
-        ImGui::SameLine();
-        if (widgets::secondary_button("Undo Scan", ImVec2(undo_width, 0.0f)))
-        {
-            engine_.undo();
-        }
-        ImGui::EndDisabled();
-
-        if (running)
-        {
-            ImGui::SameLine();
-            if (widgets::secondary_button("Cancel"))
-            {
-                engine_.cancel();
-            }
-        }
-
-        ImGui::Spacing();
-
-        if (widgets::begin_group("memory_scan_options", "Memory Scan Options"))
-        {
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
-            ImGui::InputTextWithHint("##start", "Start address", start_address_.data(), start_address_.size());
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputTextWithHint("##stop", "Stop address", stop_address_.data(), stop_address_.size());
-
-            ImGui::Checkbox("Writable", &writable_);
-            ImGui::SameLine();
-            ImGui::Checkbox("Executable", &executable_);
-            ImGui::SameLine();
-            ImGui::Checkbox("CopyOnWrite", &copy_on_write_);
-
-            ImGui::Checkbox("Fast Scan", &fast_scan_);
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!fast_scan_);
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 5.0f);
-            ImGui::InputTextWithHint("##alignment", "Alignment", alignment_.data(), alignment_.size());
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            {
-                ImGui::SetTooltip("Alignment step in bytes (decimal or 0x hex); blank uses the value size");
-            }
-
-            ImGui::Checkbox("Pause the game while scanning", &pause_while_scanning_);
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::SetTooltip("Accepted as a setting; no effect until a plugin can suspend the target");
-            }
-        }
-        widgets::end_group();
-
-        ImGui::Spacing();
-
-        ImGui::TextUnformatted("Extra options");
-        unavailable_checkbox("Lua formula", &lua_formula_, "Disabled: a Lua interpreter is not a project dependency");
-        ImGui::SameLine();
-        unavailable_checkbox("Not", &not_operator_, "Disabled: the scan engine does not invert comparisons yet");
-        ImGui::SameLine();
-        unavailable_checkbox("Unrandomizer", &unrandomizer_, "Disabled: requires code injection");
-        ImGui::SameLine();
-        unavailable_checkbox("Enable Speedhack", &speedhack_, "Disabled: requires code injection");
-
-        ImGui::Spacing();
-
-        ImGui::BeginDisabled(!attached);
-        if (widgets::secondary_button("Memory View"))
-        {
-            const auto address   = scan::parse_address(start_address_.data());
-            memory_view_request_ = address.has_value() ? *address : std::uint64_t {0};
-        }
-        ImGui::EndDisabled();
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        {
-            ImGui::SetTooltip("Open the Memory Viewer at the start address (or address 0)");
-        }
-
-        ImGui::SameLine();
-        if (widgets::secondary_button("Add Address Manually"))
-        {
-            add_address_request_ = true;
-        }
-
-        ImGui::Spacing();
+        progress_percent_ = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);
+        scan_progress_->setValue(progress_percent_);
 
         if (!status_.empty())
         {
-            widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                 status_.c_str());
+            status_label_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
+                                      to_qstring(status_));
         }
         else if (preparing)
         {
-            widgets::status_text(widgets::StatusKind::info, "Preparing scan session...");
+            status_label_->set_status(widgets::StatusKind::info, tr("Preparing scan session..."));
         }
         else if (!snapshot.message.empty())
         {
-            widgets::status_text(snapshot.state == scan::ScanState::failed ? widgets::StatusKind::error
-                                                                           : widgets::StatusKind::info,
-                                 snapshot.message.c_str());
+            status_label_->set_status(snapshot.state == scan::ScanState::failed ? widgets::StatusKind::error
+                                                                                : widgets::StatusKind::info,
+                                      to_qstring(snapshot.message));
         }
         else if (!attached)
         {
-            widgets::status_text(widgets::StatusKind::info, "Select a process to enable scanning.");
+            status_label_->set_status(widgets::StatusKind::info, tr("Select a process to enable scanning."));
+        }
+        else
+        {
+            status_label_->clear_status();
         }
     }
 

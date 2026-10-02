@@ -1,16 +1,20 @@
 #include "ui/dialogs/add_address.hpp"
 
-#include <cfloat>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 
-#include <imgui.h>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QFormLayout>
+#include <QHBoxLayout>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QVBoxLayout>
 
 #include "scan/types.hpp"
 #include "scan/value.hpp"
@@ -24,16 +28,15 @@ namespace slopkit::ui::dialogs
     {
         constexpr std::size_t kMaxSize = 4096;
 
-        bool parse_size(const char* text, std::size_t& out)
+        bool parse_size(std::string_view text, std::size_t& out)
         {
-            const std::string_view view(text);
-            if (view.empty())
+            if (text.empty())
             {
                 return false;
             }
             std::uint64_t value     = 0;
-            const auto [end, error] = std::from_chars(view.data(), view.data() + view.size(), value);
-            if (error != std::errc {} || end != view.data() + view.size() || value == 0 || value > kMaxSize)
+            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+            if (error != std::errc {} || end != text.data() + text.size() || value == 0 || value > kMaxSize)
             {
                 return false;
             }
@@ -42,92 +45,110 @@ namespace slopkit::ui::dialogs
         }
     } // namespace
 
-    AddAddress::AddAddress(table::AddressTable& table) : table_(table) {}
-
-    void AddAddress::commit()
+    AddAddressDialog::AddAddressDialog(table::AddressTable& table, QWidget* parent) : QDialog(parent), table_(table)
     {
-        const auto address = scan::parse_address(address_.data());
+        setWindowTitle(tr("Add Address"));
+        setMinimumWidth(360);
+
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(10, 10, 10, 10);
+        layout->setSpacing(8);
+
+        auto* form = new QFormLayout();
+        form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+        description_edit_ = new QLineEdit(tr("New address"), this);
+        form->addRow(tr("Description"), description_edit_);
+
+        address_edit_ = new QLineEdit(this);
+        address_edit_->setFont(mono_font());
+        address_edit_->setPlaceholderText(QStringLiteral("0x1234"));
+        form->addRow(tr("Address"), address_edit_);
+
+        type_combo_ = new QComboBox(this);
+        for (const char* name : scan::kValueTypeNames)
+        {
+            type_combo_->addItem(QString::fromUtf8(name));
+        }
+        type_combo_->setCurrentIndex(2); // 4 Bytes
+        form->addRow(tr("Type"), type_combo_);
+
+        size_row_         = new QWidget(this);
+        auto* size_layout = new QHBoxLayout(size_row_);
+        size_layout->setContentsMargins(0, 0, 0, 0);
+        size_edit_ = new QLineEdit(QStringLiteral("32"), size_row_);
+        size_edit_->setFont(mono_font());
+        size_layout->addWidget(size_edit_);
+        form->addRow(tr("Size (bytes)"), size_row_);
+
+        layout->addLayout(form);
+
+        hex_check_ = new QCheckBox(tr("Show as hex"), this);
+        layout->addWidget(hex_check_);
+
+        status_ = new widgets::StatusLabel(this);
+        layout->addWidget(status_);
+
+        auto* buttons      = new QHBoxLayout();
+        auto* add_button   = new widgets::PrimaryButton(tr("Add"), this);
+        auto* close_button = widgets::secondary_button(tr("Close"), this);
+        buttons->addWidget(add_button);
+        buttons->addWidget(close_button);
+        buttons->addStretch(1);
+        layout->addLayout(buttons);
+
+        connect(add_button, &QPushButton::clicked, this, &AddAddressDialog::commit);
+        connect(close_button, &QPushButton::clicked, this, &QDialog::close);
+        connect(type_combo_,
+                &QComboBox::currentIndexChanged,
+                this,
+                [this]
+                {
+                    update_size_row();
+                });
+
+        update_size_row();
+    }
+
+    void AddAddressDialog::update_size_row()
+    {
+        const auto type    = static_cast<scan::ValueType>(type_combo_->currentIndex());
+        const bool dynamic = type == scan::ValueType::string || type == scan::ValueType::byte_array;
+        size_row_->setVisible(dynamic);
+    }
+
+    void AddAddressDialog::commit()
+    {
+        const auto address = scan::parse_address(address_edit_->text().toStdString());
         if (!address)
         {
-            status_ = "Address: " + address.error().message;
+            status_->set_status(widgets::StatusKind::error,
+                                tr("Address: %1").arg(QString::fromStdString(address.error().message)));
             return;
         }
 
-        const auto  type    = static_cast<scan::ValueType>(type_index_);
+        const auto  type    = static_cast<scan::ValueType>(type_combo_->currentIndex());
         const bool  dynamic = type == scan::ValueType::string || type == scan::ValueType::byte_array;
         std::size_t size    = scan::value_size(type);
         if (type == scan::ValueType::all)
         {
             size = 4;
         }
-        if (dynamic && !parse_size(size_.data(), size))
+        if (dynamic && !parse_size(size_edit_->text().toStdString(), size))
         {
-            status_ = "Size must be a number between 1 and 4096.";
+            status_->set_status(widgets::StatusKind::error, tr("Size must be a number between 1 and 4096."));
             return;
         }
 
         table::AddressEntry entry;
-        entry.description = description_.data();
+        entry.description = description_edit_->text().toStdString();
         entry.address     = *address;
         entry.type        = type;
-        entry.hex         = hex_;
+        entry.hex         = hex_check_->isChecked();
         entry.bytes.assign(size, std::byte {0});
         table_.add(std::move(entry));
-        status_ = "Address added.";
-    }
 
-    void AddAddress::draw(bool& open)
-    {
-        ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 28.0f, ImGui::GetFontSize() * 16.0f),
-                                 ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Add Address", &open))
-        {
-            ImGui::End();
-            return;
-        }
-
-        ImGui::TextUnformatted("Description");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::InputText("##description", description_.data(), description_.size());
-
-        ImGui::TextUnformatted("Address");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        {
-            ui::ScopedMonoFont mono;
-            ImGui::InputTextWithHint("##address", "0x1234", address_.data(), address_.size());
-        }
-
-        ImGui::TextUnformatted("Type");
-        ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::Combo("##type", &type_index_, scan::kValueTypeNames, static_cast<int>(std::size(scan::kValueTypeNames)));
-
-        const auto type = static_cast<scan::ValueType>(type_index_);
-        if (type == scan::ValueType::string || type == scan::ValueType::byte_array)
-        {
-            ImGui::TextUnformatted("Size (bytes)");
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            ImGui::InputTextWithHint("##size", "32", size_.data(), size_.size());
-        }
-
-        ImGui::Checkbox("Show as hex", &hex_);
-
-        ImGui::Spacing();
-        if (widgets::primary_button("Add"))
-        {
-            commit();
-        }
-        ImGui::SameLine();
-        if (widgets::secondary_button("Close"))
-        {
-            open = false;
-        }
-
-        if (!status_.empty())
-        {
-            widgets::status_text(widgets::StatusKind::info, status_.c_str());
-        }
-
-        ImGui::End();
+        status_->set_status(widgets::StatusKind::info, tr("Address added."));
     }
 
 } // namespace slopkit::ui::dialogs

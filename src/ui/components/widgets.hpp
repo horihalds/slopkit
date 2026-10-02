@@ -1,6 +1,16 @@
 #pragma once
 
-#include <imgui.h>
+#include <QColor>
+#include <QFrame>
+#include <QIcon>
+#include <QLabel>
+#include <QPushButton>
+#include <QString>
+#include <QWidget>
+
+class QAction;
+class QToolButton;
+class QVBoxLayout;
 
 namespace slopkit::ui::widgets
 {
@@ -13,43 +23,95 @@ namespace slopkit::ui::widgets
         error,
     };
 
-    // Muted label with a separator, used to title sections inside panels.
-    void section_header(const char* label);
+    // The colour a status kind is drawn with.
+    [[nodiscard]] QColor status_color(StatusKind kind);
 
-    // Filled, accent-coloured button for the primary action.
-    bool primary_button(const char* label, const ImVec2& size = ImVec2(0.0f, 0.0f));
+    // Muted title label used to head a section or panel.
+    [[nodiscard]] QLabel* section_header(const QString& text, QWidget* parent = nullptr);
 
-    // Muted, surface-coloured button for secondary actions.
-    bool secondary_button(const char* label, const ImVec2& size = ImVec2(0.0f, 0.0f));
+    // Accent-filled button for the primary action. Fusion derives the hover and
+    // pressed shades from the button colour, and the palette is re-applied when
+    // the application palette changes, so a theme switch keeps the accent.
+    class PrimaryButton : public QPushButton
+    {
+        Q_OBJECT
 
-    // Card-like surface. EndChild must be paired with every BeginChild, so
-    // end_panel() must always be called after begin_panel().
-    bool begin_panel(const char* id, const char* title);
-    void end_panel();
+    public:
+        explicit PrimaryButton(const QString& text, QWidget* parent = nullptr);
 
-    // Wrapped status line coloured by kind.
-    void status_text(StatusKind kind, const char* text);
+    protected:
+        void changeEvent(QEvent* event) override;
 
-    // Progress bar filled with the accent colour. `fraction` is clamped to
-    // 0..1; when `overlay` is null the percentage is shown.
-    void progress_bar(const char*   id,
-                      float         fraction,
-                      const ImVec2& size    = ImVec2(0.0f, 0.0f),
-                      const char*   overlay = nullptr);
+    private:
+        void apply_palette();
 
-    // Draggable divider between two panes. `vertical` is true for a vertical
-    // bar that resizes the panes horizontally. `extent` is the combined size of
-    // both panes along the drag axis and `span` is the divider's own length.
-    // The ratio is mutated while dragging and clamped so neither pane
-    // collapses. Returns true when the ratio changed this frame.
-    bool splitter(const char* id, bool vertical, float& ratio, float extent, float span);
+        bool applying_ {false};
+    };
 
-    // Collapsible themed section. end_group() must be called after every
-    // begin_group(), whether or not the group is open.
-    bool begin_group(const char* id, const char* title, bool default_open = true);
-    void end_group();
+    // Surface-coloured button for secondary actions; the base palette already
+    // paints it that way.
+    [[nodiscard]] QPushButton* secondary_button(const QString& text, QWidget* parent = nullptr);
 
-    // Compact toolbar button with an optional leading icon text.
-    bool toolbar_button(const char* label, const char* icon_text = nullptr);
+    // Card-like surface with an optional title; add the content to body().
+    class Panel : public QFrame
+    {
+        Q_OBJECT
+
+    public:
+        explicit Panel(const QString& title = QString(), QWidget* parent = nullptr);
+
+        [[nodiscard]] QVBoxLayout* body() const noexcept;
+
+    private:
+        QVBoxLayout* body_ {};
+    };
+
+    // Collapsible themed section; add the content to body().
+    class CollapsibleSection : public QWidget
+    {
+        Q_OBJECT
+
+    public:
+        explicit CollapsibleSection(const QString& title, bool expanded = true, QWidget* parent = nullptr);
+
+        [[nodiscard]] QVBoxLayout* body() const noexcept;
+
+    private:
+        void set_expanded(bool expanded);
+
+        QToolButton* toggle_ {};
+        QWidget*     content_ {};
+        QVBoxLayout* body_ {};
+    };
+
+    // Wrapped status line coloured by kind; keeps its colour across theme
+    // switches.
+    class StatusLabel : public QLabel
+    {
+        Q_OBJECT
+
+    public:
+        explicit StatusLabel(QWidget* parent = nullptr);
+
+        void set_status(StatusKind kind, const QString& text);
+        void clear_status();
+
+    protected:
+        void changeEvent(QEvent* event) override;
+
+    private:
+        void apply_color();
+
+        StatusKind kind_ {StatusKind::info};
+        bool       applying_ {false};
+    };
+
+    // Multi-size application icon assembled from the generated
+    // `:/icons/<N>x<N>/apps/slopkit.png` resources.
+    [[nodiscard]] QIcon application_icon();
+
+    // Toolbar action: the toolbar shows `text`, the menus show `menu_text`
+    // (which carries the ellipsis where the command opens something).
+    [[nodiscard]] QAction* toolbar_action(const QString& text, const QString& menu_text, QWidget* parent);
 
 } // namespace slopkit::ui::widgets

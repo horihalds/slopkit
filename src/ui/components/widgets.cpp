@@ -1,7 +1,12 @@
 #include "ui/components/widgets.hpp"
 
-#include <algorithm>
-#include <string>
+#include <QAction>
+#include <QEvent>
+#include <QGuiApplication>
+#include <QPalette>
+#include <QSizePolicy>
+#include <QToolButton>
+#include <QVBoxLayout>
 
 #include "ui/theme.hpp"
 
@@ -10,176 +15,197 @@ namespace slopkit::ui::widgets
 
     namespace
     {
-        // Divider thickness as a fraction of the font size, so it follows the
-        // DPI scale without a raw pixel literal.
-        constexpr float kSplitterThicknessEm = 0.4f;
-
-        // Minimum pane size in font-size units, used to keep both panes
-        // usable when the divider is dragged to an extreme.
-        constexpr float kMinPaneEm = 3.0f;
-
-        float splitter_thickness()
-        {
-            return ImGui::GetFontSize() * kSplitterThicknessEm;
-        }
+        // Every icon size generated for the desktop entry.
+        constexpr int kIconSizes[] = {16, 24, 32, 48, 64, 128, 256, 512};
     } // namespace
 
-    void section_header(const char* label)
+    QColor status_color(StatusKind kind)
     {
         const Theme& theme = active_theme();
-        ImGui::PushStyleColor(ImGuiCol_Text, theme.text_muted);
-        ImGui::TextUnformatted(label);
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-        ImGui::Spacing();
-    }
-
-    bool primary_button(const char* label, const ImVec2& size)
-    {
-        const Theme& theme = active_theme();
-        ImGui::PushStyleColor(ImGuiCol_Button, theme.accent);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme.accent_hover);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme.accent_active);
-        const bool pressed = ImGui::Button(label, size);
-        ImGui::PopStyleColor(3);
-        return pressed;
-    }
-
-    bool secondary_button(const char* label, const ImVec2& size)
-    {
-        const Theme& theme = active_theme();
-        ImGui::PushStyleColor(ImGuiCol_Button, theme.surface);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme.surface_hover);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme.surface_hover);
-        ImGui::PushStyleColor(ImGuiCol_Text, theme.text);
-        const bool pressed = ImGui::Button(label, size);
-        ImGui::PopStyleColor(4);
-        return pressed;
-    }
-
-    bool begin_panel(const char* id, const char* title)
-    {
-        const Theme& theme = active_theme();
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, theme.surface);
-        const bool visible = ImGui::BeginChild(id, ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
-        if (visible && title != nullptr && title[0] != '\0')
-        {
-            section_header(title);
-        }
-        return visible;
-    }
-
-    void end_panel()
-    {
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-    }
-
-    void status_text(StatusKind kind, const char* text)
-    {
-        const Theme& theme = active_theme();
-
-        ImVec4 color = theme.text;
         switch (kind)
         {
         case StatusKind::info:
-            color = theme.text_muted;
             break;
         case StatusKind::success:
-            color = theme.success;
-            break;
+            return theme.success;
         case StatusKind::warning:
-            color = theme.warning;
-            break;
+            return theme.warning;
         case StatusKind::error:
-            color = theme.error;
-            break;
+            return theme.error;
         }
-
-        ImGui::PushStyleColor(ImGuiCol_Text, color);
-        ImGui::TextWrapped("%s", text);
-        ImGui::PopStyleColor();
+        return theme.text_muted;
     }
 
-    void progress_bar(const char* id, float fraction, const ImVec2& size, const char* overlay)
+    QLabel* section_header(const QString& text, QWidget* parent)
     {
-        ImGui::PushID(id);
-        ImGui::ProgressBar(std::clamp(fraction, 0.0f, 1.0f), size, overlay);
-        ImGui::PopID();
+        // A status label in the muted "info" colour, so the title follows the
+        // theme without a hard-coded colour.
+        auto* label = new StatusLabel(parent);
+        label->set_status(StatusKind::info, text);
+        QFont font = label->font();
+        font.setWeight(QFont::DemiBold);
+        label->setFont(font);
+        return label;
     }
 
-    bool splitter(const char* id, bool vertical, float& ratio, float extent, float span)
+    PrimaryButton::PrimaryButton(const QString& text, QWidget* parent) : QPushButton(text, parent)
     {
-        const float  thickness = splitter_thickness();
-        const ImVec2 item_size = vertical ? ImVec2(thickness, span) : ImVec2(span, thickness);
-
-        ImGui::PushID(id);
-        ImGui::InvisibleButton("##splitter", ImVec2(std::max(item_size.x, 1.0f), std::max(item_size.y, 1.0f)));
-
-        const bool hovered = ImGui::IsItemHovered();
-        const bool active  = ImGui::IsItemActive();
-        if (hovered || active)
-        {
-            ImGui::SetMouseCursor(vertical ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeNS);
-        }
-
-        const Theme& theme = active_theme();
-        const ImVec4 color = active ? theme.accent : (hovered ? theme.accent_hover : theme.border);
-        const ImVec2 min   = ImGui::GetItemRectMin();
-        const ImVec2 max   = ImGui::GetItemRectMax();
-        ImDrawList*  draw  = ImGui::GetWindowDrawList();
-        if (vertical)
-        {
-            const float x = (min.x + max.x) * 0.5f;
-            draw->AddLine(ImVec2(x, min.y), ImVec2(x, max.y), ImGui::GetColorU32(color), 1.0f);
-        }
-        else
-        {
-            const float y = (min.y + max.y) * 0.5f;
-            draw->AddLine(ImVec2(min.x, y), ImVec2(max.x, y), ImGui::GetColorU32(color), 1.0f);
-        }
-
-        bool changed = false;
-        if (active && extent > 1.0f)
-        {
-            const float delta = vertical ? ImGui::GetIO().MouseDelta.x : ImGui::GetIO().MouseDelta.y;
-            if (delta != 0.0f)
-            {
-                const float min_ratio = std::min(0.5f, (ImGui::GetFontSize() * kMinPaneEm) / extent);
-                ratio                 = std::clamp(ratio + delta / extent, min_ratio, 1.0f - min_ratio);
-                changed               = true;
-            }
-        }
-
-        ImGui::PopID();
-        return changed;
+        apply_palette();
     }
 
-    bool begin_group(const char* id, const char* title, bool default_open)
+    void PrimaryButton::changeEvent(QEvent* event)
     {
-        const Theme& theme = active_theme();
-        ImGui::PushID(id);
-        ImGui::PushStyleColor(ImGuiCol_Header, theme.surface);
-        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, theme.surface_hover);
-        ImGui::PushStyleColor(ImGuiCol_HeaderActive, theme.accent_hover);
-        const ImGuiTreeNodeFlags flags = default_open ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None;
-        return ImGui::CollapsingHeader(title, flags);
-    }
-
-    void end_group()
-    {
-        ImGui::PopStyleColor(3);
-        ImGui::PopID();
-    }
-
-    bool toolbar_button(const char* label, const char* icon_text)
-    {
-        if (icon_text == nullptr || icon_text[0] == '\0')
+        QPushButton::changeEvent(event);
+        if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange)
         {
-            return secondary_button(label);
+            apply_palette();
         }
-        const std::string text = std::string(icon_text) + "  " + label;
-        return secondary_button(text.c_str());
+    }
+
+    void PrimaryButton::apply_palette()
+    {
+        // setPalette() reports a palette change; without the guard that would
+        // recurse forever.
+        if (applying_)
+        {
+            return;
+        }
+        applying_ = true;
+
+        QPalette     palette = QGuiApplication::palette();
+        const Theme& theme   = active_theme();
+        palette.setColor(QPalette::Button, theme.accent);
+        palette.setColor(QPalette::ButtonText, theme.on_accent);
+        setPalette(palette);
+
+        applying_ = false;
+    }
+
+    QPushButton* secondary_button(const QString& text, QWidget* parent)
+    {
+        return new QPushButton(text, parent);
+    }
+
+    Panel::Panel(const QString& title, QWidget* parent) : QFrame(parent)
+    {
+        setFrameShape(QFrame::StyledPanel);
+        setFrameShadow(QFrame::Plain);
+        // The surface shade comes from a palette role, so it follows the theme.
+        setBackgroundRole(QPalette::Base);
+        setAutoFillBackground(true);
+
+        body_ = new QVBoxLayout(this);
+        body_->setContentsMargins(8, 8, 8, 8);
+        body_->setSpacing(6);
+        if (!title.isEmpty())
+        {
+            body_->addWidget(section_header(title, this));
+        }
+    }
+
+    QVBoxLayout* Panel::body() const noexcept
+    {
+        return body_;
+    }
+
+    CollapsibleSection::CollapsibleSection(const QString& title, bool expanded, QWidget* parent) : QWidget(parent)
+    {
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(4);
+
+        toggle_ = new QToolButton(this);
+        toggle_->setText(title);
+        toggle_->setCheckable(true);
+        toggle_->setChecked(expanded);
+        toggle_->setAutoRaise(true);
+        toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+        toggle_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        layout->addWidget(toggle_, 0, Qt::AlignLeft);
+
+        content_ = new QWidget(this);
+        content_->setVisible(expanded);
+        body_ = new QVBoxLayout(content_);
+        body_->setContentsMargins(12, 0, 0, 0);
+        body_->setSpacing(6);
+        layout->addWidget(content_);
+
+        connect(toggle_, &QToolButton::toggled, this, &CollapsibleSection::set_expanded);
+    }
+
+    QVBoxLayout* CollapsibleSection::body() const noexcept
+    {
+        return body_;
+    }
+
+    void CollapsibleSection::set_expanded(bool expanded)
+    {
+        toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+        content_->setVisible(expanded);
+    }
+
+    StatusLabel::StatusLabel(QWidget* parent) : QLabel(parent)
+    {
+        setWordWrap(true);
+        apply_color();
+    }
+
+    void StatusLabel::set_status(StatusKind kind, const QString& text)
+    {
+        kind_ = kind;
+        setText(text);
+        apply_color();
+    }
+
+    void StatusLabel::clear_status()
+    {
+        set_status(StatusKind::info, QString());
+    }
+
+    void StatusLabel::changeEvent(QEvent* event)
+    {
+        QLabel::changeEvent(event);
+        if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ApplicationPaletteChange)
+        {
+            apply_color();
+        }
+    }
+
+    void StatusLabel::apply_color()
+    {
+        // setPalette() reports a palette change; without the guard that would
+        // recurse forever.
+        if (applying_)
+        {
+            return;
+        }
+        applying_ = true;
+
+        // The application palette is the base, so a later theme switch is picked
+        // up again by the palette-change handler.
+        QPalette palette = QGuiApplication::palette();
+        palette.setColor(QPalette::WindowText, status_color(kind_));
+        setPalette(palette);
+
+        applying_ = false;
+    }
+
+    QIcon application_icon()
+    {
+        QIcon icon;
+        for (const int size : kIconSizes)
+        {
+            icon.addFile(QStringLiteral(":/icons/%1x%1/apps/slopkit.png").arg(size));
+        }
+        return icon;
+    }
+
+    QAction* toolbar_action(const QString& text, const QString& menu_text, QWidget* parent)
+    {
+        auto* action = new QAction(menu_text, parent);
+        action->setIconText(text);
+        return action;
     }
 
 } // namespace slopkit::ui::widgets

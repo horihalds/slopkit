@@ -97,9 +97,15 @@ namespace slopkit::process
     // Runs on the UI thread inside AccessWorker::drain().
     using JobCallback = std::move_only_function<void(JobResult&&)>;
 
+    // Invoked on the worker thread right after a completion is queued, so the UI
+    // can post a wake-up to its own event loop. It must not touch a widget, a
+    // session or any other UI state; keep it to a thread-safe notification.
+    using CompletionHook = std::move_only_function<void()>;
+
     // Serializes every target access on one background thread. The worker owns
     // the application's Session; the UI only submits jobs and drains the
-    // completions once per frame. Only the UI thread touches ImGui and OpenGL.
+    // completions after the completion hook posts a wake-up. Only the UI thread
+    // touches the widgets.
     class AccessWorker
     {
     public:
@@ -124,9 +130,14 @@ namespace slopkit::process
         // requested a detach.
         bool submit_detach(JobId id, JobCallback on_done);
 
-        // Invokes pending callbacks on the calling (UI) thread; call once per
-        // frame. Bounded so a single frame never drains an unbounded backlog.
+        // Invokes pending callbacks on the calling (UI) thread; call after the
+        // completion hook posted a wake-up. Bounded so a single call never drains
+        // an unbounded backlog.
         std::size_t drain(std::size_t max_jobs = 64);
+
+        // Registers the notification invoked on the worker thread after a
+        // completion is queued; pass an empty hook to clear it.
+        void set_completion_hook(CompletionHook hook);
 
         // Atomic mirror of the worker-owned session slot.
         [[nodiscard]] bool attached() const noexcept;
@@ -186,7 +197,8 @@ namespace slopkit::process
         std::condition_variable cv_;
         std::deque<Request>     requests_;
         std::deque<Completion>  completions_;
-        std::optional<Session>  session_; // worker thread only
+        CompletionHook          completion_hook_; // guarded by mutex_
+        std::optional<Session>  session_;         // worker thread only
         std::atomic<bool>       attached_ {false};
         std::atomic<JobId>      next_id_ {1};
     };

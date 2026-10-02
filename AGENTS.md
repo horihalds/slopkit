@@ -21,7 +21,7 @@ them for every task in this repository.
 ## UI & Design
 
 - Follow the guidelines in `docs/UI_DESIGN.md`
-- Never perform target access on the UI thread. UI code must not touch a `process::Session`, call a plugin or make a syscall during a frame; process listing, attach, probing, the desktop-entry index, memory reads/writes and the freeze pass all go through `process::AccessWorker` and are applied by its once-per-frame drain.
+- Never perform target access on the UI thread. UI code must not touch a `process::Session`, call a plugin or make a syscall; process listing, attach, probing, the desktop-entry index, memory reads/writes and the freeze pass all go through `process::AccessWorker` and are applied by its queued `drain()` on the UI thread.
 
 ## Build & test
 
@@ -56,9 +56,11 @@ them for every task in this repository.
 - Tying into that, the build links the system Zydis through `pkg-config`; it
   needs the distro Zydis development package (e.g. Fedora's `zydis-devel`) and
   `pkg-config` installed, and does not vendor Zydis.
-- ImageMagick is a build-time dependency: configure generates the icon set and
-  the embedded window icon from `data/icon.svg`, and fails with an actionable
-  message when neither `magick` nor `convert` is on the `PATH`.
+- Qt 6 Widgets (`Qt6::Core`, `Qt6::Gui`, `Qt6::Widgets`) is the UI toolkit; the
+  build requires the Qt 6 development packages and does not vendor Qt.
+- ImageMagick is a build-time dependency: configure generates the icon set that
+  is embedded into the Qt resources from `data/icon.svg`, and fails with an
+  actionable message when neither `magick` nor `convert` is on the `PATH`.
 
 ## Reference tree
 

@@ -20,51 +20,22 @@ set(SLOPKIT_PLUGIN_RELATIVE_DIR "../${CMAKE_INSTALL_LIBDIR}/slopkit/plugins")
 
 # --- dependencies ----------------------------------------------------------
 #
-# The only third-party source that is fetched and pinned to a commit hash is
-# Dear ImGui. Zydis, GLFW and OpenGL come from the system packages (see below).
-#
-# The pin is the docking-branch release `v1.92.9b-docking` (peeled commit
-# below), which matches the previously used 1.92.9b and adds the multi-viewport
-# support the dialogs need. The core source list is identical on both branches.
+# Qt6 Widgets is the UI toolkit, replacing the previous immediate-mode stack.
+# Zydis still comes from the system packages (see below).
 
-include(FetchContent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
-FetchContent_Declare(imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG b48d1afbe8ee8b238e2961dc363a949dd7304e23)
-
-FetchContent_MakeAvailable(imgui)
-
-# Dear ImGui ships no CMakeLists.txt, so FetchContent only populates its
-# sources. Expose the backend-agnostic core as a library target. The docking
-# branch uses the same core file list as master.
-add_library(imgui STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp
-    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp)
-target_include_directories(imgui PUBLIC
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
-    ${imgui_SOURCE_DIR}/misc/cpp)
+# Q_OBJECT classes live in headers next to their same-named .cpp, which is the
+# layout AUTOMOC scans to generate the meta-object code.
+set(CMAKE_AUTOMOC ON)
 
 # --- system dependencies ---------------------------------------------------
 #
-# These come from the system repositories (e.g. Fedora `zydis-devel` and
-# `glfw-devel`) and ship pkg-config files but no CMake package configs.
+# Zydis comes from the system repositories (e.g. Fedora `zydis-devel`) and ships
+# a pkg-config file but no CMake package config.
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZYDIS REQUIRED IMPORTED_TARGET zydis)
-pkg_check_modules(GLFW REQUIRED IMPORTED_TARGET glfw3)
-pkg_check_modules(OPENGL REQUIRED IMPORTED_TARGET gl)
-
-# GLFW + OpenGL3 backends, compiled against the system GLFW.
-add_library(imgui_backends STATIC
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
-target_link_libraries(imgui_backends PUBLIC imgui PkgConfig::GLFW)
 
 # --- assets ----------------------------------------------------------------
 
@@ -88,11 +59,10 @@ add_library(slopkit_assets INTERFACE)
 embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSans-Regular.ttf slopkit_notosans_regular)
 embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSansMono-Regular.ttf slopkit_notosansmono_regular)
 
-# Hicolor PNG set for the desktop entry, plus the 64x64 RGBA blob used as the
-# X11 window icon. Both share the `slopkit_assets` include directory.
+# Hicolor PNG set for the desktop entry, embedded below as a Qt resource so
+# `QIcon` gets every size crisp.
 set(SLOPKIT_ICON_SIZES 16 24 32 48 64 128 256 512)
 slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/data/icon.svg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
-embed_window_icon(slopkit_assets ${CMAKE_SOURCE_DIR}/data/icon.svg 64 slopkit_icon_rgba)
 
 # --- application -----------------------------------------------------------
 
@@ -110,10 +80,15 @@ target_compile_definitions(slopkit PRIVATE SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKI
 target_compile_options(slopkit PRIVATE -Wall -Wextra)
 target_link_libraries(slopkit PRIVATE
     slopkit_assets
-    imgui_backends
-    PkgConfig::OPENGL
+    Qt6::Widgets
     PkgConfig::ZYDIS
     ${CMAKE_DL_LIBS})
+
+# Every generated icon size is embedded as :/icons/<N>x<N>/apps/slopkit.png.
+qt_add_resources(slopkit "slopkit_icons"
+    PREFIX "/icons"
+    BASE "${CMAKE_BINARY_DIR}/icons"
+    FILES ${SLOPKIT_ICON_PNGS})
 
 # --- platform library ------------------------------------------------------
 
@@ -201,14 +176,18 @@ target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2
     slopkit_platform
     slopkit_assets
-    imgui_backends
-    PkgConfig::OPENGL
+    Qt6::Widgets
     PkgConfig::ZYDIS
     ${CMAKE_DL_LIBS})
+qt_add_resources(slopkit_tests "slopkit_icons"
+    PREFIX "/icons"
+    BASE "${CMAKE_BINARY_DIR}/icons"
+    FILES ${SLOPKIT_ICON_PNGS})
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)
-catch_discover_tests(slopkit_tests)
+# Widget tests run headless through the offscreen QPA platform.
+catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # --- install ---------------------------------------------------------------
 

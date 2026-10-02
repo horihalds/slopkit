@@ -1,110 +1,120 @@
 #include "ui/theme.hpp"
 
+#include <QApplication>
+#include <QGuiApplication>
+#include <QStyleHints>
+
 namespace slopkit::ui
 {
 
     namespace
     {
-        constexpr ImVec4 rgba(float red, float green, float blue, float alpha = 1.0f)
+        QColor rgb(float red, float green, float blue)
         {
-            return ImVec4(red, green, blue, alpha);
+            return QColor::fromRgbF(red, green, blue);
         }
 
+        // The active theme the component library reads from; refreshed by
+        // apply_theme().
         Theme g_active = dark_theme();
 
-        void assign_colors(ImGuiStyle& style, const Theme& theme)
+        void assign_group(QPalette& palette, QPalette::ColorGroup group, const Theme& theme)
         {
-            style.Colors[ImGuiCol_Text]                 = theme.text;
-            style.Colors[ImGuiCol_TextDisabled]         = theme.text_muted;
-            style.Colors[ImGuiCol_WindowBg]             = theme.background;
-            style.Colors[ImGuiCol_ChildBg]              = theme.background;
-            style.Colors[ImGuiCol_PopupBg]              = theme.surface;
-            style.Colors[ImGuiCol_Border]               = theme.border;
-            style.Colors[ImGuiCol_BorderShadow]         = rgba(0.0f, 0.0f, 0.0f, 0.0f);
-            style.Colors[ImGuiCol_FrameBg]              = theme.surface;
-            style.Colors[ImGuiCol_FrameBgHovered]       = theme.surface_hover;
-            style.Colors[ImGuiCol_FrameBgActive]        = theme.surface_hover;
-            style.Colors[ImGuiCol_TitleBg]              = theme.background;
-            style.Colors[ImGuiCol_TitleBgActive]        = theme.surface;
-            style.Colors[ImGuiCol_TitleBgCollapsed]     = theme.background;
-            style.Colors[ImGuiCol_MenuBarBg]            = theme.surface;
-            style.Colors[ImGuiCol_ScrollbarBg]          = theme.background;
-            style.Colors[ImGuiCol_ScrollbarGrab]        = theme.surface_hover;
-            style.Colors[ImGuiCol_ScrollbarGrabHovered] = theme.border;
-            style.Colors[ImGuiCol_ScrollbarGrabActive]  = theme.accent;
-            style.Colors[ImGuiCol_CheckMark]            = theme.accent;
-            style.Colors[ImGuiCol_SliderGrab]           = theme.accent;
-            style.Colors[ImGuiCol_SliderGrabActive]     = theme.accent_active;
-            style.Colors[ImGuiCol_PlotHistogram]        = theme.accent;
-            style.Colors[ImGuiCol_PlotHistogramHovered] = theme.accent_hover;
-            style.Colors[ImGuiCol_Button]               = theme.surface;
-            style.Colors[ImGuiCol_ButtonHovered]        = theme.surface_hover;
-            style.Colors[ImGuiCol_ButtonActive]         = theme.accent_active;
-            style.Colors[ImGuiCol_Header]               = theme.surface_hover;
-            style.Colors[ImGuiCol_HeaderHovered]        = theme.accent_hover;
-            style.Colors[ImGuiCol_HeaderActive]         = theme.accent;
-            style.Colors[ImGuiCol_Separator]            = theme.border;
-            style.Colors[ImGuiCol_SeparatorHovered]     = theme.accent_hover;
-            style.Colors[ImGuiCol_SeparatorActive]      = theme.accent;
-            style.Colors[ImGuiCol_ResizeGrip]           = theme.surface_hover;
-            style.Colors[ImGuiCol_ResizeGripHovered]    = theme.accent_hover;
-            style.Colors[ImGuiCol_ResizeGripActive]     = theme.accent;
-            style.Colors[ImGuiCol_Tab]                  = theme.surface;
-            style.Colors[ImGuiCol_TabHovered]           = theme.surface_hover;
-            style.Colors[ImGuiCol_TabSelected]          = theme.accent;
-            style.Colors[ImGuiCol_TabDimmed]            = theme.background;
-            style.Colors[ImGuiCol_TabDimmedSelected]    = theme.surface_hover;
-            style.Colors[ImGuiCol_TableHeaderBg]        = theme.surface;
-            style.Colors[ImGuiCol_TableBorderStrong]    = theme.border;
-            style.Colors[ImGuiCol_TableBorderLight]     = theme.border;
-            style.Colors[ImGuiCol_TableRowBg]           = rgba(0.0f, 0.0f, 0.0f, 0.0f);
-            style.Colors[ImGuiCol_TableRowBgAlt]        = theme.surface;
-            style.Colors[ImGuiCol_TextSelectedBg]       = theme.accent_hover;
-            style.Colors[ImGuiCol_NavCursor]            = theme.accent;
-            style.Colors[ImGuiCol_ModalWindowDimBg]     = rgba(0.0f, 0.0f, 0.0f, 0.4f);
+            palette.setColor(group, QPalette::Window, theme.background);
+            palette.setColor(group, QPalette::WindowText, theme.text);
+            palette.setColor(group, QPalette::Base, theme.surface);
+            palette.setColor(group, QPalette::AlternateBase, theme.surface_hover);
+            palette.setColor(group, QPalette::ToolTipBase, theme.surface);
+            palette.setColor(group, QPalette::ToolTipText, theme.text);
+            palette.setColor(group, QPalette::Text, theme.text);
+            palette.setColor(group, QPalette::Button, theme.surface);
+            palette.setColor(group, QPalette::ButtonText, theme.text);
+            palette.setColor(group, QPalette::PlaceholderText, theme.text_muted);
+            palette.setColor(group, QPalette::Light, theme.surface_hover);
+            palette.setColor(group, QPalette::Midlight, theme.surface_hover);
+            palette.setColor(group, QPalette::Mid, theme.border);
+            palette.setColor(group, QPalette::Dark, theme.border);
+            palette.setColor(group, QPalette::Shadow, theme.background);
+            palette.setColor(group, QPalette::Highlight, theme.accent);
+            palette.setColor(group, QPalette::HighlightedText, theme.on_accent);
+            palette.setColor(group, QPalette::Link, theme.accent);
+            palette.setColor(group, QPalette::LinkVisited, theme.accent_active);
         }
     } // namespace
 
     Theme dark_theme()
     {
         Theme theme;
-        theme.background    = rgba(0.09f, 0.10f, 0.12f);
-        theme.surface       = rgba(0.13f, 0.14f, 0.18f);
-        theme.surface_hover = rgba(0.18f, 0.20f, 0.25f);
-        theme.text          = rgba(0.92f, 0.93f, 0.95f);
-        theme.text_muted    = rgba(0.60f, 0.62f, 0.68f);
-        theme.accent        = rgba(0.30f, 0.58f, 0.95f);
-        theme.accent_hover  = rgba(0.38f, 0.66f, 0.99f);
-        theme.accent_active = rgba(0.24f, 0.49f, 0.84f);
-        theme.border        = rgba(0.24f, 0.26f, 0.32f);
-        theme.success       = rgba(0.42f, 0.80f, 0.50f);
-        theme.warning       = rgba(0.94f, 0.74f, 0.32f);
-        theme.error         = rgba(0.92f, 0.44f, 0.44f);
+        theme.background    = rgb(0.09f, 0.10f, 0.12f);
+        theme.surface       = rgb(0.13f, 0.14f, 0.18f);
+        theme.surface_hover = rgb(0.18f, 0.20f, 0.25f);
+        theme.text          = rgb(0.92f, 0.93f, 0.95f);
+        theme.text_muted    = rgb(0.60f, 0.62f, 0.68f);
+        theme.accent        = rgb(0.30f, 0.58f, 0.95f);
+        theme.accent_hover  = rgb(0.38f, 0.66f, 0.99f);
+        theme.accent_active = rgb(0.24f, 0.49f, 0.84f);
+        theme.on_accent     = rgb(1.00f, 1.00f, 1.00f);
+        theme.border        = rgb(0.24f, 0.26f, 0.32f);
+        theme.success       = rgb(0.42f, 0.80f, 0.50f);
+        theme.warning       = rgb(0.94f, 0.74f, 0.32f);
+        theme.error         = rgb(0.92f, 0.44f, 0.44f);
         return theme;
     }
 
     Theme light_theme()
     {
         Theme theme;
-        theme.background    = rgba(0.97f, 0.97f, 0.98f);
-        theme.surface       = rgba(1.00f, 1.00f, 1.00f);
-        theme.surface_hover = rgba(0.92f, 0.93f, 0.95f);
-        theme.text          = rgba(0.12f, 0.13f, 0.16f);
-        theme.text_muted    = rgba(0.42f, 0.44f, 0.50f);
-        theme.accent        = rgba(0.15f, 0.42f, 0.86f);
-        theme.accent_hover  = rgba(0.20f, 0.49f, 0.93f);
-        theme.accent_active = rgba(0.11f, 0.34f, 0.72f);
-        theme.border        = rgba(0.80f, 0.82f, 0.86f);
-        theme.success       = rgba(0.20f, 0.60f, 0.30f);
-        theme.warning       = rgba(0.72f, 0.50f, 0.10f);
-        theme.error         = rgba(0.78f, 0.22f, 0.22f);
+        theme.background    = rgb(0.97f, 0.97f, 0.98f);
+        theme.surface       = rgb(1.00f, 1.00f, 1.00f);
+        theme.surface_hover = rgb(0.92f, 0.93f, 0.95f);
+        theme.text          = rgb(0.12f, 0.13f, 0.16f);
+        theme.text_muted    = rgb(0.42f, 0.44f, 0.50f);
+        theme.accent        = rgb(0.15f, 0.42f, 0.86f);
+        theme.accent_hover  = rgb(0.20f, 0.49f, 0.93f);
+        theme.accent_active = rgb(0.11f, 0.34f, 0.72f);
+        theme.on_accent     = rgb(1.00f, 1.00f, 1.00f);
+        theme.border        = rgb(0.80f, 0.82f, 0.86f);
+        theme.success       = rgb(0.20f, 0.60f, 0.30f);
+        theme.warning       = rgb(0.72f, 0.50f, 0.10f);
+        theme.error         = rgb(0.78f, 0.22f, 0.22f);
         return theme;
     }
 
-    void apply_theme(ImGuiStyle& style, const Theme& theme)
+    QPalette make_palette(const Theme& theme)
+    {
+        QPalette palette;
+        assign_group(palette, QPalette::Active, theme);
+        assign_group(palette, QPalette::Inactive, theme);
+
+        // Disabled controls keep their surfaces but fade their text.
+        assign_group(palette, QPalette::Disabled, theme);
+        palette.setColor(QPalette::Disabled, QPalette::WindowText, theme.text_muted);
+        palette.setColor(QPalette::Disabled, QPalette::Text, theme.text_muted);
+        palette.setColor(QPalette::Disabled, QPalette::ButtonText, theme.text_muted);
+        palette.setColor(QPalette::Disabled, QPalette::HighlightedText, theme.text_muted);
+        palette.setColor(QPalette::Disabled, QPalette::Highlight, theme.surface_hover);
+        palette.setColor(QPalette::Disabled, QPalette::Link, theme.text_muted);
+        return palette;
+    }
+
+    void apply_theme(const Theme& theme)
     {
         g_active = theme;
-        assign_colors(style, theme);
+
+        if (QApplication::instance() == nullptr)
+        {
+            return;
+        }
+
+        // Tell the platform which colour scheme is in use so the native parts
+        // (file dialogs, window decorations) follow, then install our palette on
+        // top of it.
+        if (QStyleHints* hints = QGuiApplication::styleHints())
+        {
+            const bool dark = theme.background.lightness() < 128;
+            hints->setColorScheme(dark ? Qt::ColorScheme::Dark : Qt::ColorScheme::Light);
+        }
+        QApplication::setPalette(make_palette(theme));
     }
 
     const Theme& active_theme()

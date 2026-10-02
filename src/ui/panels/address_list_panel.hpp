@@ -1,80 +1,72 @@
 #pragma once
 
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <optional>
-#include <string>
 #include <string_view>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "table/address_table.hpp"
 
+#include <QString>
+#include <QWidget>
+
+class QPoint;
+class QTableView;
+
+namespace slopkit::ui::models
+{
+    class AddressTableModel;
+} // namespace slopkit::ui::models
+
+namespace slopkit::ui::widgets
+{
+    class StatusLabel;
+} // namespace slopkit::ui::widgets
+
 namespace slopkit::ui::panels
 {
 
     // The bottom zone: the editable address list with its context menu and the
-    // footer popups. It owns no session; edits are encoded locally and the
+    // footer popups. It owns no session; edits are encoded by the model and the
     // writes are submitted to the access worker.
-    class AddressListPanel
+    class AddressListPanel : public QWidget
     {
-    public:
-        AddressListPanel(table::AddressTable& table, process::AccessWorker& worker, process::AttachedTarget& target);
+        Q_OBJECT
 
-        void draw();
+    public:
+        AddressListPanel(table::AddressTable&     table,
+                         process::AccessWorker&   worker,
+                         process::AttachedTarget& target,
+                         QWidget*                 parent = nullptr);
 
         // Entry points used by the menu bar and the toolbar.
-        void request_open();
-        void request_save();
+        void open_table();
+        void save_table();
         void delete_selected();
         void toggle_freeze_selected();
 
         // Reports a freeze failure raised outside the panel.
         void report_freeze_error(std::string_view message);
 
-        // A request to show an address, consumed by the Memory Viewer.
-        [[nodiscard]] std::optional<std::uint64_t> take_browse_request();
+        // Polled by the window's tick.
+        void refresh();
+
+    signals:
+        // A request to show an address, fed by the context menu.
+        void browseRequested(quint64 address);
 
     private:
-        enum class EditField
-        {
-            none,
-            description,
-            value,
-        };
+        void show_context_menu(const QPoint& position);
+        void set_status(const QString& message, bool is_error);
 
-        void draw_table();
-        void draw_context_menu(std::size_t row);
-        void draw_footer();
-        void draw_file_popups();
-        void start_edit(std::size_t row, EditField field);
-        void commit_edit();
-        void write_value_at(std::size_t row, std::string_view text);
-        void set_status(std::string message, bool is_error);
+        table::AddressTable&       table_;
+        models::AddressTableModel* model_ {};
+        QTableView*                table_view_ {};
+        widgets::StatusLabel*      status_label_ {};
 
-        table::AddressTable&     table_;
-        process::AccessWorker&   worker_;
-        process::AttachedTarget& target_;
-
-        std::size_t           editing_row_ {0};
-        EditField             editing_field_ {EditField::none};
-        bool                  edit_focus_pending_ {false};
-        std::array<char, 256> edit_buffer_ {};
-
-        int pending_delete_ {-1};
-
-        std::optional<process::JobId> write_pending_;
-        std::optional<std::uint64_t>  writing_entry_;
-
-        std::optional<std::uint64_t> browse_request_;
-
-        std::array<char, 512> table_path_ {"slopkit-table.txt"};
-        bool                  open_requested_ {false};
-        bool                  save_requested_ {false};
-
-        std::string status_;
-        bool        status_is_error_ {false};
+        // The pre-filled path of the open/save dialogs.
+        QString table_path_;
+        QString status_;
+        bool    status_is_error_ {false};
     };
 
 } // namespace slopkit::ui::panels

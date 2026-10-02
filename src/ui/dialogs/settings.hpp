@@ -1,52 +1,75 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
-#include <optional>
-#include <string>
 
 #include "plugin/plugin_host.hpp"
 #include "scan/engine.hpp"
 
+#include <QDialog>
+#include <QString>
+
+class QLabel;
+class QLineEdit;
+class QListWidget;
+class QPlainTextEdit;
+class QRadioButton;
+class QStackedWidget;
+
+namespace slopkit::ui::widgets
+{
+    class StatusLabel;
+} // namespace slopkit::ui::widgets
+
 namespace slopkit::ui::dialogs
 {
 
-    // The Settings dialog: a category list on the left and the selected
-    // category on the right. Nothing is persisted between runs.
-    class Settings
+    // The Settings dialog: a category list on the left and the selected category
+    // on the right. Nothing is persisted between runs.
+    class SettingsDialog : public QDialog
     {
+        Q_OBJECT
+
     public:
-        Settings(plugin::PluginHost& host, scan::ScanEngine& engine);
+        SettingsDialog(plugin::PluginHost& host, scan::ScanEngine& engine, QWidget* parent = nullptr);
 
-        // The changes the user asked for, applied by the App.
-        struct Result
-        {
-            // The requested theme, so the App can re-apply the style.
-            std::optional<bool>          dark_theme;
-            // The new fast-scan alignment, forwarded to the ScannerPanel.
-            std::optional<std::uint64_t> default_alignment;
-        };
-
-        Result draw(bool& open, bool dark_theme);
-
-        // Selects the About category; used by Help > About.
+        // Selects the About category; used by Help > About slopkit.
         void select_about();
 
-    private:
-        void draw_appearance(Result& result, bool dark_theme);
-        void draw_scanning(Result& result);
-        void draw_plugins();
-        void draw_about();
-        void apply_scanning(Result& result);
-        void set_status(std::string message, bool is_error);
+        // Keeps the Appearance selector in step with the active theme.
+        void set_dark_theme(bool dark);
 
-        plugin::PluginHost&  host_;
-        scan::ScanEngine&    engine_;
-        int                  category_ {0};
-        std::array<char, 16> alignment_ {"4"};
-        std::array<char, 32> result_cap_ {"1000000"};
-        std::string          status_;
-        bool                 status_is_error_ {false};
+    signals:
+        // The requested theme, so the window can re-apply the palette.
+        void darkThemeChanged(bool dark);
+
+        // The new fast-scan alignment default, forwarded to the scanner panel.
+        void alignmentChanged(quint64 alignment);
+
+    protected:
+        void showEvent(QShowEvent* event) override;
+
+    private:
+        [[nodiscard]] QWidget* build_appearance_page();
+        [[nodiscard]] QWidget* build_scanning_page();
+        [[nodiscard]] QWidget* build_plugins_page();
+        [[nodiscard]] QWidget* build_about_page();
+
+        void apply_scanning();
+        void refresh_plugins();
+
+        plugin::PluginHost& host_;
+        scan::ScanEngine&   engine_;
+
+        QListWidget*          categories_ {};
+        QStackedWidget*       pages_ {};
+        QRadioButton*         dark_button_ {};
+        QRadioButton*         light_button_ {};
+        QLineEdit*            alignment_edit_ {};
+        QLineEdit*            result_cap_edit_ {};
+        QPlainTextEdit*       plugins_view_ {};
+        QLabel*               about_title_ {};
+        QLabel*               about_plugins_ {};
+        widgets::StatusLabel* status_ {};
     };
 
 } // namespace slopkit::ui::dialogs

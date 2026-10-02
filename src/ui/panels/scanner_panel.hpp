@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -13,37 +12,60 @@
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 
+#include <QWidget>
+
+class QCheckBox;
+class QComboBox;
+class QLineEdit;
+class QProgressBar;
+class QPushButton;
+
+namespace slopkit::ui::widgets
+{
+    class CollapsibleSection;
+    class PrimaryButton;
+    class StatusLabel;
+} // namespace slopkit::ui::widgets
+
 namespace slopkit::ui::panels
 {
 
     // The right half of the middle zone: the scan controls. It builds the
     // ScanConfig, owns the engine and the worker session the engine reads
-    // through, and never blocks the render loop.
-    class ScannerPanel
+    // through, and never blocks on target access.
+    class ScannerPanel : public QWidget
     {
+        Q_OBJECT
+
     public:
-        ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target);
+        ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent = nullptr);
 
-        void draw();
-
-        [[nodiscard]] scan::ScanEngine& engine() noexcept
-        {
-            return engine_;
-        }
+        [[nodiscard]] scan::ScanEngine& engine() noexcept;
 
         // Sets the fast-scan alignment field, used by the Settings dialog.
         void set_default_alignment(std::uint64_t alignment);
 
+        // Polled by the window's tick: refreshes the enable state, the progress
+        // bar and the status line.
+        void refresh();
+
+        [[nodiscard]] int progress_percent() const noexcept;
+
+    signals:
         // A request to open the Memory Viewer at an address.
-        [[nodiscard]] std::optional<std::uint64_t> take_memory_view_request();
+        void memoryViewRequested(quint64 address);
 
         // A request to open the Add Address dialog.
-        [[nodiscard]] bool take_add_address_request();
+        void addAddressRequested();
 
     private:
+        void build_layout();
+        void connect_widgets();
+
         void request_scan_session();
         void start_first_scan();
         void start_next_scan();
+        void update_value_inputs();
 
         [[nodiscard]] scan::ScanType                               current_scan_type() const noexcept;
         [[nodiscard]] scan::ValueType                              current_value_type() const noexcept;
@@ -52,33 +74,35 @@ namespace slopkit::ui::panels
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
 
-        // Inputs.
-        std::array<char, 64> value_buffer_ {};
-        std::array<char, 64> value_upper_buffer_ {};
-        bool                 hex_ {false};
-        int                  scan_type_ {0};
-        int                  value_type_ {2};
+        QLineEdit*   value_edit_ {};
+        QLineEdit*   value_upper_edit_ {};
+        QCheckBox*   hex_check_ {};
+        QComboBox*   scan_type_combo_ {};
+        QComboBox*   value_type_combo_ {};
+        QPushButton* scan_button_ {};
+        QPushButton* next_scan_button_ {};
+        QPushButton* undo_button_ {};
+        QPushButton* cancel_button_ {};
 
-        std::array<char, 32> start_address_ {};
-        std::array<char, 32> stop_address_ {};
-        std::array<char, 16> alignment_ {"4"};
-        bool                 writable_ {true};
-        bool                 executable_ {false};
-        bool                 copy_on_write_ {true};
-        bool                 fast_scan_ {true};
-        bool                 pause_while_scanning_ {false};
+        QLineEdit* start_edit_ {};
+        QLineEdit* stop_edit_ {};
+        QCheckBox* writable_check_ {};
+        QCheckBox* executable_check_ {};
+        QCheckBox* copy_on_write_check_ {};
+        QCheckBox* fast_scan_check_ {};
+        QLineEdit* alignment_edit_ {};
+        QCheckBox* pause_scanning_check_ {};
 
-        // Placeholder toggles for the not-yet-implemented extra options.
-        bool lua_formula_ {false};
-        bool not_operator_ {false};
-        bool unrandomizer_ {false};
-        bool speedhack_ {false};
+        QPushButton* memory_view_button_ {};
+        QPushButton* add_address_button_ {};
 
-        std::optional<std::uint64_t> memory_view_request_;
-        bool                         add_address_request_ {false};
+        QProgressBar*         scan_progress_ {};
+        widgets::StatusLabel* status_label_ {};
 
         std::string status_;
         bool        status_is_error_ {false};
+
+        int progress_percent_ {0};
 
         // A session separate from the app-wide one, used only by the scan
         // worker so the shared session is never touched from two threads. It is
