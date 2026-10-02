@@ -1,16 +1,61 @@
 # Index
 
+- `README.md` — project front page: what slopkit is, its plugin architecture, anti-detection stance, build/run instructions, layout and roadmap.
 - `AGENTS.md` — AI agent operating guide: project rules, toolchain and conventions.
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
-- `CMakeLists.txt` — CMake build: fetches pinned imgui and links the system Zydis via pkg-config; defines the `slopkit` app and the Catch2/CTest `slopkit_tests` target.
+- `CMakeLists.txt` — CMake build: fetches pinned imgui, links system Zydis/GLFW/OpenGL via pkg-config, compiles the ImGui backends, embeds the UI font, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins; builds fixture plugins and the Catch2/CTest `slopkit_tests` target.
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
+- `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
+- `assets/fonts/NotoSans-Regular.ttf` — bundled UI font (Noto Sans Regular).
+- `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.
 - `reference/README.md` — placeholder documenting the read-only `reference/` tree.
-- `src/main.cpp` — application entry point; prints the banner and `slopkit::version()`.
+- `src/main.cpp` — application entry point; dispatches to `slopkit::app::run`.
 - `src/core/version.hpp` — declares `slopkit::version()`.
 - `src/core/version.cpp` — implements `slopkit::version()`.
+- `src/app/cli.hpp` — declares command-line parsing and the headless commands.
+- `src/app/cli.cpp` — parses `--version`/`--list-plugins`/`--list-processes` and runs the default GUI path.
+- `src/plugin/plugin_api.h` — the C plugin ABI: version macros, host services, descriptors, access-method flags and the vtable.
+- `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession`.
+- `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake and typed plugin calls.
+- `src/plugin/plugin_host.hpp` — plugin discovery, diagnostics and the merged process listing.
+- `src/plugin/plugin_host.cpp` — scans search directories, loads plugins by precedence and merges processes.
+- `src/platform/linux/procfs.hpp` — procfs types and queries: pids, status, exe/cmdline, mapped regions and threads.
+- `src/platform/linux/procfs.cpp` — implements procfs enumeration, text parsing, region classification and module merging.
+- `src/platform/linux/memory.hpp` — ptrace-free memory read/write primitives and their result types.
+- `src/platform/linux/memory.cpp` — process_vm_* with a /proc/<pid>/mem fallback and per-call primitive reporting.
+- `src/platform/linux/wine.hpp` — Wine/Proton detection types and classification entry points.
+- `src/platform/linux/wine.cpp` — environ/cmdline/maps heuristics that classify a process as Wine or Proton.
+- `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs.
+- `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes and exposing their PE images.
+- `src/process/types.hpp` — process/module/thread descriptors, access-method flags and `AccessError`.
+- `src/process/types.cpp` — human-readable descriptions of errors, module kinds and access methods.
+- `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the UI depends on.
+- `src/process/plugin_access.hpp` — embedded `ProcessAccess` implementation over `PluginHost`.
+- `src/process/plugin_access.cpp` — attaches through plugins and tracks the access method actually used.
+- `src/ui/app.hpp` — the `App`: owns the window, theme and scale, and drives the tool navigation.
+- `src/ui/app.cpp` — runs the window loop and draws the navigation and placeholder panels.
+- `src/ui/app_window.hpp` — `AppWindow`: GLFW window, OpenGL context and ImGui backends.
+- `src/ui/app_window.cpp` — Wayland-first init with X11 fallback, content-scale handling and frame rendering.
+- `src/ui/theme.hpp` — the `Theme` colour-role struct and the dark/light constructors.
+- `src/ui/theme.cpp` — theme values and `apply_theme`, mapping roles onto `ImGuiStyle`.
+- `src/ui/scale.hpp` — the unscaled base style and the `Scale` DPI helper.
+- `src/ui/scale.cpp` — base style values and non-compounding `ScaleAllSizes` application.
+- `src/ui/fonts.hpp` — embedded-font loading and font scaling declarations.
+- `src/ui/fonts.cpp` — loads the embedded Noto Sans and applies `FontScaleDpi`.
+- `src/ui/components/widgets.hpp` — the first themed component set (headers, buttons, panels, status text).
+- `src/ui/components/widgets.cpp` — implements the themed components from the active theme.
+- `src/ui/panels/process_picker.hpp` — the process picker panel state and API.
+- `src/ui/panels/process_picker.cpp` — searchable/sortable process table, detail pane and attach/detach.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
+- `src/tests/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
+- `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
+- `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
+- `src/tests/ui_test.cpp` — theme, scaling and embedded-font unit tests that need no window.
+- `src/tests/plugin_host_test.cpp` — loader diagnostics, missing-directory tolerance and headless commands.
+- `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
+- `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.

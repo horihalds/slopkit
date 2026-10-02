@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # --- dependencies ----------------------------------------------------------
 #
 # The only third-party source that is fetched and pinned to a commit hash is
-# Dear ImGui. Zydis is provided by the system package (see below).
+# Dear ImGui. Zydis, GLFW and OpenGL come from the system packages (see below).
 
 include(FetchContent)
 
@@ -25,33 +25,109 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/imgui_demo.cpp)
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp)
 target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends)
+    ${imgui_SOURCE_DIR}/backends
+    ${imgui_SOURCE_DIR}/misc/cpp)
 
 # --- system dependencies ---------------------------------------------------
 #
-# Zydis comes from the system repositories (e.g. Fedora `zydis-devel`), which
-# ship a pkg-config file but no CMake package config.
+# These come from the system repositories (e.g. Fedora `zydis-devel` and
+# `glfw-devel`) and ship pkg-config files but no CMake package configs.
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZYDIS REQUIRED IMPORTED_TARGET zydis)
+pkg_check_modules(GLFW REQUIRED IMPORTED_TARGET glfw3)
+pkg_check_modules(OPENGL REQUIRED IMPORTED_TARGET gl)
+
+# GLFW + OpenGL3 backends, compiled against the system GLFW.
+add_library(imgui_backends STATIC
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+target_link_libraries(imgui_backends PUBLIC imgui PkgConfig::GLFW)
+
+# --- assets ----------------------------------------------------------------
+
+include(${CMAKE_SOURCE_DIR}/cmake/EmbedFont.cmake)
+
+# The font is embedded at configure time; consumers get the generated include
+# directory and the `slopkit::generated::*` symbols through this target.
+add_library(slopkit_assets INTERFACE)
+embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSans-Regular.ttf slopkit_notosans_regular)
 
 # --- application -----------------------------------------------------------
 
+# Plugin sources are excluded from the application binary: every plugin defines
+# `slopkit_plugin_entry`, so linking two of them into one binary would collide.
+# Platform code is shared with the plugins through the slopkit_platform target.
 file(GLOB_RECURSE SLOPKIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/tests/.*")
+list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/plugins/.*")
+list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/platform/.*")
 
 add_executable(slopkit ${SLOPKIT_SOURCES})
 target_include_directories(slopkit PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit PRIVATE -Wall -Wextra)
-target_link_libraries(slopkit PRIVATE imgui PkgConfig::ZYDIS)
+target_link_libraries(slopkit PRIVATE
+    slopkit_assets
+    imgui_backends
+    PkgConfig::OPENGL
+    PkgConfig::ZYDIS
+    ${CMAKE_DL_LIBS})
+
+# --- platform library ------------------------------------------------------
+
+# Linux helpers shared by the plugins and exercised directly by the tests.
+file(GLOB_RECURSE SLOPKIT_PLATFORM_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/platform/*.cpp)
+add_library(slopkit_platform STATIC ${SLOPKIT_PLATFORM_SOURCES})
+target_include_directories(slopkit_platform PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(slopkit_platform PRIVATE -Wall -Wextra -fvisibility=hidden)
+set_target_properties(slopkit_platform PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# --- plugins ---------------------------------------------------------------
+
+set(SLOPKIT_PLUGIN_OUTPUT_DIR ${CMAKE_BINARY_DIR}/plugins)
+
+# Builds a plugin as a shared library with hidden visibility and places it next
+# to the executable, where the host discovers it in `${exe_dir}/plugins`.
+function(add_slopkit_plugin target)
+    add_library(${target} SHARED ${ARGN})
+    target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_options(${target} PRIVATE -Wall -Wextra -fvisibility=hidden)
+    set_target_properties(${target} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${SLOPKIT_PLUGIN_OUTPUT_DIR}
+        RUNTIME_OUTPUT_DIRECTORY ${SLOPKIT_PLUGIN_OUTPUT_DIR})
+endfunction()
+
+add_slopkit_plugin(slopkit-linux_proc ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/linux_proc/linux_proc_plugin.cpp)
+target_link_libraries(slopkit-linux_proc PRIVATE slopkit_platform)
+
+add_slopkit_plugin(slopkit-wine_proton ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/wine_proton/wine_proton_plugin.cpp)
+target_link_libraries(slopkit-wine_proton PRIVATE slopkit_platform)
 
 # --- tests -----------------------------------------------------------------
 
 find_package(Catch2 REQUIRED)
 include(CTest)
+
+# Fixture plugins for the loader tests: one uses an incompatible ABI major, one
+# exports no entry symbol. They are kept out of the application plugin
+# directory so they never show up in a normal run.
+set(SLOPKIT_TEST_PLUGIN_OUTPUT_DIR ${CMAKE_BINARY_DIR}/test_plugins)
+
+function(add_slopkit_test_plugin target)
+    add_library(${target} SHARED ${ARGN})
+    target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_options(${target} PRIVATE -Wall -Wextra -fvisibility=hidden)
+    set_target_properties(${target} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}
+        RUNTIME_OUTPUT_DIRECTORY ${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR})
+endfunction()
+
+add_slopkit_test_plugin(slopkit_test_bad_abi ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/bad_abi_plugin.cpp)
+add_slopkit_test_plugin(slopkit_test_no_entry ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/no_entry_plugin.cpp)
 
 # --- formatting ------------------------------------------------------------
 
@@ -72,8 +148,19 @@ list(FILTER SLOPKIT_TEST_SUPPORT_SOURCES EXCLUDE REGEX ".*/main\\.cpp$")
 
 file(GLOB SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/tests/*.cpp)
 add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES})
+add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_test_bad_abi slopkit_test_no_entry)
 target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(slopkit_tests PRIVATE Catch2::Catch2 imgui PkgConfig::ZYDIS)
+target_compile_definitions(slopkit_tests PRIVATE
+    SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
+    SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}")
+target_link_libraries(slopkit_tests PRIVATE
+    Catch2::Catch2
+    slopkit_platform
+    slopkit_assets
+    imgui_backends
+    PkgConfig::OPENGL
+    PkgConfig::ZYDIS
+    ${CMAKE_DL_LIBS})
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)

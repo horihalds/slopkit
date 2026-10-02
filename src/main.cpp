@@ -1,10 +1,6 @@
-#include <iostream>
+#include "app/cli.hpp"
 
-#include "core/version.hpp"
-
-int main()
+int main(int argc, char** argv)
 {
-    std::cout << "slopkit - reverse engineering toolset\n";
-    std::cout << "version " << slopkit::version() << '\n';
-    return 0;
+    return slopkit::app::run(argc, argv);
 }

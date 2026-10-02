@@ -1,0 +1,210 @@
+#include "ui/app_window.hpp"
+
+#include <cstdio>
+#include <string>
+#include <utility>
+
+#define GLFW_INCLUDE_NONE
+#include <GL/gl.h>
+#include <GLFW/glfw3.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_opengl3.h>
+
+namespace slopkit::ui
+{
+
+    AppWindow::~AppWindow()
+    {
+        shutdown();
+    }
+
+    std::expected<std::unique_ptr<AppWindow>, std::string> AppWindow::create()
+    {
+        glfwSetErrorCallback(&AppWindow::error_callback);
+
+        // Wayland is the primary target, X11 the fallback.
+        glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_WAYLAND);
+        if (glfwInit() == GLFW_FALSE)
+        {
+            glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+            if (glfwInit() == GLFW_FALSE)
+            {
+                return std::unexpected("failed to initialize GLFW (Wayland and X11 are both unavailable)");
+            }
+        }
+
+        auto window               = std::make_unique<AppWindow>();
+        window->glfw_initialized_ = true;
+
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+        glfwWindowHintString(GLFW_WAYLAND_APP_ID, "slopkit");
+
+        window->window_ = glfwCreateWindow(1280, 800, "slopkit", nullptr, nullptr);
+        if (window->window_ == nullptr)
+        {
+            return std::unexpected("failed to create the GLFW window");
+        }
+
+        glfwMakeContextCurrent(window->window_);
+        glfwSwapInterval(1);
+
+        float x_scale = 1.0f;
+        float y_scale = 1.0f;
+        glfwGetWindowContentScale(window->window_, &x_scale, &y_scale);
+        window->scale_ = x_scale > 0.0f ? x_scale : 1.0f;
+
+        // Minimum size is expressed in logical units and scaled.
+        glfwSetWindowSizeLimits(window->window_,
+                                static_cast<int>(640.0f * window->scale_),
+                                static_cast<int>(420.0f * window->scale_),
+                                GLFW_DONT_CARE,
+                                GLFW_DONT_CARE);
+
+        glfwSetWindowUserPointer(window->window_, window.get());
+        glfwSetFramebufferSizeCallback(window->window_, &AppWindow::framebuffer_size_callback);
+        glfwSetWindowContentScaleCallback(window->window_, &AppWindow::content_scale_callback);
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        window->imgui_context_ = true;
+
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.IniFilename = nullptr; // No settings persistence yet.
+
+        if (ImGui_ImplGlfw_InitForOpenGL(window->window_, true) == false)
+        {
+            return std::unexpected("failed to initialize the ImGui GLFW backend");
+        }
+        window->imgui_glfw_ = true;
+
+        if (ImGui_ImplOpenGL3_Init("#version 150") == false)
+        {
+            return std::unexpected("failed to initialize the ImGui OpenGL3 backend");
+        }
+        window->imgui_opengl_ = true;
+
+        return window;
+    }
+
+    void AppWindow::shutdown() noexcept
+    {
+        if (imgui_opengl_)
+        {
+            ImGui_ImplOpenGL3_Shutdown();
+            imgui_opengl_ = false;
+        }
+        if (imgui_glfw_)
+        {
+            ImGui_ImplGlfw_Shutdown();
+            imgui_glfw_ = false;
+        }
+        if (imgui_context_)
+        {
+            ImGui::DestroyContext();
+            imgui_context_ = false;
+        }
+        if (window_ != nullptr)
+        {
+            glfwDestroyWindow(window_);
+            window_ = nullptr;
+        }
+        if (glfw_initialized_)
+        {
+            glfwTerminate();
+            glfw_initialized_ = false;
+        }
+    }
+
+    GLFWwindow* AppWindow::handle() const noexcept
+    {
+        return window_;
+    }
+
+    bool AppWindow::should_close() const noexcept
+    {
+        return window_ == nullptr || glfwWindowShouldClose(window_) != 0;
+    }
+
+    float AppWindow::content_scale() const noexcept
+    {
+        return scale_;
+    }
+
+    bool AppWindow::take_scale_change() noexcept
+    {
+        const bool changed = scale_changed_;
+        scale_changed_     = false;
+        return changed;
+    }
+
+    void AppWindow::set_clear_color(const ImVec4& color) noexcept
+    {
+        clear_color_ = color;
+    }
+
+    void AppWindow::poll_events()
+    {
+        glfwPollEvents();
+    }
+
+    void AppWindow::begin_frame()
+    {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+    }
+
+    void AppWindow::end_frame()
+    {
+        ImGui::Render();
+
+        int width  = 0;
+        int height = 0;
+        glfwGetFramebufferSize(window_, &width, &height);
+        // The framebuffer size is authoritative for the viewport: on HiDPI
+        // displays it differs from the window size.
+        glViewport(0, 0, width, height);
+        glClearColor(clear_color_.x, clear_color_.y, clear_color_.z, clear_color_.w);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        glfwSwapBuffers(window_);
+    }
+
+    void AppWindow::framebuffer_size_callback(GLFWwindow* window, int width, int height)
+    {
+        // The viewport is recomputed from the framebuffer size every frame, so
+        // there is nothing to cache here; the callback exists to make resizes
+        // explicit and to keep the framebuffer in sync.
+        (void)window;
+        (void)width;
+        (void)height;
+    }
+
+    void AppWindow::content_scale_callback(GLFWwindow* window, float x_scale, float y_scale)
+    {
+        (void)y_scale;
+        auto* self = static_cast<AppWindow*>(glfwGetWindowUserPointer(window));
+        if (self == nullptr)
+        {
+            return;
+        }
+
+        const float scale = x_scale > 0.0f ? x_scale : 1.0f;
+        if (scale != self->scale_)
+        {
+            self->scale_         = scale;
+            self->scale_changed_ = true;
+        }
+    }
+
+    void AppWindow::error_callback(int code, const char* description)
+    {
+        std::fprintf(stderr, "slopkit: GLFW error %d: %s\n", code, description != nullptr ? description : "");
+    }
+
+} // namespace slopkit::ui
