@@ -490,13 +490,32 @@ namespace slopkit::ui::dialogs
                         attach_selected();
                     }
                 });
+
+        // Enter must attach, not re-trigger the dialog's default button.
+        refresh_button_->setAutoDefault(false);
+
+        connect(search_edit_, &QLineEdit::returnPressed, this, &ProcessListDialog::attach_selected);
+
+        connect(table_view_,
+                &QTableView::activated,
+                this,
+                [this](const QModelIndex& index)
+                {
+                    table_view_->setCurrentIndex(index); // Enter on the table: honour the activated row.
+                    attach_selected();
+                });
     }
 
     void ProcessListDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);
+        selected_pid_ = 0; // Re-open with the top result preselected.
+        restoring_    = true;
+        table_view_->selectionModel()->clearCurrentIndex();
+        restoring_ = false;
         request_application_index();
         refresh();
+        search_edit_->setFocus(Qt::OtherFocusReason);
     }
 
     void ProcessListDialog::set_status(std::string message, bool is_error)
@@ -652,7 +671,11 @@ namespace slopkit::ui::dialogs
 
     void ProcessListDialog::restore_selection()
     {
-        const int row = model_->row_for_pid(selected_pid_);
+        int row = model_->row_for_pid(selected_pid_);
+        if (row < 0 && model_->rowCount() > 0)
+        {
+            row = 0; // Top result of the current filtered/sorted view.
+        }
         if (row < 0)
         {
             selected_pid_ = 0;
@@ -791,6 +814,7 @@ namespace slopkit::ui::dialogs
                 set_status(target_.label() + "; methods: " + process::describe(target_.method), false);
                 update_buttons();
                 emit targetChanged();
+                close(); // The picker has done its job once we are attached.
             });
         if (!submitted)
         {

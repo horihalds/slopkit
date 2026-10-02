@@ -1,20 +1,35 @@
 #include <catch2/catch.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <expected>
+#include <memory>
+#include <span>
+#include <string_view>
+#include <thread>
+#include <vector>
+
 #include <QAction>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QList>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QPalette>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QString>
+#include <QTableView>
 #include <QToolBar>
 
 #include "plugin/plugin_host.hpp"
@@ -22,6 +37,7 @@
 #include "process/attachment.hpp"
 #include "process/plugin_access.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/dialogs/process_list.hpp"
 #include "ui/main_window.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/models/found_results_model.hpp"
@@ -74,6 +90,124 @@ namespace
             }
         }
         return texts;
+    }
+
+    // A tiny in-memory target the Process List dialog can attach to in tests.
+    class UiFakeBackend final : public slopkit::process::SessionBackend
+    {
+    public:
+        [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
+        {
+            return 42;
+        }
+
+        [[nodiscard]] std::string_view plugin_id() const noexcept override
+        {
+            return "fake";
+        }
+
+        [[nodiscard]] slopkit::process::AccessMethod advertised_methods() const noexcept override
+        {
+            return slopkit::process::AccessMethod::procfs_mem;
+        }
+
+        [[nodiscard]] slopkit::process::AccessMethod last_method() const noexcept override
+        {
+            return slopkit::process::AccessMethod::procfs_mem;
+        }
+
+        std::expected<std::vector<std::byte>, slopkit::process::AccessError> read(std::uint64_t, std::size_t) override
+        {
+            return std::vector<std::byte> {};
+        }
+
+        std::expected<std::size_t, slopkit::process::AccessError> write(std::uint64_t,
+                                                                        std::span<const std::byte>) override
+        {
+            return std::size_t {};
+        }
+
+        std::expected<std::vector<slopkit::process::ModuleInfo>, slopkit::process::AccessError> modules() override
+        {
+            return std::vector<slopkit::process::ModuleInfo> {};
+        }
+
+        std::expected<std::vector<slopkit::process::ThreadInfo>, slopkit::process::AccessError> threads() override
+        {
+            return std::vector<slopkit::process::ThreadInfo> {};
+        }
+
+        std::expected<std::vector<slopkit::process::RegionInfo>, slopkit::process::AccessError> regions() override
+        {
+            return std::vector<slopkit::process::RegionInfo> {};
+        }
+    };
+
+    // A ProcessAccess serving a fixed process list that can be told to fail the
+    // attach, so the dialog can be driven without a real target.
+    class UiFakeAccess final : public slopkit::process::ProcessAccess
+    {
+    public:
+        std::vector<slopkit::process::ProcessInfo> processes;
+        bool                                       attach_fails {false};
+        std::atomic<int>                           attach_calls {0};
+        std::atomic<int>                           list_calls {0};
+
+        std::expected<std::vector<slopkit::process::ProcessInfo>, slopkit::process::AccessError>
+        list_processes() override
+        {
+            ++list_calls;
+            return processes;
+        }
+
+        std::expected<slopkit::process::Session, slopkit::process::AccessError> attach(slopkit::process::ProcessId,
+                                                                                       std::string_view) override
+        {
+            ++attach_calls;
+            if (attach_fails)
+            {
+                return std::unexpected(slopkit::process::AccessError::permission_denied);
+            }
+            return slopkit::process::Session {std::make_unique<UiFakeBackend>()};
+        }
+    };
+
+    std::vector<slopkit::process::ProcessInfo> sample_processes()
+    {
+        slopkit::process::ProcessInfo first;
+        first.pid       = 10;
+        first.name      = "alpha";
+        first.exe_path  = "/usr/bin/alpha";
+        first.plugin_id = "fake";
+        first.claimants = {"fake"};
+
+        slopkit::process::ProcessInfo second;
+        second.pid       = 20;
+        second.name      = "beta";
+        second.exe_path  = "/usr/bin/beta";
+        second.plugin_id = "fake";
+        second.claimants = {"fake"};
+
+        return {first, second};
+    }
+
+    // Drains the worker (and the Qt event loop) until `done` holds or the
+    // timeout elapses. The dialog completes its jobs through AccessWorker.
+    template<typename Predicate>
+    bool pump_ui(slopkit::process::AccessWorker& worker, Predicate done)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            worker.drain();
+            QCoreApplication::processEvents();
+            if (done())
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return done();
     }
 } // namespace
 
@@ -329,4 +463,231 @@ TEST_CASE("the main window shell is built", "[ui]")
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
     QCoreApplication::processEvents();
     CHECK(QGuiApplication::palette().color(QPalette::Window) == slopkit::ui::light_theme().background);
+}
+
+TEST_CASE("the process list dialog focuses the filter box and preselects the top result", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    // The filter box owns the keyboard focus and the top result is selected.
+    CHECK(dialog.focusWidget() == search);
+    CHECK(table->currentIndex().row() == 0);
+
+    // Enter in the filter box attaches the preselected (top) process.
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &enter);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.valid();
+                    }));
+    CHECK(target.pid == 10);
+
+    // A successful attach dismisses the picker.
+    CHECK_FALSE(dialog.isVisible());
+
+    dialog.close();
+}
+
+TEST_CASE("double-clicking a process row attaches it", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* table = dialog.findChild<QTableView*>();
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2;
+                    }));
+
+    // Double-click the second row: a press parks the index, the double-click
+    // activates it.
+    const QModelIndex second = table->model()->index(1, slopkit::ui::dialogs::ProcessListModel::pid);
+    const QRect       rect   = table->visualRect(second);
+    REQUIRE_FALSE(rect.isEmpty());
+    const QPoint pos = rect.center();
+
+    QMouseEvent press {QEvent::MouseButtonPress,
+                       pos,
+                       table->viewport()->mapToGlobal(pos),
+                       Qt::LeftButton,
+                       Qt::LeftButton,
+                       Qt::NoModifier};
+    QCoreApplication::sendEvent(table->viewport(), &press);
+    QMouseEvent dbl {QEvent::MouseButtonDblClick,
+                     pos,
+                     table->viewport()->mapToGlobal(pos),
+                     Qt::LeftButton,
+                     Qt::LeftButton,
+                     Qt::NoModifier};
+    QCoreApplication::sendEvent(table->viewport(), &dbl);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.valid();
+                    }));
+    CHECK(target.pid == 20);
+
+    dialog.close();
+}
+
+TEST_CASE("the process list dialog ignores Enter when the list is empty", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access; // Empty listing.
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    REQUIRE(search != nullptr);
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+
+    // No selection yet: Enter must not submit an attach.
+    QCoreApplication::sendEvent(search, &enter);
+    QCoreApplication::processEvents();
+    CHECK(access.attach_calls.load() == 0);
+    CHECK_FALSE(target.valid());
+
+    // ...nor once the empty listing has landed.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return access.list_calls.load() >= 1;
+                    }));
+    QCoreApplication::processEvents();
+    QCoreApplication::sendEvent(search, &enter);
+    QCoreApplication::processEvents();
+    CHECK(access.attach_calls.load() == 0);
+    CHECK_FALSE(target.valid());
+
+    dialog.close();
+}
+
+TEST_CASE("a failed attach leaves the process list dialog open", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes    = sample_processes();
+    access.attach_fails = true;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2;
+                    }));
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &enter);
+
+    // The failure is surfaced in the status area and the picker stays up.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        for (auto* label : dialog.findChildren<slopkit::ui::widgets::StatusLabel*>())
+                        {
+                            if (label->text().contains(QStringLiteral("attach failed")))
+                            {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }));
+
+    CHECK_FALSE(target.valid());
+    CHECK(dialog.isVisible());
+
+    dialog.close();
+}
+
+TEST_CASE("detaching does not close the process list dialog", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    target.pid          = 10;
+    target.name         = "alpha";
+    target.plugin_id    = "fake";
+    target.method       = slopkit::process::AccessMethod::procfs_mem;
+    target.session_live = true;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* table = dialog.findChild<QTableView*>();
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2;
+                    }));
+
+    // Row 0 (pid 10) is the attached process, so the button detaches it.
+    QPushButton* attach_button = nullptr;
+    for (auto* button : dialog.findChildren<QPushButton*>())
+    {
+        if (button->text() == QStringLiteral("Detach"))
+        {
+            attach_button = button;
+        }
+    }
+    REQUIRE(attach_button != nullptr);
+    attach_button->click();
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return !target.valid();
+                    }));
+    CHECK(dialog.isVisible());
+
+    dialog.close();
 }
