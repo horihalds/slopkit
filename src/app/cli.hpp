@@ -14,7 +14,8 @@ namespace slopkit::app
     // Directory containing the running executable.
     std::filesystem::path executable_directory();
 
-    // `${executable_dir}/plugins` plus every SLOPKIT_PLUGIN_PATH entry.
+    // `${executable_dir}/plugins`, the installed plugin directory, then every
+    // SLOPKIT_PLUGIN_PATH entry.
     std::vector<std::filesystem::path> plugin_search_directories();
 
     // Headless commands, exposed so tests can exercise them without a display.

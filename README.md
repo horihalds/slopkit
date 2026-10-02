@@ -51,6 +51,9 @@ Lower precedence wins, so `wine-proton` is the default target for a Wine process
 Plugins are discovered at startup in:
 
 - `${exe_dir}/plugins` — the directory next to the `slopkit` executable.
+- `${exe_dir}/../<libdir>/slopkit/plugins` — the directory the CMake install
+  rules use, so an installed binary finds its plugins with no environment
+  variable.
 - Every directory listed in the colon-separated `SLOPKIT_PLUGIN_PATH` environment
   variable.
 
@@ -116,6 +119,8 @@ Dependencies (from the system repositories):
 - Catch2
 - GLFW 3.4 or newer, built with Wayland support
 - OpenGL development files (e.g. Fedora's `mesa-libGL-devel`)
+- ImageMagick — build-time only: generates the icon set and the embedded window
+  icon from `data/icon.jpg`
 
 Configure and build:
 
@@ -140,6 +145,31 @@ Run:
 ```
 
 The three flags work headlessly, with no display or GPU required.
+
+## Installing
+
+`./install.sh` configures, builds and installs slopkit together with its desktop
+entry and hicolor icons. It installs into `~/.local` by default and needs no
+root; override the prefix with `PREFIX`:
+
+```sh
+./install.sh                    # installs into ~/.local
+PREFIX=/usr/local ./install.sh  # installs system-wide
+```
+
+The prefix is applied at configure time, because the desktop entry bakes the
+absolute path of the installed binary. The resulting layout is:
+
+- `<prefix>/bin/slopkit`
+- `<prefix>/<libdir>/slopkit/plugins/libslopkit-linux_proc.so` and
+  `libslopkit-wine_proton.so`
+- `<prefix>/share/applications/slopkit.desktop`
+- `<prefix>/share/icons/hicolor/<N>x<N>/apps/slopkit.png`
+- `<prefix>/share/doc/slopkit/README.md`
+
+`<libdir>` comes from CMake's `GNUInstallDirs`, so it is `lib64` on RPM-based
+distros and `lib` elsewhere. ImageMagick is required to generate the icons at
+configure time (see the dependency list above).
 
 ## Repository layout
 

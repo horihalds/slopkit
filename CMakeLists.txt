@@ -5,6 +5,19 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# --- install layout --------------------------------------------------------
+#
+# GNUInstallDirs drives every install destination and the relative plugin
+# search path baked into the binary. Note `CMAKE_INSTALL_LIBDIR` is `lib64` on
+# RPM-based distros, so it must never be assumed to be `lib`.
+
+include(GNUInstallDirs)
+
+# Plugins are installed under <prefix>/<libdir>/slopkit/plugins. From the
+# executable in <prefix>/bin that is the relative path below; the loader and
+# the install rule share it so `lib` vs `lib64` can never drift.
+set(SLOPKIT_PLUGIN_RELATIVE_DIR "../${CMAKE_INSTALL_LIBDIR}/slopkit/plugins")
+
 # --- dependencies ----------------------------------------------------------
 #
 # The only third-party source that is fetched and pinned to a commit hash is
@@ -51,11 +64,29 @@ target_link_libraries(imgui_backends PUBLIC imgui PkgConfig::GLFW)
 # --- assets ----------------------------------------------------------------
 
 include(${CMAKE_SOURCE_DIR}/cmake/EmbedFont.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/EmbedIcon.cmake)
+
+# The icon PNG set and the embedded window icon are derived from data/icon.jpg
+# at configure time, so ImageMagick is a hard build-time dependency.
+find_program(SLOPKIT_MAGICK_EXECUTABLE NAMES magick convert)
+if(NOT SLOPKIT_MAGICK_EXECUTABLE)
+    message(FATAL_ERROR
+        "ImageMagick is required to generate the slopkit icon from data/icon.jpg, "
+        "but neither `magick` nor `convert` was found on PATH. "
+        "Install it (e.g. Fedora: `sudo dnf install ImageMagick`; "
+        "Debian/Ubuntu: `sudo apt install imagemagick`) and re-run configure.")
+endif()
 
 # The font is embedded at configure time; consumers get the generated include
 # directory and the `slopkit::generated::*` symbols through this target.
 add_library(slopkit_assets INTERFACE)
 embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSans-Regular.ttf slopkit_notosans_regular)
+
+# Hicolor PNG set for the desktop entry, plus the 64x64 RGBA blob used as the
+# X11 window icon. Both share the `slopkit_assets` include directory.
+set(SLOPKIT_ICON_SIZES 16 24 32 48 64 128 256 512)
+slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/data/icon.jpg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
+embed_window_icon(slopkit_assets ${CMAKE_SOURCE_DIR}/data/icon.jpg 64 slopkit_icon_rgba)
 
 # --- application -----------------------------------------------------------
 
@@ -69,6 +100,7 @@ list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/platform/.*")
 
 add_executable(slopkit ${SLOPKIT_SOURCES})
 target_include_directories(slopkit PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(slopkit PRIVATE SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}")
 target_compile_options(slopkit PRIVATE -Wall -Wextra)
 target_link_libraries(slopkit PRIVATE
     slopkit_assets
@@ -152,6 +184,7 @@ add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_te
 target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
+    SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"
     SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}")
 target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2
@@ -165,3 +198,28 @@ target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)
 catch_discover_tests(slopkit_tests)
+
+# --- install ---------------------------------------------------------------
+
+# The desktop entry bakes the absolute installed binary path; `install.sh`
+# therefore passes the prefix at configure time.
+configure_file(${CMAKE_SOURCE_DIR}/data/slopkit.desktop.in
+    ${CMAKE_BINARY_DIR}/slopkit.desktop @ONLY)
+
+install(TARGETS slopkit RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Plugins go under the library dir, where the installed binary looks for them
+# (see SLOPKIT_PLUGIN_RELATIVE_DIR above).
+install(TARGETS slopkit-linux_proc slopkit-wine_proton
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins)
+
+install(FILES ${CMAKE_BINARY_DIR}/slopkit.desktop
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+
+foreach(size IN LISTS SLOPKIT_ICON_SIZES)
+    install(FILES ${CMAKE_BINARY_DIR}/icons/${size}x${size}/apps/slopkit.png
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${size}x${size}/apps)
+endforeach()
+
+install(FILES ${CMAKE_SOURCE_DIR}/README.md ${CMAKE_SOURCE_DIR}/assets/fonts/OFL.txt
+    DESTINATION ${CMAKE_INSTALL_DOCDIR})

@@ -4,12 +4,16 @@
 - `AGENTS.md` — AI agent operating guide: project rules, toolchain and conventions.
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
-- `CMakeLists.txt` — CMake build: fetches pinned imgui, links system Zydis/GLFW/OpenGL via pkg-config, compiles the ImGui backends, embeds the UI font, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins; builds fixture plugins and the Catch2/CTest `slopkit_tests` target.
+- `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included.
+- `CMakeLists.txt` — CMake build: fetches pinned imgui, links system Zydis/GLFW/OpenGL via pkg-config, compiles the ImGui backends, generates and embeds the UI font and the program icon from `data/`, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs.
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
+- `cmake/EmbedIcon.cmake` — icon helpers: the hicolor PNG set and the embedded RGBA window icon derived from `data/icon.jpg`.
 - `assets/fonts/NotoSans-Regular.ttf` — bundled UI font (Noto Sans Regular).
 - `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
+- `data/icon.jpg` — single source image for the program icon.
+- `data/slopkit.desktop.in` — desktop entry template with the configured `Exec` path.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.
 - `reference/README.md` — placeholder documenting the read-only `reference/` tree.
@@ -22,7 +26,7 @@
 - `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession`.
 - `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake and typed plugin calls.
 - `src/plugin/plugin_host.hpp` — plugin discovery, diagnostics and the merged process listing.
-- `src/plugin/plugin_host.cpp` — scans search directories, loads plugins by precedence and merges processes.
+- `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence and merges processes.
 - `src/platform/linux/procfs.hpp` — procfs types and queries: pids, status, exe/cmdline, mapped regions and threads.
 - `src/platform/linux/procfs.cpp` — implements procfs enumeration, text parsing, region classification and module merging.
 - `src/platform/linux/memory.hpp` — ptrace-free memory read/write primitives and their result types.
@@ -39,7 +43,7 @@
 - `src/ui/app.hpp` — the `App`: owns the window, theme and scale, and drives the tool navigation.
 - `src/ui/app.cpp` — runs the window loop and draws the navigation and placeholder panels.
 - `src/ui/app_window.hpp` — `AppWindow`: GLFW window, OpenGL context and ImGui backends.
-- `src/ui/app_window.cpp` — Wayland-first init with X11 fallback, content-scale handling and frame rendering.
+- `src/ui/app_window.cpp` — Wayland-first init with X11 fallback, X11 `WM_CLASS` hints, the embedded window icon, content-scale handling and frame rendering.
 - `src/ui/theme.hpp` — the `Theme` colour-role struct and the dark/light constructors.
 - `src/ui/theme.cpp` — theme values and `apply_theme`, mapping roles onto `ImGuiStyle`.
 - `src/ui/scale.hpp` — the unscaled base style and the `Scale` DPI helper.
@@ -56,6 +60,6 @@
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
 - `src/tests/ui_test.cpp` — theme, scaling and embedded-font unit tests that need no window.
-- `src/tests/plugin_host_test.cpp` — loader diagnostics, missing-directory tolerance and headless commands.
+- `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.

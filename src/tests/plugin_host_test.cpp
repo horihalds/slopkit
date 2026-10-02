@@ -62,6 +62,45 @@ TEST_CASE("SLOPKIT_PLUGIN_PATH is split on colons", "[plugin]")
     REQUIRE(slopkit::plugin::PluginHost::split_search_path("").empty());
 }
 
+TEST_CASE("Default plugin search directories cover the build tree and the install", "[plugin]")
+{
+    const auto directories = slopkit::plugin::PluginHost::default_search_directories("/prefix/bin");
+
+    REQUIRE(directories.size() >= 2);
+    REQUIRE(directories[0] == std::filesystem::path("/prefix/bin/plugins"));
+
+    const auto installed = std::filesystem::path("/prefix/bin") / SLOPKIT_PLUGIN_RELATIVE_DIR;
+    REQUIRE(directories[1] == installed);
+    REQUIRE(installed.filename() == "plugins");
+    REQUIRE(installed.parent_path().filename() == "slopkit");
+}
+
+TEST_CASE("A missing installed plugin directory is silent", "[plugin]")
+{
+    const auto directories = slopkit::plugin::PluginHost::default_search_directories("/nonexistent/slopkit/bin");
+
+    slopkit::plugin::PluginHost host;
+    host.discover(directories);
+
+    REQUIRE(host.plugins().empty());
+    REQUIRE(host.diagnostics().empty());
+}
+
+TEST_CASE("SLOPKIT_PLUGIN_PATH entries follow the default directories", "[plugin]")
+{
+    set_env("SLOPKIT_PLUGIN_PATH", "/extra/one:/extra/two");
+
+    const auto directories = slopkit::plugin::PluginHost::default_search_directories("/prefix/bin");
+
+    unset_env("SLOPKIT_PLUGIN_PATH");
+
+    REQUIRE(directories.size() >= 4);
+    REQUIRE(directories[0] == std::filesystem::path("/prefix/bin/plugins"));
+    REQUIRE(directories[1] == std::filesystem::path("/prefix/bin") / SLOPKIT_PLUGIN_RELATIVE_DIR);
+    REQUIRE(directories[2] == std::filesystem::path("/extra/one"));
+    REQUIRE(directories[3] == std::filesystem::path("/extra/two"));
+}
+
 TEST_CASE("The version command prints the version", "[app]")
 {
     std::ostringstream out;

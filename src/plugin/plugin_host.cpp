@@ -88,7 +88,12 @@ namespace slopkit::plugin
         std::vector<std::filesystem::path> directories;
         if (!executable_dir.empty())
         {
+            // Build tree: plugins live next to the executable.
             directories.push_back(executable_dir / "plugins");
+            // Installed layout: <prefix>/<libdir>/slopkit/plugins, resolved
+            // exe-relative so any install prefix works without an environment
+            // variable (see SLOPKIT_PLUGIN_RELATIVE_DIR).
+            directories.push_back(executable_dir / SLOPKIT_PLUGIN_RELATIVE_DIR);
         }
         if (const char* path = std::getenv("SLOPKIT_PLUGIN_PATH"); path != nullptr)
         {

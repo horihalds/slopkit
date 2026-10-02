@@ -32,8 +32,9 @@ namespace slopkit::plugin
         PluginHost(PluginHost&&)                 = delete;
         PluginHost& operator=(PluginHost&&)      = delete;
 
-        // `${executable_dir}/plugins` plus every entry of the colon-separated
-        // SLOPKIT_PLUGIN_PATH environment variable.
+        // `${executable_dir}/plugins`, the installed plugin directory
+        // (`${executable_dir}/../<libdir>/slopkit/plugins`), then every entry of
+        // the colon-separated SLOPKIT_PLUGIN_PATH environment variable.
         static std::vector<std::filesystem::path>
         default_search_directories(const std::filesystem::path& executable_dir);
         static std::vector<std::filesystem::path> split_search_path(std::string_view value);

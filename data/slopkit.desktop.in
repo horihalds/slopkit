@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=slopkit
+GenericName=Process Inspection Toolkit
+Comment=Cheat Engine-like reverse-engineering toolset for games and software
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/slopkit
+Icon=slopkit
+Terminal=false
+Categories=Development;Debugger;
+Keywords=reverse;engineering;memory;process;debugger;
+StartupNotify=true
+StartupWMClass=slopkit

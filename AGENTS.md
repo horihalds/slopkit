@@ -31,9 +31,11 @@ them for every task in this repository.
   cmake --build build
   ```
 
-- Two convenience scripts at the repository root wrap those commands and work
-  from any directory: `./configure.sh` runs the configure step, and `./build.sh`
-  builds, configuring first when the `build/` directory does not exist yet.
+- Three convenience scripts at the repository root work from any directory:
+  `./configure.sh` runs the configure step, `./build.sh` builds (configuring
+  first when `build/` does not exist yet), and `./install.sh` configures, builds
+  and installs into `PREFIX` (default `~/.local`), including the desktop entry
+  and hicolor icons.
   
 - Run the tests (Catch2 suites, wired into CTest):
 
@@ -53,6 +55,9 @@ them for every task in this repository.
 - Tying into that, the build links the system Zydis through `pkg-config`; it
   needs the distro Zydis development package (e.g. Fedora's `zydis-devel`) and
   `pkg-config` installed, and does not vendor Zydis.
+- ImageMagick is a build-time dependency: configure generates the icon set and
+  the embedded window icon from `data/icon.jpg`, and fails with an actionable
+  message when neither `magick` nor `convert` is on the `PATH`.
 
 ## Reference tree
 
