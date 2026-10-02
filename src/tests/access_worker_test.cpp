@@ -32,6 +32,7 @@ namespace
     using slopkit::process::FreezeResult;
     using slopkit::process::JobResult;
     using slopkit::process::ListResult;
+    using slopkit::process::MemoryMapResult;
     using slopkit::process::ProbeResult;
     using slopkit::process::ReadResult;
     using slopkit::process::WriteItem;
@@ -43,9 +44,10 @@ namespace
     public:
         static constexpr std::uint64_t kBase = 0x1000;
 
-        std::vector<std::byte> memory       = std::vector<std::byte>(0x40);
-        std::size_t            module_count = 0;
-        std::size_t            thread_count = 0;
+        std::vector<std::byte>                    memory       = std::vector<std::byte>(0x40);
+        std::size_t                               module_count = 0;
+        std::size_t                               thread_count = 0;
+        std::vector<slopkit::process::RegionInfo> region_list;
 
         [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
         {
@@ -101,7 +103,7 @@ namespace
 
         std::expected<std::vector<slopkit::process::RegionInfo>, AccessError> regions() override
         {
-            return std::vector<slopkit::process::RegionInfo> {};
+            return region_list;
         }
     };
 
@@ -528,4 +530,63 @@ TEST_CASE("destruction drops queued callbacks and waits for the in-flight job", 
 
     // Neither the in-flight nor the queued callback may run after shutdown.
     CHECK(called.load() == 0);
+}
+
+TEST_CASE("memory map jobs report the target modules and regions", "[worker]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    // Before any attach the worker owns no session.
+    MemoryMapResult before;
+    worker.submit_memory_map(worker.next_job_id(),
+                             [&](JobResult&& result)
+                             {
+                                 before = std::get<MemoryMapResult>(std::move(result));
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return before.error.has_value();
+                 }));
+    CHECK(before.error == AccessError::internal);
+
+    bool attached = false;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&&)
+                             {
+                                 attached = true;
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached;
+                 }));
+
+    // Place a readable region on the target so the map has something to report.
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x2000;
+    region.readable = true;
+    access.backend()->region_list.push_back(region);
+
+    MemoryMapResult map;
+    worker.submit_memory_map(worker.next_job_id(),
+                             [&](JobResult&& result)
+                             {
+                                 map = std::get<MemoryMapResult>(std::move(result));
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return !map.modules.empty() || map.error.has_value();
+                 }));
+    CHECK_FALSE(map.error.has_value());
+    CHECK(map.modules.size() == 2);
+    REQUIRE(map.regions.size() == 1);
+    CHECK(map.regions[0].start == 0x1000);
+    CHECK(map.regions[0].end == 0x2000);
+    CHECK(map.regions[0].readable);
 }

@@ -189,6 +189,15 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_memory_map(JobId id, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::memory_map;
+        request.id      = id;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_read(JobId id, std::uint64_t address, std::size_t size, JobCallback on_done)
     {
         Request request;
@@ -246,6 +255,8 @@ namespace slopkit::process
             return do_attach(request, true);
         case JobKind::application_index:
             return do_application_index();
+        case JobKind::memory_map:
+            return do_memory_map();
         case JobKind::read:
             return do_read(request);
         case JobKind::write:
@@ -362,6 +373,37 @@ namespace slopkit::process
         {
             result.error = bytes.error();
         }
+        return result;
+    }
+
+    MemoryMapResult AccessWorker::do_memory_map()
+    {
+        MemoryMapResult result;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            return result;
+        }
+
+        if (auto modules = session_->modules())
+        {
+            result.modules = std::move(*modules);
+        }
+        else
+        {
+            result.error = modules.error();
+        }
+
+        if (auto regions = session_->regions())
+        {
+            result.regions = std::move(*regions);
+        }
+        else if (!result.error)
+        {
+            result.error = regions.error();
+        }
+
         return result;
     }
 

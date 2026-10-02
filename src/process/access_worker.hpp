@@ -85,14 +85,27 @@ namespace slopkit::process
         std::optional<AccessError> error;
     };
 
+    struct MemoryMapResult
+    {
+        std::vector<ModuleInfo>    modules;
+        std::vector<RegionInfo>    regions;
+        std::optional<AccessError> error;
+    };
+
     struct FreezeResult
     {
         std::size_t                written {};
         std::optional<AccessError> error;
     };
 
-    using JobResult =
-        std::variant<ListResult, ProbeResult, AttachResult, AppIndexResult, ReadResult, WriteResult, FreezeResult>;
+    using JobResult = std::variant<ListResult,
+                                   ProbeResult,
+                                   AttachResult,
+                                   AppIndexResult,
+                                   ReadResult,
+                                   WriteResult,
+                                   FreezeResult,
+                                   MemoryMapResult>;
 
     // Runs on the UI thread inside AccessWorker::drain().
     using JobCallback = std::move_only_function<void(JobResult&&)>;
@@ -122,6 +135,7 @@ namespace slopkit::process
         bool submit_attach_app(JobId id, ProcessId pid, std::string plugin_id, JobCallback on_done);
         bool submit_attach_handoff(JobId id, ProcessId pid, std::string plugin_id, JobCallback on_done);
         bool submit_application_index(JobId id, JobCallback on_done);
+        bool submit_memory_map(JobId id, JobCallback on_done);
         bool submit_read(JobId id, std::uint64_t address, std::size_t size, JobCallback on_done);
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
@@ -153,6 +167,7 @@ namespace slopkit::process
             attach_app,
             attach_handoff,
             application_index,
+            memory_map,
             read,
             write,
             freeze,
@@ -179,17 +194,18 @@ namespace slopkit::process
             JobResult   result;
         };
 
-        void           run(std::stop_token token);
-        JobResult      execute(Request& request);
-        bool           submit(Request request);
-        ListResult     do_list();
-        ProbeResult    do_probe(const Request& request);
-        AttachResult   do_attach(const Request& request, bool handoff);
-        AppIndexResult do_application_index();
-        ReadResult     do_read(const Request& request);
-        WriteResult    do_write(const Request& request);
-        FreezeResult   do_freeze(const Request& request);
-        AttachResult   do_detach();
+        void            run(std::stop_token token);
+        JobResult       execute(Request& request);
+        bool            submit(Request request);
+        ListResult      do_list();
+        ProbeResult     do_probe(const Request& request);
+        AttachResult    do_attach(const Request& request, bool handoff);
+        AppIndexResult  do_application_index();
+        MemoryMapResult do_memory_map();
+        ReadResult      do_read(const Request& request);
+        WriteResult     do_write(const Request& request);
+        FreezeResult    do_freeze(const Request& request);
+        AttachResult    do_detach();
 
         ProcessAccess&          access_;
         std::jthread            worker_;

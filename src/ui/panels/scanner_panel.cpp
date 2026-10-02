@@ -34,6 +34,17 @@ namespace slopkit::ui::panels
             return box;
         }
 
+        // Shortens a long module name, keeping its head and tail readable.
+        QString elide_name(const QString& name, int max_chars)
+        {
+            if (name.size() <= max_chars)
+            {
+                return name;
+            }
+            const int keep = (max_chars - 3) / 2;
+            return name.left(keep) + QStringLiteral("...") + name.right(max_chars - 3 - keep);
+        }
+
         // The alignment the fast scan uses when the field is left blank.
         std::size_t default_alignment(scan::ValueType type) noexcept
         {
@@ -124,6 +135,15 @@ namespace slopkit::ui::panels
 
         auto* options_body = options->body();
 
+        auto* range_row = new QHBoxLayout();
+        module_combo_   = new QComboBox();
+        module_combo_->addItem(tr("All memory"));
+        module_combo_->setEnabled(false);
+        module_combo_->setFont(mono_font());
+        module_combo_->setToolTip(tr("Whole process or a single loaded module"));
+        range_row->addWidget(module_combo_, 1);
+        options_body->addLayout(range_row);
+
         auto* address_row = new QHBoxLayout();
         start_edit_       = new QLineEdit();
         start_edit_->setPlaceholderText(tr("Start address"));
@@ -194,6 +214,13 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::connect_widgets()
     {
+        connect(module_combo_,
+                &QComboBox::currentIndexChanged,
+                this,
+                [this](int index)
+                {
+                    on_range_selected(index);
+                });
         connect(scan_button_,
                 &QPushButton::clicked,
                 this,
@@ -300,6 +327,7 @@ namespace slopkit::ui::panels
         worker_plugin_.clear();
         if (!target_.valid())
         {
+            clear_memory_map();
             status_.clear();
             status_is_error_ = false;
             return;
@@ -348,6 +376,194 @@ namespace slopkit::ui::panels
         {
             handoff_pending_.reset();
         }
+    }
+
+    void ScannerPanel::request_memory_map()
+    {
+        const bool changed = target_.pid != map_pid_ || target_.plugin_id != map_plugin_;
+        if (!changed || map_pending_.has_value() || !target_.valid() || !worker_.attached())
+        {
+            return;
+        }
+
+        const process::ProcessId pid    = target_.pid;
+        const std::string        plugin = target_.plugin_id;
+        map_pid_                        = pid;
+        map_plugin_                     = plugin;
+
+        const process::JobId job_id = worker_.next_job_id();
+        map_pending_                = job_id;
+
+        // Show the in-flight state; the last known ranges stay in the fields.
+        range_updating_ = true;
+        module_combo_->clear();
+        module_combo_->addItem(tr("Loading…"));
+        module_combo_->setEnabled(false);
+        range_updating_ = false;
+
+        const bool submitted =
+            worker_.submit_memory_map(job_id,
+                                      [this, job_id, pid, plugin](process::JobResult&& result)
+                                      {
+                                          if (map_pending_ != job_id)
+                                          {
+                                              return; // Superseded or shut down.
+                                          }
+                                          map_pending_.reset();
+                                          // Drop a map whose target changed while the job ran; the next
+                                          // tick requests the new target.
+                                          if (!target_.valid() || target_.pid != pid || target_.plugin_id != plugin)
+                                          {
+                                              return;
+                                          }
+                                          apply_memory_map(std::get<process::MemoryMapResult>(std::move(result)));
+                                      });
+        if (!submitted)
+        {
+            map_pending_.reset();
+        }
+    }
+
+    void ScannerPanel::apply_memory_map(process::MemoryMapResult result)
+    {
+        modules_ = std::move(result.modules);
+
+        const auto bounds_of = [&result](bool readable_only) -> std::optional<std::pair<std::uint64_t, std::uint64_t>>
+        {
+            std::optional<std::pair<std::uint64_t, std::uint64_t>> bounds;
+            for (const auto& region : result.regions)
+            {
+                if (region.end <= region.start)
+                {
+                    continue;
+                }
+                if (readable_only && !region.readable)
+                {
+                    continue;
+                }
+                if (!bounds)
+                {
+                    bounds = std::pair {region.start, region.end};
+                    continue;
+                }
+                bounds->first  = std::min(bounds->first, region.start);
+                bounds->second = std::max(bounds->second, region.end);
+            }
+            return bounds;
+        };
+
+        // Mirror the engine's span choice: prefer the readable, non-empty
+        // regions and fall back to every region when none is readable.
+        process_bounds_ = bounds_of(true);
+        if (!process_bounds_)
+        {
+            process_bounds_ = bounds_of(false);
+        }
+
+        if (process_bounds_)
+        {
+            apply_range(process_bounds_->first, process_bounds_->second);
+        }
+        else
+        {
+            start_edit_->clear();
+            stop_edit_->clear();
+        }
+
+        rebuild_range_items();
+    }
+
+    void ScannerPanel::apply_range(std::uint64_t start, std::uint64_t end)
+    {
+        start_edit_->setText(QStringLiteral("0x") + QString::number(start, 16).toUpper());
+        stop_edit_->setText(QStringLiteral("0x") + QString::number(end, 16).toUpper());
+    }
+
+    void ScannerPanel::clear_memory_map()
+    {
+        map_pending_.reset();
+        map_pid_ = 0;
+        map_plugin_.clear();
+        modules_.clear();
+        process_bounds_.reset();
+        start_edit_->clear();
+        stop_edit_->clear();
+
+        range_updating_ = true;
+        module_combo_->clear();
+        module_combo_->addItem(tr("All memory"));
+        module_combo_->setCurrentIndex(0);
+        module_combo_->setEnabled(false);
+        range_updating_ = false;
+    }
+
+    void ScannerPanel::rebuild_range_items()
+    {
+        const auto range_text = [](std::uint64_t start, std::uint64_t end)
+        {
+            return QStringLiteral("0x") + QString::number(start, 16).toUpper() + QStringLiteral("-")
+                 + QStringLiteral("0x") + QString::number(end, 16).toUpper();
+        };
+
+        range_updating_ = true;
+        module_combo_->clear();
+
+        if (process_bounds_)
+        {
+            module_combo_->addItem(
+                tr("All memory  %1").arg(range_text(process_bounds_->first, process_bounds_->second)));
+            module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(process_bounds_->first), Qt::UserRole);
+            module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(process_bounds_->second), Qt::UserRole + 1);
+        }
+        else
+        {
+            module_combo_->addItem(tr("All memory"));
+        }
+
+        // Only file-backed modules are listed, ordered by their base address;
+        // anonymous mappings stay covered by the whole-process entry.
+        std::vector<const process::ModuleInfo*> listed;
+        for (const auto& module : modules_)
+        {
+            if (module.kind == process::ModuleKind::anonymous || module.size == 0)
+            {
+                continue;
+            }
+            listed.push_back(&module);
+        }
+        std::ranges::sort(listed, {}, &process::ModuleInfo::base);
+
+        for (const process::ModuleInfo* module : listed)
+        {
+            const std::uint64_t start = module->base;
+            const std::uint64_t end   = module->base + module->size;
+            module_combo_->addItem(
+                QStringLiteral("%1  %2").arg(elide_name(to_qstring(module->name), 48), range_text(start, end)));
+            const int row = module_combo_->count() - 1;
+            module_combo_->setItemData(row, QVariant::fromValue<qulonglong>(start), Qt::UserRole);
+            module_combo_->setItemData(row, QVariant::fromValue<qulonglong>(end), Qt::UserRole + 1);
+            module_combo_->setItemData(row, to_qstring(module->path), Qt::ToolTipRole);
+        }
+
+        module_combo_->setCurrentIndex(0);
+        module_combo_->setEnabled(true);
+        range_updating_ = false;
+    }
+
+    void ScannerPanel::on_range_selected(int index)
+    {
+        if (range_updating_ || index < 0)
+        {
+            return;
+        }
+
+        const QVariant start = module_combo_->itemData(index, Qt::UserRole);
+        const QVariant end   = module_combo_->itemData(index, Qt::UserRole + 1);
+        if (!start.isValid() || !end.isValid())
+        {
+            return;
+        }
+        apply_range(start.toULongLong(), end.toULongLong());
     }
 
     std::expected<scan::ScanConfig, std::string> ScannerPanel::build_config() const
@@ -472,6 +688,7 @@ namespace slopkit::ui::panels
     void ScannerPanel::refresh()
     {
         request_scan_session();
+        request_memory_map();
 
         const scan::ScanSnapshot snapshot    = engine_.snapshot();
         const bool               running     = snapshot.state == scan::ScanState::running;

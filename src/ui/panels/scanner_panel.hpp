@@ -4,6 +4,8 @@
 #include <expected>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "process/access.hpp"
 #include "process/access_worker.hpp"
@@ -63,6 +65,12 @@ namespace slopkit::ui::panels
         void connect_widgets();
 
         void request_scan_session();
+        void request_memory_map();
+        void apply_memory_map(process::MemoryMapResult result);
+        void apply_range(std::uint64_t start, std::uint64_t end);
+        void clear_memory_map();
+        void rebuild_range_items();
+        void on_range_selected(int index);
         void start_first_scan();
         void start_next_scan();
         void update_value_inputs();
@@ -79,6 +87,7 @@ namespace slopkit::ui::panels
         QCheckBox*   hex_check_ {};
         QComboBox*   scan_type_combo_ {};
         QComboBox*   value_type_combo_ {};
+        QComboBox*   module_combo_ {};
         QPushButton* scan_button_ {};
         QPushButton* next_scan_button_ {};
         QPushButton* undo_button_ {};
@@ -113,7 +122,19 @@ namespace slopkit::ui::panels
         process::ProcessId            worker_pid_ {0};
         std::string                   worker_plugin_;
         std::optional<process::JobId> handoff_pending_;
-        scan::ScanEngine              engine_;
+
+        // The target's memory map, fetched once per attach so the scan range
+        // defaults to the process bounds. `map_pid_`/`map_plugin_` record which
+        // target the pending or last request belongs to, so a completion for a
+        // superseded target is dropped.
+        std::optional<process::JobId>                          map_pending_;
+        process::ProcessId                                     map_pid_ {0};
+        std::string                                            map_plugin_;
+        std::vector<process::ModuleInfo>                       modules_;
+        std::optional<std::pair<std::uint64_t, std::uint64_t>> process_bounds_;
+        bool                                                   range_updating_ {false};
+
+        scan::ScanEngine engine_;
     };
 
 } // namespace slopkit::ui::panels

@@ -12,6 +12,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
@@ -96,6 +97,9 @@ namespace
     class UiFakeBackend final : public slopkit::process::SessionBackend
     {
     public:
+        std::vector<slopkit::process::ModuleInfo> module_list;
+        std::vector<slopkit::process::RegionInfo> region_list;
+
         [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
         {
             return 42;
@@ -129,7 +133,7 @@ namespace
 
         std::expected<std::vector<slopkit::process::ModuleInfo>, slopkit::process::AccessError> modules() override
         {
-            return std::vector<slopkit::process::ModuleInfo> {};
+            return module_list;
         }
 
         std::expected<std::vector<slopkit::process::ThreadInfo>, slopkit::process::AccessError> threads() override
@@ -139,7 +143,7 @@ namespace
 
         std::expected<std::vector<slopkit::process::RegionInfo>, slopkit::process::AccessError> regions() override
         {
-            return std::vector<slopkit::process::RegionInfo> {};
+            return region_list;
         }
     };
 
@@ -149,6 +153,8 @@ namespace
     {
     public:
         std::vector<slopkit::process::ProcessInfo> processes;
+        std::vector<slopkit::process::ModuleInfo>  modules;
+        std::vector<slopkit::process::RegionInfo>  regions;
         bool                                       attach_fails {false};
         std::atomic<int>                           attach_calls {0};
         std::atomic<int>                           list_calls {0};
@@ -168,7 +174,10 @@ namespace
             {
                 return std::unexpected(slopkit::process::AccessError::permission_denied);
             }
-            return slopkit::process::Session {std::make_unique<UiFakeBackend>()};
+            auto backend         = std::make_unique<UiFakeBackend>();
+            backend->module_list = modules;
+            backend->region_list = regions;
+            return slopkit::process::Session {std::move(backend)};
         }
     };
 
@@ -208,6 +217,61 @@ namespace
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
         return done();
+    }
+
+    // The scanner panel's Start/Stop fields, located by their placeholder text.
+    QLineEdit* address_field(QWidget& panel, const char* placeholder)
+    {
+        for (auto* edit : panel.findChildren<QLineEdit*>())
+        {
+            if (edit->placeholderText() == QString::fromUtf8(placeholder))
+            {
+                return edit;
+            }
+        }
+        return nullptr;
+    }
+
+    // Attaches the app-wide session to the fake backend on pid 42.
+    void attach_app_session(slopkit::process::AccessWorker& worker)
+    {
+        bool attached = false;
+        worker.submit_attach_app(worker.next_job_id(),
+                                 42,
+                                 "fake",
+                                 [&](slopkit::process::JobResult&&)
+                                 {
+                                     attached = true;
+                                 });
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return attached;
+                        }));
+    }
+
+    slopkit::process::AttachedTarget fake_target()
+    {
+        slopkit::process::AttachedTarget target;
+        target.pid          = 42;
+        target.name         = "fake";
+        target.plugin_id    = "fake";
+        target.method       = slopkit::process::AccessMethod::procfs_mem;
+        target.session_live = true;
+        return target;
+    }
+
+    // The scan-range dropdown, located by its tooltip.
+    QComboBox* range_combo(QWidget& panel)
+    {
+        for (auto* combo : panel.findChildren<QComboBox*>())
+        {
+            if (combo->toolTip() == QStringLiteral("Whole process or a single loaded module"))
+            {
+                return combo;
+            }
+        }
+        return nullptr;
     }
 } // namespace
 
@@ -771,4 +835,313 @@ TEST_CASE("typing in the filter selects the first result", "[ui]")
     CHECK(table->currentIndex().row() == 0);
 
     dialog.close();
+}
+
+TEST_CASE("the scanner range defaults to the target process bounds", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+
+    slopkit::process::RegionInfo low;
+    low.start    = 0x1000;
+    low.end      = 0x3000;
+    low.readable = true;
+
+    slopkit::process::RegionInfo high;
+    high.start    = 0x4000;
+    high.end      = 0x5000;
+    high.readable = true;
+
+    access.regions = {low, high};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* start = address_field(panel, "Start address");
+    auto* stop  = address_field(panel, "Stop address");
+    REQUIRE(start != nullptr);
+    REQUIRE(stop != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return !start->text().isEmpty();
+                    }));
+    CHECK(start->text() == QStringLiteral("0x1000"));
+    CHECK(stop->text() == QStringLiteral("0x5000"));
+}
+
+TEST_CASE("the scanner range falls back to all regions and blanks an empty map", "[ui]")
+{
+    application();
+
+    SECTION("no readable region falls back to every non-empty region")
+    {
+        UiFakeAccess access;
+
+        slopkit::process::RegionInfo only;
+        only.start     = 0x2000;
+        only.end       = 0x6000;
+        only.readable  = false;
+        access.regions = {only};
+
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = fake_target();
+
+        attach_app_session(worker);
+
+        slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+        auto* start = address_field(panel, "Start address");
+        auto* stop  = address_field(panel, "Stop address");
+        REQUIRE(start != nullptr);
+        REQUIRE(stop != nullptr);
+
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return !start->text().isEmpty();
+                        }));
+        CHECK(start->text() == QStringLiteral("0x2000"));
+        CHECK(stop->text() == QStringLiteral("0x6000"));
+    }
+
+    SECTION("an empty map leaves the fields blank")
+    {
+        UiFakeAccess access; // No regions reported.
+
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = fake_target();
+
+        attach_app_session(worker);
+
+        slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+        auto* start = address_field(panel, "Start address");
+        auto* stop  = address_field(panel, "Stop address");
+        REQUIRE(start != nullptr);
+        REQUIRE(stop != nullptr);
+
+        // Let both the handoff and the map job complete and drain.
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return access.attach_calls.load() >= 2;
+                        }));
+        CHECK(start->text().isEmpty());
+        CHECK(stop->text().isEmpty());
+    }
+}
+
+TEST_CASE("the scan range dropdown lists file-backed modules and narrows the range", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::ModuleInfo high;
+    high.base = 0x2000;
+    high.size = 0x100;
+    high.kind = slopkit::process::ModuleKind::elf;
+    high.name = "high";
+    high.path = "/opt/high";
+
+    slopkit::process::ModuleInfo low;
+    low.base = 0x1000;
+    low.size = 0x800;
+    low.kind = slopkit::process::ModuleKind::elf;
+    low.name = "low";
+    low.path = "/opt/low";
+
+    slopkit::process::ModuleInfo anon;
+    anon.base = 0x4000;
+    anon.size = 0x1000;
+    anon.kind = slopkit::process::ModuleKind::anonymous;
+    anon.name = "[anon]";
+
+    // Deliberately out of base order to prove the dropdown sorts.
+    access.modules = {high, anon, low};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* start = address_field(panel, "Start address");
+    auto* stop  = address_field(panel, "Stop address");
+    auto* combo = range_combo(panel);
+    REQUIRE(start != nullptr);
+    REQUIRE(stop != nullptr);
+    REQUIRE(combo != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return combo->isEnabled();
+                    }));
+
+    // Item 0 is the whole process, then the file-backed modules by base; the
+    // anonymous mapping stays out of the list.
+    REQUIRE(combo->count() == 3);
+    CHECK(combo->itemText(0).startsWith(QStringLiteral("All memory")));
+    CHECK(combo->itemText(0).contains(QStringLiteral("0x1000-0x3000")));
+    CHECK(combo->itemText(1).contains(QStringLiteral("low")));
+    CHECK(combo->itemText(2).contains(QStringLiteral("high")));
+    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("/opt/low"));
+
+    // Selecting a module narrows the range to its base and size.
+    combo->setCurrentIndex(1);
+    CHECK(start->text() == QStringLiteral("0x1000"));
+    CHECK(stop->text() == QStringLiteral("0x1800"));
+
+    combo->setCurrentIndex(2);
+    CHECK(start->text() == QStringLiteral("0x2000"));
+    CHECK(stop->text() == QStringLiteral("0x2100"));
+
+    // Back to the whole process.
+    combo->setCurrentIndex(0);
+    CHECK(start->text() == QStringLiteral("0x1000"));
+    CHECK(stop->text() == QStringLiteral("0x3000"));
+}
+
+TEST_CASE("manual edits to the scan range survive refresh cycles", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* start = address_field(panel, "Start address");
+    REQUIRE(start != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return start->text() == QStringLiteral("0x1000");
+                    }));
+
+    // A hand-typed value must not be rewritten by later ticks.
+    start->setText(QStringLiteral("0x2000"));
+    for (int tick = 0; tick < 5; ++tick)
+    {
+        panel.refresh();
+        worker.drain();
+        QCoreApplication::processEvents();
+    }
+    CHECK(start->text() == QStringLiteral("0x2000"));
+}
+
+TEST_CASE("detaching resets the scan range and re-attaching repopulates it", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* start = address_field(panel, "Start address");
+    auto* stop  = address_field(panel, "Stop address");
+    auto* combo = range_combo(panel);
+    REQUIRE(start != nullptr);
+    REQUIRE(stop != nullptr);
+    REQUIRE(combo != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return !start->text().isEmpty();
+                    }));
+
+    // Detach: the fields clear and the dropdown resets to a disabled entry.
+    target.clear();
+    panel.refresh();
+    CHECK(start->text().isEmpty());
+    CHECK(stop->text().isEmpty());
+    CHECK_FALSE(combo->isEnabled());
+    REQUIRE(combo->count() == 1);
+    CHECK(combo->itemText(0) == QStringLiteral("All memory"));
+
+    // Re-attach: the map is requested again and the fields refill.
+    target = fake_target();
+    panel.refresh();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return combo->isEnabled() && !start->text().isEmpty();
+                    }));
+    CHECK(start->text() == QStringLiteral("0x1000"));
+    CHECK(stop->text() == QStringLiteral("0x3000"));
+}
+
+TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    // Build the panel before the app-wide attach, so the handoff drains without
+    // a map request: the map is only asked for on an explicit refresh below.
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* start = address_field(panel, "Start address");
+    auto* combo = range_combo(panel);
+    REQUIRE(start != nullptr);
+    REQUIRE(combo != nullptr);
+
+    attach_app_session(worker);
+    panel.refresh(); // Submits the map job for pid 42 (shows "Loading…").
+
+    // Let the job finish and queue its completion, then change the target
+    // before the completion is drained: it must be dropped.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    target.pid = 99;
+    worker.drain();
+    QCoreApplication::processEvents();
+
+    CHECK(start->text().isEmpty());
+    CHECK_FALSE(combo->isEnabled());
+    REQUIRE(combo->count() == 1);
+    CHECK(combo->itemText(0) == QStringLiteral("Loading…"));
 }
