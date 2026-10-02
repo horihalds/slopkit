@@ -19,6 +19,18 @@ target_compile_options(slopkit PRIVATE -Wall -Wextra)
 find_package(Catch2 REQUIRED)
 include(CTest)
 
+# --- formatting ------------------------------------------------------------
+
+find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
+if(CLANG_FORMAT_EXECUTABLE)
+    file(GLOB_RECURSE SLOPKIT_FORMAT_SOURCES CONFIGURE_DEPENDS
+        ${CMAKE_SOURCE_DIR}/src/*.hpp
+        ${CMAKE_SOURCE_DIR}/src/*.cpp)
+    add_test(NAME clang-format-check
+        COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${SLOPKIT_FORMAT_SOURCES}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endif()
+
 # Application modules (everything but the entry point) are compiled into the
 # test binary so tests can exercise them.
 set(SLOPKIT_TEST_SUPPORT_SOURCES ${SLOPKIT_SOURCES})

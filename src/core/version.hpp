@@ -2,7 +2,8 @@
 
 #include <string_view>
 
-namespace slopkit {
+namespace slopkit
+{
 
     std::string_view version();
 

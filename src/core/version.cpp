@@ -1,6 +1,7 @@
 #include "core/version.hpp"
 
-namespace slopkit {
+namespace slopkit
+{
 
     std::string_view version()
     {

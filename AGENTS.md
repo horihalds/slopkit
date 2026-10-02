@@ -28,6 +28,11 @@ them for every task in this repository.
   ctest --test-dir build --output-on-failure
   ```
 
+- One CTest test, `clang-format-check`, verifies that every `src/**/*.hpp` and
+  `src/**/*.cpp` file is formatted with `clang-format` (targeting the installed
+  23.x rules in `.clang-format`). It is registered only when `clang-format` is on
+  the `PATH`, so a missing formatter skips the check instead of failing the build.
+
 ## Dependencies
 
 - Never add any other dependency without consulting the owner first.
