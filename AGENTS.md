@@ -56,7 +56,7 @@ them for every task in this repository.
   needs the distro Zydis development package (e.g. Fedora's `zydis-devel`) and
   `pkg-config` installed, and does not vendor Zydis.
 - ImageMagick is a build-time dependency: configure generates the icon set and
-  the embedded window icon from `data/icon.jpg`, and fails with an actionable
+  the embedded window icon from `data/icon.svg`, and fails with an actionable
   message when neither `magick` nor `convert` is on the `PATH`.
 
 ## Reference tree

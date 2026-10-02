@@ -13,6 +13,7 @@
 #include <imgui_stdlib.h>
 
 #include "ui/components/widgets.hpp"
+#include "ui/fonts.hpp"
 
 namespace slopkit::ui::panels
 {
@@ -314,13 +315,17 @@ namespace slopkit::ui::panels
                 ImGui::TableSetColumnIndex(0);
                 ImGui::PushID(index);
                 const auto pid_text = std::to_string(process.pid);
-                if (ImGui::Selectable(pid_text.c_str(), selected_index_ == index, ImGuiSelectableFlags_SpanAllColumns))
                 {
-                    if (selected_index_ != index)
+                    ui::ScopedMonoFont mono;
+                    if (ImGui::Selectable(
+                            pid_text.c_str(), selected_index_ == index, ImGuiSelectableFlags_SpanAllColumns))
                     {
-                        selected_index_ = index;
-                        selected_plugin_.clear();
-                        probe_needed_ = true;
+                        if (selected_index_ != index)
+                        {
+                            selected_index_ = index;
+                            selected_plugin_.clear();
+                            probe_needed_ = true;
+                        }
                     }
                 }
                 ImGui::TableSetColumnIndex(1);
@@ -328,7 +333,10 @@ namespace slopkit::ui::panels
                 ImGui::TableSetColumnIndex(2);
                 ImGui::TextUnformatted(process.plugin_id.c_str());
                 ImGui::TableSetColumnIndex(3);
-                ImGui::TextUnformatted(process.exe_path.c_str());
+                {
+                    ui::ScopedMonoFont mono;
+                    ImGui::TextUnformatted(process.exe_path.c_str());
+                }
                 ImGui::PopID();
             }
 
@@ -355,9 +363,15 @@ namespace slopkit::ui::panels
         }
         else
         {
-            ImGui::Text("PID: %u", info->pid);
+            {
+                ui::ScopedMonoFont mono;
+                ImGui::Text("PID: %u", info->pid);
+            }
             ImGui::Text("Name: %s", info->name.c_str());
-            ImGui::TextWrapped("Executable: %s", info->exe_path.empty() ? "(unknown)" : info->exe_path.c_str());
+            {
+                ui::ScopedMonoFont mono;
+                ImGui::TextWrapped("Executable: %s", info->exe_path.empty() ? "(unknown)" : info->exe_path.c_str());
+            }
             ImGui::Text("Default plugin: %s", info->plugin_id.c_str());
 
             if (info->claimants.size() > 1)
@@ -377,9 +391,12 @@ namespace slopkit::ui::panels
             }
 
             ImGui::Spacing();
-            ImGui::Text("Access methods: %s", process::describe(detail_methods_).c_str());
-            ImGui::Text("Modules: %zu", detail_module_count_);
-            ImGui::Text("Threads: %zu", detail_thread_count_);
+            {
+                ui::ScopedMonoFont mono;
+                ImGui::Text("Access methods: %s", process::describe(detail_methods_).c_str());
+                ImGui::Text("Modules: %zu", detail_module_count_);
+                ImGui::Text("Threads: %zu", detail_thread_count_);
+            }
 
             if (!detail_error_.empty())
             {
@@ -405,14 +422,17 @@ namespace slopkit::ui::panels
         ImGui::EndChild();
 
         ImGui::Separator();
-        if (!status_.empty())
         {
-            widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                 status_.c_str());
-        }
-        else
-        {
-            ImGui::TextDisabled("%zu process(es)", processes_.size());
+            ui::ScopedMonoFont mono;
+            if (!status_.empty())
+            {
+                widgets::status_text(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
+                                     status_.c_str());
+            }
+            else
+            {
+                ImGui::TextDisabled("%zu process(es)", processes_.size());
+            }
         }
     }
 

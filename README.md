@@ -120,7 +120,7 @@ Dependencies (from the system repositories):
 - GLFW 3.4 or newer, built with Wayland support
 - OpenGL development files (e.g. Fedora's `mesa-libGL-devel`)
 - ImageMagick — build-time only: generates the icon set and the embedded window
-  icon from `data/icon.jpg`
+  icon from `data/icon.svg`
 
 Configure and build:
 
@@ -165,6 +165,7 @@ absolute path of the installed binary. The resulting layout is:
   `libslopkit-wine_proton.so`
 - `<prefix>/share/applications/slopkit.desktop`
 - `<prefix>/share/icons/hicolor/<N>x<N>/apps/slopkit.png`
+- `<prefix>/share/icons/hicolor/scalable/apps/slopkit.svg`
 - `<prefix>/share/doc/slopkit/README.md`
 
 `<libdir>` comes from CMake's `GNUInstallDirs`, so it is `lib64` on RPM-based

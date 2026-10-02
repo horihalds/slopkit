@@ -115,10 +115,15 @@ TEST_CASE("scaling derives the active style from an unscaled base", "[ui]")
     CHECK(scale.style().ItemSpacing.x == base_spacing);
 }
 
-TEST_CASE("the embedded font loads into the atlas", "[ui]")
+TEST_CASE("the embedded fonts load into the atlas", "[ui]")
 {
     ContextGuard guard;
 
-    ImFont* font = slopkit::ui::load_embedded_font(slopkit::ui::kBaseFontSize);
-    REQUIRE(font != nullptr);
+    REQUIRE(slopkit::ui::load_embedded_fonts(slopkit::ui::kBaseFontSize));
+
+    ImFont* ui   = slopkit::ui::ui_font();
+    ImFont* mono = slopkit::ui::mono_font();
+    REQUIRE(ui != nullptr);
+    REQUIRE(mono != nullptr);
+    CHECK(ui != mono);
 }

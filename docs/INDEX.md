@@ -9,10 +9,11 @@
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
-- `cmake/EmbedIcon.cmake` — icon helpers: the hicolor PNG set and the embedded RGBA window icon derived from `data/icon.jpg`.
+- `cmake/EmbedIcon.cmake` — icon helpers: the hicolor PNG set and the embedded RGBA window icon derived from `data/icon.svg`.
 - `assets/fonts/NotoSans-Regular.ttf` — bundled UI font (Noto Sans Regular).
+- `assets/fonts/NotoSansMono-Regular.ttf` — bundled monospace UI font (Noto Sans Mono Regular).
 - `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
-- `data/icon.jpg` — single source image for the program icon.
+- `data/icon.svg` — single vector source for the program icon.
 - `data/slopkit.desktop.in` — desktop entry template with the configured `Exec` path.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.
@@ -48,8 +49,8 @@
 - `src/ui/theme.cpp` — theme values and `apply_theme`, mapping roles onto `ImGuiStyle`.
 - `src/ui/scale.hpp` — the unscaled base style and the `Scale` DPI helper.
 - `src/ui/scale.cpp` — base style values and non-compounding `ScaleAllSizes` application.
-- `src/ui/fonts.hpp` — embedded-font loading and font scaling declarations.
-- `src/ui/fonts.cpp` — loads the embedded Noto Sans and applies `FontScaleDpi`.
+- `src/ui/fonts.hpp` — embedded-font loading, the proportional/monospace accessors, the `ScopedMonoFont` guard and font scaling declarations.
+- `src/ui/fonts.cpp` — loads the embedded Noto Sans and Noto Sans Mono and applies `FontScaleDpi`.
 - `src/ui/components/widgets.hpp` — the first themed component set (headers, buttons, panels, status text).
 - `src/ui/components/widgets.cpp` — implements the themed components from the active theme.
 - `src/ui/panels/process_picker.hpp` — the process picker panel state and API.

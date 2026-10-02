@@ -26,9 +26,9 @@ namespace slopkit::ui
         theme_ = dark_theme();
         scale_.set_factor(window_->content_scale());
         apply_active_style();
-        if (load_embedded_font(kBaseFontSize) == nullptr)
+        if (!load_embedded_fonts(kBaseFontSize))
         {
-            std::cerr << "slopkit: warning: the embedded font could not be loaded\n";
+            std::cerr << "slopkit: warning: the embedded fonts could not be loaded\n";
         }
         window_->set_clear_color(theme_.background);
 

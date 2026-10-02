@@ -66,27 +66,28 @@ target_link_libraries(imgui_backends PUBLIC imgui PkgConfig::GLFW)
 include(${CMAKE_SOURCE_DIR}/cmake/EmbedFont.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/EmbedIcon.cmake)
 
-# The icon PNG set and the embedded window icon are derived from data/icon.jpg
+# The icon PNG set and the embedded window icon are derived from data/icon.svg
 # at configure time, so ImageMagick is a hard build-time dependency.
 find_program(SLOPKIT_MAGICK_EXECUTABLE NAMES magick convert)
 if(NOT SLOPKIT_MAGICK_EXECUTABLE)
     message(FATAL_ERROR
-        "ImageMagick is required to generate the slopkit icon from data/icon.jpg, "
+        "ImageMagick is required to generate the slopkit icon from data/icon.svg, "
         "but neither `magick` nor `convert` was found on PATH. "
         "Install it (e.g. Fedora: `sudo dnf install ImageMagick`; "
         "Debian/Ubuntu: `sudo apt install imagemagick`) and re-run configure.")
 endif()
 
-# The font is embedded at configure time; consumers get the generated include
+# The fonts are embedded at configure time; consumers get the generated include
 # directory and the `slopkit::generated::*` symbols through this target.
 add_library(slopkit_assets INTERFACE)
 embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSans-Regular.ttf slopkit_notosans_regular)
+embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSansMono-Regular.ttf slopkit_notosansmono_regular)
 
 # Hicolor PNG set for the desktop entry, plus the 64x64 RGBA blob used as the
 # X11 window icon. Both share the `slopkit_assets` include directory.
 set(SLOPKIT_ICON_SIZES 16 24 32 48 64 128 256 512)
-slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/data/icon.jpg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
-embed_window_icon(slopkit_assets ${CMAKE_SOURCE_DIR}/data/icon.jpg 64 slopkit_icon_rgba)
+slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/data/icon.svg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
+embed_window_icon(slopkit_assets ${CMAKE_SOURCE_DIR}/data/icon.svg 64 slopkit_icon_rgba)
 
 # --- application -----------------------------------------------------------
 
@@ -220,6 +221,11 @@ foreach(size IN LISTS SLOPKIT_ICON_SIZES)
     install(FILES ${CMAKE_BINARY_DIR}/icons/${size}x${size}/apps/slopkit.png
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${size}x${size}/apps)
 endforeach()
+
+# The vector is installed as well, so SVG-aware desktops get a crisp icon.
+install(FILES ${CMAKE_SOURCE_DIR}/data/icon.svg
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps
+    RENAME slopkit.svg)
 
 install(FILES ${CMAKE_SOURCE_DIR}/README.md ${CMAKE_SOURCE_DIR}/assets/fonts/OFL.txt
     DESTINATION ${CMAKE_INSTALL_DOCDIR})

@@ -35,6 +35,7 @@ These rules apply to all user interface work in this project. Read this file bef
 ## 5. Fonts
 
 - Use **Noto Sans** as the UI font. Embed it in the binary rather than loading it from disk at runtime, so the app has no external font file dependency.
+- Use **Noto Sans Mono** as the companion monospace font for text that must line up (ids, paths, hex, counters) and wrap only those fields in it.
 - Embedding happens at build time through a CMake script that converts the `.ttf` into a generated C++ header. Do not commit generated headers or paste font byte arrays into source files.
 - Keep the source font under `assets/fonts/` (e.g. `NotoSans-Regular.ttf`) and track it in version control together with its license (OFL).
 - The CMake script (e.g. `cmake/EmbedFont.cmake`) should:
@@ -42,8 +43,8 @@ These rules apply to all user interface work in this project. Read this file bef
   - Write the result into the build directory (`${CMAKE_BINARY_DIR}/generated/`) as a header containing a `constexpr unsigned char[]` and a size constant.
   - Re-run automatically when the font file changes (e.g. `set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS <font>)`, or `add_custom_command` with `DEPENDS`).
   - Be exposed as a function such as `embed_font(<target> <font_path> <symbol_name>)` that also adds the generated include directory to the target.
-- Load the embedded font with `ImFontAtlas::AddFontFromMemoryTTF` and set `FontDataOwnedByAtlas = false`, since the data is static and must not be freed by ImGui.
-- Additional weights (Bold, Medium) or icon glyphs go through the same `embed_font` function; do not add a separate embedding mechanism.
+- Load the embedded fonts with `ImFontAtlas::AddFontFromMemoryTTF` and set `FontDataOwnedByAtlas = false`, since the data is static and must not be freed by ImGui.
+- Additional weights (Bold, Medium), a monospace companion or icon glyphs go through the same `embed_font` function; do not add a separate embedding mechanism.
 - Noto Sans covers Latin, Cyrillic, and Greek, but ImGui loads only a default glyph range. If other scripts are needed, request the glyph ranges explicitly.
 
 ## 6. DPI and Scaling
