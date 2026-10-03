@@ -1,7 +1,7 @@
 # Index
 
 - `README.md` — project front page: what slopkit is, its plugin architecture, anti-detection stance, build/run instructions, layout and roadmap.
-- `AGENTS.md` — AI agent operating guide: project rules, toolchain and conventions.
+- `AGENTS.md` — AI agent operating guide: project rules, toolchain and conventions, including the index-first file-discovery rule.
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
 - `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included.

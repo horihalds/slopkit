@@ -81,6 +81,10 @@ them for every task in this repository.
 
 ## Project index
 
+- Prefer `docs/INDEX.md` for file discovery over shell searches such as `find`
+  (or tree-wide `ls`/`grep`): it lists every project file with a terse
+  description. Fall back to `find` only when the file is not indexed yet or the
+  index looks stale.
 - `docs/INDEX.md` at the repository root indexes every file in the project: what
   it is and what it does.
 - Whenever a task adds, removes, renames or repurposes a file, update `docs/INDEX.md`
