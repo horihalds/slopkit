@@ -87,6 +87,9 @@ namespace slopkit::ui::panels
         table_view_->sortByColumn(models::FoundResultsModel::address, Qt::AscendingOrder);
         table_view_->verticalHeader()->setVisible(false);
         table_view_->horizontalHeader()->setStretchLastSection(true);
+        // The table takes the whole scan zone so its bottom edge stays level
+        // with the Memory Scan Options panel's; no spacer may sit between it
+        // and the entry row below.
         layout->addWidget(table_view_, 1);
 
         connect(table_view_,

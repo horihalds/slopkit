@@ -12,6 +12,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include "core/log.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 
@@ -191,8 +192,6 @@ namespace slopkit::ui::panels
         pause_scanning_check_->setToolTip(tr("Accepted as a setting; no effect until a plugin can suspend the target"));
         options_body->addWidget(pause_scanning_check_);
 
-        status_label_ = new widgets::StatusLabel(this);
-        layout->addWidget(status_label_);
         layout->addStretch(1);
 
         // The Add Address button sits against the window's right edge, in the
@@ -223,8 +222,6 @@ namespace slopkit::ui::panels
                     if (engine_.has_results())
                     {
                         engine_.reset();
-                        status_.clear();
-                        status_is_error_ = false;
                     }
                     else
                     {
@@ -322,8 +319,6 @@ namespace slopkit::ui::panels
         if (!target_.valid())
         {
             clear_memory_map();
-            status_.clear();
-            status_is_error_ = false;
             return;
         }
 
@@ -334,6 +329,7 @@ namespace slopkit::ui::panels
 
         const process::JobId job_id = worker_.next_job_id();
         handoff_pending_            = job_id;
+        log::info("scan", "Preparing scan session...");
 
         const bool submitted = worker_.submit_attach_handoff(
             job_id,
@@ -357,14 +353,12 @@ namespace slopkit::ui::panels
                 }
                 if (attached.error)
                 {
-                    status_ = std::string("Scan session failed: ") + std::string(process::describe(*attached.error));
-                    status_is_error_ = true;
+                    log::warning(
+                        "scan", std::string("Scan session failed: ") + std::string(process::describe(*attached.error)));
                     return;
                 }
 
-                worker_session_  = std::move(*attached.handed_session);
-                status_          = std::string();
-                status_is_error_ = false;
+                worker_session_ = std::move(*attached.handed_session);
             });
         if (!submitted)
         {
@@ -609,18 +603,14 @@ namespace slopkit::ui::panels
         const auto config = build_config();
         if (!config)
         {
-            status_          = config.error();
-            status_is_error_ = true;
+            log::warning("scan", config.error());
             return;
         }
         if (!worker_session_)
         {
-            status_          = "No scan session; attach a process first.";
-            status_is_error_ = true;
+            log::warning("scan", "No scan session; attach a process first.");
             return;
         }
-        status_.clear();
-        status_is_error_ = false;
         engine_.first_scan(*config, scan::make_session_source(worker_session_));
     }
 
@@ -629,18 +619,14 @@ namespace slopkit::ui::panels
         const auto config = build_config();
         if (!config)
         {
-            status_          = config.error();
-            status_is_error_ = true;
+            log::warning("scan", config.error());
             return;
         }
         if (!engine_.has_results())
         {
-            status_          = "Run a first scan before refining.";
-            status_is_error_ = true;
+            log::warning("scan", "Run a first scan before refining.");
             return;
         }
-        status_.clear();
-        status_is_error_ = false;
         engine_.next_scan(*config);
     }
 
@@ -668,28 +654,22 @@ namespace slopkit::ui::panels
 
         progress_percent_ = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);
 
-        if (!status_.empty())
+        // The panel has no status line: every message it used to show goes to
+        // the log, and only when it changes so the 50 ms tick cannot repeat it.
+        if (snapshot.message != last_logged_message_)
         {
-            status_label_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                      to_qstring(status_));
-        }
-        else if (preparing)
-        {
-            status_label_->set_status(widgets::StatusKind::info, tr("Preparing scan session..."));
-        }
-        else if (!snapshot.message.empty())
-        {
-            status_label_->set_status(snapshot.state == scan::ScanState::failed ? widgets::StatusKind::error
-                                                                                : widgets::StatusKind::info,
-                                      to_qstring(snapshot.message));
-        }
-        else if (!attached)
-        {
-            status_label_->set_status(widgets::StatusKind::info, tr("Select a process to enable scanning."));
-        }
-        else
-        {
-            status_label_->clear_status();
+            last_logged_message_ = snapshot.message;
+            if (!snapshot.message.empty())
+            {
+                if (snapshot.state == scan::ScanState::failed)
+                {
+                    log::warning("scan", snapshot.message);
+                }
+                else
+                {
+                    log::info("scan", snapshot.message);
+                }
+            }
         }
     }
 

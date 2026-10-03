@@ -167,9 +167,11 @@ namespace slopkit::ui
         auto* vertical_splitter = new QSplitter(Qt::Vertical, this);
         vertical_splitter->addWidget(middle_splitter);
         vertical_splitter->addWidget(address_list_);
-        // 62 % of the height goes to the middle scan zone, 38 % to the list.
-        vertical_splitter->setStretchFactor(0, 62);
-        vertical_splitter->setStretchFactor(1, 38);
+        // The scan zone keeps the scanner's content height, so the hits table's
+        // bottom edge stays level with the Memory Scan Options panel; the address
+        // list takes every remaining pixel of window height.
+        vertical_splitter->setStretchFactor(0, 0);
+        vertical_splitter->setStretchFactor(1, 1);
 
         scan_progress_ = new QProgressBar(this);
         scan_progress_->setRange(0, 100);

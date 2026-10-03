@@ -26,7 +26,6 @@ namespace slopkit::ui::widgets
 {
     class PrimaryButton;
     class ScrollingComboBox;
-    class StatusLabel;
 } // namespace slopkit::ui::widgets
 
 namespace slopkit::ui::panels
@@ -49,8 +48,8 @@ namespace slopkit::ui::panels
         // Sets the fast-scan alignment field, used by the Settings dialog.
         void set_default_alignment(std::uint64_t alignment);
 
-        // Polled by the window's tick: refreshes the enable state, the progress
-        // bar and the status line.
+        // Polled by the window's tick: refreshes the enable state and the
+        // progress bar, and logs a changed engine message.
         void refresh();
 
         [[nodiscard]] int progress_percent() const noexcept;
@@ -111,10 +110,9 @@ namespace slopkit::ui::panels
         QLineEdit* alignment_edit_ {};
         QCheckBox* pause_scanning_check_ {};
 
-        widgets::StatusLabel* status_label_ {};
-
-        std::string status_;
-        bool        status_is_error_ {false};
+        // The engine message already written to the log, so the 50 ms tick
+        // never repeats a record.
+        std::string last_logged_message_;
 
         int progress_percent_ {0};
 

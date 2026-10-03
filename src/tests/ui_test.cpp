@@ -1611,6 +1611,34 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(button->text() != QStringLiteral("Table Extras"));
     }
 
+    // The removed idle hint is nowhere in the window, in any state.
+    for (auto* label : window.findChildren<QLabel*>())
+    {
+        CHECK(label->text() != QStringLiteral("Select a process to enable scanning."));
+    }
+
+    // Show the window so the layouts are realised, then check that the hits
+    // table's bottom edge is level with the Memory Scan Options panel's.
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto* hits = found_list->findChild<QTableView*>();
+    REQUIRE(hits != nullptr);
+    const auto hits_bottom    = hits->mapTo(&window, QPoint(0, hits->height()));
+    const auto options_bottom = options_panel->mapTo(&window, QPoint(0, options_panel->height()));
+    CHECK(hits_bottom.y() == options_bottom.y());
+
+    // Growing the window hands every extra pixel to the address list: the scan
+    // zone keeps its height and the two edges stay level.
+    const int scan_zone_before = middle->height();
+    const int address_before   = address_list->height();
+    window.resize(window.width(), window.height() + 200);
+    QCoreApplication::processEvents();
+    CHECK(middle->height() == scan_zone_before);
+    CHECK(address_list->height() - address_before >= 150);
+    CHECK(hits->mapTo(&window, QPoint(0, hits->height())).y()
+          == options_panel->mapTo(&window, QPoint(0, options_panel->height())).y());
+
     // The Add Address button lives at the bottom-right of the scanner panel,
     // not in the found list or the address list.
     CHECK(button_labelled(*address_list, QStringLiteral("Add Address Manually")) == nullptr);
@@ -2147,6 +2175,68 @@ TEST_CASE("starting a scan hands the whole address space range to the engine", "
     const auto config = panel.engine().config();
     CHECK(config.filter.start == 0);
     CHECK(config.filter.stop == slopkit::scan::kMaxUserAddress);
+}
+
+TEST_CASE("a rejected scan is reported through the log, not a panel line", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+
+    // Capture every record while the panel is exercised.
+    std::vector<slopkit::log::Record> records;
+    const auto                        sink = slopkit::log::Logger::instance().add_sink(
+        [&records](const slopkit::log::Record& record)
+        {
+            records.push_back(record);
+        });
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    // A first scan needs a value to search for; the empty box is rejected.
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    REQUIRE(scan_button != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return scan_button->isEnabled();
+                    }));
+    value->clear();
+    scan_button->click();
+
+    slopkit::log::Logger::instance().remove_sink(sink);
+
+    bool saw_reject = false;
+    for (const auto& record : records)
+    {
+        if (record.category == "scan" && record.level == slopkit::log::Level::warning
+            && record.message.starts_with("Value: "))
+        {
+            saw_reject = true;
+        }
+    }
+    CHECK(saw_reject);
+
+    // The removed idle hint is nowhere in the panel in any state.
+    for (auto* label : panel.findChildren<QLabel*>())
+    {
+        CHECK(label->text() != QStringLiteral("Select a process to enable scanning."));
+    }
 }
 
 TEST_CASE("New Scan clears the results and returns the panel to its pre-scan state", "[ui]")
