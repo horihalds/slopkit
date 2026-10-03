@@ -154,7 +154,7 @@ namespace slopkit::ui
                 {
                     on_memory_view_requested(scanner_->main_module_address());
                 });
-        connect(found_list_, &panels::FoundListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
+        connect(scanner_, &panels::ScannerPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(undo_scan_action_,
                 &QAction::triggered,
                 this,

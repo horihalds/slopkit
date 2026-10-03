@@ -77,10 +77,10 @@
 - `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font and keeps the display order.
 - `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox and the async write.
 - `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value` and submits one write job with the pending-job-id guard.
-- `src/ui/panels/scanner_panel.hpp` — the scan controls, the handoff-created scan session and the scan engine.
-- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, applies the handed-over session and starts first/next/undo scans.
-- `src/ui/panels/found_list_panel.hpp` — the `Found: N` result list over the scan engine's snapshot and the address table; its entry row holds the Memory View and Add Address buttons.
-- `src/ui/panels/found_list_panel.cpp` — shows the hits, the truncation notes and adds double-clicked hits; its entry row raises the Memory View and Add Address requests.
+- `src/ui/panels/scanner_panel.hpp` — the scan controls, the handoff-created scan session, the scan engine and the bottom-right Add Address button.
+- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, applies the handed-over session, starts first/next/undo scans and raises the Add Address request.
+- `src/ui/panels/found_list_panel.hpp` — the `Found: N` result list over the scan engine's snapshot and the address table; its entry row holds the Memory View button.
+- `src/ui/panels/found_list_panel.cpp` — shows the hits, the truncation notes and adds double-clicked hits; its entry row raises the Memory View request.
 - `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu and open/save.
 - `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions, toggles freezes and loads/saves through native file dialogs.
 - `src/ui/dialogs/process_list.hpp` — the Process List dialog and its filtered, sortable process model.

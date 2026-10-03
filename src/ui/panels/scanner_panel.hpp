@@ -34,7 +34,9 @@ namespace slopkit::ui::panels
 
     // The right half of the middle zone: the scan controls. It builds the
     // ScanConfig, owns the engine and the worker session the engine reads
-    // through, and never blocks on target access.
+    // through, and never blocks on target access. Its bottom-right button
+    // requests the Add Address dialog, lined up with the found list's Memory
+    // View button.
     class ScannerPanel : public QWidget
     {
         Q_OBJECT
@@ -56,6 +58,10 @@ namespace slopkit::ui::panels
         // Entry point of the target's main module, or its base when the plugin
         // reports none; 0 before a memory map has been applied.
         [[nodiscard]] std::uint64_t main_module_address() const noexcept;
+
+    signals:
+        // A request to open the Add Address dialog, fed by the bottom button.
+        void addAddressRequested();
 
     private:
         void build_layout();
@@ -89,6 +95,7 @@ namespace slopkit::ui::panels
         QPushButton*                next_scan_button_ {};
         QPushButton*                undo_button_ {};
         QPushButton*                cancel_button_ {};
+        QPushButton*                add_address_button_ {};
 
         QLineEdit* start_edit_ {};
         QLineEdit* stop_edit_ {};

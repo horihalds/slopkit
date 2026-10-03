@@ -631,10 +631,11 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(button->text() != QStringLiteral("Table Extras"));
     }
 
-    // The Add Address button lives in the found-results entry row, not in the
-    // address list.
+    // The Add Address button lives at the bottom-right of the scanner panel,
+    // not in the found list or the address list.
     CHECK(button_labelled(*address_list, QStringLiteral("Add Address Manually")) == nullptr);
-    CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) != nullptr);
+    CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) == nullptr);
+    CHECK(button_labelled(*scanner, QStringLiteral("Add Address Manually")) != nullptr);
 
     // A live theme switch re-installs the application palette.
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
@@ -1447,9 +1448,9 @@ TEST_CASE("the found-results entry row drives the viewer", "[ui]")
     slopkit::ui::panels::FoundListPanel panel {engine, table};
 
     auto* memory_view = button_labelled(panel, QStringLiteral("Memory View"));
-    auto* add_address = button_labelled(panel, QStringLiteral("Add Address Manually"));
     REQUIRE(memory_view != nullptr);
-    REQUIRE(add_address != nullptr);
+    // The Add Address button moved to the scanner panel's bottom-right.
+    CHECK(button_labelled(panel, QStringLiteral("Add Address Manually")) == nullptr);
 
     // The view button waits for an attached target.
     CHECK_FALSE(memory_view->isEnabled());
@@ -1458,13 +1459,10 @@ TEST_CASE("the found-results entry row drives the viewer", "[ui]")
     panel.show();
     QCoreApplication::processEvents();
 
-    // Both buttons sit on one row directly below the hits table, at opposite
-    // ends.
+    // The button sits in the row directly below the hits table.
     auto* hits = panel.findChild<QTableView*>();
     REQUIRE(hits != nullptr);
     CHECK(memory_view->y() > hits->y());
-    CHECK(memory_view->y() == add_address->y());
-    CHECK(memory_view->x() < add_address->x());
 
     bool view_requested = false;
     QObject::connect(&panel,
@@ -1513,9 +1511,10 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
 
     auto* memory_view = button_labelled(*found_list, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
-    auto* add_address = button_labelled(*found_list, QStringLiteral("Add Address Manually"));
+    auto* add_address = button_labelled(*scanner, QStringLiteral("Add Address Manually"));
     REQUIRE(add_address != nullptr);
-    CHECK(found_list->isAncestorOf(add_address));
+    CHECK(scanner->isAncestorOf(add_address));
+    CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) == nullptr);
 
     // The window enables the view button once the target is attached and the
     // main module's map has landed.
@@ -1524,6 +1523,17 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
                     {
                         return memory_view->isEnabled() && scanner->main_module_address() != 0;
                     }));
+
+    window.show();
+    QCoreApplication::processEvents();
+
+    // The two buttons share one window-wide row: Memory View on the left and Add
+    // Address Manually against the window's right edge.
+    const QPoint memory_view_pos = memory_view->mapTo(&window, QPoint(0, 0));
+    const QPoint add_address_pos = add_address->mapTo(&window, QPoint(0, 0));
+    CHECK(memory_view_pos.y() == add_address_pos.y());
+    CHECK(memory_view_pos.x() < add_address_pos.x());
+    CHECK(window.width() - add_address->mapTo(&window, add_address->rect().topRight()).x() <= 24);
 
     auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
     REQUIRE(viewer != nullptr);
