@@ -1448,10 +1448,10 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(menus[2]->text() == QStringLiteral("Help"));
 
     CHECK(action_texts(menus[0]->menu()->actions())
-          == QList<QString> {QStringLiteral("Open Process..."),
-                             QStringLiteral("Open Table..."),
-                             QStringLiteral("Save Table..."),
-                             QStringLiteral("Save Table As..."),
+          == QList<QString> {QStringLiteral("Open Process"),
+                             QStringLiteral("Open Table"),
+                             QStringLiteral("Save Table"),
+                             QStringLiteral("Save Table As"),
                              QStringLiteral("Quit")});
 
     // The toolbar is gone; the file commands live only in the menus now.
@@ -1459,7 +1459,7 @@ TEST_CASE("the main window shell is built", "[ui]")
 
     // The View menu holds the log and settings entries; Help keeps About.
     CHECK(action_texts(menus[1]->menu()->actions())
-          == QList<QString> {QStringLiteral("Log..."), QStringLiteral("Settings")});
+          == QList<QString> {QStringLiteral("Log"), QStringLiteral("Settings")});
     CHECK(action_texts(menus[2]->menu()->actions()) == QList<QString> {QStringLiteral("About slopkit")});
 
     // No Edit menu survives, and Undo Scan / Add Address Manually... are gone as
@@ -1502,13 +1502,13 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(action->icon().isNull());
     }
 
-    // View > Log... opens the non-modal log window; live records reach its view
+    // View > Log opens the non-modal log window; live records reach its view
     // and the text filter hides what does not match.
     slopkit::log::Logger::instance().clear_history();
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
     QAction* log_action = menus[1]->menu()->actions().first();
-    CHECK(log_action->text() == QStringLiteral("Log..."));
+    CHECK(log_action->text() == QStringLiteral("Log"));
     log_action->trigger();
     auto* log_dialog = window.findChild<slopkit::ui::dialogs::LogDialog*>();
     REQUIRE(log_dialog != nullptr);
