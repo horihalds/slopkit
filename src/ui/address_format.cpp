@@ -147,6 +147,11 @@ namespace slopkit::ui
              + QString::number(rva, 16).toUpper();
     }
 
+    QString format_absolute(std::uint64_t address)
+    {
+        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
+    }
+
     std::optional<QString> module_relative_text(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)
     {
         if (mode != AddressMode::module_relative)

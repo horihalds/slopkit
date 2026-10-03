@@ -58,6 +58,9 @@ namespace slopkit::ui
     // "name+RVA": upper-case hex, no 0x, no leading zeros, no padding.
     [[nodiscard]] QString format_module_relative(const ModuleSpan& span, std::uint64_t address);
 
+    // "0x…": upper-case hex, no leading zeros, no padding.
+    [[nodiscard]] QString format_absolute(std::uint64_t address);
+
     // The module-relative text, or nullopt in absolute mode / outside every span.
     [[nodiscard]] std::optional<QString>
     module_relative_text(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);

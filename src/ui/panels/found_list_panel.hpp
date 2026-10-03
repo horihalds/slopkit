@@ -10,12 +10,14 @@
 #include <QWidget>
 
 class QLabel;
+class QMenu;
 class QPushButton;
 class QTableView;
 
 namespace slopkit::ui::models
 {
     class FoundResultsModel;
+    enum class CopyFormat;
 } // namespace slopkit::ui::models
 
 namespace slopkit::ui::panels
@@ -45,6 +47,10 @@ namespace slopkit::ui::panels
         // Chooses how static addresses are shown in the Address column.
         void set_address_mode(ui::AddressMode mode);
 
+        // Adds the per-row entries for `row` to `menu`: `Add to address table`
+        // and the `Copy` submenu (module + RVA, absolute, address + value).
+        void populate_row_menu(QMenu& menu, int row);
+
     signals:
         // A request to open the Memory Viewer at the main module's entry point
         // (or its base when the plugin reports none).
@@ -52,6 +58,7 @@ namespace slopkit::ui::panels
 
     private:
         void add_to_table(int row);
+        void copy_row(int row, models::CopyFormat format);
         void show_context_menu(const QPoint& position);
 
         scan::ScanEngine&    engine_;

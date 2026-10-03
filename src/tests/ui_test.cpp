@@ -541,6 +541,15 @@ TEST_CASE("module-relative addresses render as name+HEX", "[ui]")
     CHECK_FALSE(slopkit::ui::format_module_relative(span, 0x1040).contains(QStringLiteral("0x")));
 }
 
+TEST_CASE("absolute addresses render as 0xHEX", "[ui]")
+{
+    CHECK(slopkit::ui::format_absolute(0) == QStringLiteral("0x0"));
+    CHECK(slopkit::ui::format_absolute(0x1040) == QStringLiteral("0x1040"));
+    CHECK(slopkit::ui::format_absolute(0x5000000) == QStringLiteral("0x5000000"));
+    // Upper-case hex, no leading zeros.
+    CHECK(slopkit::ui::format_absolute(0xabcdef) == QStringLiteral("0xABCDEF"));
+}
+
 TEST_CASE("module-relative text falls back in absolute mode and outside spans", "[ui]")
 {
     const std::vector<slopkit::process::ModuleInfo> modules {module_image("app", 0x1000, 0x1000)};
@@ -626,6 +635,78 @@ TEST_CASE("the found-results model mirrors a snapshot", "[ui]")
     model.clear();
     CHECK(model.rowCount() == 0);
     CHECK(model.hit_at(0) == nullptr);
+}
+
+TEST_CASE("the found-results model renders the clipboard texts", "[ui]")
+{
+    application();
+
+    slopkit::ui::models::FoundResultsModel model;
+
+    slopkit::scan::ScanConfig config;
+    config.value_type = slopkit::scan::ValueType::int32;
+
+    slopkit::scan::ScanSnapshot snapshot;
+    snapshot.hit_count = 2;
+    snapshot.hits.push_back(slopkit::scan::ScanHit {
+        0x1040, std::vector<std::byte> {std::byte {10}, std::byte {0}, std::byte {0}, std::byte {0}},
+          {}
+    });
+    snapshot.hits.push_back(slopkit::scan::ScanHit {
+        0x7F3A1B2C, std::vector<std::byte> {std::byte {100}, std::byte {0}, std::byte {0}, std::byte {0}},
+          {}
+    });
+    model.set_snapshot(snapshot, config);
+
+    // With no module map every hit copies as an absolute address.
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("0x1040"));
+
+    model.set_modules({module_image("app", 0x1000, 0x1000)});
+
+    // A static hit inside `app`.
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+40"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::absolute) == QStringLiteral("0x1040"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("app+40: 10"));
+
+    // A dynamic hit falls back to the absolute form for module + RVA.
+    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("0x7F3A1B2C"));
+    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::absolute) == QStringLiteral("0x7F3A1B2C"));
+    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("0x7F3A1B2C: 100"));
+
+    // Module + RVA ignores the display mode; address + value follows it.
+    model.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+40"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("0x1040: 10"));
+
+    // An out-of-range row and a cleared model yield nothing.
+    CHECK(model.copy_text(2, slopkit::ui::models::CopyFormat::absolute).isEmpty());
+    CHECK(model.copy_text(-1, slopkit::ui::models::CopyFormat::module_relative).isEmpty());
+    model.clear();
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::absolute).isEmpty());
+}
+
+TEST_CASE("the found-results model copies the value in hex when configured", "[ui]")
+{
+    application();
+
+    slopkit::ui::models::FoundResultsModel model;
+
+    slopkit::scan::ScanConfig config;
+    config.value_type = slopkit::scan::ValueType::int32;
+    config.hex        = true;
+
+    slopkit::scan::ScanSnapshot snapshot;
+    snapshot.hit_count = 1;
+    snapshot.hits.push_back(slopkit::scan::ScanHit {
+        0x1040, std::vector<std::byte> {std::byte {10}, std::byte {0}, std::byte {0}, std::byte {0}},
+          {}
+    });
+    model.set_snapshot(snapshot, config);
+    model.set_modules({module_image("app", 0x1000, 0x1000)});
+
+    // The value matches the Value column's hex rendering, zero-padded to int32.
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value)
+          == QStringLiteral("app+40: 0x0000000A"));
 }
 
 TEST_CASE("the found-results model marks and groups static hits", "[ui]")
@@ -851,6 +932,209 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     REQUIRE(header != nullptr);
     CHECK(header->text() == QStringLiteral("Showing 2 of 3 results (result cap reached)"));
     CHECK(panel.findChildren<QLabel*>().size() == 1);
+}
+
+TEST_CASE("the found list stays empty until the scan finishes", "[ui]")
+{
+    application();
+
+    // 300 matches at 4-byte spacing.
+    auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4, std::byte {0});
+    for (std::size_t i = 0; i < 300; ++i)
+    {
+        const std::uint32_t value = 10;
+        std::memcpy(bytes->data() + i * 4, &value, sizeof(value));
+    }
+
+    // Hold the scan's read so its running state stays observable.
+    auto                        release = std::make_shared<std::atomic<bool>>(false);
+    slopkit::scan::MemorySource source;
+    source.read = [bytes,
+                   release](std::uint64_t address,
+                            std::size_t   size) -> std::expected<std::vector<std::byte>, slopkit::process::AccessError>
+    {
+        while (!release->load())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (address < 0x1000 || address - 0x1000 + size > bytes->size())
+        {
+            return std::unexpected(slopkit::process::AccessError::not_found);
+        }
+        const auto offset = static_cast<std::size_t>(address - 0x1000);
+        return std::vector<std::byte>(bytes->begin() + static_cast<std::ptrdiff_t>(offset),
+                                      bytes->begin() + static_cast<std::ptrdiff_t>(offset + size));
+    };
+    source.regions = [bytes]()
+    {
+        slopkit::process::RegionInfo region;
+        region.start    = 0x1000;
+        region.end      = 0x1000 + bytes->size();
+        region.readable = true;
+        region.writable = true;
+        return std::vector<slopkit::process::RegionInfo> {region};
+    };
+
+    slopkit::scan::ScanEngine engine;
+    slopkit::scan::ScanConfig config;
+    config.value = std::int64_t {10};
+    engine.first_scan(config, source);
+    REQUIRE(engine.is_running());
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    auto*                               view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = dynamic_cast<slopkit::ui::models::FoundResultsModel*>(view->model());
+    REQUIRE(model != nullptr);
+    auto* header = panel.findChild<QLabel*>();
+    REQUIRE(header != nullptr);
+
+    // While the scan runs the list is empty and the header reports progress.
+    panel.refresh();
+    CHECK(model->rowCount() == 0);
+    CHECK(header->text().startsWith(QStringLiteral("Scanning... ")));
+    CHECK(view->selectionModel()->selectedRows().isEmpty());
+
+    // Releasing the read lets the scan finish; the rows appear with it.
+    release->store(true);
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE_FALSE(engine.is_running());
+    REQUIRE(engine.has_results());
+    panel.refresh();
+    CHECK(model->rowCount() == slopkit::scan::kDisplayPage);
+    CHECK(header->text() == QStringLiteral("Showing 256 of 300 results"));
+}
+
+TEST_CASE("the found list keeps the rows when a refinement is cancelled", "[ui]")
+{
+    application();
+
+    // 300 matches at 4-byte spacing.
+    auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4, std::byte {0});
+    for (std::size_t i = 0; i < 300; ++i)
+    {
+        const std::uint32_t value = 10;
+        std::memcpy(bytes->data() + i * 4, &value, sizeof(value));
+    }
+
+    // Hold the refinement's read so the cancel lands while it runs.
+    auto                        block   = std::make_shared<std::atomic<bool>>(false);
+    auto                        release = std::make_shared<std::atomic<bool>>(false);
+    slopkit::scan::MemorySource source;
+    source.read = [bytes, block, release](
+                      std::uint64_t address,
+                      std::size_t   size) -> std::expected<std::vector<std::byte>, slopkit::process::AccessError>
+    {
+        if (block->load())
+        {
+            while (!release->load())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        if (address < 0x1000 || address - 0x1000 + size > bytes->size())
+        {
+            return std::unexpected(slopkit::process::AccessError::not_found);
+        }
+        const auto offset = static_cast<std::size_t>(address - 0x1000);
+        return std::vector<std::byte>(bytes->begin() + static_cast<std::ptrdiff_t>(offset),
+                                      bytes->begin() + static_cast<std::ptrdiff_t>(offset + size));
+    };
+    source.regions = [bytes]()
+    {
+        slopkit::process::RegionInfo region;
+        region.start    = 0x1000;
+        region.end      = 0x1000 + bytes->size();
+        region.readable = true;
+        region.writable = true;
+        return std::vector<slopkit::process::RegionInfo> {region};
+    };
+
+    slopkit::scan::ScanEngine engine;
+    slopkit::scan::ScanConfig config;
+    config.value = std::int64_t {10};
+    engine.first_scan(config, source);
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(engine.has_results());
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    auto*                               view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = dynamic_cast<slopkit::ui::models::FoundResultsModel*>(view->model());
+    REQUIRE(model != nullptr);
+    auto* header = panel.findChild<QLabel*>();
+    REQUIRE(header != nullptr);
+
+    panel.refresh();
+    REQUIRE(model->rowCount() == slopkit::scan::kDisplayPage);
+    REQUIRE(header->text() == QStringLiteral("Showing 256 of 300 results"));
+
+    // Refine while its read is held, then cancel before it finishes.
+    block->store(true);
+    slopkit::scan::ScanConfig refinement;
+    refinement.type       = slopkit::scan::ScanType::unchanged;
+    refinement.value_type = slopkit::scan::ValueType::int32;
+    engine.next_scan(refinement);
+    REQUIRE(engine.is_running());
+
+    panel.refresh();
+    CHECK(model->rowCount() == 0);
+    CHECK(header->text().startsWith(QStringLiteral("Scanning... ")));
+
+    engine.cancel();
+    release->store(true);
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE_FALSE(engine.is_running());
+
+    // The previous result set is back on screen.
+    panel.refresh();
+    CHECK(model->rowCount() == slopkit::scan::kDisplayPage);
+    CHECK(header->text() == QStringLiteral("Showing 256 of 300 results"));
+}
+
+TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
+{
+    application();
+
+    slopkit::scan::ScanEngine           engine;
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+
+    // An empty model still builds the row menu, so a stale row cannot break it.
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+
+    CHECK(action_texts(menu.actions())
+          == QList<QString> {QStringLiteral("Add to address table"), QStringLiteral("Copy")});
+
+    QMenu* copy = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->menu() != nullptr)
+        {
+            copy = action->menu();
+        }
+    }
+    REQUIRE(copy != nullptr);
+    CHECK(action_texts(copy->actions())
+          == QList<QString> {QStringLiteral("Address (module + RVA)"),
+                             QStringLiteral("Address (absolute)"),
+                             QStringLiteral("Address + value")});
+
+    // Triggering the entries with no hit behind them is a no-op, not a crash.
+    menu.actions().front()->trigger();
+    copy->actions().front()->trigger();
 }
 
 TEST_CASE("the found list shows the static-first top of the whole result set", "[ui]")

@@ -13,6 +13,14 @@
 namespace slopkit::ui::models
 {
 
+    // The three texts the found list's Copy submenu puts on the clipboard.
+    enum class CopyFormat
+    {
+        module_relative,   // "<module>+<RVA>"; the absolute form outside every module
+        absolute,          // "0x7F3A1B2C"
+        address_and_value, // "<module>+<RVA>: 100" / "0x7F3A1B2C: 100"
+    };
+
     // Address / Value / Previous rows over a scan snapshot. The ordering is
     // computed over the whole stored result set and the model shows the top
     // display page of that ordering.
@@ -51,6 +59,10 @@ namespace slopkit::ui::models
 
         // The rendered Address column text for `address`.
         [[nodiscard]] QString address_text(std::uint64_t address) const;
+
+        // The clipboard text for row `row` in `format`; empty when the row is
+        // out of date.
+        [[nodiscard]] QString copy_text(int row, CopyFormat format) const;
 
         // True when the address lies inside one of the module image spans.
         [[nodiscard]] bool is_static(std::uint64_t address) const;

@@ -1,9 +1,12 @@
 #include "ui/panels/found_list_panel.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <utility>
 
 #include <QAction>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
@@ -24,8 +27,8 @@ namespace slopkit::ui::panels
     {
         // Compares the two snapshots' display data. A finished scan shares its
         // whole result set with the engine, so its handle doubles as the change
-        // signal; only the running page (at most kDisplayPage hits) is compared
-        // element-wise.
+        // signal; anything else (an idle or failed snapshot) is compared through
+        // its display page.
         bool same_snapshot(const scan::ScanSnapshot& lhs, const scan::ScanSnapshot& rhs)
         {
             if (lhs.state != rhs.state || lhs.progress != rhs.progress || lhs.hit_count != rhs.hit_count
@@ -133,14 +136,32 @@ namespace slopkit::ui::panels
     {
         const scan::ScanSnapshot snapshot = engine_.snapshot();
         const scan::ScanConfig   config   = engine_.config();
+        const bool               running  = snapshot.state == scan::ScanState::running;
 
-        if (!has_last_ || !same_config(last_config_, config) || !same_snapshot(last_snapshot_, snapshot))
+        if (running)
         {
-            last_snapshot_ = snapshot;
-            last_config_   = config;
-            has_last_      = true;
+            // A running scan shows no rows; they appear with the finished set.
+            if (!has_last_ || last_snapshot_.state != scan::ScanState::running)
+            {
+                table_view_->clearSelection();
+                model_->clear();
+            }
+        }
+        else if (!has_last_ || !same_config(last_config_, config) || !same_snapshot(last_snapshot_, snapshot))
+        {
             table_view_->clearSelection();
-            model_->set_snapshot(std::move(snapshot), std::move(config));
+            model_->set_snapshot(snapshot, config);
+        }
+
+        last_snapshot_ = snapshot;
+        last_config_   = config;
+        has_last_      = true;
+
+        if (running)
+        {
+            const int percent = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);
+            header_->setText(tr("Scanning... %1%").arg(percent));
+            return;
         }
 
         QString line = tr("Showing %1 of %2 results")
@@ -170,6 +191,50 @@ namespace slopkit::ui::panels
         table_.add(std::move(entry));
     }
 
+    void FoundListPanel::populate_row_menu(QMenu& menu, int row)
+    {
+        QAction* add = menu.addAction(tr("Add to address table"));
+        connect(add,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    add_to_table(row);
+                });
+
+        QMenu* copy = menu.addMenu(tr("Copy"));
+        connect(copy->addAction(tr("Address (module + RVA)")),
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    copy_row(row, models::CopyFormat::module_relative);
+                });
+        connect(copy->addAction(tr("Address (absolute)")),
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    copy_row(row, models::CopyFormat::absolute);
+                });
+        connect(copy->addAction(tr("Address + value")),
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    copy_row(row, models::CopyFormat::address_and_value);
+                });
+    }
+
+    void FoundListPanel::copy_row(int row, models::CopyFormat format)
+    {
+        const QString text = model_->copy_text(row, format);
+        if (!text.isEmpty())
+        {
+            QGuiApplication::clipboard()->setText(text);
+        }
+    }
+
     void FoundListPanel::show_context_menu(const QPoint& position)
     {
         const QModelIndex index = table_view_->indexAt(position);
@@ -178,12 +243,9 @@ namespace slopkit::ui::panels
             return;
         }
 
-        QMenu    menu(this);
-        QAction* add = menu.addAction(tr("Add to address table"));
-        if (menu.exec(table_view_->viewport()->mapToGlobal(position)) == add)
-        {
-            add_to_table(index.row());
-        }
+        QMenu menu(this);
+        populate_row_menu(menu, index.row());
+        menu.exec(table_view_->viewport()->mapToGlobal(position));
     }
 
 } // namespace slopkit::ui::panels

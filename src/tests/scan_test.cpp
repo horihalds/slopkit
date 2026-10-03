@@ -244,10 +244,13 @@ TEST_CASE("a finished scan publishes the whole stored result set", "[scan]")
     config.filter.alignment = 4;
     engine.first_scan(config, source);
 
-    // While the scan runs only the incremental page exists.
+    // While the scan runs no rows are published at all.
     const auto running = engine.snapshot();
     REQUIRE(running.state == ScanState::running);
+    CHECK(running.hits.empty());
     CHECK(running.result_hits == nullptr);
+    CHECK(running.progress >= 0.0f);
+    CHECK(running.progress <= 1.0f);
 
     const auto snapshot = wait(engine);
     REQUIRE(snapshot.state == ScanState::done);
@@ -259,6 +262,75 @@ TEST_CASE("a finished scan publishes the whole stored result set", "[scan]")
     // The handle aliases the engine's storage, so taking another snapshot does
     // not copy the whole result set.
     CHECK(engine.snapshot().result_hits.get() == snapshot.result_hits.get());
+}
+
+TEST_CASE("a refinement publishes no rows before it finishes", "[scan]")
+{
+    // 300 matches, more than the display page.
+    auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4);
+    for (std::size_t i = 0; i < 300; ++i)
+    {
+        write_int32(*bytes, i * 4, 10);
+    }
+
+    // Block the refinement's first read so its running state stays observable.
+    auto                        block   = std::make_shared<std::atomic<bool>>(false);
+    auto                        release = std::make_shared<std::atomic<bool>>(false);
+    slopkit::scan::MemorySource source;
+    source.read = [bytes, block, release](std::uint64_t address,
+                                          std::size_t   size) -> std::expected<std::vector<std::byte>, AccessError>
+    {
+        if (block->load())
+        {
+            while (!release->load())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        if (address < kBase || address - kBase + size > bytes->size())
+        {
+            return std::unexpected(AccessError::not_found);
+        }
+        const auto offset = static_cast<std::size_t>(address - kBase);
+        return std::vector<std::byte>(bytes->begin() + static_cast<std::ptrdiff_t>(offset),
+                                      bytes->begin() + static_cast<std::ptrdiff_t>(offset + size));
+    };
+    source.regions = [bytes]()
+    {
+        RegionInfo region;
+        region.start    = kBase;
+        region.end      = kBase + bytes->size();
+        region.readable = true;
+        region.writable = true;
+        return std::vector<RegionInfo> {region};
+    };
+
+    ScanEngine engine;
+    ScanConfig config       = exact_config(ValueType::int32, 10);
+    config.filter.alignment = 4;
+    engine.first_scan(config, source);
+    const auto first = wait(engine);
+    REQUIRE(first.state == ScanState::done);
+    REQUIRE(first.result_hits != nullptr);
+    REQUIRE(first.result_hits->size() == 300);
+
+    block->store(true);
+    ScanConfig refinement;
+    refinement.type       = ScanType::unchanged;
+    refinement.value_type = ValueType::int32;
+    engine.next_scan(refinement);
+
+    // The previous set is not exposed as a running page.
+    const auto running = engine.snapshot();
+    REQUIRE(running.state == ScanState::running);
+    CHECK(running.hits.empty());
+    CHECK(running.result_hits == nullptr);
+
+    release->store(true);
+    const auto refined = wait(engine);
+    REQUIRE(refined.state == ScanState::done);
+    REQUIRE(refined.result_hits != nullptr);
+    CHECK(refined.result_hits->size() == 300);
 }
 
 TEST_CASE("undo republishes the whole result set through the handle", "[scan]")

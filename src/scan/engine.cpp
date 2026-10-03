@@ -131,14 +131,6 @@ namespace slopkit::scan
             return shards;
         }
 
-        // One worker's hits for one shard, with a release flag the progress
-        // publisher uses to skip shards that are still being written.
-        struct ShardHits
-        {
-            std::vector<ScanHit> hits;
-            std::atomic<bool>    done {false};
-        };
-
         struct ScannedShard
         {
             std::vector<ScanHit> hits;
@@ -267,43 +259,6 @@ namespace slopkit::scan
             return result;
         }
 
-        // Refreshes the running snapshot from the finished shards only, gathering
-        // at most `page` hits in address order.
-        void merge_page_locked(ScanSnapshot&                 snapshot,
-                               const std::vector<ShardHits>& shards,
-                               std::size_t                   page,
-                               std::size_t                   scanned,
-                               std::size_t                   total,
-                               std::size_t                   count,
-                               bool                          truncated)
-        {
-            snapshot.state = ScanState::running;
-            snapshot.progress =
-                total == 0
-                    ? 1.0f
-                    : std::min(1.0f, static_cast<float>(static_cast<double>(scanned) / static_cast<double>(total)));
-            snapshot.scanned_bytes = scanned;
-            snapshot.total_bytes   = total;
-            snapshot.hit_count     = count;
-            snapshot.truncated     = truncated;
-            snapshot.hits.clear();
-            snapshot.result_hits.reset();
-            for (const auto& shard : shards)
-            {
-                if (!shard.done.load(std::memory_order_acquire))
-                {
-                    continue;
-                }
-                for (const auto& hit : shard.hits)
-                {
-                    if (snapshot.hits.size() >= page)
-                    {
-                        return;
-                    }
-                    snapshot.hits.push_back(hit);
-                }
-            }
-        }
     } // namespace
 
     ScanEngine::ScanEngine() = default;
@@ -364,6 +319,9 @@ namespace slopkit::scan
             config_         = config;
             snapshot_.state = ScanState::running;
             snapshot_.message.clear();
+            // A refinement must not expose the previous set as a running page.
+            snapshot_.hits.clear();
+            snapshot_.result_hits.reset();
         }
 
         cancel_requested_.store(false);
@@ -462,8 +420,7 @@ namespace slopkit::scan
         return max_threads_.load();
     }
 
-    void ScanEngine::publish_running_locked(
-        const std::vector<ScanHit>& hits, std::size_t scanned, std::size_t total, std::size_t count, bool truncated)
+    void ScanEngine::publish_running_locked(std::size_t scanned, std::size_t total, std::size_t count, bool truncated)
     {
         snapshot_.state = ScanState::running;
         snapshot_.progress =
@@ -473,8 +430,7 @@ namespace slopkit::scan
         snapshot_.total_bytes   = total;
         snapshot_.hit_count     = count;
         snapshot_.truncated     = truncated;
-        const std::size_t page  = std::min(hits.size(), kDisplayPage);
-        snapshot_.hits.assign(hits.begin(), hits.begin() + static_cast<std::ptrdiff_t>(page));
+        snapshot_.hits.clear();
         snapshot_.result_hits.reset();
     }
 
@@ -565,10 +521,10 @@ namespace slopkit::scan
         const std::size_t        cap       = max_stored_hits_.load();
         const std::vector<Shard> shards    = build_shards(spans, alignment);
 
-        std::vector<ShardHits> shard_hits(shards.size());
+        std::vector<std::vector<ScanHit>> shard_hits(shards.size());
         {
             const std::lock_guard lock(mutex_);
-            merge_page_locked(snapshot_, shard_hits, kDisplayPage, 0, total, 0, false);
+            publish_running_locked(0, total, 0, false);
         }
 
         std::atomic<std::size_t> index {0};
@@ -594,31 +550,24 @@ namespace slopkit::scan
                     break;
                 }
 
-                ScannedShard result   = scan_shard_range(shards[slot],
-                                                         matcher,
-                                                         source,
-                                                         alignment,
-                                                         size,
-                                                         cap,
-                                                         buffer,
-                                                         stored,
-                                                         scanned,
-                                                         found,
-                                                         token,
-                                                         cancel_requested_);
-                shard_hits[slot].hits = std::move(result.hits);
-                shard_hits[slot].done.store(true, std::memory_order_release);
+                ScannedShard result = scan_shard_range(shards[slot],
+                                                       matcher,
+                                                       source,
+                                                       alignment,
+                                                       size,
+                                                       cap,
+                                                       buffer,
+                                                       stored,
+                                                       scanned,
+                                                       found,
+                                                       token,
+                                                       cancel_requested_);
+                shard_hits[slot]    = std::move(result.hits);
 
                 {
                     const std::lock_guard lock(mutex_);
                     const std::size_t     count = found.load(std::memory_order_relaxed);
-                    merge_page_locked(snapshot_,
-                                      shard_hits,
-                                      kDisplayPage,
-                                      scanned.load(std::memory_order_relaxed),
-                                      total,
-                                      count,
-                                      count > cap);
+                    publish_running_locked(scanned.load(std::memory_order_relaxed), total, count, count > cap);
                 }
                 if (result.cancelled)
                 {
@@ -653,7 +602,7 @@ namespace slopkit::scan
         next->reserve(std::min(count, cap));
         for (auto& shard : shard_hits)
         {
-            for (auto& hit : shard.hits)
+            for (auto& hit : shard)
             {
                 next->push_back(std::move(hit));
             }
@@ -705,7 +654,7 @@ namespace slopkit::scan
 
         {
             const std::lock_guard lock(mutex_);
-            publish_running_locked(*next, 0, total, 0, false);
+            publish_running_locked(0, total, 0, false);
         }
 
         for (const auto& hit : previous->hits)
@@ -762,7 +711,7 @@ namespace slopkit::scan
             {
                 since_publish = 0;
                 const std::lock_guard lock(mutex_);
-                publish_running_locked(*next, scanned, total, count, truncated);
+                publish_running_locked(scanned, total, count, truncated);
             }
         }
 

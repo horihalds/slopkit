@@ -48,7 +48,8 @@ namespace slopkit::scan
         std::size_t                                 total_bytes {};
         std::size_t                                 hit_count {};
         bool                                        truncated {};
-        // Incremental display page; used while a scan runs.
+        // The top `kDisplayPage` rows of a finished result set; empty while a
+        // scan runs.
         std::vector<ScanHit>                        hits;
         // The whole stored result set once a scan finished (null while running or
         // before any result). Shared with the engine, so copies stay cheap and the
@@ -123,11 +124,8 @@ namespace slopkit::scan
         void run_first(ScanConfig config, MemorySource source, const std::stop_token& token);
         void run_next(ScanConfig config, ResultSetPtr previous, MemorySource source, const std::stop_token& token);
 
-        void publish_running_locked(const std::vector<ScanHit>& hits,
-                                    std::size_t                 scanned,
-                                    std::size_t                 total,
-                                    std::size_t                 count,
-                                    bool                        truncated);
+        // Publishes progress only: a running scan exposes no rows at all.
+        void publish_running_locked(std::size_t scanned, std::size_t total, std::size_t count, bool truncated);
         void publish_results_locked(ScanState state, std::string message);
         void finish_success(std::shared_ptr<std::vector<ScanHit>> hits,
                             std::size_t                           count,

@@ -193,7 +193,32 @@ namespace slopkit::ui::models
         {
             return *relative;
         }
-        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
+        return ui::format_absolute(address);
+    }
+
+    QString FoundResultsModel::copy_text(int row, CopyFormat format) const
+    {
+        const scan::ScanHit* hit = hit_at(row);
+        if (hit == nullptr)
+        {
+            return {};
+        }
+        if (format == CopyFormat::absolute)
+        {
+            return ui::format_absolute(hit->address);
+        }
+        if (format == CopyFormat::module_relative)
+        {
+            if (const auto relative =
+                    ui::module_relative_text(ui::AddressMode::module_relative, module_spans_, hit->address);
+                relative.has_value())
+            {
+                return *relative;
+            }
+            return ui::format_absolute(hit->address);
+        }
+        return address_text(hit->address) + QStringLiteral(": ")
+             + to_qstring(scan::format_value(config_.value_type, hit->value, config_.hex));
     }
 
     bool FoundResultsModel::is_static(std::uint64_t address) const
