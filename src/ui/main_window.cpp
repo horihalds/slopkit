@@ -74,20 +74,24 @@ namespace slopkit::ui
                 });
 
         open_process_action_ = new QAction(tr("Open Process..."), this);
+        open_process_action_->setIcon(widgets::action_icon(widgets::ActionIcon::target));
         // No standard key exists for "pick a process".
         open_process_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+T")));
         open_process_action_->setShortcutContext(Qt::WindowShortcut);
 
         open_table_action_ = new QAction(tr("Open Table..."), this);
+        open_table_action_->setIcon(widgets::action_icon(widgets::ActionIcon::open));
         open_table_action_->setShortcut(QKeySequence::Open);
         open_table_action_->setShortcutContext(Qt::WindowShortcut);
 
         save_table_action_ = new QAction(tr("Save Table..."), this);
+        save_table_action_->setIcon(widgets::action_icon(widgets::ActionIcon::save));
         // Shared by the File and Table menus; one action, so no shortcut ambiguity.
         save_table_action_->setShortcut(QKeySequence::Save);
         save_table_action_->setShortcutContext(Qt::WindowShortcut);
 
         save_table_as_action_ = new QAction(tr("Save Table As..."), this);
+        save_table_as_action_->setIcon(widgets::action_icon(widgets::ActionIcon::save));
         save_table_as_action_->setShortcut(QKeySequence::SaveAs);
         save_table_as_action_->setShortcutContext(Qt::WindowShortcut);
 

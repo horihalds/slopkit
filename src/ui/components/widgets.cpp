@@ -1,5 +1,8 @@
 #include "ui/components/widgets.hpp"
 
+#include <string_view>
+#include <utility>
+
 #include <QAbstractItemView>
 #include <QEvent>
 #include <QGuiApplication>
@@ -15,6 +18,24 @@ namespace slopkit::ui::widgets
     {
         // Every icon size generated for the desktop entry.
         constexpr int kIconSizes[] = {16, 24, 32, 48, 64, 128, 256, 512};
+
+        // Every icon size generated for the action glyphs; menus paint 16
+        // logical px, the rest cover HiDPI/fractional scaling.
+        constexpr int kActionIconSizes[] = {16, 24, 32, 48, 64};
+
+        constexpr std::string_view action_icon_name(ActionIcon which)
+        {
+            switch (which)
+            {
+            case ActionIcon::open:
+                return "open";
+            case ActionIcon::save:
+                return "save";
+            case ActionIcon::target:
+                return "target";
+            }
+            std::unreachable();
+        }
     } // namespace
 
     QColor status_color(StatusKind kind)
@@ -194,6 +215,18 @@ namespace slopkit::ui::widgets
         for (const int size : kIconSizes)
         {
             icon.addFile(QStringLiteral(":/icons/%1x%1/apps/slopkit.png").arg(size));
+        }
+        return icon;
+    }
+
+    QIcon action_icon(ActionIcon which)
+    {
+        const std::string_view name = action_icon_name(which);
+        const QString          stem = QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size()));
+        QIcon                  icon;
+        for (const int size : kActionIconSizes)
+        {
+            icon.addFile(QStringLiteral(":/icons/actions/%1x%1/%2.png").arg(size).arg(stem));
         }
         return icon;
     }

@@ -9,11 +9,14 @@
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
-- `cmake/EmbedIcon.cmake` — `slopkit_icon_pngs()` helper that renders the hicolor PNG set from `assets/icons/icon.svg` (the set is also embedded as a Qt resource).
+- `cmake/EmbedIcon.cmake` — `slopkit_icon_pngs()` renders the hicolor PNG set from `assets/icons/icon.svg` and `slopkit_action_icon_pngs()` renders the embedded action glyphs (both sets become Qt resources).
 - `assets/fonts/NotoSans-Regular.ttf` — bundled UI font (Noto Sans Regular).
 - `assets/fonts/NotoSansMono-Regular.ttf` — bundled monospace UI font (Noto Sans Mono Regular).
 - `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
-- `assets/icons/icon.svg` — single vector source for the program icon.
+- `assets/icons/icon.svg` — vector source of the program/desktop icon (rasterised into the hicolor set and the embedded window icon).
+- `assets/icons/open.svg` — folder glyph source for the File > Open Table menu icon.
+- `assets/icons/save.svg` — diskette glyph source shared by the File > Save Table and Save Table As menu icons.
+- `assets/icons/target.svg` — crosshair glyph source for the File > Open Process menu icon.
 - `assets/slopkit.desktop.in` — desktop entry template with the configured `Exec` path.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.

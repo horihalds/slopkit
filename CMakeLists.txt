@@ -96,6 +96,16 @@ embed_font(slopkit_assets ${CMAKE_SOURCE_DIR}/assets/fonts/NotoSansMono-Regular.
 set(SLOPKIT_ICON_SIZES 16 24 32 48 64 128 256 512)
 slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/assets/icons/icon.svg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
 
+# UI action glyphs: rendered with the same ImageMagick step and embedded (never
+# installed) under :/icons/actions/<N>x<N>/<name>.png. Menu icons paint at 16
+# logical px, so the larger sizes only serve HiDPI/fractional scaling.
+set(SLOPKIT_ACTION_ICON_SIZES 16 24 32 48 64)
+set(SLOPKIT_ACTION_ICON_PNGS "")
+foreach(name IN ITEMS open save target)
+    slopkit_action_icon_pngs(${CMAKE_SOURCE_DIR}/assets/icons/${name}.svg pngs SIZES ${SLOPKIT_ACTION_ICON_SIZES})
+    list(APPEND SLOPKIT_ACTION_ICON_PNGS ${pngs})
+endforeach()
+
 # --- application -----------------------------------------------------------
 
 # Plugin sources are excluded from the application binary: every plugin defines
@@ -117,11 +127,12 @@ target_link_libraries(slopkit PRIVATE
     PkgConfig::ZYDIS
     ${CMAKE_DL_LIBS})
 
-# Every generated icon size is embedded as :/icons/<N>x<N>/apps/slopkit.png.
+# Every generated icon size is embedded as :/icons/<N>x<N>/apps/slopkit.png,
+# the action glyphs as :/icons/actions/<N>x<N>/<name>.png.
 qt_add_resources(slopkit "slopkit_icons"
     PREFIX "/icons"
     BASE "${CMAKE_BINARY_DIR}/icons"
-    FILES ${SLOPKIT_ICON_PNGS})
+    FILES ${SLOPKIT_ICON_PNGS} ${SLOPKIT_ACTION_ICON_PNGS})
 
 # --- platform library ------------------------------------------------------
 
@@ -220,7 +231,7 @@ target_link_libraries(slopkit_tests PRIVATE
 qt_add_resources(slopkit_tests "slopkit_icons"
     PREFIX "/icons"
     BASE "${CMAKE_BINARY_DIR}/icons"
-    FILES ${SLOPKIT_ICON_PNGS})
+    FILES ${SLOPKIT_ICON_PNGS} ${SLOPKIT_ACTION_ICON_PNGS})
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)

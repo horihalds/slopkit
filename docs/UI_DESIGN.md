@@ -30,6 +30,7 @@ These rules apply to all user interface work in this project. Read this file bef
 ## 4. Custom Components
 
 - Build reusable widgets instead of repeating raw Qt calls. Put them in a dedicated module (`ui/components/`): buttons, panels, section headers, status labels and icon loading.
+- Icons are rasterised at configure time from `assets/icons/*.svg` into multi-size PNGs and embedded as Qt resources; load them through `widgets::application_icon()` / `widgets::action_icon()`, never from disk or a theme at runtime.
 - Components take their styling from the active theme, expose a small and consistent API, and keep no hidden global state.
 - Prefer composing existing components over adding one-off widgets. If similar Qt code appears twice, extract it into a component.
 - Let Qt do the work: use `QSplitter` for dividers, `QGroupBox`/`widgets::Panel` for groups, `QProgressBar` for progress and `QTableView` with a `QAbstractTableModel` for tabular data rather than custom-painted equivalents.
@@ -66,6 +67,7 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 
 - Set `QGuiApplication::setDesktopFileName("slopkit")` so compositors, taskbars and desktop entries match the window correctly. The ID must match the `.desktop` file name and its `StartupWMClass`.
 - Load the window icon from the generated `:/icons/<N>x<N>/apps/slopkit.png` resource so every size is available to the compositor.
+- Menu action glyphs are embedded the same way under `:/icons/actions/<N>x<N>/<name>.png` and reached through `widgets::action_icon()`.
 - Respect Wayland limitations; do not write code that depends on them:
   - No programmatic window positioning. Never rely on or persist window position.
   - A dialog in its own OS window is positioned by the compositor at first show; do not compute, save or restore its geometry.

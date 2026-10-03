@@ -26,6 +26,8 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHelpEvent>
+#include <QIcon>
+#include <QImage>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
@@ -37,6 +39,7 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPalette>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
@@ -1446,6 +1449,26 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(file_actions[2]->shortcut() == QKeySequence(QKeySequence::Save));
     CHECK(file_actions[3]->shortcut() == QKeySequence(QKeySequence::SaveAs));
 
+    // The four file commands carry their action glyphs; every other menu entry
+    // stays text-only.
+    for (const int index : {0, 1, 2, 3})
+    {
+        CHECK_FALSE(file_actions[index]->icon().isNull());
+        CHECK(file_actions[index]->icon().availableSizes().contains(QSize(16, 16)));
+    }
+    // Save and Save As share the same diskette glyph.
+    CHECK(file_actions[2]->icon().pixmap(16).toImage() == file_actions[3]->icon().pixmap(16).toImage());
+    // Quit, and every Edit/Help entry, remain icon-less.
+    CHECK(file_actions[5]->icon().isNull());
+    for (QAction* action : menus[1]->menu()->actions())
+    {
+        CHECK(action->icon().isNull());
+    }
+    for (QAction* action : menus[2]->menu()->actions())
+    {
+        CHECK(action->icon().isNull());
+    }
+
     // The status bar carries only the detached-process label; no progress bar
     // lives there any more.
     auto* process_label = window.statusBar()->findChild<QLabel*>();
@@ -1535,6 +1558,20 @@ TEST_CASE("the main window shell is built", "[ui]")
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
     QCoreApplication::processEvents();
     CHECK(QGuiApplication::palette().color(QPalette::Window) == slopkit::ui::light_theme().background);
+}
+
+TEST_CASE("the action icons are non-null multi-size icons", "[ui]")
+{
+    application();
+
+    for (const auto which : {slopkit::ui::widgets::ActionIcon::open,
+                             slopkit::ui::widgets::ActionIcon::save,
+                             slopkit::ui::widgets::ActionIcon::target})
+    {
+        const QIcon icon = slopkit::ui::widgets::action_icon(which);
+        CHECK_FALSE(icon.isNull());
+        CHECK(icon.availableSizes().contains(QSize(16, 16)));
+    }
 }
 
 TEST_CASE("the process list dialog focuses the filter box and preselects the top result", "[ui]")
