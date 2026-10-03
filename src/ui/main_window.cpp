@@ -45,7 +45,7 @@ namespace slopkit::ui
     {
         setWindowTitle(QStringLiteral("slopkit"));
         setWindowIcon(widgets::application_icon());
-        resize(640, 768);
+        resize(748, 768);
 
         build_actions();
         build_menus();

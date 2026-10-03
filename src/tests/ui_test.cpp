@@ -585,7 +585,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(middle->count() == 2);
 
     // The window opens at the compact default size.
-    CHECK(window.size() == QSize(640, 768));
+    CHECK(window.size() == QSize(748, 768));
 
     // The middle zone holds the live found list and the scanner controls.
     auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
@@ -631,7 +631,7 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(button->text() != QStringLiteral("Table Extras"));
     }
 
-    // The Add Address button lives at the far right of the address list footer,
+    // The Add Address button lives at the far right of the address list header,
     // not in the found-results entry row.
     CHECK(button_labelled(*address_list, QStringLiteral("Add Address Manually")) != nullptr);
     CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) == nullptr);
@@ -1448,7 +1448,7 @@ TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 
     auto* memory_view = button_labelled(panel, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
-    // The Add Address button moved to the address list footer.
+    // The Add Address button moved to the address list header.
     CHECK(button_labelled(panel, QStringLiteral("Add Address Manually")) == nullptr);
 
     // The view button waits for an attached target.
@@ -1512,7 +1512,8 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     REQUIRE(memory_view != nullptr);
     CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) == nullptr);
 
-    // The Add Address button lives at the far right of the address list footer.
+    // The Add Address button lives at the far right of the address list header,
+    // above the saved addresses table.
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
     auto* add_address = button_labelled(*address_list, QStringLiteral("Add Address Manually"));
@@ -1521,6 +1522,9 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     window.show();
     QCoreApplication::processEvents();
     CHECK(window.width() - add_address->mapTo(&window, add_address->rect().topRight()).x() <= 24);
+    auto* addresses = address_list->findChild<QTableView*>();
+    REQUIRE(addresses != nullptr);
+    CHECK(add_address->y() < addresses->y());
 
     // The window enables the view button once the target is attached and the
     // main module's map has landed.

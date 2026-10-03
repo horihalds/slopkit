@@ -27,7 +27,7 @@ namespace slopkit::ui::panels
 {
 
     // The bottom zone: the editable address list with its context menu and the
-    // footer popups. It owns no session; edits are encoded by the model and the
+    // header actions. It owns no session; edits are encoded by the model and the
     // writes are submitted to the access worker.
     class AddressListPanel : public QWidget
     {
@@ -56,7 +56,7 @@ namespace slopkit::ui::panels
         // A request to show an address, fed by the context menu.
         void browseRequested(quint64 address);
 
-        // A request to open the Add Address dialog, fed by the footer button.
+        // A request to open the Add Address dialog, fed by the header button.
         void addAddressRequested();
 
     private:
