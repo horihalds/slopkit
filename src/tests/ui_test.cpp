@@ -25,6 +25,7 @@
 #include <QEvent>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHelpEvent>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
@@ -47,6 +48,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QToolTip>
 
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
@@ -911,6 +913,64 @@ TEST_CASE("the found list shows the static-first top of the whole result set", "
         Q_ARG(QModelIndex, model->index(0, slopkit::ui::models::FoundResultsModel::address))));
     REQUIRE(table.entries().size() == 1);
     CHECK(table.entries()[0].address == first);
+}
+
+TEST_CASE("the found list tooltips an elided cell", "[ui]")
+{
+    application();
+
+    // One int32 hit whose hex rendering is wider than a collapsed column.
+    std::vector<std::byte> bytes(4, std::byte {0});
+    const std::uint32_t    value = 0x12345678;
+    std::memcpy(bytes.data(), &value, sizeof(value));
+
+    slopkit::scan::ScanEngine engine;
+    slopkit::scan::ScanConfig config;
+    config.value_type = slopkit::scan::ValueType::int32;
+    config.value      = std::int64_t {0x12345678};
+    config.hex        = true;
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(engine.has_results());
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    panel.resize(400, 200);
+    panel.show();
+    panel.refresh();
+    QCoreApplication::processEvents();
+
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = dynamic_cast<slopkit::ui::models::FoundResultsModel*>(view->model());
+    REQUIRE(model != nullptr);
+    REQUIRE(model->rowCount() > 0);
+
+    const QModelIndex cell = model->index(0, slopkit::ui::models::FoundResultsModel::value);
+    const QString     text = model->data(cell, Qt::DisplayRole).toString();
+    REQUIRE_FALSE(text.isEmpty());
+
+    // A column wide enough for the value stays quiet: with no tooltip shown yet,
+    // the hover must not create one.
+    view->setColumnWidth(slopkit::ui::models::FoundResultsModel::value, 300);
+    QCoreApplication::processEvents();
+    const QPoint fitted_pos = view->visualRect(cell).center();
+    QHelpEvent   fitted {QEvent::ToolTip, fitted_pos, view->viewport()->mapToGlobal(fitted_pos)};
+    QApplication::sendEvent(view->viewport(), &fitted);
+    CHECK_FALSE(QToolTip::isVisible());
+    CHECK(QToolTip::text().isEmpty());
+
+    // A column narrower than the value reveals the whole text on hover.
+    view->setColumnWidth(slopkit::ui::models::FoundResultsModel::value, 1);
+    QCoreApplication::processEvents();
+    const QPoint clipped_pos = view->visualRect(cell).center();
+    QHelpEvent   clipped {QEvent::ToolTip, clipped_pos, view->viewport()->mapToGlobal(clipped_pos)};
+    QApplication::sendEvent(view->viewport(), &clipped);
+    CHECK(QToolTip::isVisible());
+    CHECK(QToolTip::text() == text);
 }
 
 TEST_CASE("the address-table model edits the table", "[ui]")

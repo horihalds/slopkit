@@ -13,6 +13,7 @@
 #include <QTableView>
 #include <QVBoxLayout>
 
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/models/found_results_model.hpp"
 
@@ -79,6 +80,7 @@ namespace slopkit::ui::panels
         table_view_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table_view_->setAlternatingRowColors(true);
         table_view_->setSortingEnabled(true);
+        table_view_->setItemDelegate(new widgets::ElidedTooltipDelegate(table_view_));
         table_view_->sortByColumn(models::FoundResultsModel::address, Qt::AscendingOrder);
         table_view_->verticalHeader()->setVisible(false);
         table_view_->horizontalHeader()->setStretchLastSection(true);
