@@ -77,6 +77,7 @@ them for every task in this repository.
 
 - If possible, when you need to create temporary files, do so under the main project directory in a tmp folder instead of the system tmp folder.
 - This project tmp directory should be gitignored.
+- When any plan is completed, empty the project `tmp/` directory of any remaining files so no scratch files are left behind.
 
 ## Source layout
 
