@@ -95,11 +95,14 @@ namespace slopkit::ui::panels
         memory_view_button_ = widgets::secondary_button(tr("Memory View"), this);
         memory_view_button_->setToolTip(tr("Open the Memory Viewer at the main module's entry point (or its base)"));
         memory_view_button_->setEnabled(false);
+        add_address_button_ = widgets::secondary_button(tr("Add Address Manually"), this);
         entry_row->addWidget(memory_view_button_);
         entry_row->addStretch(1);
+        entry_row->addWidget(add_address_button_);
         layout->addLayout(entry_row);
 
         connect(memory_view_button_, &QPushButton::clicked, this, &FoundListPanel::memoryViewRequested);
+        connect(add_address_button_, &QPushButton::clicked, this, &FoundListPanel::addAddressRequested);
     }
 
     void FoundListPanel::set_target_attached(bool attached)

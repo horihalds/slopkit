@@ -24,7 +24,7 @@ namespace slopkit::ui::panels
 
     // The left half of the middle zone: the `Found: N` result list. It only
     // reads the engine's snapshot and appends double-clicked hits to the address
-    // table.
+    // table. Its entry row hosts the Memory View and Add Address buttons.
     class FoundListPanel : public QWidget
     {
         Q_OBJECT
@@ -44,6 +44,9 @@ namespace slopkit::ui::panels
         // (or its base when the plugin reports none).
         void memoryViewRequested();
 
+        // A request to open the Add Address dialog.
+        void addAddressRequested();
+
     private:
         void add_to_table(int row);
         void show_context_menu(const QPoint& position);
@@ -56,6 +59,7 @@ namespace slopkit::ui::panels
         QTableView*                table_view_ {};
         models::FoundResultsModel* model_ {};
         QPushButton*               memory_view_button_ {};
+        QPushButton*               add_address_button_ {};
 
         // The snapshot currently shown, so an unchanged poll does not reset the
         // model (a reset would drop the selection and re-run the sort).

@@ -8,12 +8,10 @@
 
 #include <QAction>
 #include <QFileDialog>
-#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QMenu>
 #include <QMessageBox>
-#include <QPushButton>
 #include <QTableView>
 #include <QVBoxLayout>
 
@@ -68,16 +66,6 @@ namespace slopkit::ui::panels
         table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::value, QHeaderView::Stretch);
         table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::frozen,
                                                               QHeaderView::ResizeToContents);
-        // The address-table actions sit at the far right of the header row above
-        // the table, so the Add Address button lands against the window's right
-        // edge and is seen before the saved addresses.
-        auto* header        = new QHBoxLayout();
-        add_address_button_ = widgets::secondary_button(tr("Add Address Manually"), this);
-        header->addStretch(1);
-        header->addWidget(add_address_button_);
-        layout->addLayout(header);
-        connect(add_address_button_, &QPushButton::clicked, this, &AddressListPanel::addAddressRequested);
-
         layout->addWidget(table_view_, 1);
 
         connect(table_view_->selectionModel(),

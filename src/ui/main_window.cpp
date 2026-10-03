@@ -154,6 +154,7 @@ namespace slopkit::ui
                 {
                     on_memory_view_requested(scanner_->main_module_address());
                 });
+        connect(found_list_, &panels::FoundListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(undo_scan_action_,
                 &QAction::triggered,
                 this,
@@ -165,8 +166,6 @@ namespace slopkit::ui
 
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
-        connect(
-            address_list_, &panels::AddressListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(open_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::open_table);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
         connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
