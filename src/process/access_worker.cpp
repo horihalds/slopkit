@@ -3,12 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <span>
 #include <stop_token>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "platform/linux/desktop_entry.hpp"
 
 namespace slopkit::process
@@ -21,6 +24,7 @@ namespace slopkit::process
                                    run(token);
                                })
     {
+        log::debug(log::category::process, "access worker started");
     }
 
     AccessWorker::~AccessWorker()
@@ -39,6 +43,8 @@ namespace slopkit::process
         completions_.clear(); // Pending callbacks are dropped, never invoked.
         requests_.clear();
         completion_hook_ = nullptr;
+
+        log::debug(log::category::process, "access worker stopped");
     }
 
     void AccessWorker::run(std::stop_token token)
@@ -61,7 +67,13 @@ namespace slopkit::process
                 requests_.pop_front();
             }
 
+            log::debug(log::category::process,
+                       std::format("executing job {} ({})", request.id, job_kind_name(request.kind)));
+
             JobResult result = execute(request);
+
+            log::debug(log::category::process,
+                       std::format("completed job {} ({})", request.id, job_kind_name(request.kind)));
 
             // A stop request that arrived while the job ran drops the result
             // instead of delivering it after shutdown started.
@@ -87,6 +99,8 @@ namespace slopkit::process
         {
             return false;
         }
+
+        log::debug(log::category::process, std::format("queued job {} ({})", request.id, job_kind_name(request.kind)));
 
         {
             const std::lock_guard lock(mutex_);
@@ -118,6 +132,10 @@ namespace slopkit::process
                 completion.on_done(std::move(completion.result));
             }
             ++drained;
+        }
+        if (drained > 0)
+        {
+            log::debug(log::category::process, std::format("drained {} completion(s)", drained));
         }
         return drained;
     }
@@ -241,6 +259,34 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    std::string_view AccessWorker::job_kind_name(JobKind kind) noexcept
+    {
+        switch (kind)
+        {
+        case JobKind::list:
+            return "list";
+        case JobKind::probe:
+            return "probe";
+        case JobKind::attach_app:
+            return "attach";
+        case JobKind::attach_handoff:
+            return "attach-handoff";
+        case JobKind::application_index:
+            return "application-index";
+        case JobKind::memory_map:
+            return "memory-map";
+        case JobKind::read:
+            return "read";
+        case JobKind::write:
+            return "write";
+        case JobKind::freeze:
+            return "freeze";
+        case JobKind::detach:
+            return "detach";
+        }
+        return "unknown";
+    }
+
     JobResult AccessWorker::execute(Request& request)
     {
         switch (request.kind)
@@ -279,6 +325,7 @@ namespace slopkit::process
         else
         {
             result.error = listed.error();
+            log::warning(log::category::process, std::format("listing processes failed: {}", describe(*result.error)));
         }
         return result;
     }
@@ -292,6 +339,10 @@ namespace slopkit::process
         if (!probe)
         {
             result.error = probe.error();
+            log::warning(
+                log::category::process,
+                std::format(
+                    "probe of pid {} via {} failed: {}", request.pid, request.plugin_id, describe(*result.error)));
             return result;
         }
 
@@ -304,6 +355,10 @@ namespace slopkit::process
         else
         {
             result.modules_error = modules.error();
+            log::warning(log::category::process,
+                         std::format("probe of pid {} could not list modules: {}",
+                                     request.pid,
+                                     describe(*result.modules_error)));
         }
 
         if (auto threads = probe->threads())
@@ -322,6 +377,10 @@ namespace slopkit::process
         if (!attached)
         {
             result.error = attached.error();
+            log::warning(
+                log::category::process,
+                std::format(
+                    "attach to pid {} via {} failed: {}", request.pid, request.plugin_id, describe(*result.error)));
             if (!handoff)
             {
                 // A failed re-attach leaves no session behind, matching the old
@@ -362,6 +421,8 @@ namespace slopkit::process
         if (!session_)
         {
             result.error = AccessError::internal;
+            log::warning(log::category::process,
+                         std::format("read at 0x{:X} requested without an attached target", request.address));
             return result;
         }
 
@@ -372,6 +433,10 @@ namespace slopkit::process
         else
         {
             result.error = bytes.error();
+            log::debug(
+                log::category::process,
+                std::format(
+                    "read of {} byte(s) at 0x{:X} failed: {}", request.size, request.address, describe(*result.error)));
         }
         return result;
     }
@@ -383,6 +448,7 @@ namespace slopkit::process
         if (!session_)
         {
             result.error = AccessError::internal;
+            log::warning(log::category::process, "memory map requested without an attached target");
             return result;
         }
 
@@ -393,6 +459,7 @@ namespace slopkit::process
         else
         {
             result.error = modules.error();
+            log::warning(log::category::process, std::format("could not list modules: {}", describe(*result.error)));
         }
 
         if (auto regions = session_->regions())
@@ -402,6 +469,7 @@ namespace slopkit::process
         else if (!result.error)
         {
             result.error = regions.error();
+            log::warning(log::category::process, std::format("could not list regions: {}", describe(*result.error)));
         }
 
         return result;
@@ -416,12 +484,18 @@ namespace slopkit::process
         if (!session_)
         {
             result.error = AccessError::internal;
+            log::warning(log::category::process, "write requested without an attached target");
             return result;
         }
 
         if (auto written = session_->write(request.address, request.bytes); !written)
         {
             result.error = written.error();
+            log::warning(log::category::process,
+                         std::format("write of {} byte(s) at 0x{:X} failed: {}",
+                                     request.bytes.size(),
+                                     request.address,
+                                     describe(*result.error)));
         }
         return result;
     }
@@ -433,6 +507,7 @@ namespace slopkit::process
         if (!session_)
         {
             result.error = AccessError::internal;
+            log::warning(log::category::process, "freeze pass requested without an attached target");
             return result;
         }
 
@@ -441,10 +516,18 @@ namespace slopkit::process
             if (auto written = session_->write(item.address, item.bytes); !written)
             {
                 result.error = written.error();
+                log::warning(log::category::process,
+                             std::format("freeze pass failed writing {} byte(s) at 0x{:X}: {}",
+                                         item.bytes.size(),
+                                         item.address,
+                                         describe(*result.error)));
                 return result;
             }
             ++result.written;
         }
+
+        log::debug(log::category::process,
+                   std::format("freeze pass wrote {} of {} value(s)", result.written, request.items.size()));
         return result;
     }
 

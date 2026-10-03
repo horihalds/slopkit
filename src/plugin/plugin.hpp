@@ -45,6 +45,21 @@ namespace slopkit::plugin
 
     class Plugin;
 
+    // Host-side log context handed to a plugin as host_services::user_data so
+    // host_log can attribute a record to it. Owned by the Plugin.
+    struct PluginLogContext
+    {
+        std::string           plugin_id; // empty until the descriptor is read
+        std::filesystem::path path;
+    };
+
+    namespace detail
+    {
+        // The one factory for host services: fills abi_version, struct_size,
+        // alloc/dealloc/log and points user_data at `context`.
+        slopkit_host_services make_host_services(PluginLogContext* context);
+    } // namespace detail
+
     // RAII attachment to a target held by a plugin.
     class PluginSession
     {
@@ -81,10 +96,9 @@ namespace slopkit::plugin
     class Plugin
     {
     public:
-        static std::expected<std::unique_ptr<Plugin>, std::string> load(const std::filesystem::path& path,
-                                                                        const slopkit_host_services* host);
+        static std::expected<std::unique_ptr<Plugin>, std::string> load(const std::filesystem::path& path);
 
-        Plugin(DynamicLibrary library, const slopkit_plugin_vtable* vtable, const slopkit_host_services* host);
+        explicit Plugin(DynamicLibrary library);
         Plugin(const Plugin&)            = delete;
         Plugin& operator=(const Plugin&) = delete;
         ~Plugin()                        = default;
@@ -109,7 +123,8 @@ namespace slopkit::plugin
 
         DynamicLibrary               library_;
         const slopkit_plugin_vtable* vtable_ {nullptr};
-        const slopkit_host_services* host_ {nullptr};
+        PluginLogContext             log_context_;
+        slopkit_host_services        services_ {};
         std::string                  id_;
         std::string                  name_;
         std::string                  version_;

@@ -1,6 +1,7 @@
 #include "ui/main_window.hpp"
 
 #include <chrono>
+#include <format>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -15,6 +16,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/log.hpp"
@@ -73,6 +76,7 @@ namespace slopkit::ui
                 this,
                 []
                 {
+                    log::debug(log::category::ui, "quit requested");
                     QCoreApplication::quit();
                 });
 
@@ -147,6 +151,7 @@ namespace slopkit::ui
                 this,
                 [this](std::vector<process::ModuleInfo> modules)
                 {
+                    log::debug(log::category::ui, std::format("memory map applied: {} module(s)", modules.size()));
                     found_list_->set_modules(modules);
                     address_list_->set_modules(modules);
                     memory_view_->set_modules(std::move(modules));
@@ -190,7 +195,14 @@ namespace slopkit::ui
     void MainWindow::build_dialogs()
     {
         process_list_ = new dialogs::ProcessListDialog(worker_, target_, this);
-        connect(process_list_, &dialogs::ProcessListDialog::targetChanged, this, &MainWindow::refresh_target_label);
+        connect(process_list_,
+                &dialogs::ProcessListDialog::targetChanged,
+                this,
+                [this]
+                {
+                    log::info(log::category::ui, std::format("target changed to {}", target_.label()));
+                    refresh_target_label();
+                });
 
         add_address_ = new dialogs::AddAddressDialog(address_table_, this);
 
@@ -240,6 +252,7 @@ namespace slopkit::ui
 
     void MainWindow::show_process_list()
     {
+        log::debug(log::category::ui, "opening Process List dialog");
         process_list_->show();
         process_list_->raise();
         process_list_->activateWindow();
@@ -247,6 +260,7 @@ namespace slopkit::ui
 
     void MainWindow::show_add_address()
     {
+        log::debug(log::category::ui, "opening Add Address dialog");
         add_address_->show();
         add_address_->raise();
         add_address_->activateWindow();
@@ -254,6 +268,7 @@ namespace slopkit::ui
 
     void MainWindow::show_log()
     {
+        log::debug(log::category::ui, "opening Log dialog");
         log_->show();
         log_->raise();
         log_->activateWindow();
@@ -261,6 +276,7 @@ namespace slopkit::ui
 
     void MainWindow::show_settings()
     {
+        log::debug(log::category::ui, "opening Settings dialog");
         settings_dialog_->show();
         settings_dialog_->raise();
         settings_dialog_->activateWindow();
@@ -287,6 +303,7 @@ namespace slopkit::ui
 
     void MainWindow::on_memory_view_requested(quint64 address)
     {
+        log::debug(log::category::ui, std::format("opening Memory Viewer at 0x{:X}", address));
         memory_view_->set_address(address);
         memory_view_->show();
         memory_view_->raise();
@@ -321,22 +338,25 @@ namespace slopkit::ui
 
         const process::JobId job_id = worker_.next_job_id();
         freeze_pending_             = job_id;
-        const bool submitted =
-            worker_.submit_freeze(job_id,
-                                  std::move(items),
-                                  [this, job_id](process::JobResult&& result)
-                                  {
-                                      if (freeze_pending_ != job_id)
-                                      {
-                                          return;
-                                      }
-                                      freeze_pending_.reset();
-                                      const auto& frozen = std::get<process::FreezeResult>(result);
-                                      if (frozen.error)
-                                      {
-                                          address_list_->report_freeze_error(process::describe(*frozen.error));
-                                      }
-                                  });
+        log::debug(log::category::ui, std::format("freeze pass submitted for {} item(s)", items.size()));
+        const bool submitted = worker_.submit_freeze(
+            job_id,
+            std::move(items),
+            [this, job_id](process::JobResult&& result)
+            {
+                if (freeze_pending_ != job_id)
+                {
+                    return;
+                }
+                freeze_pending_.reset();
+                const auto& frozen = std::get<process::FreezeResult>(result);
+                if (frozen.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("freeze pass failed: {}", process::describe(*frozen.error)));
+                    address_list_->report_freeze_error(process::describe(*frozen.error));
+                }
+            });
         if (!submitted)
         {
             freeze_pending_.reset();

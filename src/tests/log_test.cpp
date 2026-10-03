@@ -4,10 +4,12 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 #include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace
 {
@@ -220,4 +222,53 @@ TEST_CASE("The rolling file sink rotates past its cap", "[log]")
     REQUIRE(current_text.find("first record") == std::string::npos);
 
     std::filesystem::remove_all(directory, error);
+}
+
+TEST_CASE("The shared category constants are stable lower-case names", "[log]")
+{
+    using namespace slopkit::log::category;
+
+    static_assert(app == std::string_view {"app"});
+    static_assert(plugin == std::string_view {"plugin"});
+    static_assert(process == std::string_view {"process"});
+    static_assert(memory == std::string_view {"memory"});
+    static_assert(scan == std::string_view {"scan"});
+    static_assert(table == std::string_view {"table"});
+    static_assert(ui == std::string_view {"ui"});
+
+    for (const std::string_view name : {app, plugin, process, memory, scan, table, ui})
+    {
+        REQUIRE_FALSE(name.empty());
+        for (const char character : name)
+        {
+            REQUIRE(character >= 'a');
+            REQUIRE(character <= 'z');
+        }
+    }
+}
+
+TEST_CASE("The info level hides debug-only detail", "[log]")
+{
+    LoggerState state;
+    auto&       logger = slopkit::log::Logger::instance();
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {logger.add_sink(
+        [&records](const slopkit::log::Record& record)
+        {
+            records.push_back(record);
+        })};
+
+    logger.set_minimum_level(Level::info);
+    slopkit::log::debug(slopkit::log::category::process, "job submitted");
+    slopkit::log::info(slopkit::log::category::process, "attached");
+    REQUIRE(records.size() == 1);
+    REQUIRE(records.back().level == Level::info);
+    REQUIRE(std::string_view {records.back().category} == slopkit::log::category::process);
+
+    logger.set_minimum_level(Level::debug);
+    slopkit::log::debug(slopkit::log::category::process, "job executed");
+    REQUIRE(records.size() == 2);
+    REQUIRE(records.back().level == Level::debug);
+    REQUIRE(std::string_view {records.back().category} == slopkit::log::category::process);
 }

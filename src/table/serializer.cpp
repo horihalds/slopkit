@@ -13,6 +13,9 @@
 #include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+
 namespace slopkit::table
 {
 
@@ -271,6 +274,7 @@ namespace slopkit::table
         std::ofstream file(path, std::ios::trunc);
         if (!file)
         {
+            log::warning(log::category::table, std::format("cannot open {} for writing", path.string()));
             return std::unexpected("cannot open " + path.string() + " for writing");
         }
 
@@ -287,8 +291,10 @@ namespace slopkit::table
         }
         if (!file)
         {
+            log::warning(log::category::table, std::format("write failed for {}", path.string()));
             return std::unexpected("write failed for " + path.string());
         }
+        log::info(log::category::table, std::format("saved {} entry/entries to {}", table.size(), path.string()));
         return {};
     }
 
@@ -297,12 +303,14 @@ namespace slopkit::table
         std::ifstream file(path);
         if (!file)
         {
+            log::warning(log::category::table, std::format("cannot open {}", path.string()));
             return std::unexpected("cannot open " + path.string());
         }
 
-        AddressTable loaded;
-        std::string  line;
-        int          line_number = 0;
+        AddressTable              loaded;
+        std::vector<AddressEntry> parsed;
+        std::string               line;
+        int                       line_number = 0;
         while (std::getline(file, line))
         {
             ++line_number;
@@ -317,21 +325,27 @@ namespace slopkit::table
             }
             if (!view.starts_with("entry"))
             {
+                log::warning(log::category::table,
+                             std::format("{}: line {}: expected an entry line", path.string(), line_number));
                 return std::unexpected(std::format("line {}: expected an entry line", line_number));
             }
             auto entry = parse_entry(view.substr(5), line_number);
             if (!entry)
             {
+                log::warning(log::category::table, std::format("{}: {}", path.string(), entry.error()));
                 return std::unexpected(entry.error());
             }
-            loaded.add(std::move(*entry));
+            parsed.push_back(std::move(*entry));
         }
         if (file.bad())
         {
+            log::warning(log::category::table, std::format("read failed for {}", path.string()));
             return std::unexpected("read failed for " + path.string());
         }
 
+        loaded.replace(std::move(parsed));
         table = std::move(loaded);
+        log::info(log::category::table, std::format("loaded {} entry/entries from {}", table.size(), path.string()));
         return {};
     }
 

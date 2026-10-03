@@ -7,6 +7,7 @@
 #include <cctype>
 #include <charconv>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -17,6 +18,9 @@
 #include <vector>
 
 #include <unistd.h>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::platform
 {
@@ -143,6 +147,14 @@ namespace slopkit::platform
             }
             pids.push_back(static_cast<process::ProcessId>(to_uint(name)));
         }
+        if (error)
+        {
+            log::warning(log::category::process, std::format("cannot enumerate /proc: {}", error.message()));
+        }
+        else
+        {
+            log::debug(log::category::process, std::format("enumerated {} process(es)", pids.size()));
+        }
         std::ranges::sort(pids);
         return pids;
     }
@@ -266,6 +278,7 @@ namespace slopkit::platform
         const auto raw = read_file(proc_entry(pid, "maps"));
         if (!raw)
         {
+            log::warning(log::category::process, std::format("cannot read the memory map of pid {}", pid));
             return {};
         }
         return parse_maps(*raw);
@@ -365,6 +378,16 @@ namespace slopkit::platform
                 thread.name = std::string(trim(*comm));
             }
             threads.push_back(std::move(thread));
+        }
+
+        if (error)
+        {
+            log::warning(log::category::process,
+                         std::format("cannot enumerate the threads of pid {}: {}", pid, error.message()));
+        }
+        else
+        {
+            log::debug(log::category::process, std::format("pid {} has {} thread(s)", pid, threads.size()));
         }
 
         std::ranges::sort(threads, {}, &process::ThreadInfo::tid);

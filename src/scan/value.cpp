@@ -6,6 +6,9 @@
 #include <format>
 #include <limits>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+
 namespace slopkit::scan
 {
 
@@ -279,6 +282,8 @@ namespace slopkit::scan
             auto bytes = byte_array_value(text, hex);
             if (!bytes)
             {
+                log::debug(log::category::scan,
+                           std::format("rejected {} value '{}': {}", describe(type), text, bytes.error().message));
                 return std::unexpected(bytes.error());
             }
             return ScanValue {std::move(*bytes)};
@@ -289,6 +294,8 @@ namespace slopkit::scan
             auto value = real_value(text, hex);
             if (!value)
             {
+                log::debug(log::category::scan,
+                           std::format("rejected {} value '{}': {}", describe(type), text, value.error().message));
                 return std::unexpected(value.error());
             }
             return ScanValue {*value};
@@ -302,6 +309,8 @@ namespace slopkit::scan
             auto value = integer_value(type, text, hex);
             if (!value)
             {
+                log::debug(log::category::scan,
+                           std::format("rejected {} value '{}': {}", describe(type), text, value.error().message));
                 return std::unexpected(value.error());
             }
             return ScanValue {*value};
@@ -315,10 +324,12 @@ namespace slopkit::scan
         auto literal = parse_integer_literal(text, false);
         if (!literal)
         {
+            log::debug(log::category::scan, std::format("rejected address '{}': {}", text, literal.error().message));
             return std::unexpected(literal.error());
         }
         if (literal->negative)
         {
+            log::debug(log::category::scan, std::format("rejected address '{}': address must not be negative", text));
             return std::unexpected(ValueError {"address must not be negative"});
         }
         return literal->magnitude;
@@ -334,6 +345,7 @@ namespace slopkit::scan
         auto literal = parse_integer_literal(text, false);
         if (!literal || literal->negative || literal->magnitude == 0)
         {
+            log::debug(log::category::scan, std::format("rejected alignment '{}'", text));
             return std::unexpected(ValueError {"alignment must be a positive number"});
         }
         return literal->magnitude;

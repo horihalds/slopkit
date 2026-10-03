@@ -37,6 +37,10 @@ namespace slopkit::table
         void remove(std::size_t index);
         void clear();
 
+        // Replaces every entry with fresh ids. The serializer uses this when
+        // loading so a file load does not log one record per row.
+        void replace(std::vector<AddressEntry> entries);
+
         [[nodiscard]] std::span<AddressEntry>       entries() noexcept;
         [[nodiscard]] std::span<const AddressEntry> entries() const noexcept;
         [[nodiscard]] std::size_t                   size() const noexcept;

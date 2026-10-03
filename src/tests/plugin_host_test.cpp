@@ -4,8 +4,13 @@
 #include <filesystem>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "app/cli.hpp"
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "core/version.hpp"
 #include "plugin/plugin_host.hpp"
 
@@ -20,6 +25,43 @@ namespace
     {
         ::unsetenv(name);
     }
+
+    // Restores the process-wide log level on scope exit so a test that pins it
+    // cannot leak the setting into the next case.
+    class LevelGuard
+    {
+    public:
+        LevelGuard() : previous_(slopkit::log::Logger::instance().minimum_level()) {}
+
+        LevelGuard(const LevelGuard&)            = delete;
+        LevelGuard& operator=(const LevelGuard&) = delete;
+
+        ~LevelGuard()
+        {
+            slopkit::log::Logger::instance().set_minimum_level(previous_);
+        }
+
+    private:
+        slopkit::log::Level previous_;
+    };
+
+    // Registers a sink for the lifetime of the guard.
+    class SinkGuard
+    {
+    public:
+        explicit SinkGuard(slopkit::log::Sink sink) : id_(slopkit::log::Logger::instance().add_sink(std::move(sink))) {}
+
+        SinkGuard(const SinkGuard&)            = delete;
+        SinkGuard& operator=(const SinkGuard&) = delete;
+
+        ~SinkGuard()
+        {
+            slopkit::log::Logger::instance().remove_sink(id_);
+        }
+
+    private:
+        slopkit::log::SinkId id_;
+    };
 } // namespace
 
 TEST_CASE("PluginHost diagnoses broken plugin libraries", "[plugin]")
@@ -154,4 +196,76 @@ TEST_CASE("Headless commands tolerate broken plugins", "[app]")
     REQUIRE(slopkit::app::list_processes(process_out, process_err) == 0);
 
     unset_env("SLOPKIT_PLUGIN_PATH");
+}
+
+TEST_CASE("Plugin discovery records a warning per rejected library", "[plugin]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::warning);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_TEST_PLUGIN_DIR});
+
+    REQUIRE_FALSE(host.diagnostics().empty());
+    for (const auto& diagnostic : host.diagnostics())
+    {
+        bool recorded = false;
+        for (const auto& record : records)
+        {
+            recorded = recorded
+                    || (record.level == slopkit::log::Level::warning
+                        && std::string_view {record.category} == slopkit::log::category::plugin
+                        && record.message.find(diagnostic.path.string()) != std::string::npos);
+        }
+        REQUIRE(recorded);
+    }
+}
+
+TEST_CASE("A plugin's host log messages carry its id", "[plugin]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::debug);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_TEST_LOGGING_PLUGIN_DIR});
+
+    auto* plugin = host.find("logging-fixture");
+    REQUIRE(plugin != nullptr);
+
+    // The entry-call record happens before the id is known, so it falls back to
+    // the library file name and must still arrive under `plugin`.
+    bool saw_fallback = false;
+    for (const auto& record : records)
+    {
+        saw_fallback = saw_fallback
+                    || (record.level == slopkit::log::Level::warning
+                        && std::string_view {record.category} == slopkit::log::category::plugin
+                        && record.message.find("loaded without a descriptor id yet") != std::string::npos);
+    }
+    REQUIRE(saw_fallback);
+
+    auto session = plugin->open_session(1);
+    REQUIRE(session.has_value());
+
+    bool saw_attributed = false;
+    for (const auto& record : records)
+    {
+        saw_attributed = saw_attributed
+                      || (record.level == slopkit::log::Level::info
+                          && std::string_view {record.category} == slopkit::log::category::plugin
+                          && record.message.starts_with("logging-fixture: "));
+    }
+    REQUIRE(saw_attributed);
 }

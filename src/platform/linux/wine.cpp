@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -10,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "platform/linux/procfs.hpp"
 
 namespace slopkit::platform
@@ -77,6 +80,20 @@ namespace slopkit::platform
                                        return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
                                    });
             return result;
+        }
+
+        std::string_view flavor_name(WineFlavor flavor)
+        {
+            switch (flavor)
+            {
+            case WineFlavor::proton:
+                return "proton";
+            case WineFlavor::wine:
+                return "wine";
+            case WineFlavor::none:
+                break;
+            }
+            return "none";
         }
     } // namespace
 
@@ -245,11 +262,20 @@ namespace slopkit::platform
         // Environment and command line are the cheapest signals; only fall back
         // to mapping the process when they say nothing.
         auto result = classify_wine_process(environ, cmdline, {});
+        if (!result.claimed())
+        {
+            result = classify_wine_process(environ, cmdline, read_maps_text(pid));
+        }
+
         if (result.claimed())
         {
-            return result;
+            log::info(log::category::process, std::format("pid {} classified as {}", pid, flavor_name(result.flavor)));
+            for (const auto& detail : result.evidence.details)
+            {
+                log::debug(log::category::process, std::format("pid {} wine signal: {}", pid, detail));
+            }
         }
-        return classify_wine_process(environ, cmdline, read_maps_text(pid));
+        return result;
     }
 
 } // namespace slopkit::platform

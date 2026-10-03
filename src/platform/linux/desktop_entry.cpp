@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <ranges>
 #include <system_error>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::platform
 {
@@ -185,12 +189,17 @@ namespace slopkit::platform
 
     std::vector<std::string> scan_desktop_executables(std::span<const std::filesystem::path> application_dirs)
     {
+        log::info(log::category::process,
+                  std::format("desktop entry index: scanning {} director(ies)", application_dirs.size()));
+
         std::vector<std::string> executables;
         for (const auto& dir : application_dirs)
         {
             std::error_code error;
             if (!std::filesystem::is_directory(dir, error))
             {
+                log::debug(log::category::process,
+                           std::format("desktop entry index: {} is not a directory", dir.string()));
                 continue;
             }
             for (std::filesystem::recursive_directory_iterator it(dir, error), end; it != end; it.increment(error))
@@ -211,7 +220,13 @@ namespace slopkit::platform
                 }
                 const std::string content {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
                 const auto        entry = parse_desktop_entry(content);
-                if (!entry || entry->type != "Application" || entry->no_display || entry->hidden)
+                if (!entry)
+                {
+                    log::warning(log::category::process,
+                                 std::format("desktop entry index: malformed {}", it->path().string()));
+                    continue;
+                }
+                if (entry->type != "Application" || entry->no_display || entry->hidden)
                 {
                     continue;
                 }
@@ -224,6 +239,7 @@ namespace slopkit::platform
 
         std::ranges::sort(executables);
         executables.erase(std::ranges::unique(executables).begin(), executables.end());
+        log::info(log::category::process, std::format("desktop entry index: {} executable(s)", executables.size()));
         return executables;
     }
 

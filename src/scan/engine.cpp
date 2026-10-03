@@ -1,9 +1,13 @@
 #include "scan/engine.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <expected>
+#include <format>
 #include <utility>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "scan/matcher.hpp"
 
 namespace slopkit::scan
@@ -21,6 +25,49 @@ namespace slopkit::scan
 
         // How often the worker publishes progress, to limit lock churn.
         constexpr std::size_t kPublishEveryCandidate = 1024;
+
+        double elapsed_ms(const std::chrono::steady_clock::time_point& started)
+        {
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        }
+
+        // Renders a comparison value the way the table shows it.
+        std::string render_value(ValueType type, const ScanValue& value, bool hex)
+        {
+            const std::vector<std::byte> bytes = encode_value(type, value);
+            return format_value(type, bytes, hex);
+        }
+
+        // A compact, single-line rendering of the scan configuration.
+        std::string describe_config(const ScanConfig& config)
+        {
+            std::string text = std::format("{} value_type={} value={}",
+                                           describe(config.type),
+                                           describe(config.value_type),
+                                           render_value(config.value_type, config.value, config.hex));
+            if (config.type == ScanType::value_between)
+            {
+                text += std::format(" upper={}", render_value(config.value_type, config.value_upper, config.hex));
+            }
+            text += std::format(" alignment={}", config.filter.alignment);
+            if (config.filter.start != 0 || config.filter.stop != 0)
+            {
+                text += std::format(" range=0x{:X}-0x{:X}", config.filter.start, config.filter.stop);
+            }
+            if (config.filter.writable)
+            {
+                text += " writable";
+            }
+            if (config.filter.executable)
+            {
+                text += " executable";
+            }
+            if (config.filter.copy_on_write)
+            {
+                text += " copy_on_write";
+            }
+            return text;
+        }
 
         std::uint64_t align_up(std::uint64_t value, std::uint64_t alignment)
         {
@@ -135,6 +182,7 @@ namespace slopkit::scan
         {
             std::vector<ScanHit> hits;
             bool                 cancelled {};
+            std::size_t          unreadable_chunks {};
         };
 
         // Walks one shard in chunks, reading one extra window across the chunk
@@ -252,6 +300,10 @@ namespace slopkit::scan
                         }
                     }
                 }
+                else
+                {
+                    ++result.unreadable_chunks;
+                }
 
                 scanned.fetch_add(chunk, std::memory_order_relaxed);
                 cursor += chunk;
@@ -283,6 +335,8 @@ namespace slopkit::scan
     {
         finish_worker();
 
+        log::info(log::category::scan, std::format("first scan: {}", describe_config(config)));
+
         MemorySource thread_source = source;
         {
             const std::lock_guard lock(mutex_);
@@ -304,6 +358,8 @@ namespace slopkit::scan
     {
         finish_worker();
 
+        log::info(log::category::scan, std::format("next scan: {}", describe_config(config)));
+
         ResultSetPtr previous;
         MemorySource source;
         {
@@ -312,6 +368,7 @@ namespace slopkit::scan
             {
                 snapshot_.state   = ScanState::failed;
                 snapshot_.message = "Run a first scan before refining.";
+                log::warning(log::category::scan, "next scan rejected: no previous results");
                 return;
             }
             previous        = results_;
@@ -338,11 +395,13 @@ namespace slopkit::scan
         if (history_.empty())
         {
             snapshot_.message = "Nothing to undo.";
+            log::info(log::category::scan, "undo requested with no history");
             return;
         }
         results_ = history_.back();
         history_.pop_back();
         publish_results_locked(ScanState::done, "Undid the last scan.");
+        log::info(log::category::scan, std::format("undo restored {} hit(s)", results_ ? results_->count : 0));
     }
 
     void ScanEngine::cancel()
@@ -356,6 +415,7 @@ namespace slopkit::scan
         }
         cancel_requested_.store(true);
         worker_.request_stop();
+        log::info(log::category::scan, "scan cancel requested");
     }
 
     void ScanEngine::reset()
@@ -368,6 +428,7 @@ namespace slopkit::scan
         history_.clear();
         config_ = ScanConfig {};
         source_ = MemorySource {};
+        log::info(log::category::scan, "scan reset");
     }
 
     ScanSnapshot ScanEngine::snapshot() const
@@ -481,16 +542,20 @@ namespace slopkit::scan
 
     void ScanEngine::run_first(ScanConfig config, MemorySource source, const std::stop_token& token)
     {
+        const auto started = std::chrono::steady_clock::now();
+
         if (is_refinement(config.type))
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::failed, "Run a first scan before refining.");
+            log::error(log::category::scan, "first scan failed: a refinement needs a previous scan");
             return;
         }
         if (!source.read || !source.regions)
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::failed, "No memory source is available.");
+            log::error(log::category::scan, "first scan failed: no memory source is available");
             return;
         }
 
@@ -499,6 +564,7 @@ namespace slopkit::scan
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::failed, "The scan value is empty.");
+            log::error(log::category::scan, "first scan failed: the scan value is empty");
             return;
         }
 
@@ -513,6 +579,7 @@ namespace slopkit::scan
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::failed, "Could not enumerate memory regions.");
+            log::error(log::category::scan, "first scan failed: could not enumerate memory regions");
             return;
         }
 
@@ -522,6 +589,7 @@ namespace slopkit::scan
         const std::vector<Shard> shards    = build_shards(spans, alignment);
 
         std::vector<std::vector<ScanHit>> shard_hits(shards.size());
+        std::vector<std::size_t>          shard_unreadable(shards.size());
         {
             const std::lock_guard lock(mutex_);
             publish_running_locked(0, total, 0, false);
@@ -550,19 +618,20 @@ namespace slopkit::scan
                     break;
                 }
 
-                ScannedShard result = scan_shard_range(shards[slot],
-                                                       matcher,
-                                                       source,
-                                                       alignment,
-                                                       size,
-                                                       cap,
-                                                       buffer,
-                                                       stored,
-                                                       scanned,
-                                                       found,
-                                                       token,
-                                                       cancel_requested_);
-                shard_hits[slot]    = std::move(result.hits);
+                ScannedShard result    = scan_shard_range(shards[slot],
+                                                          matcher,
+                                                          source,
+                                                          alignment,
+                                                          size,
+                                                          cap,
+                                                          buffer,
+                                                          stored,
+                                                          scanned,
+                                                          found,
+                                                          token,
+                                                          cancel_requested_);
+                shard_hits[slot]       = std::move(result.hits);
+                shard_unreadable[slot] = result.unreadable_chunks;
 
                 {
                     const std::lock_guard lock(mutex_);
@@ -594,6 +663,7 @@ namespace slopkit::scan
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::cancelled, "Scan cancelled; the previous results were kept.");
+            log::info(log::category::scan, std::format("first scan cancelled after {:.1f} ms", elapsed_ms(started)));
             return;
         }
 
@@ -617,21 +687,42 @@ namespace slopkit::scan
                   });
 
         finish_success(std::move(next), count, count > cap, true);
+
+        std::size_t unreadable = 0;
+        for (const std::size_t value : shard_unreadable)
+        {
+            unreadable += value;
+        }
+        if (unreadable > 0)
+        {
+            log::debug(log::category::scan, std::format("first scan: {} unreadable chunk(s) skipped", unreadable));
+        }
+
+        log::info(log::category::scan,
+                  std::format("first scan finished: {} hit(s){}, {} byte(s) scanned in {:.1f} ms",
+                              count,
+                              count > cap ? " (stored hits truncated)" : "",
+                              total,
+                              elapsed_ms(started)));
     }
 
     void
     ScanEngine::run_next(ScanConfig config, ResultSetPtr previous, MemorySource source, const std::stop_token& token)
     {
+        const auto started = std::chrono::steady_clock::now();
+
         if (config.type == ScanType::unknown_initial_value)
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::failed, "Unknown initial value is only available for a first scan.");
+            log::error(log::category::scan, "next scan failed: unknown initial value needs a first scan");
             return;
         }
         if (!source.read || !previous)
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::failed, "No previous scan to refine.");
+            log::error(log::category::scan, "next scan failed: no previous scan to refine");
             return;
         }
 
@@ -641,6 +732,7 @@ namespace slopkit::scan
         {
             const std::lock_guard lock(mutex_);
             publish_results_locked(ScanState::failed, "The scan value is empty.");
+            log::error(log::category::scan, "next scan failed: the scan value is empty");
             return;
         }
 
@@ -650,6 +742,7 @@ namespace slopkit::scan
         std::size_t       count         = 0;
         bool              truncated     = false;
         std::size_t       since_publish = 0;
+        std::size_t       unreadable    = 0;
         const std::size_t cap           = max_stored_hits_.load();
 
         {
@@ -663,6 +756,7 @@ namespace slopkit::scan
             {
                 const std::lock_guard lock(mutex_);
                 publish_results_locked(ScanState::cancelled, "Scan cancelled; the previous results were kept.");
+                log::info(log::category::scan, std::format("next scan cancelled after {:.1f} ms", elapsed_ms(started)));
                 return;
             }
 
@@ -706,6 +800,10 @@ namespace slopkit::scan
                     }
                 }
             }
+            else
+            {
+                ++unreadable;
+            }
 
             if (++since_publish >= kPublishEveryCandidate)
             {
@@ -716,6 +814,17 @@ namespace slopkit::scan
         }
 
         finish_success(std::move(next), count, truncated, false);
+        if (unreadable > 0)
+        {
+            log::debug(log::category::scan,
+                       std::format("next scan: {} unreadable candidate read(s) skipped", unreadable));
+        }
+        log::info(log::category::scan,
+                  std::format("next scan finished: {} of {} candidate(s) kept{} in {:.1f} ms",
+                              count,
+                              total,
+                              truncated ? " (stored hits truncated)" : "",
+                              elapsed_ms(started)));
     }
 
 } // namespace slopkit::scan

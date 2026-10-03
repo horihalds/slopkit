@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -15,6 +16,8 @@
 #include <QTableView>
 #include <QVBoxLayout>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "table/serializer.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/models/address_table_model.hpp"
@@ -134,6 +137,7 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::open_table()
     {
+        log::debug(log::category::ui, "open table requested");
         const QString path = QFileDialog::getOpenFileName(
             this, tr("Open Table"), table_path_, tr("Address tables (*.txt);;All files (*)"));
         if (path.isEmpty())
@@ -152,6 +156,7 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::save_table()
     {
+        log::debug(log::category::ui, "save table requested");
         if (table_path_.isEmpty())
         {
             save_table_as();
@@ -162,6 +167,7 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::save_table_as()
     {
+        log::debug(log::category::ui, "save table as requested");
         const QString path = QFileDialog::getSaveFileName(
             this, tr("Save Table As"), table_path_, tr("Address tables (*.txt);;All files (*)"));
         if (path.isEmpty())
@@ -187,6 +193,7 @@ namespace slopkit::ui::panels
         const int row = table_.selected();
         if (row < 0)
         {
+            log::warning(log::category::ui, "delete requested with no selection");
             set_status(tr("Select an entry to delete."), true);
             return;
         }
@@ -211,12 +218,14 @@ namespace slopkit::ui::panels
         const int row = table_.selected();
         if (row < 0)
         {
+            log::warning(log::category::ui, "freeze requested with no selection");
             set_status(tr("Select an entry to freeze."), true);
             return;
         }
 
         auto& entry  = table_.entries()[static_cast<std::size_t>(row)];
         entry.active = !entry.active;
+        log::info(log::category::ui, entry.active ? "entry frozen" : "entry unfrozen");
         set_status(entry.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
     }
 

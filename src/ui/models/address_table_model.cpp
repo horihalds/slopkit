@@ -1,10 +1,13 @@
 #include "ui/models/address_table_model.hpp"
 
 #include <cstddef>
+#include <format>
 #include <string>
 #include <string_view>
 #include <utility>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 #include "ui/fonts.hpp"
@@ -265,12 +268,14 @@ namespace slopkit::ui::models
         // Parse here as well so a malformed value keeps its detailed message.
         if (const auto parsed = scan::parse_value(entry.type, input, entry.hex); !parsed)
         {
+            log::warning(log::category::ui, std::format("table value rejected: {}", parsed.error().message));
             emit statusChanged(tr("Value: %1").arg(to_qstring(parsed.error().message)), true);
             return false;
         }
         auto encoded = table_.encode_value(index_row, input);
         if (!encoded)
         {
+            log::warning(log::category::ui, std::format("table value rejected: {}", input));
             emit statusChanged(tr("Value: invalid value."), true);
             return false;
         }
@@ -298,6 +303,8 @@ namespace slopkit::ui::models
                 const auto& write = std::get<process::WriteResult>(result);
                 if (write.error)
                 {
+                    log::warning(log::category::ui,
+                                 std::format("table write failed: {}", process::describe(*write.error)));
                     emit dataChanged(index(0, 0), index(rowCount() - 1, column_count - 1));
                     emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*write.error))), true);
                     return;

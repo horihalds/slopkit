@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <format>
 #include <string>
 #include <utility>
 
 #include <dlfcn.h>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::plugin
 {
@@ -31,6 +35,69 @@ namespace slopkit::plugin
             }
         }
     } // namespace
+
+    namespace detail
+    {
+        namespace
+        {
+            void* host_alloc(std::size_t size, void* /*user_data*/)
+            {
+                return std::malloc(size);
+            }
+
+            void host_dealloc(void* memory, void* /*user_data*/)
+            {
+                std::free(memory);
+            }
+
+            log::Level to_log_level(int32_t level)
+            {
+                switch (level)
+                {
+                case SLOPKIT_LOG_DEBUG:
+                    return log::Level::debug;
+                case SLOPKIT_LOG_WARN:
+                    return log::Level::warning;
+                case SLOPKIT_LOG_ERROR:
+                    return log::Level::error;
+                case SLOPKIT_LOG_INFO:
+                default:
+                    return log::Level::info;
+                }
+            }
+
+            // Attributes a plugin's message to the plugin that emitted it, falling
+            // back to the library file name before the descriptor is read.
+            void host_log(int32_t level, const char* message, void* user_data)
+            {
+                const auto* context    = static_cast<const PluginLogContext*>(user_data);
+                std::string attributor = "plugin";
+                if (context != nullptr)
+                {
+                    attributor = context->plugin_id.empty() ? context->path.filename().string() : context->plugin_id;
+                }
+
+                const std::string_view detail =
+                    message != nullptr ? std::string_view {message} : std::string_view {"(no message)"};
+                log::Logger::instance().log(to_log_level(level),
+                                            log::category::plugin,
+                                            attributor.empty() ? std::string {detail}
+                                                               : std::format("{}: {}", attributor, detail));
+            }
+        } // namespace
+
+        slopkit_host_services make_host_services(PluginLogContext* context)
+        {
+            slopkit_host_services services {};
+            services.abi_version = SLOPKIT_PLUGIN_ABI_VERSION;
+            services.struct_size = sizeof(slopkit_host_services);
+            services.user_data   = context;
+            services.alloc       = host_alloc;
+            services.dealloc     = host_dealloc;
+            services.log         = host_log;
+            return services;
+        }
+    } // namespace detail
 
     // --- DynamicLibrary -----------------------------------------------------
 
@@ -78,13 +145,14 @@ namespace slopkit::plugin
 
     // --- Plugin -------------------------------------------------------------
 
-    Plugin::Plugin(DynamicLibrary library, const slopkit_plugin_vtable* vtable, const slopkit_host_services* host)
-        : library_(std::move(library)), vtable_(vtable), host_(host)
+    Plugin::Plugin(DynamicLibrary library) : library_(std::move(library))
     {
+        log_context_.path      = library_.path();
+        log_context_.plugin_id = library_.path().filename().string();
+        services_              = detail::make_host_services(&log_context_);
     }
 
-    std::expected<std::unique_ptr<Plugin>, std::string> Plugin::load(const std::filesystem::path& path,
-                                                                     const slopkit_host_services* host)
+    std::expected<std::unique_ptr<Plugin>, std::string> Plugin::load(const std::filesystem::path& path)
     {
         auto library = DynamicLibrary::open(path);
         if (!library)
@@ -92,8 +160,10 @@ namespace slopkit::plugin
             return std::unexpected("cannot open library: " + library.error());
         }
 
+        auto plugin = std::make_unique<Plugin>(std::move(*library));
+
         using EntryPoint = const slopkit_plugin_vtable* (*)(const slopkit_host_services*);
-        auto* entry      = reinterpret_cast<EntryPoint>(library->symbol("slopkit_plugin_entry"));
+        auto* entry      = reinterpret_cast<EntryPoint>(plugin->library_.symbol("slopkit_plugin_entry"));
         if (entry == nullptr)
         {
             return std::unexpected("missing slopkit_plugin_entry symbol");
@@ -102,7 +172,7 @@ namespace slopkit::plugin
         const slopkit_plugin_vtable* vtable = nullptr;
         try
         {
-            vtable = entry(host);
+            vtable = entry(&plugin->services_);
         }
         catch (...)
         {
@@ -151,13 +221,14 @@ namespace slopkit::plugin
             return std::unexpected("plugin did not report an id");
         }
 
-        auto plugin             = std::make_unique<Plugin>(std::move(*library), vtable, host);
-        plugin->id_             = info->id;
-        plugin->name_           = info->name != nullptr ? info->name : "";
-        plugin->version_        = info->version != nullptr ? info->version : "";
-        plugin->description_    = info->description != nullptr ? info->description : "";
-        plugin->precedence_     = vtable->precedence();
-        plugin->access_methods_ = static_cast<process::AccessMethod>(vtable->access_methods());
+        plugin->vtable_                = vtable;
+        plugin->id_                    = info->id;
+        plugin->log_context_.plugin_id = info->id;
+        plugin->name_                  = info->name != nullptr ? info->name : "";
+        plugin->version_               = info->version != nullptr ? info->version : "";
+        plugin->description_           = info->description != nullptr ? info->description : "";
+        plugin->precedence_            = vtable->precedence();
+        plugin->access_methods_        = static_cast<process::AccessMethod>(vtable->access_methods());
         return plugin;
     }
 
@@ -198,20 +269,20 @@ namespace slopkit::plugin
 
     void* Plugin::alloc(std::size_t size) const
     {
-        if (host_ == nullptr || host_->alloc == nullptr)
+        if (services_.alloc == nullptr)
         {
             return nullptr;
         }
-        return host_->alloc(size, host_->user_data);
+        return services_.alloc(size, services_.user_data);
     }
 
     void Plugin::dealloc(void* memory) const
     {
-        if (memory == nullptr || host_ == nullptr || host_->dealloc == nullptr)
+        if (memory == nullptr || services_.dealloc == nullptr)
         {
             return;
         }
-        host_->dealloc(memory, host_->user_data);
+        services_.dealloc(memory, services_.user_data);
     }
 
     process::AccessError Plugin::classify(const slopkit_result& result)

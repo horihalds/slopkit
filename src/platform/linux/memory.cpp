@@ -2,11 +2,15 @@
 
 #include <cerrno>
 #include <cstdint>
+#include <format>
 #include <string>
 
 #include <fcntl.h>
 #include <sys/uio.h>
 #include <unistd.h>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::platform
 {
@@ -107,6 +111,12 @@ namespace slopkit::platform
         // Fallback: the cached /proc/<pid>/mem descriptor. No ptrace, no attach.
         if (read_fd_ < 0)
         {
+            log::debug(log::category::memory,
+                       std::format("read failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}",
+                                   address,
+                                   buffer.size(),
+                                   pid_,
+                                   vm_error));
             return std::unexpected(map_errno(vm_error));
         }
 
@@ -118,8 +128,18 @@ namespace slopkit::platform
         }
         if (bytes == 0)
         {
+            log::debug(
+                log::category::memory,
+                std::format("read failed at 0x{:X} ({} byte(s), pid {}): unmapped", address, buffer.size(), pid_));
             return std::unexpected(MemoryError::unmapped);
         }
+        log::debug(log::category::memory,
+                   std::format("read failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}, procfs_mem errno {}",
+                               address,
+                               buffer.size(),
+                               pid_,
+                               vm_error,
+                               pread_error));
         return std::unexpected(map_errno(pread_error));
     }
 
@@ -141,6 +161,12 @@ namespace slopkit::platform
 
         if (write_fd_ < 0)
         {
+            log::debug(log::category::memory,
+                       std::format("write failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}",
+                                   address,
+                                   data.size(),
+                                   pid_,
+                                   vm_error));
             return std::unexpected(map_errno(vm_error));
         }
 
@@ -152,8 +178,18 @@ namespace slopkit::platform
         }
         if (bytes == 0)
         {
+            log::debug(
+                log::category::memory,
+                std::format("write failed at 0x{:X} ({} byte(s), pid {}): unmapped", address, data.size(), pid_));
             return std::unexpected(MemoryError::unmapped);
         }
+        log::debug(log::category::memory,
+                   std::format("write failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}, procfs_mem errno {}",
+                               address,
+                               data.size(),
+                               pid_,
+                               vm_error,
+                               pwrite_error));
         return std::unexpected(map_errno(pwrite_error));
     }
 

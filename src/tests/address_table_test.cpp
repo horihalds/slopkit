@@ -6,8 +6,12 @@
 #include <fstream>
 #include <initializer_list>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "process/access_worker.hpp"
 #include "scan/types.hpp"
 #include "table/address_table.hpp"
@@ -35,6 +39,42 @@ namespace
         }
         return entry;
     }
+
+    // Restores the process-wide log level on scope exit.
+    class LevelGuard
+    {
+    public:
+        LevelGuard() : previous_(slopkit::log::Logger::instance().minimum_level()) {}
+
+        LevelGuard(const LevelGuard&)            = delete;
+        LevelGuard& operator=(const LevelGuard&) = delete;
+
+        ~LevelGuard()
+        {
+            slopkit::log::Logger::instance().set_minimum_level(previous_);
+        }
+
+    private:
+        slopkit::log::Level previous_;
+    };
+
+    // Registers a sink for the lifetime of the guard.
+    class SinkGuard
+    {
+    public:
+        explicit SinkGuard(slopkit::log::Sink sink) : id_(slopkit::log::Logger::instance().add_sink(std::move(sink))) {}
+
+        SinkGuard(const SinkGuard&)            = delete;
+        SinkGuard& operator=(const SinkGuard&) = delete;
+
+        ~SinkGuard()
+        {
+            slopkit::log::Logger::instance().remove_sink(id_);
+        }
+
+    private:
+        slopkit::log::SinkId id_;
+    };
 } // namespace
 
 TEST_CASE("address entries are added, selected and removed", "[table]")
@@ -205,4 +245,70 @@ TEST_CASE("the serializer rejects malformed files", "[table]")
     std::filesystem::remove(path);
 
     CHECK_FALSE(slopkit::table::load("/nonexistent/slopkit/table.txt", table).has_value());
+}
+
+TEST_CASE("entry mutations are recorded on the table category", "[table][log]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    AddressTable table;
+    table.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
+    table.remove(0);
+
+    bool saw_add    = false;
+    bool saw_remove = false;
+    for (const auto& record : records)
+    {
+        if (std::string_view {record.category} != slopkit::log::category::table
+            || record.level != slopkit::log::Level::info)
+        {
+            continue;
+        }
+        saw_add    = saw_add || record.message.starts_with("entry added: ");
+        saw_remove = saw_remove || record.message.starts_with("entry removed");
+    }
+    CHECK(saw_add);
+    CHECK(saw_remove);
+}
+
+TEST_CASE("a malformed table file is recorded with its line number", "[table][log]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::warning);
+
+    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed_log.txt";
+    std::filesystem::remove(path);
+    {
+        std::ofstream file(path);
+        file << "slopkit-table 1\n";
+        file << "nonsense line\n";
+    }
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    AddressTable table;
+    CHECK_FALSE(slopkit::table::load(path, table).has_value());
+    std::filesystem::remove(path);
+
+    bool saw_warning = false;
+    for (const auto& record : records)
+    {
+        if (record.level == slopkit::log::Level::warning && record.category == "table"
+            && record.message.find("line 2") != std::string::npos)
+        {
+            saw_warning = true;
+        }
+    }
+    CHECK(saw_warning);
 }

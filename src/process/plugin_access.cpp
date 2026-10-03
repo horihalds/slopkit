@@ -3,12 +3,16 @@
 #include <atomic>
 #include <cstddef>
 #include <expected>
+#include <format>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::process
 {
@@ -114,20 +118,28 @@ namespace slopkit::process
 
     std::expected<Session, AccessError> PluginAccess::attach(ProcessId pid, std::string_view plugin_id)
     {
+        log::debug(log::category::process, std::format("attach requested for pid {} via {}", pid, plugin_id));
+
         auto* plugin = host_.find(plugin_id);
         if (plugin == nullptr)
         {
+            log::warning(log::category::process,
+                         std::format("attach failed for pid {}: unknown plugin {}", pid, plugin_id));
             return std::unexpected(AccessError::not_found);
         }
 
         auto session = plugin->open_session(pid);
         if (!session)
         {
+            log::warning(log::category::process,
+                         std::format("attach failed for pid {} via {}: {}", pid, plugin_id, describe(session.error())));
             return std::unexpected(session.error());
         }
 
         auto backend = std::make_unique<PluginSessionBackend>(
             std::move(*session), pid, plugin->access_methods(), std::string(plugin_id));
+        log::info(log::category::process,
+                  std::format("attached to pid {} via {} ({})", pid, plugin_id, describe(plugin->access_methods())));
         return Session(std::move(backend));
     }
 

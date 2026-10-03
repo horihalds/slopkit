@@ -14,10 +14,13 @@
 #include <random>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "process/types.hpp"
 #include "scan/engine.hpp"
 #include "scan/matcher.hpp"
@@ -136,6 +139,42 @@ namespace
         config.value      = value;
         return config;
     }
+
+    // Restores the process-wide log level on scope exit.
+    class LevelGuard
+    {
+    public:
+        LevelGuard() : previous_(slopkit::log::Logger::instance().minimum_level()) {}
+
+        LevelGuard(const LevelGuard&)            = delete;
+        LevelGuard& operator=(const LevelGuard&) = delete;
+
+        ~LevelGuard()
+        {
+            slopkit::log::Logger::instance().set_minimum_level(previous_);
+        }
+
+    private:
+        slopkit::log::Level previous_;
+    };
+
+    // Registers a sink for the lifetime of the guard.
+    class SinkGuard
+    {
+    public:
+        explicit SinkGuard(slopkit::log::Sink sink) : id_(slopkit::log::Logger::instance().add_sink(std::move(sink))) {}
+
+        SinkGuard(const SinkGuard&)            = delete;
+        SinkGuard& operator=(const SinkGuard&) = delete;
+
+        ~SinkGuard()
+        {
+            slopkit::log::Logger::instance().remove_sink(id_);
+        }
+
+    private:
+        slopkit::log::SinkId id_;
+    };
 } // namespace
 
 TEST_CASE("value literals parse for every value type", "[scan]")
@@ -200,6 +239,46 @@ TEST_CASE("a first scan finds exact values", "[scan]")
     CHECK(snapshot.hits[0].address == kBase + 8);
     CHECK(snapshot.hits[0].previous.empty());
     CHECK(snapshot.progress == Approx(1.0f));
+}
+
+TEST_CASE("a first scan records its start and completion", "[scan][log]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    std::vector<std::byte> bytes(32);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        write_int32(bytes, i * 4, static_cast<std::int32_t>(i * 10));
+    }
+
+    ScanEngine engine;
+    engine.first_scan(exact_config(ValueType::int32, 20), slopkit::scan::make_buffer_source(bytes, kBase));
+    const auto snapshot = wait(engine);
+    REQUIRE(snapshot.state == ScanState::done);
+
+    bool saw_start      = false;
+    bool saw_completion = false;
+    for (const auto& record : records)
+    {
+        if (std::string_view {record.category} != slopkit::log::category::scan)
+        {
+            continue;
+        }
+        saw_start =
+            saw_start || (record.level == slopkit::log::Level::info && record.message.starts_with("first scan: "));
+        saw_completion = saw_completion
+                      || (record.level == slopkit::log::Level::info
+                          && record.message.starts_with("first scan finished: 1 hit(s)"));
+    }
+    CHECK(saw_start);
+    CHECK(saw_completion);
 }
 
 TEST_CASE("a finished scan publishes the whole stored result set", "[scan]")

@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -16,6 +17,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 #include "ui/components/widgets.hpp"
@@ -119,9 +122,11 @@ namespace slopkit::ui::dialogs
 
     void AddAddressDialog::commit()
     {
+        log::debug(log::category::ui, "add address submitted");
         const auto address = scan::parse_address(address_edit_->text().toStdString());
         if (!address)
         {
+            log::warning(log::category::ui, std::format("add address rejected: {}", address.error().message));
             status_->set_status(widgets::StatusKind::error,
                                 tr("Address: %1").arg(QString::fromStdString(address.error().message)));
             return;
@@ -136,6 +141,8 @@ namespace slopkit::ui::dialogs
         }
         if (dynamic && !parse_size(size_edit_->text().toStdString(), size))
         {
+            log::warning(log::category::ui,
+                         std::format("add address rejected: size {}", size_edit_->text().toStdString()));
             status_->set_status(widgets::StatusKind::error, tr("Size must be a number between 1 and 4096."));
             return;
         }

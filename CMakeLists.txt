@@ -148,6 +148,11 @@ target_link_libraries(slopkit_platform PRIVATE slopkit_native)
 # index, so the application links the shared platform library too.
 target_link_libraries(slopkit PRIVATE slopkit_platform)
 
+# The bundled plugins link the static platform library statically, so its
+# diagnostics reference `slopkit::log`; exporting the application's symbols lets
+# a dlopen'ed plugin resolve them to this process's single logger.
+set_target_properties(slopkit PROPERTIES ENABLE_EXPORTS ON)
+
 # --- plugins ---------------------------------------------------------------
 
 set(SLOPKIT_PLUGIN_OUTPUT_DIR ${CMAKE_BINARY_DIR}/plugins)
@@ -195,6 +200,14 @@ add_slopkit_test_plugin(slopkit_test_no_entry ${CMAKE_CURRENT_SOURCE_DIR}/src/te
 add_slopkit_test_plugin(slopkit_test_missing_regions ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/missing_regions_plugin.cpp)
 add_slopkit_test_plugin(slopkit_test_old_abi_minor ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/old_abi_minor_plugin.cpp)
 
+# The logging fixture is a valid plugin, so it lives in its own directory: the
+# loader tests above require the broken-plugin directory to yield no plugins.
+set(SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR ${CMAKE_BINARY_DIR}/logging_test_plugins)
+add_slopkit_test_plugin(slopkit_test_logging ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/logging_plugin.cpp)
+set_target_properties(slopkit_test_logging PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY ${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR}
+    RUNTIME_OUTPUT_DIRECTORY ${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR})
+
 # --- formatting ------------------------------------------------------------
 
 find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
@@ -214,12 +227,16 @@ list(FILTER SLOPKIT_TEST_SUPPORT_SOURCES EXCLUDE REGEX ".*/main\\.cpp$")
 
 file(GLOB SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/tests/*.cpp)
 add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES})
-add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor)
+# The tests load the bundled plugins the same way the app does, so they need the
+# same exported symbols for the platform library's diagnostics.
+set_target_properties(slopkit_tests PROPERTIES ENABLE_EXPORTS ON)
+add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor slopkit_test_logging)
 target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"
     SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}"
+    SLOPKIT_TEST_LOGGING_PLUGIN_DIR="${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_TMP_DIR="${CMAKE_SOURCE_DIR}/tmp")
 target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2

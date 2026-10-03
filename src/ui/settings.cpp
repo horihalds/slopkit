@@ -1,10 +1,14 @@
 #include "ui/settings.hpp"
 
+#include <format>
 #include <optional>
 
 #include <QDir>
 #include <QStandardPaths>
 #include <QVariant>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::ui
 {
@@ -88,15 +92,42 @@ namespace slopkit::ui
 
     void SettingsController::load()
     {
-        if (const auto dark = parse_bool(store_->value(QString::fromLatin1(kDarkThemeKey))); dark.has_value())
+        const auto file_path = store_->fileName().toStdString();
+        if (store_->status() != QSettings::NoError)
+        {
+            log::warning(log::category::app, std::format("settings file {} could not be read", file_path));
+        }
+        else
+        {
+            log::info(log::category::app, std::format("settings file {}", file_path));
+        }
+
+        const auto dark_key = QString::fromLatin1(kDarkThemeKey);
+        if (const auto dark = parse_bool(store_->value(dark_key)); dark.has_value())
         {
             values_.dark_theme = *dark;
         }
+        else if (store_->contains(dark_key))
+        {
+            log::warning(log::category::app,
+                         std::format("settings file {}: malformed {} value", file_path, kDarkThemeKey));
+        }
 
-        if (const auto mode = parse_address_mode(store_->value(QString::fromLatin1(kDisplayModeKey))); mode.has_value())
+        const auto mode_key = QString::fromLatin1(kDisplayModeKey);
+        if (const auto mode = parse_address_mode(store_->value(mode_key)); mode.has_value())
         {
             values_.address_mode = *mode;
         }
+        else if (store_->contains(mode_key))
+        {
+            log::warning(log::category::app,
+                         std::format("settings file {}: malformed {} value", file_path, kDisplayModeKey));
+        }
+
+        log::debug(log::category::app,
+                   std::format("settings loaded: dark_theme={}, address_mode={}",
+                               values_.dark_theme,
+                               values_.address_mode == AddressMode::absolute ? "absolute" : "module_relative"));
     }
 
     void SettingsController::store()

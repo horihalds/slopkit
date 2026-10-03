@@ -1,6 +1,7 @@
 #include "ui/dialogs/log.hpp"
 
 #include <chrono>
+#include <format>
 #include <string_view>
 #include <utility>
 
@@ -15,6 +16,8 @@
 #include <QScrollBar>
 #include <QVBoxLayout>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 
@@ -183,6 +186,7 @@ namespace slopkit::ui::dialogs
 
     void LogDialog::save_as()
     {
+        log::debug(log::category::ui, "log save as requested");
         const QString path =
             QFileDialog::getSaveFileName(this, tr("Save Log"), QString(), tr("Log files (*.log);;All files (*)"));
         if (path.isEmpty())
@@ -193,10 +197,12 @@ namespace slopkit::ui::dialogs
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
         {
+            log::warning(log::category::ui, std::format("log could not be written to {}", path.toStdString()));
             status_->set_status(widgets::StatusKind::error, tr("Could not write %1").arg(path));
             return;
         }
         file.write(view_->toPlainText().toUtf8());
+        log::debug(log::category::ui, std::format("log saved to {}", path.toStdString()));
         status_->set_status(widgets::StatusKind::success, tr("Saved %1").arg(path));
     }
 

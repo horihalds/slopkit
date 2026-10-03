@@ -2,61 +2,18 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <format>
 #include <map>
 #include <system_error>
 #include <utility>
 
 #include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::plugin
 {
 
-    namespace
-    {
-        void* host_alloc(std::size_t size, void* /*user_data*/)
-        {
-            return std::malloc(size);
-        }
-
-        void host_dealloc(void* memory, void* /*user_data*/)
-        {
-            std::free(memory);
-        }
-
-        log::Level to_log_level(int32_t level)
-        {
-            switch (level)
-            {
-            case SLOPKIT_LOG_DEBUG:
-                return log::Level::debug;
-            case SLOPKIT_LOG_WARN:
-                return log::Level::warning;
-            case SLOPKIT_LOG_ERROR:
-                return log::Level::error;
-            case SLOPKIT_LOG_INFO:
-            default:
-                return log::Level::info;
-            }
-        }
-
-        void host_log(int32_t level, const char* message, void* /*user_data*/)
-        {
-            if (message != nullptr)
-            {
-                log::Logger::instance().log(to_log_level(level), "plugin", message);
-            }
-        }
-    } // namespace
-
-    PluginHost::PluginHost()
-    {
-        host_.abi_version = SLOPKIT_PLUGIN_ABI_VERSION;
-        host_.struct_size = sizeof(slopkit_host_services);
-        host_.user_data   = nullptr;
-        host_.alloc       = host_alloc;
-        host_.dealloc     = host_dealloc;
-        host_.log         = host_log;
-    }
+    PluginHost::PluginHost() = default;
 
     PluginHost::~PluginHost() = default;
 
@@ -108,6 +65,8 @@ namespace slopkit::plugin
         plugins_.clear();
         diagnostics_.clear();
 
+        log::debug(log::category::plugin, std::format("discovery: {} search director(ies)", directories.size()));
+
         std::vector<std::filesystem::path>   seen;
         std::vector<std::unique_ptr<Plugin>> loaded;
 
@@ -116,7 +75,9 @@ namespace slopkit::plugin
             std::error_code error;
             if (!std::filesystem::is_directory(directory, error))
             {
-                continue; // A missing plugin directory is not fatal.
+                // A missing plugin directory is not fatal.
+                log::debug(log::category::plugin, std::format("discovery: {} is not a directory", directory.string()));
+                continue;
             }
 
             std::vector<std::filesystem::path> candidates;
@@ -147,12 +108,20 @@ namespace slopkit::plugin
                 }
                 seen.push_back(canonical);
 
-                auto plugin = Plugin::load(candidate, &host_);
+                auto plugin = Plugin::load(candidate);
                 if (!plugin)
                 {
+                    log::warning(log::category::plugin,
+                                 std::format("skipped {}: {}", candidate.string(), plugin.error()));
                     diagnostics_.push_back(PluginDiagnostic {candidate, plugin.error()});
                     continue;
                 }
+                log::debug(log::category::plugin,
+                           std::format("loaded {} {} (precedence {}, methods {})",
+                                       (*plugin)->id(),
+                                       (*plugin)->version(),
+                                       (*plugin)->precedence(),
+                                       process::describe((*plugin)->access_methods())));
                 loaded.push_back(std::move(*plugin));
             }
         }
@@ -170,6 +139,8 @@ namespace slopkit::plugin
                       return lhs->id() < rhs->id();
                   });
         plugins_ = std::move(loaded);
+        log::info(log::category::plugin,
+                  std::format("discovery: {} plugin(s) loaded, {} rejected", plugins_.size(), diagnostics_.size()));
     }
 
     std::span<const PluginDiagnostic> PluginHost::diagnostics() const noexcept
@@ -216,7 +187,11 @@ namespace slopkit::plugin
             auto processes = plugin->list_processes();
             if (!processes)
             {
-                continue; // A plugin that cannot enumerate contributes nothing.
+                // A plugin that cannot enumerate contributes nothing.
+                log::debug(
+                    log::category::plugin,
+                    std::format("{} could not list processes: {}", plugin->id(), process::describe(processes.error())));
+                continue;
             }
 
             for (auto& process : *processes)
@@ -248,6 +223,19 @@ namespace slopkit::plugin
                   {
                       return lhs.pid < rhs.pid;
                   });
+        for (const auto& process : merged)
+        {
+            std::string claimants;
+            for (const auto& claimant : process.claimants)
+            {
+                if (!claimants.empty())
+                {
+                    claimants += ", ";
+                }
+                claimants += claimant;
+            }
+            log::debug(log::category::plugin, std::format("merging pid {} claimed by {}", process.pid, claimants));
+        }
         return merged;
     }
 

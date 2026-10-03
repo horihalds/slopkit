@@ -1,7 +1,11 @@
 #include "platform/linux/module_entry.hpp"
 
 #include <array>
+#include <format>
 #include <fstream>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::platform
 {
@@ -174,9 +178,15 @@ namespace slopkit::platform
         const auto header = read_header(path);
         if (!header)
         {
+            log::warning(log::category::process, std::format("cannot read the header of {}", path.string()));
             return std::nullopt;
         }
-        return parse_image_entry(std::span<const std::byte>(header->data.data(), header->size));
+        auto entry = parse_image_entry(std::span<const std::byte>(header->data.data(), header->size));
+        if (!entry)
+        {
+            log::warning(log::category::process, std::format("cannot parse the image header of {}", path.string()));
+        }
+        return entry;
     }
 
     std::optional<PeKind> parse_pe_kind(std::span<const std::byte> bytes)
@@ -215,9 +225,15 @@ namespace slopkit::platform
         const auto header = read_header(path);
         if (!header)
         {
+            log::warning(log::category::process, std::format("cannot read the PE header of {}", path.string()));
             return std::nullopt;
         }
-        return parse_pe_kind(std::span<const std::byte>(header->data.data(), header->size));
+        auto kind = parse_pe_kind(std::span<const std::byte>(header->data.data(), header->size));
+        if (!kind)
+        {
+            log::warning(log::category::process, std::format("cannot parse the PE header of {}", path.string()));
+        }
+        return kind;
     }
 
 } // namespace slopkit::platform

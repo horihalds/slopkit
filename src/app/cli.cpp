@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "core/version.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/plugin_access.hpp"
@@ -49,6 +50,8 @@ namespace slopkit::app
             for (const auto& diagnostic : host.diagnostics())
             {
                 err << "skipped " << diagnostic.path.string() << ": " << diagnostic.message << '\n';
+                log::warning(log::category::plugin,
+                             std::format("skipped {}: {}", diagnostic.path.string(), diagnostic.message));
             }
         }
 
@@ -94,12 +97,16 @@ namespace slopkit::app
 
     int print_version(std::ostream& out, std::ostream& /*err*/)
     {
+        log::info(log::category::app, "command print-version: start");
         out << "slopkit " << version() << '\n';
+        log::info(log::category::app, std::format("command print-version: done ({})", version()));
         return 0;
     }
 
     int list_plugins(std::ostream& out, std::ostream& err)
     {
+        log::info(log::category::app, "command list-plugins: start");
+
         plugin::PluginHost host;
         host.discover(plugin_search_directories());
 
@@ -110,15 +117,22 @@ namespace slopkit::app
         }
         report_diagnostics(err, host);
         out << host.plugins().size() << " plugin(s) loaded, " << host.diagnostics().size() << " rejected\n";
+        log::info(log::category::app,
+                  std::format("command list-plugins: done, {} loaded, {} rejected",
+                              host.plugins().size(),
+                              host.diagnostics().size()));
         return 0;
     }
 
     int list_processes(std::ostream& out, std::ostream& err)
     {
+        log::info(log::category::app, "command list-processes: start");
+
         plugin::PluginHost host;
         host.discover(plugin_search_directories());
 
-        for (const auto& process : host.list_processes())
+        const auto processes = host.list_processes();
+        for (const auto& process : processes)
         {
             out << process.pid << '\t' << process.plugin_id << '\t' << process.name;
             if (!process.exe_path.empty())
@@ -128,11 +142,17 @@ namespace slopkit::app
             out << '\n';
         }
         report_diagnostics(err, host);
+        log::info(log::category::app,
+                  std::format("command list-processes: done, {} process(es), {} rejected",
+                              processes.size(),
+                              host.diagnostics().size()));
         return 0;
     }
 
     int scan_process(std::ostream& out, std::ostream& err, std::uint32_t pid, std::string_view value_text)
     {
+        log::info(log::category::app, std::format("command scan: start pid {} value {}", pid, value_text));
+
         plugin::PluginHost host;
         host.discover(plugin_search_directories());
         report_diagnostics(err, host);
@@ -143,6 +163,9 @@ namespace slopkit::app
         if (!processes)
         {
             err << "could not list processes: " << process::describe(processes.error()) << '\n';
+            log::warning(
+                log::category::app,
+                std::format("command scan: could not list processes: {}", process::describe(processes.error())));
             return 1;
         }
         std::string plugin_id;
@@ -157,6 +180,7 @@ namespace slopkit::app
         if (plugin_id.empty())
         {
             err << "no loaded plugin claims pid " << pid << '\n';
+            log::warning(log::category::app, std::format("command scan: no loaded plugin claims pid {}", pid));
             return 1;
         }
 
@@ -164,6 +188,8 @@ namespace slopkit::app
         if (!session)
         {
             err << "attach failed: " << process::describe(session.error()) << '\n';
+            log::warning(log::category::app,
+                         std::format("command scan: attach failed: {}", process::describe(session.error())));
             return 1;
         }
 
@@ -172,6 +198,7 @@ namespace slopkit::app
         if (!value)
         {
             err << "invalid value: " << value.error().message << '\n';
+            log::warning(log::category::app, std::format("command scan: invalid value: {}", value.error().message));
             return 2;
         }
 
@@ -193,11 +220,13 @@ namespace slopkit::app
         if (snapshot.state != scan::ScanState::done)
         {
             err << "scan failed: " << snapshot.message << '\n';
+            log::warning(log::category::app, std::format("command scan: failed: {}", snapshot.message));
             return 1;
         }
         if (snapshot.hits.empty())
         {
             out << "no matches\n";
+            log::info(log::category::app, std::format("command scan: done, no matches for pid {}", pid));
             return 0;
         }
 
@@ -209,6 +238,7 @@ namespace slopkit::app
                                scan::format_value(value_type, hit.value, false));
         }
         out << snapshot.hit_count << " hit(s)\n";
+        log::info(log::category::app, std::format("command scan: done, {} hit(s) for pid {}", snapshot.hit_count, pid));
         return 0;
     }
 
@@ -251,7 +281,15 @@ namespace slopkit::app
         auto& logger = log::Logger::instance();
         logger.set_minimum_level(log_level);
         logger.add_sink(log::stderr_sink());
-        logger.add_sink(log::rolling_file_sink(log::default_log_path(), kLogFileLimit));
+
+        const auto log_path = log::default_log_path();
+        logger.add_sink(log::rolling_file_sink(log_path, kLogFileLimit));
+
+        log::info(log::category::app,
+                  std::format("slopkit {} starting, level {}, sinks: stderr + {}",
+                              version(),
+                              log::level_name(log_level),
+                              log_path.string()));
 
         bool handled = false;
 

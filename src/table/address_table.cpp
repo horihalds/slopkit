@@ -1,7 +1,11 @@
 #include "table/address_table.hpp"
 
 #include <algorithm>
+#include <format>
 #include <utility>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 
 namespace slopkit::table
 {
@@ -9,6 +13,9 @@ namespace slopkit::table
     void AddressTable::add(AddressEntry entry)
     {
         entry.id = next_id_++;
+        log::info(
+            log::category::table,
+            std::format("entry added: id {} at 0x{:X} ({} byte(s))", entry.id, entry.address, entry.bytes.size()));
         entries_.push_back(std::move(entry));
         selected_ = static_cast<int>(entries_.size()) - 1;
     }
@@ -19,6 +26,7 @@ namespace slopkit::table
         {
             return;
         }
+        log::info(log::category::table, std::format("entry removed at index {}", index));
         entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(index));
         if (selected_ == static_cast<int>(index))
         {
@@ -33,8 +41,23 @@ namespace slopkit::table
 
     void AddressTable::clear()
     {
+        if (!entries_.empty())
+        {
+            log::info(log::category::table, std::format("table cleared ({} entry/entries)", entries_.size()));
+        }
         entries_.clear();
         selected_ = -1;
+    }
+
+    void AddressTable::replace(std::vector<AddressEntry> entries)
+    {
+        entries_ = std::move(entries);
+        next_id_ = 1;
+        for (auto& entry : entries_)
+        {
+            entry.id = next_id_++;
+        }
+        selected_ = entries_.empty() ? -1 : static_cast<int>(entries_.size()) - 1;
     }
 
     std::span<AddressEntry> AddressTable::entries() noexcept

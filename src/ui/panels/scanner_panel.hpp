@@ -110,10 +110,6 @@ namespace slopkit::ui::panels
         QLineEdit* alignment_edit_ {};
         QCheckBox* pause_scanning_check_ {};
 
-        // The engine message already written to the log, so the 50 ms tick
-        // never repeats a record.
-        std::string last_logged_message_;
-
         int progress_percent_ {0};
 
         // A session separate from the app-wide one, used only by the scan

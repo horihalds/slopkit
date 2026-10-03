@@ -20,8 +20,7 @@ namespace slopkit::plugin
         std::string           message;
     };
 
-    // Discovers and owns the loaded plugins. The host services struct lives here
-    // and must outlive every plugin, which is why this type is non-movable.
+    // Discovers and owns the loaded plugins.
     class PluginHost
     {
     public:
@@ -52,7 +51,6 @@ namespace slopkit::plugin
         [[nodiscard]] std::vector<process::ProcessInfo> list_processes();
 
     private:
-        slopkit_host_services                host_ {};
         std::vector<std::unique_ptr<Plugin>> plugins_;
         std::vector<PluginDiagnostic>        diagnostics_;
     };

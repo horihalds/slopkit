@@ -2,6 +2,9 @@
 
 #include <format>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+
 namespace slopkit::process
 {
 
@@ -21,6 +24,10 @@ namespace slopkit::process
 
     void AttachedTarget::clear()
     {
+        if (valid())
+        {
+            log::info(log::category::process, std::format("detached from {}", label()));
+        }
         pid = 0;
         name.clear();
         plugin_id.clear();

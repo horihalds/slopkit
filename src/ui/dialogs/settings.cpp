@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -19,6 +20,8 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "core/version.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
@@ -131,6 +134,8 @@ namespace slopkit::ui::dialogs
                 this,
                 [this](int id)
                 {
+                    log::debug(log::category::ui,
+                               id == 0 ? "settings: dark theme applied" : "settings: light theme applied");
                     settings_.set_dark_theme(id == 0);
                 });
 
@@ -173,6 +178,9 @@ namespace slopkit::ui::dialogs
                 this,
                 [this](int id)
                 {
+                    log::debug(log::category::ui,
+                               id == 0 ? "settings: module-relative addresses applied"
+                                       : "settings: absolute addresses applied");
                     settings_.set_address_mode(id == 0 ? ui::AddressMode::module_relative : ui::AddressMode::absolute);
                 });
 

@@ -20,19 +20,21 @@
 - `assets/slopkit.desktop.in` — desktop entry template with the configured `Exec` path.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.
+- `docs/LOGGING.md` — logging conventions: levels, category ownership per module, message style and the hot-path/never-log-from-a-sink rules.
 - `reference/README.md` — placeholder documenting the read-only `reference/` tree.
 - `src/main.cpp` — application entry point; dispatches to `slopkit::app::run`.
 - `src/core/version.hpp` — declares `slopkit::version()`.
 - `src/core/version.cpp` — implements `slopkit::version()`.
 - `src/core/log.hpp` — the process-wide `slopkit::log` logger: levels, timestamped categorised records, a bounded history, the sink registry and the stderr/rolling-file sink factories.
 - `src/core/log.cpp` — mutex-guarded level filtering, history and sink fan-out, the `HH:MM:SS.mmm level [category] message` line format and the XDG state-dir default log path.
+- `src/core/log_categories.hpp` — the shared log category constants (`app`, `plugin`, `process`, `memory`, `scan`, `table`, `ui`).
 - `src/app/cli.hpp` — declares command-line parsing and the headless commands.
-- `src/app/cli.cpp` — parses `--log-level`/`--version`/`--list-plugins`/`--list-processes`, installs the stderr and rolling-file log sinks and runs the default GUI path.
+- `src/app/cli.cpp` — parses `--log-level`/`--version`/`--list-plugins`/`--list-processes`, installs the stderr and rolling-file log sinks, records startup and each headless command and runs the default GUI path.
 - `src/plugin/plugin_api.h` — the C plugin ABI: version macros, host services, descriptors (including the module main-image flag), access-method flags and the vtable.
 - `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession` (including a caller-buffer `read_into`).
-- `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake and typed plugin calls.
+- `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake, the per-plugin host services (with log attribution) and typed plugin calls.
 - `src/plugin/plugin_host.hpp` — plugin discovery, diagnostics and the merged process listing.
-- `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence, routes plugin log messages into `slopkit::log` and merges processes.
+- `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence, records each accept/reject, routes plugin log messages (attributed to the emitting plugin) into `slopkit::log` and merges processes.
 - `src/platform/linux/procfs.hpp` — procfs types and queries: pids, status, exe/cmdline, mapped regions, threads, module entry points and main-image flagging.
 - `src/platform/linux/procfs.cpp` — implements procfs enumeration, text parsing, region classification, module merging, entry-point filling and main-image flagging.
 - `src/platform/linux/module_entry.hpp` — executable-image entry-point and PE-kind declaration for ELF and PE headers.
@@ -42,14 +44,14 @@
 - `src/platform/linux/wine.hpp` — Wine/Proton detection types and classification entry points.
 - `src/platform/linux/wine.cpp` — environ/cmdline/maps heuristics that classify a process as Wine or Proton.
 - `src/platform/linux/desktop_entry.hpp` — `.desktop` entry parser and the application-executable index.
-- `src/platform/linux/desktop_entry.cpp` — parses `Name`/`Exec`/`NoDisplay` and scans `$XDG_DATA_DIRS` for applications.
-- `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs, with per-session cached memory access.
-- `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes, exposing their PE images and caching memory access per session.
+- `src/platform/linux/desktop_entry.cpp` — parses `Name`/`Exec`/`NoDisplay` and scans `$XDG_DATA_DIRS` for applications, recording the index summary and malformed entries.
+- `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs, with per-session cached memory access and failure/enumeration records through the host log hook.
+- `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes, exposing their PE images, caching memory access per session and reporting failures through the host log hook.
 - `src/process/types.hpp` — process/module/thread descriptors, the `is_file_backed` module predicate, the `main_module` resolution rule, access-method flags and `AccessError`.
 - `src/process/types.cpp` — implements the `main_module` resolution and the human-readable descriptions of errors, module kinds and access methods.
 - `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the access worker depends on, including the caller-buffer `read_into`.
 - `src/process/access_worker.hpp` — job/result types and the background `AccessWorker` that serializes all target access.
-- `src/process/access_worker.cpp` — the worker thread, request/completion queues, worker-owned session and the job bodies.
+- `src/process/access_worker.cpp` — the worker thread, request/completion queues, worker-owned session and the job bodies, recording the job lifecycle at `debug` and each failure once at `warning`.
 - `src/process/attachment.hpp` — `AttachedTarget`: metadata-only identity of the app-wide attachment (the session lives in the access worker).
 - `src/process/attachment.cpp` — formats the process label and clears the metadata.
 - `src/process/plugin_access.hpp` — embedded `ProcessAccess` implementation over `PluginHost`.
@@ -67,7 +69,7 @@
 - `src/table/address_table.hpp` — `AddressEntry` with a stable id and the `AddressTable` model: value encoding, freeze snapshots and selection, no session.
 - `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
-- `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency.
+- `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency, recording load/save summaries and malformed-line warnings.
 - `src/ui/app.hpp` — the `App`: owns the plugin host, the access worker, the attached target, the settings controller and the main window, and runs the Qt event loop.
 - `src/ui/app.cpp` — builds the `QApplication`, applies the Fusion style, the persisted theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
 - `src/ui/address_format.hpp` — `AddressMode`, the `ModuleSpan`/`ModuleSpans` lookup over file-backed module images with the main-image span, the `name+RVA` and absolute renderers and the dual-form address parser.
@@ -79,7 +81,7 @@
 - `src/ui/log_notifier.hpp` — `LogNotifier`: the thread-safe queue and coalesced queued wake-up that carries log records to the UI thread; removes its logger sink on destruction.
 - `src/ui/log_notifier.cpp` — registers the logger sink, queues records under a mutex and emits `recordsAvailable()` on the UI thread.
 - `src/ui/main_window.hpp` — `MainWindow`: the File/View/Help menu bar, status bar and splitter zones, the owned address table, the five dialogs and the shared settings controller.
-- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, pins the scan zone to the scanner's content height so the hits table ends level with the Memory Scan Options panel while the address list takes every remaining pixel, polls the panels on a 50 ms tick, fans the module map and the persisted address display mode out to the three views, applies theme/address changes live, opens the log window from the View menu and submits the freeze pass to the worker.
+- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, pins the scan zone to the scanner's content height so the hits table ends level with the Memory Scan Options panel while the address list takes every remaining pixel, polls the panels on a 50 ms tick (which logs nothing), fans the module map and the persisted address display mode out to the three views, applies theme/address changes live, records dialog openings and the target/freeze handoffs, opens the log window from the View menu and submits the freeze pass to the worker.
 - `src/ui/theme.hpp` — the `Theme` colour-role struct, the dark/light constructors, `make_palette()` and `apply_theme()`.
 - `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
 - `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
@@ -92,20 +94,20 @@
 - `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font; orders the whole set with `std::partial_sort` (main image, then other static hits, then dynamic), renders the address as `module+RVA` or absolute, and builds the `module+RVA`/absolute/address+value clipboard texts.
 - `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox, the async write, the module spans and the address mode.
 - `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value`, submits one write job with the pending-job-id guard and renders the Address column as `module+RVA` in module-relative mode.
-- `src/ui/panels/scanner_panel.hpp` — the scan controls with padded whole-address-space range defaults, the handoff-created scan session, the scan engine whose messages go to the log instead of a status line, the `memoryMapApplied` module-map signal and the bottom-right Add Address button.
-- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, lists name-only module entries with the main image pinned after `All memory`, resolves the main-module address, applies the handed-over session, starts first/next/undo scans, resets the engine on New Scan, logs scan rejects, the handoff and the changed engine messages under the `scan` category and raises the Add Address request.
+- `src/ui/panels/scanner_panel.hpp` — the scan controls with padded whole-address-space range defaults, the handoff-created scan session, the scan engine whose lifecycle the engine logs itself, the `memoryMapApplied` module-map signal and the bottom-right Add Address button.
+- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, lists name-only module entries with the main image pinned after `All memory`, resolves the main-module address, applies the handed-over session, starts first/next/undo scans, resets the engine on New Scan, logs its own actions under `ui` and rejects/handoff under `scan`, and raises the Add Address request.
 - `src/ui/panels/found_list_panel.hpp` — the one-line `Showing N of M results` list over the scan engine's snapshot and the address table; its entry row holds the Memory View button, and it forwards the module map and address mode to the model and exposes the per-row context menu.
 - `src/ui/panels/found_list_panel.cpp` — shows no rows with a `Scanning... N%` line while the engine runs and the main-image-first top page of the whole stored result set once it finishes, detects a new result set by its shared handle, forwards the module map and address mode to the model, builds the single always-visible result line from the rows on screen, adds double-clicked hits and offers the row menu with the `Add to address table` action and the `Copy` submenu (module + RVA, absolute, address + value) through the Qt clipboard; its table fills the scan zone so the hits bottom edge stays level with the Memory Scan Options panel, its entry row raises the Memory View request, and it installs the elided-tooltip delegate that reveals a clipped cell's value on hover.
 - `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu, open/save and the forwarded module map and address mode.
 - `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions using the model's address text, toggles freezes and loads/saves through native file dialogs.
 - `src/ui/dialogs/process_list.hpp` — the fixed-size Process List picker and its filtered, sortable process model.
-- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states and a single failure message line.
+- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states and a single failure message line, recording refreshes/probes at `debug`, attach/detach at `info` and failures at `warning`.
 - `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable`.
 - `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
 - `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker, with its module spans and address mode.
 - `src/ui/dialogs/memory_viewer.cpp` — one cached page of address/bytes/ASCII rows with unreadable-range markers refreshed asynchronously; rows and the address box render `module+RVA` in module-relative mode and Go accepts both address forms.
 - `src/ui/dialogs/log.hpp` — the non-modal `LogDialog`: a live, filtered log view with Clear and Save As.
-- `src/ui/dialogs/log.cpp` — level and case-insensitive text filters over the records, history seeding on first show, live drain from the notifier and a record-count/path status line.
+- `src/ui/dialogs/log.cpp` — level and case-insensitive text filters over the records, history seeding on first show, live drain from the notifier, a record-count/path status line and Clear/Save As records.
 - `src/ui/dialogs/settings.hpp` — the Settings dialog as a view over `SettingsController` (categories plus the session-only `alignmentChanged` signal).
 - `src/ui/dialogs/settings.cpp` — Appearance, Addresses, Scanning, Plugins and About pages; the theme/address radios drive the controller and follow it back.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
@@ -125,3 +127,5 @@
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.
 - `src/tests/fixtures/missing_regions_plugin.cpp` — fixture plugin whose vtable predates `list_regions` and is too small.
+- `src/tests/fixtures/old_abi_minor_plugin.cpp` — fixture plugin whose vtable reports an older ABI minor version.
+- `src/tests/fixtures/logging_plugin.cpp` — valid fixture plugin that reports through the host services log hook at entry and when a session is opened.

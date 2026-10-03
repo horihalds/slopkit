@@ -18,6 +18,8 @@
 #include <variant>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "process/access.hpp"
 #include "process/access_worker.hpp"
 #include "process/types.hpp"
@@ -204,6 +206,42 @@ namespace
         }
         return done();
     }
+
+    // Restores the process-wide log level on scope exit.
+    class LevelGuard
+    {
+    public:
+        LevelGuard() : previous_(slopkit::log::Logger::instance().minimum_level()) {}
+
+        LevelGuard(const LevelGuard&)            = delete;
+        LevelGuard& operator=(const LevelGuard&) = delete;
+
+        ~LevelGuard()
+        {
+            slopkit::log::Logger::instance().set_minimum_level(previous_);
+        }
+
+    private:
+        slopkit::log::Level previous_;
+    };
+
+    // Registers a sink for the lifetime of the guard.
+    class SinkGuard
+    {
+    public:
+        explicit SinkGuard(slopkit::log::Sink sink) : id_(slopkit::log::Logger::instance().add_sink(std::move(sink))) {}
+
+        SinkGuard(const SinkGuard&)            = delete;
+        SinkGuard& operator=(const SinkGuard&) = delete;
+
+        ~SinkGuard()
+        {
+            slopkit::log::Logger::instance().remove_sink(id_);
+        }
+
+    private:
+        slopkit::log::SinkId id_;
+    };
 } // namespace
 
 TEST_CASE("submissions do not block and completions arrive after the job finishes", "[worker]")
@@ -611,4 +649,77 @@ TEST_CASE("the default session read_into copies through read", "[worker]")
     const auto missing = session.read_into(FakeBackend::kBase + 0x100, buffer);
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error() == AccessError::not_found);
+}
+
+TEST_CASE("a failed read job logs exactly one warning", "[worker][log]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::debug);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    ReadResult read;
+    worker.submit_read(worker.next_job_id(),
+                       FakeBackend::kBase,
+                       4,
+                       [&](JobResult&& result)
+                       {
+                           read = std::get<ReadResult>(std::move(result));
+                       });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return read.error.has_value();
+                 }));
+
+    std::size_t warnings = 0;
+    for (const auto& record : records)
+    {
+        if (record.level == slopkit::log::Level::warning && record.category == "process"
+            && record.message.find("requested without an attached target") != std::string::npos)
+        {
+            ++warnings;
+        }
+    }
+    // The failure is decided (and therefore logged) exactly once, by the worker.
+    CHECK(warnings == 1);
+}
+
+TEST_CASE("job lifecycle detail is debug-only", "[worker][log]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    bool listed = false;
+    worker.submit_list(worker.next_job_id(),
+                       [&](JobResult&&)
+                       {
+                           listed = true;
+                       });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return listed;
+                 }));
+
+    for (const auto& record : records)
+    {
+        CHECK(record.level != slopkit::log::Level::debug);
+    }
 }

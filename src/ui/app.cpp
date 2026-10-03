@@ -1,11 +1,15 @@
 #include "ui/app.hpp"
 
+#include <format>
+
 #include <QApplication>
 #include <QGuiApplication>
 #include <QStyleFactory>
 
 #include "app/cli.hpp"
 #include "core/log.hpp"
+#include "core/log_categories.hpp"
+#include "core/version.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
 
@@ -25,13 +29,20 @@ namespace slopkit::ui
         // same on every desktop.
         application.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 
+        const bool dark_theme_selected = settings_.values().dark_theme;
+        log::info(log::category::app,
+                  std::format("slopkit {} starting, {} theme", version(), dark_theme_selected ? "dark" : "light"));
+
         if (!register_embedded_fonts())
         {
-            log::warning("ui", "the embedded fonts could not be loaded");
+            log::warning(log::category::ui, "the embedded fonts could not be loaded");
         }
-        apply_theme(settings_.values().dark_theme ? dark_theme() : light_theme());
+        apply_theme(dark_theme_selected ? dark_theme() : light_theme());
 
         host_.discover(app::plugin_search_directories());
+        log::info(log::category::app,
+                  std::format(
+                      "plugin discovery: {} loaded, {} rejected", host_.plugins().size(), host_.diagnostics().size()));
 
         window_ = std::make_unique<MainWindow>(access_worker_, target_, host_, settings_);
         window_->show();
@@ -50,12 +61,14 @@ namespace slopkit::ui
                          {
                              access_worker_.drain();
                          });
+        log::debug(log::category::app, "worker completion hook installed");
 
         const int exit_code = QApplication::exec();
 
         // The window must be gone before the worker and its hook are torn down.
         access_worker_.set_completion_hook(nullptr);
         window_.reset();
+        log::info(log::category::app, std::format("slopkit shutting down, exit code {}", exit_code));
         return exit_code;
     }
 

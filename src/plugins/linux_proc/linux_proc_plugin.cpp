@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <format>
 #include <new>
 #include <span>
 #include <string>
@@ -85,6 +86,16 @@ namespace
     slopkit_result fail(int32_t code, const char* message)
     {
         return slopkit_result {code, message};
+    }
+
+    // Reports through the host log hook; the host tags the record with this
+    // plugin's id. A message must outlive the call, which a local string does.
+    void log_message(int32_t level, const std::string& text)
+    {
+        if (g_host != nullptr && g_host->log != nullptr)
+        {
+            g_host->log(level, text.c_str(), g_host->user_data);
+        }
     }
 
     Session* lookup(void* handle)
@@ -197,6 +208,8 @@ namespace
                 ++count;
             }
 
+            log_message(SLOPKIT_LOG_DEBUG, std::format("listed {} process(es)", count));
+
             *out       = array;
             *out_count = count;
             return ok();
@@ -220,6 +233,7 @@ namespace
             std::error_code error;
             if (!std::filesystem::exists("/proc/" + std::to_string(pid), error))
             {
+                log_message(SLOPKIT_LOG_WARN, std::format("cannot attach to pid {}: no such process", pid));
                 return fail(SLOPKIT_ERR_NOT_FOUND, "no such process");
             }
 
@@ -411,6 +425,8 @@ namespace
                 ++count;
             }
 
+            log_message(SLOPKIT_LOG_DEBUG, std::format("listed {} module(s) for pid {}", count, session->pid));
+
             *out       = array;
             *out_count = count;
             return ok();
@@ -453,6 +469,8 @@ namespace
                 array[count].name = thread.name.empty() ? nullptr : intern(thread.name);
                 ++count;
             }
+
+            log_message(SLOPKIT_LOG_DEBUG, std::format("listed {} thread(s) for pid {}", count, session->pid));
 
             *out       = array;
             *out_count = count;
@@ -502,6 +520,8 @@ namespace
                 array[count].path       = region.path.empty() ? nullptr : intern(region.path);
                 ++count;
             }
+
+            log_message(SLOPKIT_LOG_DEBUG, std::format("listed {} region(s) for pid {}", count, session->pid));
 
             *out       = array;
             *out_count = count;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <format>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -22,6 +23,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "platform/linux/desktop_entry.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
@@ -496,6 +499,7 @@ namespace slopkit::ui::dialogs
     void ProcessListDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);
+        log::debug(log::category::ui, "opening Process List dialog");
         selected_pid_ = 0; // Re-open with the top result preselected.
         restoring_    = true;
         table_view_->selectionModel()->clearCurrentIndex();
@@ -541,6 +545,7 @@ namespace slopkit::ui::dialogs
             return; // A list job is already in flight.
         }
 
+        log::debug(log::category::ui, "refreshing the process list");
         const process::JobId job_id = worker_.next_job_id();
         list_pending_               = job_id;
 
@@ -557,6 +562,8 @@ namespace slopkit::ui::dialogs
                 auto& listed = std::get<process::ListResult>(result);
                 if (listed.error)
                 {
+                    log::warning(log::category::ui,
+                                 std::format("process listing failed: {}", process::describe(*listed.error)));
                     set_message(std::string("could not list processes: ")
                                     + std::string(process::describe(*listed.error)),
                                 widgets::StatusKind::error);
@@ -704,6 +711,8 @@ namespace slopkit::ui::dialogs
         probe_pending_              = job_id;
         probe_pending_pid_          = static_cast<int>(pid);
 
+        log::debug(log::category::ui, std::format("probing pid {} via {}", pid, plugin));
+
         const bool submitted = worker_.submit_probe(
             job_id,
             pid,
@@ -727,6 +736,8 @@ namespace slopkit::ui::dialogs
                 auto& probe = std::get<process::ProbeResult>(result);
                 if (probe.error)
                 {
+                    log::warning(log::category::ui,
+                                 std::format("probe of pid {} failed: {}", pid, process::describe(*probe.error)));
                     set_message(std::string("cannot inspect: ") + std::string(process::describe(*probe.error)),
                                 widgets::StatusKind::warning);
                 }
@@ -771,6 +782,8 @@ namespace slopkit::ui::dialogs
         attach_pending_             = job_id;
         update_buttons();
 
+        log::debug(log::category::ui, std::format("attach requested for pid {} via {}", pid, plugin));
+
         const bool submitted = worker_.submit_attach_app(
             job_id,
             pid,
@@ -787,6 +800,8 @@ namespace slopkit::ui::dialogs
                 if (attached.error)
                 {
                     target_.clear();
+                    log::warning(log::category::ui,
+                                 std::format("attach to pid {} failed: {}", pid, process::describe(*attached.error)));
                     set_message(std::string("attach failed: ") + std::string(process::describe(*attached.error)),
                                 widgets::StatusKind::error);
                     update_buttons();
@@ -800,6 +815,7 @@ namespace slopkit::ui::dialogs
                 target_.plugin_id    = attached.info->plugin_id;
                 target_.method       = attached.info->method;
                 target_.session_live = true;
+                log::info(log::category::ui, std::format("attached to pid {} via {}", pid, attached.info->plugin_id));
                 update_buttons();
                 emit targetChanged();
                 close(); // The picker has done its job once we are attached.

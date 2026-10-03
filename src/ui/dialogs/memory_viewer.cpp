@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +17,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
@@ -351,7 +354,12 @@ namespace slopkit::ui::dialogs
         const auto parsed = ui::parse_address_text(address_edit_->text().toStdString(), dump_model_->module_spans());
         if (parsed.has_value())
         {
+            log::debug(log::category::ui, std::format("memory viewer go to 0x{:X}", *parsed));
             set_address(*parsed);
+        }
+        else
+        {
+            log::warning(log::category::ui, "memory viewer got an unparseable address");
         }
     }
 
@@ -390,36 +398,40 @@ namespace slopkit::ui::dialogs
         ever_requested_             = true;
         update_state();
 
-        const bool submitted = worker_.submit_read(job_id,
-                                                   base,
-                                                   MemoryDumpModel::kRowBytes * MemoryDumpModel::kRows,
-                                                   [this, base, pid, job_id](process::JobResult&& result)
-                                                   {
-                                                       if (pending_ != job_id)
-                                                       {
-                                                           return; // Superseded or shut down.
-                                                       }
-                                                       pending_.reset();
+        const bool submitted = worker_.submit_read(
+            job_id,
+            base,
+            MemoryDumpModel::kRowBytes * MemoryDumpModel::kRows,
+            [this, base, pid, job_id](process::JobResult&& result)
+            {
+                if (pending_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                pending_.reset();
 
-                                                       // Drop a page whose target or base changed while it was in
-                                                       // flight.
-                                                       if (!target_.valid() || target_.pid != pid || base_ != base)
-                                                       {
-                                                           update_state();
-                                                           return;
-                                                       }
+                // Drop a page whose target or base changed while it was in
+                // flight.
+                if (!target_.valid() || target_.pid != pid || base_ != base)
+                {
+                    update_state();
+                    return;
+                }
 
-                                                       auto& read = std::get<process::ReadResult>(result);
-                                                       if (read.error || read.bytes.empty())
-                                                       {
-                                                           dump_model_->clear();
-                                                       }
-                                                       else
-                                                       {
-                                                           dump_model_->set_page(base, std::move(read.bytes));
-                                                       }
-                                                       update_state();
-                                                   });
+                auto& read = std::get<process::ReadResult>(result);
+                if (read.error || read.bytes.empty())
+                {
+                    log::debug(log::category::ui, std::format("memory page at 0x{:X} could not be read", base));
+                    dump_model_->clear();
+                }
+                else
+                {
+                    log::debug(log::category::ui,
+                               std::format("memory page at 0x{:X} loaded ({} byte(s))", base, read.bytes.size()));
+                    dump_model_->set_page(base, std::move(read.bytes));
+                }
+                update_state();
+            });
         if (!submitted)
         {
             pending_.reset();

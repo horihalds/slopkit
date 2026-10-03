@@ -13,6 +13,7 @@
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 
@@ -221,10 +222,12 @@ namespace slopkit::ui::panels
                 {
                     if (engine_.has_results())
                     {
+                        log::debug(log::category::ui, "New Scan");
                         engine_.reset();
                     }
                     else
                     {
+                        log::debug(log::category::ui, "First Scan");
                         start_first_scan();
                     }
                     refresh();
@@ -234,6 +237,7 @@ namespace slopkit::ui::panels
                 this,
                 [this]
                 {
+                    log::debug(log::category::ui, "Next Scan");
                     start_next_scan();
                     refresh();
                 });
@@ -242,6 +246,7 @@ namespace slopkit::ui::panels
                 this,
                 [this]
                 {
+                    log::debug(log::category::ui, "Undo Scan");
                     engine_.undo();
                     refresh();
                 });
@@ -250,6 +255,7 @@ namespace slopkit::ui::panels
                 this,
                 [this]
                 {
+                    log::debug(log::category::ui, "Cancel Scan");
                     engine_.cancel();
                     refresh();
                 });
@@ -329,37 +335,38 @@ namespace slopkit::ui::panels
 
         const process::JobId job_id = worker_.next_job_id();
         handoff_pending_            = job_id;
-        log::info("scan", "Preparing scan session...");
+        log::info(log::category::scan, "Preparing scan session...");
 
-        const bool submitted = worker_.submit_attach_handoff(
-            job_id,
-            pid,
-            plugin,
-            [this, job_id, pid, plugin](process::JobResult&& result)
-            {
-                if (handoff_pending_ != job_id)
-                {
-                    return; // Superseded or shut down.
-                }
-                handoff_pending_.reset();
+        const bool submitted =
+            worker_.submit_attach_handoff(job_id,
+                                          pid,
+                                          plugin,
+                                          [this, job_id, pid, plugin](process::JobResult&& result)
+                                          {
+                                              if (handoff_pending_ != job_id)
+                                              {
+                                                  return; // Superseded or shut down.
+                                              }
+                                              handoff_pending_.reset();
 
-                auto& attached = std::get<process::AttachResult>(result);
-                // Drop a session whose target changed while the handoff ran;
-                // worker_pid_ still reflects the request, so the next tick
-                // requests the new target.
-                if (!target_.valid() || target_.pid != pid || target_.plugin_id != plugin)
-                {
-                    return;
-                }
-                if (attached.error)
-                {
-                    log::warning(
-                        "scan", std::string("Scan session failed: ") + std::string(process::describe(*attached.error)));
-                    return;
-                }
+                                              auto& attached = std::get<process::AttachResult>(result);
+                                              // Drop a session whose target changed while the handoff ran;
+                                              // worker_pid_ still reflects the request, so the next tick
+                                              // requests the new target.
+                                              if (!target_.valid() || target_.pid != pid || target_.plugin_id != plugin)
+                                              {
+                                                  return;
+                                              }
+                                              if (attached.error)
+                                              {
+                                                  log::warning(log::category::scan,
+                                                               std::string("Scan session failed: ")
+                                                                   + std::string(process::describe(*attached.error)));
+                                                  return;
+                                              }
 
-                worker_session_ = std::move(*attached.handed_session);
-            });
+                                              worker_session_ = std::move(*attached.handed_session);
+                                          });
         if (!submitted)
         {
             handoff_pending_.reset();
@@ -603,12 +610,12 @@ namespace slopkit::ui::panels
         const auto config = build_config();
         if (!config)
         {
-            log::warning("scan", config.error());
+            log::warning(log::category::scan, config.error());
             return;
         }
         if (!worker_session_)
         {
-            log::warning("scan", "No scan session; attach a process first.");
+            log::warning(log::category::scan, "No scan session; attach a process first.");
             return;
         }
         engine_.first_scan(*config, scan::make_session_source(worker_session_));
@@ -619,12 +626,12 @@ namespace slopkit::ui::panels
         const auto config = build_config();
         if (!config)
         {
-            log::warning("scan", config.error());
+            log::warning(log::category::scan, config.error());
             return;
         }
         if (!engine_.has_results())
         {
-            log::warning("scan", "Run a first scan before refining.");
+            log::warning(log::category::scan, "Run a first scan before refining.");
             return;
         }
         engine_.next_scan(*config);
@@ -653,24 +660,6 @@ namespace slopkit::ui::panels
         cancel_button_->setVisible(running);
 
         progress_percent_ = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);
-
-        // The panel has no status line: every message it used to show goes to
-        // the log, and only when it changes so the 50 ms tick cannot repeat it.
-        if (snapshot.message != last_logged_message_)
-        {
-            last_logged_message_ = snapshot.message;
-            if (!snapshot.message.empty())
-            {
-                if (snapshot.state == scan::ScanState::failed)
-                {
-                    log::warning("scan", snapshot.message);
-                }
-                else
-                {
-                    log::info("scan", snapshot.message);
-                }
-            }
-        }
     }
 
 } // namespace slopkit::ui::panels

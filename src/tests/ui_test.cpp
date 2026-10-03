@@ -57,6 +57,7 @@
 #include <QToolTip>
 
 #include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -390,6 +391,42 @@ namespace
         module.size = size;
         return module;
     }
+
+    // Restores the process-wide log level on scope exit.
+    class LevelGuard
+    {
+    public:
+        LevelGuard() : previous_(slopkit::log::Logger::instance().minimum_level()) {}
+
+        LevelGuard(const LevelGuard&)            = delete;
+        LevelGuard& operator=(const LevelGuard&) = delete;
+
+        ~LevelGuard()
+        {
+            slopkit::log::Logger::instance().set_minimum_level(previous_);
+        }
+
+    private:
+        slopkit::log::Level previous_;
+    };
+
+    // Registers a sink for the lifetime of the guard.
+    class SinkGuard
+    {
+    public:
+        explicit SinkGuard(slopkit::log::Sink sink) : id_(slopkit::log::Logger::instance().add_sink(std::move(sink))) {}
+
+        SinkGuard(const SinkGuard&)            = delete;
+        SinkGuard& operator=(const SinkGuard&) = delete;
+
+        ~SinkGuard()
+        {
+            slopkit::log::Logger::instance().remove_sink(id_);
+        }
+
+    private:
+        slopkit::log::SinkId id_;
+    };
 } // namespace
 
 TEST_CASE("both themes define every colour role", "[ui]")
@@ -3203,7 +3240,7 @@ TEST_CASE("the log dialog shows live records and filters them", "[ui]")
 
     // A record logged through the logger reaches the view once the queued
     // wake-up is processed, with its level and category visible.
-    slopkit::log::warning("scan", "something happened");
+    slopkit::log::warning(slopkit::log::category::scan, "something happened");
     QCoreApplication::processEvents();
     CHECK(view->toPlainText().contains(QStringLiteral("warning")));
     CHECK(view->toPlainText().contains(QStringLiteral("[scan] something happened")));
@@ -3242,7 +3279,7 @@ TEST_CASE("the log dialog seeds itself from the retained history", "[ui]")
     slopkit::log::Logger::instance().clear_history();
     slopkit::log::Logger::instance().set_minimum_level(Level::info);
 
-    slopkit::log::info("plugin", "logged before the window opened");
+    slopkit::log::info(slopkit::log::category::plugin, "logged before the window opened");
 
     slopkit::ui::dialogs::LogDialog dialog;
     auto*                           view = dialog.findChild<QPlainTextEdit*>();
@@ -3253,7 +3290,7 @@ TEST_CASE("the log dialog seeds itself from the retained history", "[ui]")
 
     // A record queued between construction and the first show must not be
     // duplicated by the history seeding.
-    slopkit::log::info("ui", "queued before the first show");
+    slopkit::log::info(slopkit::log::category::ui, "queued before the first show");
     dialog.show();
 
     const QString text = view->toPlainText();
@@ -3261,4 +3298,39 @@ TEST_CASE("the log dialog seeds itself from the retained history", "[ui]")
     CHECK(text.count(QStringLiteral("queued before the first show")) == 1);
 
     slopkit::log::Logger::instance().set_minimum_level(Level::info);
+}
+
+TEST_CASE("a UI action records under the ui category", "[ui]")
+{
+    application();
+
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    slopkit::table::AddressTable     table;
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    panel.toggle_freeze_selected(); // No selection: the UI refuses and warns.
+
+    bool saw_ui = false;
+    for (const auto& record : records)
+    {
+        if (std::string_view {record.category} == slopkit::log::category::ui
+            && record.level == slopkit::log::Level::warning
+            && record.message.find("freeze requested with no selection") != std::string::npos)
+        {
+            saw_ui = true;
+        }
+    }
+    CHECK(saw_ui);
 }

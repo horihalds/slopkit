@@ -10,6 +10,7 @@
 #include <optional>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <variant>
 #include <vector>
@@ -194,18 +195,19 @@ namespace slopkit::process
             JobResult   result;
         };
 
-        void            run(std::stop_token token);
-        JobResult       execute(Request& request);
-        bool            submit(Request request);
-        ListResult      do_list();
-        ProbeResult     do_probe(const Request& request);
-        AttachResult    do_attach(const Request& request, bool handoff);
-        AppIndexResult  do_application_index();
-        MemoryMapResult do_memory_map();
-        ReadResult      do_read(const Request& request);
-        WriteResult     do_write(const Request& request);
-        FreezeResult    do_freeze(const Request& request);
-        AttachResult    do_detach();
+        void                    run(std::stop_token token);
+        JobResult               execute(Request& request);
+        bool                    submit(Request request);
+        static std::string_view job_kind_name(JobKind kind) noexcept;
+        ListResult              do_list();
+        ProbeResult             do_probe(const Request& request);
+        AttachResult            do_attach(const Request& request, bool handoff);
+        AppIndexResult          do_application_index();
+        MemoryMapResult         do_memory_map();
+        ReadResult              do_read(const Request& request);
+        WriteResult             do_write(const Request& request);
+        FreezeResult            do_freeze(const Request& request);
+        AttachResult            do_detach();
 
         ProcessAccess&          access_;
         std::jthread            worker_;
