@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "platform/linux/memory.hpp"
+#include "platform/linux/procfs.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/plugin_access.hpp"
 #include "process/types.hpp"
@@ -107,6 +108,25 @@ TEST_CASE("linux-proc lists modules, threads and regions of the current process"
     REQUIRE(main_module != modules->end());
     CHECK(main_module->entry != 0);
     CHECK(main_module->entry >= main_module->base);
+
+    // Exactly one module is flagged as the main image, and it backs the exe.
+    const auto flagged = std::ranges::count_if(*modules,
+                                               [](const slopkit::process::ModuleInfo& module)
+                                               {
+                                                   return module.is_main;
+                                               });
+    CHECK(flagged == 1);
+
+    const auto main_image = std::ranges::find_if(*modules,
+                                                 [](const slopkit::process::ModuleInfo& module)
+                                                 {
+                                                     return module.is_main;
+                                                 });
+    REQUIRE(main_image != modules->end());
+    const auto exe = slopkit::platform::read_exe(static_cast<ProcessId>(::getpid()));
+    REQUIRE(exe.has_value());
+    CHECK(main_image->path == *exe);
+    CHECK(main_image->entry != 0);
 
     const auto threads = session->threads();
     REQUIRE(threads.has_value());

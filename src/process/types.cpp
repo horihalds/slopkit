@@ -3,6 +3,27 @@
 namespace slopkit::process
 {
 
+    const ModuleInfo* main_module(std::span<const ModuleInfo> modules) noexcept
+    {
+        const ModuleInfo* lowest = nullptr;
+        for (const ModuleInfo& module : modules)
+        {
+            if (!is_file_backed(module))
+            {
+                continue;
+            }
+            if (module.is_main)
+            {
+                return &module;
+            }
+            if (lowest == nullptr || module.base < lowest->base)
+            {
+                lowest = &module;
+            }
+        }
+        return lowest;
+    }
+
     std::string_view describe(AccessError error) noexcept
     {
         switch (error)

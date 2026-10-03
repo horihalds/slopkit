@@ -45,6 +45,33 @@ namespace slopkit::platform
             return value;
         }
 
+        // A file's first page, read once and shared by the entry-point and
+        // PE-kind readers.
+        struct HeaderBytes
+        {
+            std::array<std::byte, kHeaderReadSize> data {};
+            std::size_t                            size {};
+        };
+
+        std::optional<HeaderBytes> read_header(const std::filesystem::path& path)
+        {
+            std::ifstream file(path, std::ios::binary);
+            if (!file)
+            {
+                return std::nullopt;
+            }
+
+            HeaderBytes header;
+            file.read(reinterpret_cast<char*>(header.data.data()), static_cast<std::streamsize>(header.data.size()));
+            const auto count = file.gcount();
+            if (count <= 0)
+            {
+                return std::nullopt;
+            }
+            header.size = static_cast<std::size_t>(count);
+            return header;
+        }
+
         std::optional<ImageEntry> parse_elf(std::span<const std::byte> bytes)
         {
             constexpr std::size_t   kTypeOffset   = 16;
@@ -144,20 +171,53 @@ namespace slopkit::platform
 
     std::optional<ImageEntry> read_image_entry(const std::filesystem::path& path)
     {
-        std::ifstream file(path, std::ios::binary);
-        if (!file)
+        const auto header = read_header(path);
+        if (!header)
+        {
+            return std::nullopt;
+        }
+        return parse_image_entry(std::span<const std::byte>(header->data.data(), header->size));
+    }
+
+    std::optional<PeKind> parse_pe_kind(std::span<const std::byte> bytes)
+    {
+        constexpr std::size_t   kLfanewOffset       = 0x3c;
+        constexpr std::size_t   kSignatureSize      = 4;
+        constexpr std::size_t   kCoffHeaderSize     = 20;
+        constexpr std::size_t   kCharacteristicsOff = 18;
+        constexpr std::uint16_t kImageFileDll       = 0x2000;
+
+        if (bytes.size() < 2 || byte_at(bytes, 0) != 'M' || byte_at(bytes, 1) != 'Z')
+        {
+            return std::nullopt;
+        }
+        if (bytes.size() < kLfanewOffset + 4)
+        {
+            return std::nullopt;
+        }
+        const auto lfanew = static_cast<std::size_t>(read_u32(bytes, kLfanewOffset, false));
+        if (lfanew >= bytes.size() || bytes.size() - lfanew < kSignatureSize + kCoffHeaderSize)
+        {
+            return std::nullopt;
+        }
+        if (byte_at(bytes, lfanew) != 'P' || byte_at(bytes, lfanew + 1) != 'E' || byte_at(bytes, lfanew + 2) != 0
+            || byte_at(bytes, lfanew + 3) != 0)
         {
             return std::nullopt;
         }
 
-        std::array<std::byte, kHeaderReadSize> buffer {};
-        file.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
-        const auto count = file.gcount();
-        if (count <= 0)
+        const auto characteristics = read_u16(bytes, lfanew + kSignatureSize + kCharacteristicsOff, false);
+        return (characteristics & kImageFileDll) != 0 ? PeKind::dll : PeKind::executable;
+    }
+
+    std::optional<PeKind> read_pe_kind(const std::filesystem::path& path)
+    {
+        const auto header = read_header(path);
+        if (!header)
         {
             return std::nullopt;
         }
-        return parse_image_entry(std::span<const std::byte>(buffer.data(), static_cast<std::size_t>(count)));
+        return parse_pe_kind(std::span<const std::byte>(header->data.data(), header->size));
     }
 
 } // namespace slopkit::platform

@@ -38,7 +38,7 @@ extern "C"
 #endif
 
 #define SLOPKIT_PLUGIN_ABI_VERSION_MAJOR 1
-#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 2
+#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 3
 #define SLOPKIT_PLUGIN_ABI_VERSION       ((SLOPKIT_PLUGIN_ABI_VERSION_MAJOR << 16) | SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
 
     /* Status codes carried in `slopkit_result::code`. */
@@ -112,6 +112,9 @@ extern "C"
         const char* path;
         /* Absolute entry point of the image; 0 when the plugin does not know it. */
         uint64_t    entry;
+        /* Non-zero when the plugin reports this image as the process' main image
+           (the image it was started from). At most one entry per list. */
+        int32_t     is_main;
     } slopkit_module_info;
 
     typedef struct slopkit_thread_info
@@ -145,9 +148,9 @@ extern "C"
      * The plugin vtable. `abi_version` and `struct_size` must be the first two
      * fields; the host checks them before reading anything else, and rejects a
      * major-version mismatch, an older minor version or a struct smaller than it
-     * expects. The host requires the current minor because appending `entry` to
-     * slopkit_module_info changed the element stride of the module array, so a
-     * plugin built against an older minor would be misread.
+     * expects. The host requires the current minor because appending `entry` and
+     * `is_main` to slopkit_module_info changed the element stride of the module
+     * array, so a plugin built against an older minor would be misread.
      */
     typedef struct slopkit_plugin_vtable
     {

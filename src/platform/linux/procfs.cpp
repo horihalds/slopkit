@@ -478,4 +478,76 @@ namespace slopkit::platform
         }
     }
 
+    bool flag_main_module_by_path(std::vector<process::ModuleInfo>& modules, std::string_view exe_path)
+    {
+        for (auto& module : modules)
+        {
+            module.is_main = false;
+        }
+        if (exe_path.empty())
+        {
+            return false;
+        }
+
+        constexpr std::string_view kDeletedSuffix = " (deleted)";
+        const bool                 has_deleted    = exe_path.ends_with(kDeletedSuffix);
+        const std::string_view     stripped =
+            has_deleted ? exe_path.substr(0, exe_path.size() - kDeletedSuffix.size()) : exe_path;
+
+        for (auto& module : modules)
+        {
+            if (module.path.empty() || !process::is_file_backed(module))
+            {
+                continue;
+            }
+            if (module.path == exe_path || (has_deleted && module.path == stripped))
+            {
+                module.is_main = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool flag_main_pe_image(process::ProcessId pid, std::vector<process::ModuleInfo>& modules)
+    {
+        for (auto& module : modules)
+        {
+            module.is_main = false;
+        }
+
+        const auto root = std::filesystem::path("/proc") / std::to_string(pid) / "root";
+
+        process::ModuleInfo* chosen = nullptr;
+        for (auto& module : modules)
+        {
+            if (module.kind != process::ModuleKind::pe || module.path.empty() || module.offset != 0)
+            {
+                continue;
+            }
+
+            const std::filesystem::path path(module.path);
+            if (!path.is_absolute())
+            {
+                continue;
+            }
+
+            if (read_pe_kind(root / path.relative_path()) != PeKind::executable)
+            {
+                continue;
+            }
+            if (chosen == nullptr || module.base < chosen->base)
+            {
+                chosen = &module;
+            }
+        }
+
+        if (chosen == nullptr)
+        {
+            return false;
+        }
+        chosen->is_main = true;
+        return true;
+    }
+
 } // namespace slopkit::platform

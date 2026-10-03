@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,9 +37,15 @@ namespace slopkit::process
         // Absolute entry point of the image; 0 when unknown.
         std::uint64_t entry {};
         ModuleKind    kind {ModuleKind::anonymous};
+        // Reported main image (the image the process was started from).
+        bool          is_main {};
         std::string   name;
         std::string   path;
     };
+
+    // The target's main image: the flagged module when a plugin reported one,
+    // otherwise the lowest-based file-backed image. nullptr when there is none.
+    [[nodiscard]] const ModuleInfo* main_module(std::span<const ModuleInfo> modules) noexcept;
 
     // True for a module that backs a file image and can therefore make an
     // address static: not an anonymous mapping and not a zero-size entry.

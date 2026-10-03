@@ -387,6 +387,10 @@ namespace
 
             auto modules = platform::modules_from_maps(platform::read_maps(session->pid));
             platform::fill_module_entry_points(session->pid, modules);
+            if (const auto exe = platform::read_exe(session->pid))
+            {
+                (void)platform::flag_main_module_by_path(modules, *exe);
+            }
             auto* array = static_cast<slopkit_module_info*>(host_alloc(sizeof(slopkit_module_info) * modules.size()));
             if (array == nullptr && !modules.empty())
             {
@@ -396,13 +400,14 @@ namespace
             std::size_t count = 0;
             for (const auto& module : modules)
             {
-                array[count].base   = module.base;
-                array[count].size   = module.size;
-                array[count].offset = module.offset;
-                array[count].kind   = static_cast<int32_t>(module.kind);
-                array[count].name   = intern(module.name);
-                array[count].path   = module.path.empty() ? nullptr : intern(module.path);
-                array[count].entry  = module.entry;
+                array[count].base    = module.base;
+                array[count].size    = module.size;
+                array[count].offset  = module.offset;
+                array[count].kind    = static_cast<int32_t>(module.kind);
+                array[count].name    = intern(module.name);
+                array[count].path    = module.path.empty() ? nullptr : intern(module.path);
+                array[count].entry   = module.entry;
+                array[count].is_main = module.is_main ? 1 : 0;
                 ++count;
             }
 

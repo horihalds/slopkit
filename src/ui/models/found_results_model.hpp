@@ -40,9 +40,10 @@ namespace slopkit::ui::models
         void set_snapshot(scan::ScanSnapshot snapshot, scan::ScanConfig config);
         void clear();
 
-        // Sets the module image spans. Hits inside them are listed first and
-        // their address is drawn in the success colour; the spans are sorted
-        // here and survive a later snapshot.
+        // Sets the module image spans. Hits inside the main image are listed
+        // before the other module-backed hits, which are listed before the
+        // dynamic ones; their address is drawn in the success colour. The spans
+        // are sorted here and survive a later snapshot.
         void set_modules(std::vector<process::ModuleInfo> modules);
 
         // Chooses how static addresses are shown in the Address column.
@@ -53,6 +54,9 @@ namespace slopkit::ui::models
 
         // True when the address lies inside one of the module image spans.
         [[nodiscard]] bool is_static(std::uint64_t address) const;
+
+        // True when the address lies inside the target's main image span.
+        [[nodiscard]] bool is_main_hit(std::uint64_t address) const;
 
         // The hit a row currently shows, or nullptr when the row is out of date.
         [[nodiscard]] const scan::ScanHit* hit_at(int row) const;

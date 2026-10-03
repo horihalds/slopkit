@@ -480,6 +480,41 @@ TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
     CHECK(spans.empty());
 }
 
+TEST_CASE("the module spans mark the main image", "[ui]")
+{
+    slopkit::ui::ModuleSpans spans;
+    CHECK(spans.main() == nullptr);
+
+    std::vector<slopkit::process::ModuleInfo> modules;
+    modules.push_back(module_image("low", 0x2000, 0x1000));
+    modules.push_back(module_image("lib", 0x8000, 0x100));
+    // The flagged main image is not the lowest-based one.
+    slopkit::process::ModuleInfo game = module_image("game", 0x5000, 0x1000);
+    game.is_main                      = true;
+    modules.push_back(game);
+
+    spans.set_modules(modules);
+
+    REQUIRE(spans.main() != nullptr);
+    CHECK(spans.main()->name == "game");
+    CHECK(spans.main()->base == 0x5000);
+    CHECK(spans.main()->is_main);
+    CHECK(spans.containing(0x5000)->is_main);
+    CHECK_FALSE(spans.containing(0x2000)->is_main);
+    CHECK_FALSE(spans.containing(0x8000)->is_main);
+
+    // Without a flagged image the lowest-based image becomes the main one.
+    const std::vector<slopkit::process::ModuleInfo> unflagged {module_image("high", 0x5000, 0x100),
+                                                               module_image("low", 0x2000, 0x1000)};
+    spans.set_modules(unflagged);
+    REQUIRE(spans.main() != nullptr);
+    CHECK(spans.main()->name == "low");
+    CHECK(spans.main()->is_main);
+
+    spans.clear();
+    CHECK(spans.main() == nullptr);
+}
+
 TEST_CASE("a module without a name is labelled from its path", "[ui]")
 {
     slopkit::process::ModuleInfo module = module_image("", 0x4000, 0x100);
@@ -656,11 +691,12 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
     CHECK_FALSE(
         model.data(model.index(2, slopkit::ui::models::FoundResultsModel::address), Qt::ForegroundRole).isValid());
 
-    // The grouping is the primary key: statics stay on top when the address
-    // column is sorted descending, now ordered descending within the group.
+    // The tier is the primary key: the main-image hit (the lowest-based image
+    // when nothing is flagged) stays above the other static hit, which stays
+    // above the dynamic one, whatever the sort order.
     model.sort(slopkit::ui::models::FoundResultsModel::address, Qt::DescendingOrder);
-    CHECK(model.hit_at(0)->address == 0x2000);
-    CHECK(model.hit_at(1)->address == 0x1000);
+    CHECK(model.hit_at(0)->address == 0x1000);
+    CHECK(model.hit_at(1)->address == 0x2000);
     CHECK(model.hit_at(2)->address == 0x5000000);
 
     // Dropping the map makes every hit non-static again.
@@ -668,6 +704,21 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
     CHECK_FALSE(model.is_static(0x1000));
     CHECK_FALSE(model.is_static(0x2000));
     CHECK(model.rowCount() == 3);
+
+    // A flagged main image outranks the other static image, which outranks the
+    // dynamic hit, even though the flagged image has the higher base.
+    model.sort(slopkit::ui::models::FoundResultsModel::address, Qt::AscendingOrder);
+    slopkit::process::ModuleInfo game = module_image("game", 0x2000, 0x1000);
+    game.is_main                      = true;
+    model.set_modules({game, module_image("lib", 0x1000, 0x800)});
+
+    CHECK(model.is_main_hit(0x2000));       // base included
+    CHECK(model.is_main_hit(0x2FFF));       // base + size - 1 included
+    CHECK_FALSE(model.is_main_hit(0x3000)); // half-open end excluded
+    CHECK_FALSE(model.is_main_hit(0x1000));
+    CHECK(model.hit_at(0)->address == 0x2000);    // main image
+    CHECK(model.hit_at(1)->address == 0x1000);    // other static image
+    CHECK(model.hit_at(2)->address == 0x5000000); // dynamic
 }
 
 namespace
@@ -1876,6 +1927,88 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
 }
 
+TEST_CASE("the scan range dropdown pins the main image after All memory", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x9000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::ModuleInfo low;
+    low.base = 0x1000;
+    low.size = 0x800;
+    low.kind = slopkit::process::ModuleKind::elf;
+    low.name = "low";
+    low.path = "/opt/low";
+
+    slopkit::process::ModuleInfo game;
+    game.base    = 0x5000;
+    game.size    = 0x1000;
+    game.kind    = slopkit::process::ModuleKind::elf;
+    game.name    = "game";
+    game.path    = "/opt/game";
+    game.is_main = true;
+
+    slopkit::process::ModuleInfo lib;
+    lib.base = 0x8000;
+    lib.size = 0x100;
+    lib.kind = slopkit::process::ModuleKind::elf;
+    lib.name = "lib";
+    lib.path = "/opt/lib";
+
+    slopkit::process::ModuleInfo anon;
+    anon.base = 0x3000;
+    anon.size = 0x1000;
+    anon.kind = slopkit::process::ModuleKind::anonymous;
+    anon.name = "[anon]";
+
+    // Deliberately out of base order; the flagged image is not the lowest-based.
+    access.modules = {low, anon, game, lib};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* start = address_field(panel, "Start address");
+    auto* stop  = address_field(panel, "Stop address");
+    auto* combo = range_combo(panel);
+    REQUIRE(start != nullptr);
+    REQUIRE(stop != nullptr);
+    REQUIRE(combo != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return combo->isEnabled();
+                    }));
+
+    // Item 0 is the whole process, then the flagged main image, then the
+    // remaining file-backed modules by base; the anonymous mapping stays out.
+    REQUIRE(combo->count() == 4);
+    CHECK(combo->itemText(0) == QStringLiteral("All memory"));
+    CHECK(combo->itemText(1) == QStringLiteral("game"));
+    CHECK(combo->itemText(2) == QStringLiteral("low"));
+    CHECK(combo->itemText(3) == QStringLiteral("lib"));
+    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("/opt/game"));
+
+    // Each row still narrows Start/Stop to that image's span.
+    combo->setCurrentIndex(1);
+    CHECK(start->text() == QStringLiteral("0x0000000000005000"));
+    CHECK(stop->text() == QStringLiteral("0x0000000000006000"));
+
+    combo->setCurrentIndex(2);
+    CHECK(start->text() == QStringLiteral("0x0000000000001000"));
+    CHECK(stop->text() == QStringLiteral("0x0000000000001800"));
+}
+
 TEST_CASE("a memory map applied to the scanner panel reaches the found list", "[ui]")
 {
     application();
@@ -2101,17 +2234,18 @@ TEST_CASE("the scanner resolves the main module entry point", "[ui]")
 {
     application();
 
-    const auto address_for = [](std::uint64_t low_entry)
+    const auto address_for = [](std::uint64_t low_entry, bool flag_high = false)
     {
         UiFakeAccess access;
 
         slopkit::process::ModuleInfo high;
-        high.base  = 0x2000;
-        high.size  = 0x100;
-        high.entry = 0x2100;
-        high.kind  = slopkit::process::ModuleKind::elf;
-        high.name  = "high";
-        high.path  = "/opt/high";
+        high.base    = 0x2000;
+        high.size    = 0x100;
+        high.entry   = 0x2100;
+        high.kind    = slopkit::process::ModuleKind::elf;
+        high.name    = "high";
+        high.path    = "/opt/high";
+        high.is_main = flag_high;
 
         slopkit::process::ModuleInfo low;
         low.base  = 0x1000;
@@ -2148,6 +2282,10 @@ TEST_CASE("the scanner resolves the main module entry point", "[ui]")
 
     // ...and a zero entry falls back to the lowest-base module.
     CHECK(address_for(0) == 0x1000);
+
+    // A flagged image wins even when another file-backed module has a lower
+    // base, and its entry point (not the base) is reported.
+    CHECK(address_for(0x1040, true) == 0x2100);
 
     // Without a memory map there is no address at all.
     UiFakeAccess                      no_map_access;

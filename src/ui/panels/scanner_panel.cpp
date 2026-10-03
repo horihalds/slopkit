@@ -76,18 +76,7 @@ namespace slopkit::ui::panels
         {
             return 0;
         }
-        const process::ModuleInfo* main_module = nullptr;
-        for (const auto& module : modules_)
-        {
-            if (module.kind == process::ModuleKind::anonymous || module.path.empty())
-            {
-                continue;
-            }
-            if (main_module == nullptr || module.base < main_module->base)
-            {
-                main_module = &module;
-            }
-        }
+        const process::ModuleInfo* main_module = process::main_module(modules_);
         if (main_module == nullptr)
         {
             return 0;
@@ -485,8 +474,10 @@ namespace slopkit::ui::panels
         module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(scan::kMaxUserAddress), Qt::UserRole + 1);
         module_combo_->setItemData(0, range_text(0, scan::kMaxUserAddress), Qt::ToolTipRole);
 
-        // Only file-backed modules are listed, ordered by their base address;
+        // Only file-backed modules are listed, with the main image pinned
+        // directly after "All memory" and the rest ordered by base address;
         // anonymous mappings stay covered by the whole-process entry.
+        const process::ModuleInfo*              main = process::main_module(modules_);
         std::vector<const process::ModuleInfo*> listed;
         for (const auto& module : modules_)
         {
@@ -497,6 +488,15 @@ namespace slopkit::ui::panels
             listed.push_back(&module);
         }
         std::ranges::sort(listed, {}, &process::ModuleInfo::base);
+
+        if (main != nullptr)
+        {
+            const auto position = std::ranges::find(listed, main);
+            if (position != listed.end() && position != listed.begin())
+            {
+                std::rotate(listed.begin(), position, position + 1);
+            }
+        }
 
         for (const process::ModuleInfo* module : listed)
         {

@@ -27,6 +27,7 @@ namespace slopkit::ui
         std::string   name;
         std::uint64_t base {};
         std::uint64_t end {};
+        bool          is_main {};
 
         bool operator==(const ModuleSpan&) const = default;
     };
@@ -46,9 +47,12 @@ namespace slopkit::ui
         [[nodiscard]] const ModuleSpan* containing(std::uint64_t address) const;
         // The span whose file name matches `name` case-insensitively.
         [[nodiscard]] const ModuleSpan* find_by_name(std::string_view name) const;
+        // The target's main image span, or nullptr when the map is empty.
+        [[nodiscard]] const ModuleSpan* main() const;
 
     private:
         std::vector<ModuleSpan> spans_;
+        std::size_t             main_index_ {};
     };
 
     // "name+RVA": upper-case hex, no 0x, no leading zeros, no padding.

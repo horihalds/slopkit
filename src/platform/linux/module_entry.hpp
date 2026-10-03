@@ -25,4 +25,19 @@ namespace slopkit::platform
     // Reads the first page of a file and delegates to parse_image_entry.
     [[nodiscard]] std::optional<ImageEntry> read_image_entry(const std::filesystem::path& path);
 
+    // Whether a PE image is a DLL or a standalone executable (the COFF
+    // IMAGE_FILE_DLL characteristic).
+    enum class PeKind
+    {
+        dll,
+        executable,
+    };
+
+    // Parses the PE kind from a mapped header. std::nullopt for a truncated or
+    // non-PE buffer.
+    [[nodiscard]] std::optional<PeKind> parse_pe_kind(std::span<const std::byte> bytes);
+
+    // Reads the first page of a file and delegates to parse_pe_kind.
+    [[nodiscard]] std::optional<PeKind> read_pe_kind(const std::filesystem::path& path);
+
 } // namespace slopkit::platform

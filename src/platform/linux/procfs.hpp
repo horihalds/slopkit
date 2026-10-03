@@ -61,4 +61,14 @@ namespace slopkit::platform
     // have a non-absolute path or whose header cannot be read keep a zero entry.
     void fill_module_entry_points(process::ProcessId pid, std::vector<process::ModuleInfo>& modules);
 
+    // Flags the module backed by `exe_path` as the main image: the exact path
+    // first, then the " (deleted)"-stripped form. Clears any previous flag and
+    // returns whether a module was flagged.
+    [[nodiscard]] bool flag_main_module_by_path(std::vector<process::ModuleInfo>& modules, std::string_view exe_path);
+
+    // Flags the lowest-based PE image that is not a DLL as the main image,
+    // reading headers through /proc/<pid>/root like fill_module_entry_points.
+    // Clears any previous flag and returns whether a module was flagged.
+    [[nodiscard]] bool flag_main_pe_image(process::ProcessId pid, std::vector<process::ModuleInfo>& modules);
+
 } // namespace slopkit::platform

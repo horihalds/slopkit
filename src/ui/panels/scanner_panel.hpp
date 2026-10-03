@@ -55,8 +55,9 @@ namespace slopkit::ui::panels
 
         [[nodiscard]] int progress_percent() const noexcept;
 
-        // Entry point of the target's main module, or its base when the plugin
-        // reports none; 0 before a memory map has been applied.
+        // Entry point of the target's main module (the flagged image, else the
+        // lowest-based one), or its base when the plugin reports no entry; 0
+        // before a memory map has been applied.
         [[nodiscard]] std::uint64_t main_module_address() const noexcept;
 
     signals:

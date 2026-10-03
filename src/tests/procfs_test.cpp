@@ -2,8 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <span>
+#include <string>
 #include <string_view>
 #include <vector>
+
+#include <unistd.h>
 
 #include "platform/linux/module_entry.hpp"
 #include "platform/linux/procfs.hpp"
@@ -37,10 +43,14 @@ namespace
         return bytes;
     }
 
-    // A minimal PE header whose optional header carries `entry_rva`.
-    std::vector<std::byte> make_pe(std::uint32_t entry_rva)
+    // A minimal PE header whose optional header carries `entry_rva` and whose
+    // COFF characteristics carry IMAGE_FILE_DLL when `is_dll` is set.
+    std::vector<std::byte> make_pe(std::uint32_t entry_rva, bool is_dll = false)
     {
-        constexpr std::size_t  lfanew = 0x40;
+        constexpr std::size_t   lfanew              = 0x40;
+        constexpr std::size_t   characteristics_off = 22; // Signature + COFF Characteristics.
+        constexpr std::uint16_t image_file_dll      = 0x2000;
+
         std::vector<std::byte> bytes(lfanew + 44, std::byte {0});
         bytes[0]          = std::byte {'M'};
         bytes[1]          = std::byte {'Z'};
@@ -49,12 +59,23 @@ namespace
         bytes[lfanew]     = std::byte {'P'};
         bytes[lfanew + 1] = std::byte {'E'};
 
+        const auto characteristics              = static_cast<std::uint16_t>(is_dll ? image_file_dll : 0);
+        bytes[lfanew + characteristics_off]     = static_cast<std::byte>(characteristics & 0xff);
+        bytes[lfanew + characteristics_off + 1] = static_cast<std::byte>((characteristics >> 8) & 0xff);
+
         const auto rva_offset = lfanew + 24 + 16;
         for (std::size_t i = 0; i < 4; ++i)
         {
             bytes[rva_offset + i] = static_cast<std::byte>((entry_rva >> (8 * i)) & 0xff);
         }
         return bytes;
+    }
+
+    // Writes a header fixture to `path`.
+    void write_bytes(const std::filesystem::path& path, std::span<const std::byte> bytes)
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 } // namespace
 
@@ -233,4 +254,151 @@ TEST_CASE("module entry filling skips modules it cannot read", "[procfs]")
     {
         CHECK(module.entry == 0);
     }
+}
+
+TEST_CASE("the process main module is the flagged image or the lowest base", "[procfs]")
+{
+    using slopkit::process::main_module;
+    using slopkit::process::ModuleInfo;
+    using slopkit::process::ModuleKind;
+
+    const auto image = [](std::uint64_t base, std::uint64_t size, bool is_main)
+    {
+        ModuleInfo module;
+        module.kind    = ModuleKind::elf;
+        module.base    = base;
+        module.size    = size;
+        module.is_main = is_main;
+        return module;
+    };
+
+    const std::vector<ModuleInfo> none;
+    CHECK(main_module(none) == nullptr);
+
+    // Nothing flagged: the lowest-based file-backed image wins.
+    const std::vector<ModuleInfo> unflagged {image(0x5000, 0x100, false), image(0x2000, 0x100, false)};
+    REQUIRE(main_module(unflagged) != nullptr);
+    CHECK(main_module(unflagged)->base == 0x2000);
+
+    // A flagged image wins even when another file-backed image has a lower base.
+    const std::vector<ModuleInfo> flagged {image(0x2000, 0x100, false), image(0x5000, 0x100, true)};
+    REQUIRE(main_module(flagged) != nullptr);
+    CHECK(main_module(flagged)->base == 0x5000);
+
+    // Anonymous and zero-size entries are skipped: a (plugin-bug) flag on an
+    // anonymous mapping never wins, and the fallback skips both kinds.
+    ModuleInfo anonymous;
+    anonymous.kind    = ModuleKind::anonymous;
+    anonymous.base    = 0x1000;
+    anonymous.size    = 0x1000;
+    anonymous.is_main = true;
+
+    ModuleInfo zero_size;
+    zero_size.kind = ModuleKind::elf;
+    zero_size.base = 0x1500;
+
+    const std::vector<ModuleInfo> skipped {anonymous, zero_size, image(0x6000, 0x100, false)};
+    REQUIRE(main_module(skipped) != nullptr);
+    CHECK(main_module(skipped)->base == 0x6000);
+}
+
+TEST_CASE("module entry tells a PE executable from a DLL", "[procfs]")
+{
+    using slopkit::platform::PeKind;
+
+    const auto executable = slopkit::platform::parse_pe_kind(make_pe(0x1000, false));
+    REQUIRE(executable.has_value());
+    CHECK(*executable == PeKind::executable);
+
+    const auto dll = slopkit::platform::parse_pe_kind(make_pe(0x1000, true));
+    REQUIRE(dll.has_value());
+    CHECK(*dll == PeKind::dll);
+
+    // An ELF header, an MZ-only buffer and garbage are not PE images.
+    const std::vector<std::byte> elf_header {std::byte {0x7f}, std::byte {'E'}, std::byte {'L'}, std::byte {'F'}};
+    CHECK_FALSE(slopkit::platform::parse_pe_kind(elf_header).has_value());
+
+    const std::vector<std::byte> truncated {std::byte {'M'}, std::byte {'Z'}};
+    CHECK_FALSE(slopkit::platform::parse_pe_kind(truncated).has_value());
+
+    const std::vector<std::byte> garbage {std::byte {1}, std::byte {2}, std::byte {3}, std::byte {4}};
+    CHECK_FALSE(slopkit::platform::parse_pe_kind(garbage).has_value());
+}
+
+TEST_CASE("the exe path flags the matching module as the main image", "[procfs]")
+{
+    using slopkit::process::ModuleInfo;
+    using slopkit::process::ModuleKind;
+
+    const auto image = [](std::string name, std::string path, std::uint64_t base)
+    {
+        ModuleInfo module;
+        module.kind = ModuleKind::elf;
+        module.name = std::move(name);
+        module.path = std::move(path);
+        module.base = base;
+        module.size = 0x1000;
+        return module;
+    };
+
+    std::vector<ModuleInfo> modules {image("game", "/opt/game/game", 0x1000),
+                                     image("libc.so.6", "/usr/lib/libc.so.6", 0x2000)};
+
+    CHECK(slopkit::platform::flag_main_module_by_path(modules, "/opt/game/game"));
+    CHECK(modules[0].is_main);
+    CHECK_FALSE(modules[1].is_main);
+
+    // The path read from /proc may carry the " (deleted)" suffix.
+    CHECK(slopkit::platform::flag_main_module_by_path(modules, "/opt/game/game (deleted)"));
+    CHECK(modules[0].is_main);
+
+    // Any previous flag is cleared when the path does not match.
+    CHECK_FALSE(slopkit::platform::flag_main_module_by_path(modules, "/usr/bin/other"));
+    CHECK_FALSE(modules[0].is_main);
+    CHECK_FALSE(modules[1].is_main);
+
+    // An empty exe path never flags anything.
+    CHECK_FALSE(slopkit::platform::flag_main_module_by_path(modules, ""));
+}
+
+TEST_CASE("flag_main_pe_image flags the lowest-based non-DLL PE image", "[procfs]")
+{
+    using slopkit::process::ModuleInfo;
+    using slopkit::process::ModuleKind;
+
+    const auto dir = std::filesystem::temp_directory_path() / ("slopkit-procfs-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    const auto dll_path  = dir / "library.dll";
+    const auto game_path = dir / "game.exe";
+    write_bytes(dll_path, make_pe(0x1000, true));
+    write_bytes(game_path, make_pe(0x2000, false));
+
+    const auto image = [](const std::filesystem::path& path, std::uint64_t base)
+    {
+        ModuleInfo module;
+        module.kind = ModuleKind::pe;
+        module.path = path.string();
+        module.name = path.filename().string();
+        module.base = base;
+        module.size = 0x1000;
+        return module;
+    };
+
+    const auto pid = static_cast<slopkit::process::ProcessId>(::getpid());
+
+    // The DLL at a lower base is skipped; the executable at a higher base wins.
+    std::vector<ModuleInfo> modules {image(dll_path, 0x400000), image(game_path, 0x500000)};
+    CHECK(slopkit::platform::flag_main_pe_image(pid, modules));
+    CHECK_FALSE(modules[0].is_main);
+    CHECK(modules[1].is_main);
+
+    // A previous flag is cleared when no image is an executable.
+    std::vector<ModuleInfo> dlls {image(dll_path, 0x400000)};
+    dlls[0].is_main = true;
+    CHECK_FALSE(slopkit::platform::flag_main_pe_image(pid, dlls));
+    CHECK_FALSE(dlls[0].is_main);
+
+    std::filesystem::remove_all(dir);
 }

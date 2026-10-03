@@ -32,6 +32,18 @@ namespace slopkit::ui::models
         {
             return lhs < rhs ? -1 : (lhs > rhs ? 1 : 0);
         }
+
+        // Ordering tier: main-image hits (0) before other module-backed hits (1)
+        // before the dynamic ones (2).
+        int hit_tier(const ui::ModuleSpans& spans, std::uint64_t address)
+        {
+            if (const ui::ModuleSpan* main = spans.main();
+                main != nullptr && address >= main->base && address < main->end)
+            {
+                return 0;
+            }
+            return spans.containing(address) != nullptr ? 1 : 2;
+        }
     } // namespace
 
     FoundResultsModel::FoundResultsModel(QObject* parent)
@@ -189,8 +201,15 @@ namespace slopkit::ui::models
         return module_spans_.containing(address) != nullptr;
     }
 
+    bool FoundResultsModel::is_main_hit(std::uint64_t address) const
+    {
+        const ui::ModuleSpan* main = module_spans_.main();
+        return main != nullptr && address >= main->base && address < main->end;
+    }
+
     // Shows the top `scan::kDisplayPage` rows of the whole-list ordering: the
-    // static hits first, then the current sort column with the address as the
+    // main-image hits first, then the other module-backed hits, then the dynamic
+    // ones, each group ordered by the current sort column with the address as the
     // tie-breaker. The whole source range is considered through std::partial_sort,
     // so only the visible window is ordered and kept.
     void FoundResultsModel::rebuild_window()
@@ -205,13 +224,16 @@ namespace slopkit::ui::models
                           order_.end(),
                           [this](int lhs, int rhs)
                           {
-                              // Static hits always group above the others; the
+                              // The tier groups the main image, the other
+                              // module-backed hits and the dynamic hits; the
                               // sort order only orders within each group.
-                              const bool left_static  = is_static((*hits_)[static_cast<std::size_t>(lhs)].address);
-                              const bool right_static = is_static((*hits_)[static_cast<std::size_t>(rhs)].address);
-                              if (left_static != right_static)
+                              const int left_tier =
+                                  hit_tier(module_spans_, (*hits_)[static_cast<std::size_t>(lhs)].address);
+                              const int right_tier =
+                                  hit_tier(module_spans_, (*hits_)[static_cast<std::size_t>(rhs)].address);
+                              if (left_tier != right_tier)
                               {
-                                  return left_static;
+                                  return left_tier < right_tier;
                               }
 
                               const auto& left  = (*hits_)[static_cast<std::size_t>(lhs)];

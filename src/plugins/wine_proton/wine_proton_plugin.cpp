@@ -421,6 +421,7 @@ namespace
                 }
             }
             platform::fill_module_entry_points(session->pid, images);
+            (void)platform::flag_main_pe_image(session->pid, images);
 
             auto* array = static_cast<slopkit_module_info*>(host_alloc(sizeof(slopkit_module_info) * images.size()));
             if (array == nullptr && !images.empty())
@@ -431,13 +432,14 @@ namespace
             std::size_t count = 0;
             for (const auto& image : images)
             {
-                array[count].base   = image.base;
-                array[count].size   = image.size;
-                array[count].offset = image.offset;
-                array[count].kind   = static_cast<int32_t>(image.kind);
-                array[count].name   = intern(image.name);
-                array[count].path   = image.path.empty() ? nullptr : intern(image.path);
-                array[count].entry  = image.entry;
+                array[count].base    = image.base;
+                array[count].size    = image.size;
+                array[count].offset  = image.offset;
+                array[count].kind    = static_cast<int32_t>(image.kind);
+                array[count].name    = intern(image.name);
+                array[count].path    = image.path.empty() ? nullptr : intern(image.path);
+                array[count].entry   = image.entry;
+                array[count].is_main = image.is_main ? 1 : 0;
                 ++count;
             }
 
