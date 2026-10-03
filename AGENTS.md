@@ -41,6 +41,13 @@ them for every task in this repository.
   first when `build/` does not exist yet), and `./install.sh` configures, builds
   and installs into `PREFIX` (default `~/.local`), including the desktop entry
   and hicolor icons.
+
+- When a completed plan changes anything that ships in the installed build —
+  `src/**` other than `src/tests/**`, `CMakeLists.txt`, `cmake/**`, `assets/**`
+  or `data/**` — run `./install.sh` so the owner can try the installed build.
+  Plans that only touch `src/tests/**`, `README.md`, `AGENTS.md`, `docs/**`,
+  formatting or comments skip it. If `./install.sh` fails, report the failing
+  command and its output and still finish the plan.
   
 - Run the tests (Catch2 suites, wired into CTest):
 
