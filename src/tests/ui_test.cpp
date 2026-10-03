@@ -13,6 +13,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QEvent>
@@ -34,6 +35,7 @@
 #include <QString>
 #include <QTableView>
 #include <QToolBar>
+#include <QToolButton>
 
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
@@ -521,7 +523,18 @@ TEST_CASE("the main window shell is built", "[ui]")
     // The middle zone holds the live found list and the scanner controls.
     auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
     REQUIRE(found_list != nullptr);
-    CHECK(window.findChild<slopkit::ui::panels::ScannerPanel*>() != nullptr);
+    auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
+    REQUIRE(scanner != nullptr);
+
+    // The scanner options are a plain panel, not a collapsible section: the old
+    // CollapsibleSection used a QToolButton toggle, so none must remain.
+    bool has_hex_checkbox = false;
+    for (auto* box : scanner->findChildren<QCheckBox*>())
+    {
+        has_hex_checkbox = has_hex_checkbox || box->text() == QStringLiteral("Hex");
+    }
+    CHECK(has_hex_checkbox);
+    CHECK(scanner->findChild<QToolButton*>() == nullptr);
 
     auto* found_header = found_list->findChild<QLabel*>();
     REQUIRE(found_header != nullptr);

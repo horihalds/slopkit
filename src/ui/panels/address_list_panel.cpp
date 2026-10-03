@@ -141,11 +141,6 @@ namespace slopkit::ui::panels
             status_label_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
                                       status_);
         }
-        else if (table_.empty())
-        {
-            status_label_->set_status(widgets::StatusKind::info,
-                                      tr("The address list is empty; double-click a Found row to add an entry."));
-        }
         else
         {
             status_label_->clear_status();

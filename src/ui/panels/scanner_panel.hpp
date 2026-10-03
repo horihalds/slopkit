@@ -24,7 +24,6 @@ class QPushButton;
 
 namespace slopkit::ui::widgets
 {
-    class CollapsibleSection;
     class PrimaryButton;
     class ScrollingComboBox;
     class StatusLabel;

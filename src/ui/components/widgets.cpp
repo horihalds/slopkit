@@ -4,8 +4,6 @@
 #include <QEvent>
 #include <QGuiApplication>
 #include <QPalette>
-#include <QSizePolicy>
-#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "ui/theme.hpp"
@@ -142,43 +140,6 @@ namespace slopkit::ui::widgets
     QVBoxLayout* Panel::body() const noexcept
     {
         return body_;
-    }
-
-    CollapsibleSection::CollapsibleSection(const QString& title, bool expanded, QWidget* parent) : QWidget(parent)
-    {
-        auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(4);
-
-        toggle_ = new QToolButton(this);
-        toggle_->setText(title);
-        toggle_->setCheckable(true);
-        toggle_->setChecked(expanded);
-        toggle_->setAutoRaise(true);
-        toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-        toggle_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-        layout->addWidget(toggle_, 0, Qt::AlignLeft);
-
-        content_ = new QWidget(this);
-        content_->setVisible(expanded);
-        body_ = new QVBoxLayout(content_);
-        body_->setContentsMargins(12, 0, 0, 0);
-        body_->setSpacing(6);
-        layout->addWidget(content_);
-
-        connect(toggle_, &QToolButton::toggled, this, &CollapsibleSection::set_expanded);
-    }
-
-    QVBoxLayout* CollapsibleSection::body() const noexcept
-    {
-        return body_;
-    }
-
-    void CollapsibleSection::set_expanded(bool expanded)
-    {
-        toggle_->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
-        content_->setVisible(expanded);
     }
 
     StatusLabel::StatusLabel(QWidget* parent) : QLabel(parent)

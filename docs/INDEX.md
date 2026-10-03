@@ -69,7 +69,7 @@
 - `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
 - `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
 - `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
-- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, collapsible section, icon).
+- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, icon).
 - `src/ui/components/widgets.cpp` — implements the helpers, re-applying their themed palettes when the application palette changes.
 - `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over one `scan::ScanSnapshot` page with Address/Value/Previous columns and sorting.
 - `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font and keeps the display order.

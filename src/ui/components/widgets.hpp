@@ -9,7 +9,6 @@
 #include <QString>
 #include <QWidget>
 
-class QToolButton;
 class QVBoxLayout;
 
 namespace slopkit::ui::widgets
@@ -63,24 +62,6 @@ namespace slopkit::ui::widgets
         [[nodiscard]] QVBoxLayout* body() const noexcept;
 
     private:
-        QVBoxLayout* body_ {};
-    };
-
-    // Collapsible themed section; add the content to body().
-    class CollapsibleSection : public QWidget
-    {
-        Q_OBJECT
-
-    public:
-        explicit CollapsibleSection(const QString& title, bool expanded = true, QWidget* parent = nullptr);
-
-        [[nodiscard]] QVBoxLayout* body() const noexcept;
-
-    private:
-        void set_expanded(bool expanded);
-
-        QToolButton* toggle_ {};
-        QWidget*     content_ {};
         QVBoxLayout* body_ {};
     };
 

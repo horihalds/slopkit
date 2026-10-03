@@ -80,9 +80,24 @@ namespace slopkit::ui::panels
 
         layout->addWidget(widgets::section_header(tr("Scan"), this));
 
-        // Value (and, for "Value between", the upper bound) plus the Hex toggle.
+        auto* action_row  = new QHBoxLayout();
+        scan_button_      = new widgets::PrimaryButton(tr("First Scan"), this);
+        next_scan_button_ = widgets::secondary_button(tr("Next Scan"), this);
+        undo_button_      = widgets::secondary_button(tr("Undo Scan"), this);
+        cancel_button_    = widgets::secondary_button(tr("Cancel"), this);
+        cancel_button_->setVisible(false);
+        action_row->addWidget(scan_button_, 36);
+        action_row->addWidget(next_scan_button_, 32);
+        action_row->addWidget(undo_button_, 32);
+        action_row->addWidget(cancel_button_, 16);
+        layout->addLayout(action_row);
+
+        // Hex toggle, then the value (and, for "Value between", the upper bound).
         auto* value_row = new QHBoxLayout();
-        value_edit_     = new QLineEdit(this);
+        hex_check_      = new QCheckBox(tr("Hex"), this);
+        value_row->addWidget(hex_check_);
+
+        value_edit_ = new QLineEdit(this);
         value_edit_->setPlaceholderText(tr("Value"));
         value_edit_->setFont(mono_font());
         value_row->addWidget(value_edit_, 1);
@@ -92,9 +107,6 @@ namespace slopkit::ui::panels
         value_upper_edit_->setFont(mono_font());
         value_upper_edit_->setVisible(false);
         value_row->addWidget(value_upper_edit_, 1);
-
-        hex_check_ = new QCheckBox(tr("Hex"), this);
-        value_row->addWidget(hex_check_);
         layout->addLayout(value_row);
 
         scan_type_combo_ = new QComboBox(this);
@@ -112,25 +124,13 @@ namespace slopkit::ui::panels
         value_type_combo_->setCurrentIndex(2); // 4 Bytes
         layout->addWidget(value_type_combo_);
 
-        auto* action_row  = new QHBoxLayout();
-        scan_button_      = new widgets::PrimaryButton(tr("First Scan"), this);
-        next_scan_button_ = widgets::secondary_button(tr("Next Scan"), this);
-        undo_button_      = widgets::secondary_button(tr("Undo Scan"), this);
-        cancel_button_    = widgets::secondary_button(tr("Cancel"), this);
-        cancel_button_->setVisible(false);
-        action_row->addWidget(scan_button_, 36);
-        action_row->addWidget(next_scan_button_, 32);
-        action_row->addWidget(undo_button_, 32);
-        action_row->addWidget(cancel_button_, 16);
-        layout->addLayout(action_row);
-
         scan_progress_ = new QProgressBar(this);
         scan_progress_->setRange(0, 100);
         scan_progress_->setValue(0);
         scan_progress_->setFormat(QStringLiteral("%p%"));
         layout->addWidget(scan_progress_);
 
-        auto* options = new widgets::CollapsibleSection(tr("Memory Scan Options"), true, this);
+        auto* options = new widgets::Panel(tr("Memory Scan Options"), this);
         layout->addWidget(options);
 
         auto* options_body = options->body();

@@ -29,10 +29,10 @@ These rules apply to all user interface work in this project. Read this file bef
 
 ## 4. Custom Components
 
-- Build reusable widgets instead of repeating raw Qt calls. Put them in a dedicated module (`ui/components/`): buttons, panels, collapsible sections, section headers, status labels and icon loading.
+- Build reusable widgets instead of repeating raw Qt calls. Put them in a dedicated module (`ui/components/`): buttons, panels, section headers, status labels and icon loading.
 - Components take their styling from the active theme, expose a small and consistent API, and keep no hidden global state.
 - Prefer composing existing components over adding one-off widgets. If similar Qt code appears twice, extract it into a component.
-- Let Qt do the work: use `QSplitter` for dividers, `QGroupBox`/`CollapsibleSection` for groups, `QProgressBar` for progress and `QTableView` with a `QAbstractTableModel` for tabular data rather than custom-painted equivalents.
+- Let Qt do the work: use `QSplitter` for dividers, `QGroupBox`/`widgets::Panel` for groups, `QProgressBar` for progress and `QTableView` with a `QAbstractTableModel` for tabular data rather than custom-painted equivalents.
 - Model/view code keeps its state in the model; the view is only configured once at construction.
 
 ## 5. Fonts
