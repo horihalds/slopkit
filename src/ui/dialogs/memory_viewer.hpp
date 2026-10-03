@@ -8,6 +8,8 @@
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
+#include "process/types.hpp"
+#include "ui/address_format.hpp"
 
 #include <QAbstractTableModel>
 #include <QDialog>
@@ -57,12 +59,26 @@ namespace slopkit::ui::dialogs
         // Marks every row unreadable (no page loaded yet).
         void clear();
 
+        // Sets the module image spans used to render module-relative addresses.
+        void set_modules(std::vector<process::ModuleInfo> modules);
+        // Chooses how static addresses are shown in the Address column.
+        void set_address_mode(ui::AddressMode mode);
+
+        // The Address column text, including this view's 16-digit absolute fallback.
+        [[nodiscard]] QString                address_text(std::uint64_t address) const;
+        // The module-relative text, or nullopt in absolute mode / outside every span.
+        [[nodiscard]] std::optional<QString> relative_address_text(std::uint64_t address) const;
+        // The spans the viewer resolves a pasted module+RVA against.
+        [[nodiscard]] const ui::ModuleSpans& module_spans() const;
+
         [[nodiscard]] bool any_unreadable() const noexcept;
 
     private:
         std::uint64_t           base_ {0};
         std::vector<std::byte>  bytes_;
         std::array<bool, kRows> unreadable_ {};
+        ui::ModuleSpans         module_spans_;
+        ui::AddressMode         address_mode_ {ui::AddressMode::module_relative};
     };
 
     // A hex dump of the attached target's memory. Reads run on the access worker
@@ -78,18 +94,25 @@ namespace slopkit::ui::dialogs
         // Opens the viewer at `address`, aligned down to a row boundary.
         void set_address(std::uint64_t address);
 
+        // Sets the module image spans used to render module-relative addresses.
+        void set_modules(std::vector<process::ModuleInfo> modules);
+        // Chooses how static addresses are shown in the address box and rows.
+        void set_address_mode(ui::AddressMode mode);
+
     protected:
         void showEvent(QShowEvent* event) override;
         void hideEvent(QHideEvent* event) override;
 
     private:
-        void build_layout();
-        void go_to_address();
-        void previous_page();
-        void next_page();
+        void                  build_layout();
+        void                  go_to_address();
+        // The address-box text for `address`: module-relative when applicable, else "0x…".
+        [[nodiscard]] QString display_text(std::uint64_t address) const;
+        void                  previous_page();
+        void                  next_page();
         // Submits one page read unless a request is already in flight.
-        void request_page();
-        void update_state();
+        void                  request_page();
+        void                  update_state();
 
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;

@@ -122,6 +122,16 @@ namespace slopkit::ui::panels
         }
     }
 
+    void AddressListPanel::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        model_->set_modules(std::move(modules));
+    }
+
+    void AddressListPanel::set_address_mode(ui::AddressMode mode)
+    {
+        model_->set_address_mode(mode);
+    }
+
     void AddressListPanel::open_table()
     {
         const QString path = QFileDialog::getOpenFileName(
@@ -182,7 +192,7 @@ namespace slopkit::ui::panels
         }
 
         const auto& entry   = table_.entries()[static_cast<std::size_t>(row)];
-        const auto  address = QStringLiteral("0x") + QString::number(entry.address, 16).toUpper();
+        const auto  address = model_->address_text(entry.address);
         const auto  label   = entry.description.empty() ? address : to_qstring(entry.description);
 
         const auto answer = QMessageBox::question(

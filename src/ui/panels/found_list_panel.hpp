@@ -5,6 +5,7 @@
 #include "process/types.hpp"
 #include "scan/engine.hpp"
 #include "table/address_table.hpp"
+#include "ui/address_format.hpp"
 
 #include <QWidget>
 
@@ -40,6 +41,9 @@ namespace slopkit::ui::panels
         // Announces a fresh module map; the found list marks and groups static
         // hits. Wired from the scanner panel by the window.
         void set_modules(std::vector<process::ModuleInfo> modules);
+
+        // Chooses how static addresses are shown in the Address column.
+        void set_address_mode(ui::AddressMode mode);
 
     signals:
         // A request to open the Memory Viewer at the main module's entry point

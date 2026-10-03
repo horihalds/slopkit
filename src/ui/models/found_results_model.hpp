@@ -4,22 +4,14 @@
 #include <memory>
 #include <vector>
 
+#include "process/types.hpp"
 #include "scan/engine.hpp"
+#include "ui/address_format.hpp"
 
 #include <QAbstractTableModel>
 
 namespace slopkit::ui::models
 {
-
-    // A half-open address range that marks the hits inside it as static: the
-    // image span (code and data) of one loaded module.
-    struct AddressRange
-    {
-        std::uint64_t start {};
-        std::uint64_t end {};
-
-        bool operator==(const AddressRange&) const = default;
-    };
 
     // Address / Value / Previous rows over a scan snapshot. The ordering is
     // computed over the whole stored result set and the model shows the top
@@ -49,9 +41,15 @@ namespace slopkit::ui::models
         void clear();
 
         // Sets the module image spans. Hits inside them are listed first and
-        // their address is drawn in the success colour; the ranges are sorted
+        // their address is drawn in the success colour; the spans are sorted
         // here and survive a later snapshot.
-        void set_module_ranges(std::vector<AddressRange> ranges);
+        void set_modules(std::vector<process::ModuleInfo> modules);
+
+        // Chooses how static addresses are shown in the Address column.
+        void set_address_mode(ui::AddressMode mode);
+
+        // The rendered Address column text for `address`.
+        [[nodiscard]] QString address_text(std::uint64_t address) const;
 
         // True when the address lies inside one of the module image spans.
         [[nodiscard]] bool is_static(std::uint64_t address) const;
@@ -72,7 +70,8 @@ namespace slopkit::ui::models
         std::vector<int>                                  order_;
         // Parallel to `order_`, not to `hits_`.
         std::vector<bool>                                 static_hits_;
-        std::vector<AddressRange>                         module_ranges_;
+        ui::ModuleSpans                                   module_spans_;
+        ui::AddressMode                                   address_mode_ {ui::AddressMode::module_relative};
         int                                               sort_column_ {address};
         Qt::SortOrder                                     sort_order_ {Qt::AscendingOrder};
     };

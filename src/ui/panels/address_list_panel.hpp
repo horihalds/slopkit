@@ -4,7 +4,9 @@
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
+#include "process/types.hpp"
 #include "table/address_table.hpp"
+#include "ui/address_format.hpp"
 
 #include <QString>
 #include <QWidget>
@@ -50,6 +52,12 @@ namespace slopkit::ui::panels
 
         // Polled by the window's tick.
         void refresh();
+
+        // Sets the module image spans used to render module-relative addresses.
+        void set_modules(std::vector<process::ModuleInfo> modules);
+
+        // Chooses how static addresses are shown in the Address column.
+        void set_address_mode(ui::AddressMode mode);
 
     signals:
         // A request to show an address, fed by the context menu.

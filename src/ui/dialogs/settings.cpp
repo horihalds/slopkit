@@ -58,6 +58,7 @@ namespace slopkit::ui::dialogs
 
         categories_ = new QListWidget(this);
         categories_->addItem(tr("Appearance"));
+        categories_->addItem(tr("Addresses"));
         categories_->addItem(tr("Scanning"));
         categories_->addItem(tr("Plugins"));
         categories_->addItem(tr("About"));
@@ -66,6 +67,7 @@ namespace slopkit::ui::dialogs
 
         pages_ = new QStackedWidget(this);
         pages_->addWidget(build_appearance_page());
+        pages_->addWidget(build_addresses_page());
         pages_->addWidget(build_scanning_page());
         pages_->addWidget(build_plugins_page());
         pages_->addWidget(build_about_page());
@@ -123,6 +125,50 @@ namespace slopkit::ui::dialogs
                 });
 
         auto* note = new QLabel(tr("The theme applies live and is not persisted between runs."), page);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+        layout->addStretch(1);
+        return page;
+    }
+
+    QWidget* SettingsDialog::build_addresses_page()
+    {
+        auto* page   = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        layout->addWidget(widgets::section_header(tr("Addresses"), page));
+
+        layout->addWidget(new QLabel(tr("Static addresses"), page));
+
+        auto* mode_group        = new QButtonGroup(page);
+        auto* buttons_row       = new QHBoxLayout();
+        module_relative_button_ = new QRadioButton(tr("Module + RVA"), page);
+        absolute_button_        = new QRadioButton(tr("Absolute address"), page);
+        module_relative_button_->setChecked(true);
+        module_relative_button_->setToolTip(tr("libc.so.6+1A2B"));
+        absolute_button_->setToolTip(tr("0x7F3A1B2C"));
+        mode_group->addButton(module_relative_button_, 0);
+        mode_group->addButton(absolute_button_, 1);
+        buttons_row->addWidget(module_relative_button_);
+        buttons_row->addWidget(absolute_button_);
+        buttons_row->addStretch(1);
+        layout->addLayout(buttons_row);
+
+        // idClicked fires only for user input, so programmatic updates cannot
+        // loop back into this signal.
+        connect(mode_group,
+                &QButtonGroup::idClicked,
+                this,
+                [this](int id)
+                {
+                    emit addressModeChanged(id == 0 ? ui::AddressMode::module_relative : ui::AddressMode::absolute);
+                });
+
+        auto* note = new QLabel(tr("Applies live to the found results, the address list and the Memory Viewer; "
+                                   "not persisted between runs."),
+                                page);
         note->setWordWrap(true);
         layout->addWidget(note);
         layout->addStretch(1);
@@ -221,7 +267,7 @@ namespace slopkit::ui::dialogs
 
     void SettingsDialog::select_about()
     {
-        categories_->setCurrentRow(3);
+        categories_->setCurrentRow(categories_->count() - 1);
     }
 
     void SettingsDialog::set_dark_theme(bool dark)
@@ -233,6 +279,18 @@ namespace slopkit::ui::dialogs
         else
         {
             light_button_->setChecked(true);
+        }
+    }
+
+    void SettingsDialog::set_address_mode(ui::AddressMode mode)
+    {
+        if (mode == ui::AddressMode::module_relative)
+        {
+            module_relative_button_->setChecked(true);
+        }
+        else
+        {
+            absolute_button_->setChecked(true);
         }
     }
 

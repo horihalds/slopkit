@@ -16,7 +16,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-#include "scan/value.hpp"
+#include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 
@@ -83,8 +83,7 @@ namespace slopkit::ui::dialogs
             switch (index.column())
             {
             case address:
-                return QStringLiteral("0x")
-                     + QString::number(base_ + offset, 16).rightJustified(16, QLatin1Char('0')).toUpper();
+                return address_text(base_ + offset);
             case hex:
                 return unreadable_[row] ? QString(kRowBytes * 3, QLatin1Char(' '))
                                         : hex_column(bytes_, offset, kRowBytes);
@@ -173,6 +172,47 @@ namespace slopkit::ui::dialogs
                                    });
     }
 
+    void MemoryDumpModel::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        ui::ModuleSpans spans;
+        spans.set_modules(modules);
+        if (spans == module_spans_)
+        {
+            return;
+        }
+        module_spans_ = std::move(spans);
+        emit dataChanged(index(0, address), index(static_cast<int>(kRows) - 1, address), {Qt::DisplayRole});
+    }
+
+    void MemoryDumpModel::set_address_mode(ui::AddressMode mode)
+    {
+        if (address_mode_ == mode)
+        {
+            return;
+        }
+        address_mode_ = mode;
+        emit dataChanged(index(0, address), index(static_cast<int>(kRows) - 1, address), {Qt::DisplayRole});
+    }
+
+    std::optional<QString> MemoryDumpModel::relative_address_text(std::uint64_t address) const
+    {
+        return ui::module_relative_text(address_mode_, module_spans_, address);
+    }
+
+    QString MemoryDumpModel::address_text(std::uint64_t address) const
+    {
+        if (const auto relative = relative_address_text(address); relative.has_value())
+        {
+            return *relative;
+        }
+        return QStringLiteral("0x") + QString::number(address, 16).rightJustified(16, QLatin1Char('0')).toUpper();
+    }
+
+    const ui::ModuleSpans& MemoryDumpModel::module_spans() const
+    {
+        return module_spans_;
+    }
+
     MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
                                            QWidget*                 parent)
@@ -204,7 +244,8 @@ namespace slopkit::ui::dialogs
         auto* controls = new QHBoxLayout();
         address_edit_  = new QLineEdit(this);
         address_edit_->setFont(mono_font());
-        address_edit_->setPlaceholderText(tr("address"));
+        address_edit_->setPlaceholderText(tr("address or module+RVA"));
+        address_edit_->setToolTip(tr("Absolute address (0x1040) or module-relative (libc.so.6+1A2B)"));
         address_edit_->setMaximumWidth(240);
         controls->addWidget(address_edit_);
 
@@ -268,10 +309,31 @@ namespace slopkit::ui::dialogs
         refresh_timer_->stop();
     }
 
+    void MemoryViewerDialog::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        dump_model_->set_modules(std::move(modules));
+        address_edit_->setText(display_text(base_));
+    }
+
+    void MemoryViewerDialog::set_address_mode(ui::AddressMode mode)
+    {
+        dump_model_->set_address_mode(mode);
+        address_edit_->setText(display_text(base_));
+    }
+
+    QString MemoryViewerDialog::display_text(std::uint64_t address) const
+    {
+        if (const auto relative = dump_model_->relative_address_text(address); relative.has_value())
+        {
+            return *relative;
+        }
+        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
+    }
+
     void MemoryViewerDialog::set_address(std::uint64_t address)
     {
         base_ = address & ~static_cast<std::uint64_t>(MemoryDumpModel::kRowBytes - 1);
-        address_edit_->setText(QStringLiteral("0x") + QString::number(base_, 16).toUpper());
+        address_edit_->setText(display_text(base_));
 
         // The cached page belongs to the previous base.
         dump_model_->clear();
@@ -286,7 +348,8 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::go_to_address()
     {
-        if (const auto parsed = scan::parse_address(address_edit_->text().toStdString()); parsed.has_value())
+        const auto parsed = ui::parse_address_text(address_edit_->text().toStdString(), dump_model_->module_spans());
+        if (parsed.has_value())
         {
             set_address(*parsed);
         }

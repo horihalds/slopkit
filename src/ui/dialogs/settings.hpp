@@ -4,6 +4,7 @@
 
 #include "plugin/plugin_host.hpp"
 #include "scan/engine.hpp"
+#include "ui/address_format.hpp"
 
 #include <QDialog>
 #include <QString>
@@ -38,9 +39,15 @@ namespace slopkit::ui::dialogs
         // Keeps the Appearance selector in step with the active theme.
         void set_dark_theme(bool dark);
 
+        // Keeps the Addresses selector in step without re-emitting.
+        void set_address_mode(ui::AddressMode mode);
+
     signals:
         // The requested theme, so the window can re-apply the palette.
         void darkThemeChanged(bool dark);
+
+        // The requested address display mode, forwarded to the three views.
+        void addressModeChanged(slopkit::ui::AddressMode mode);
 
         // The new fast-scan alignment default, forwarded to the scanner panel.
         void alignmentChanged(quint64 alignment);
@@ -50,6 +57,7 @@ namespace slopkit::ui::dialogs
 
     private:
         [[nodiscard]] QWidget* build_appearance_page();
+        [[nodiscard]] QWidget* build_addresses_page();
         [[nodiscard]] QWidget* build_scanning_page();
         [[nodiscard]] QWidget* build_plugins_page();
         [[nodiscard]] QWidget* build_about_page();
@@ -64,6 +72,8 @@ namespace slopkit::ui::dialogs
         QStackedWidget*       pages_ {};
         QRadioButton*         dark_button_ {};
         QRadioButton*         light_button_ {};
+        QRadioButton*         module_relative_button_ {};
+        QRadioButton*         absolute_button_ {};
         QLineEdit*            alignment_edit_ {};
         QLineEdit*            result_cap_edit_ {};
         QPlainTextEdit*       plugins_view_ {};

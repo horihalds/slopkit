@@ -6,7 +6,9 @@
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
+#include "process/types.hpp"
 #include "table/address_table.hpp"
+#include "ui/address_format.hpp"
 
 #include <QAbstractTableModel>
 
@@ -48,6 +50,15 @@ namespace slopkit::ui::models
         // when the entries are unchanged, so an idle poll never repaints.
         void refresh();
 
+        // Sets the module image spans used to render module-relative addresses.
+        void set_modules(std::vector<process::ModuleInfo> modules);
+
+        // Chooses how static addresses are shown in the Address column.
+        void set_address_mode(ui::AddressMode mode);
+
+        // The rendered Address column text for `address`.
+        [[nodiscard]] QString address_text(std::uint64_t address) const;
+
     signals:
         void statusChanged(const QString& message, bool is_error);
 
@@ -61,6 +72,9 @@ namespace slopkit::ui::models
         process::AttachedTarget& target_;
 
         std::vector<table::AddressEntry> last_entries_;
+
+        ui::ModuleSpans module_spans_;
+        ui::AddressMode address_mode_ {ui::AddressMode::module_relative};
 
         std::optional<process::JobId> write_pending_;
         std::optional<std::uint64_t>  writing_entry_;

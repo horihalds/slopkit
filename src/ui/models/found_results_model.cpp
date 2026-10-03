@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <iterator>
 #include <numeric>
 #include <string_view>
 #include <utility>
@@ -65,7 +64,7 @@ namespace slopkit::ui::models
             switch (index.column())
             {
             case address:
-                return QStringLiteral("0x") + QString::number(hit.address, 16).toUpper();
+                return address_text(hit.address);
             case value:
                 return to_qstring(scan::format_value(config_.value_type, hit.value, config_.hex));
             case previous:
@@ -148,35 +147,46 @@ namespace slopkit::ui::models
         return &(*hits_)[static_cast<std::size_t>(order_[static_cast<std::size_t>(row)])];
     }
 
-    void FoundResultsModel::set_module_ranges(std::vector<AddressRange> ranges)
+    void FoundResultsModel::set_modules(std::vector<process::ModuleInfo> modules)
     {
-        std::ranges::sort(ranges, {}, &AddressRange::start);
-        if (ranges == module_ranges_)
+        ui::ModuleSpans spans;
+        spans.set_modules(modules);
+        if (spans == module_spans_)
         {
             return;
         }
 
         beginResetModel();
-        module_ranges_ = std::move(ranges);
+        module_spans_ = std::move(spans);
         rebuild_window();
         endResetModel();
     }
 
+    void FoundResultsModel::set_address_mode(ui::AddressMode mode)
+    {
+        if (address_mode_ == mode)
+        {
+            return;
+        }
+        address_mode_ = mode;
+        if (!order_.empty())
+        {
+            emit dataChanged(index(0, address), index(static_cast<int>(order_.size()) - 1, address), {Qt::DisplayRole});
+        }
+    }
+
+    QString FoundResultsModel::address_text(std::uint64_t address) const
+    {
+        if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, address); relative.has_value())
+        {
+            return *relative;
+        }
+        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
+    }
+
     bool FoundResultsModel::is_static(std::uint64_t address) const
     {
-        const auto after = std::upper_bound(module_ranges_.begin(),
-                                            module_ranges_.end(),
-                                            address,
-                                            [](std::uint64_t value, const AddressRange& range)
-                                            {
-                                                return value < range.start;
-                                            });
-        if (after == module_ranges_.begin())
-        {
-            return false;
-        }
-        const AddressRange& candidate = *std::prev(after);
-        return address < candidate.end;
+        return module_spans_.containing(address) != nullptr;
     }
 
     // Shows the top `scan::kDisplayPage` rows of the whole-list ordering: the

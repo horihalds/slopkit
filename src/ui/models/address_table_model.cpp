@@ -57,7 +57,7 @@ namespace slopkit::ui::models
             case description:
                 return to_qstring(entry.description);
             case address:
-                return QStringLiteral("0x") + QString::number(entry.address, 16).toUpper();
+                return address_text(entry.address);
             case type:
                 return to_qstring(scan::describe(entry.type));
             case value:
@@ -203,6 +203,43 @@ namespace slopkit::ui::models
 
         note_table_changed();
         emit dataChanged(index(0, 0), index(rowCount() - 1, column_count - 1));
+    }
+
+    void AddressTableModel::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        ui::ModuleSpans spans;
+        spans.set_modules(modules);
+        if (spans == module_spans_)
+        {
+            return;
+        }
+        module_spans_ = std::move(spans);
+        if (rowCount() > 0)
+        {
+            emit dataChanged(index(0, address), index(rowCount() - 1, address), {Qt::DisplayRole});
+        }
+    }
+
+    void AddressTableModel::set_address_mode(ui::AddressMode mode)
+    {
+        if (address_mode_ == mode)
+        {
+            return;
+        }
+        address_mode_ = mode;
+        if (rowCount() > 0)
+        {
+            emit dataChanged(index(0, address), index(rowCount() - 1, address), {Qt::DisplayRole});
+        }
+    }
+
+    QString AddressTableModel::address_text(std::uint64_t address) const
+    {
+        if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, address); relative.has_value())
+        {
+            return *relative;
+        }
+        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
     }
 
     bool AddressTableModel::write_value_at(int row, const QString& text)

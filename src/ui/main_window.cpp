@@ -139,7 +139,15 @@ namespace slopkit::ui
                     on_memory_view_requested(scanner_->main_module_address());
                 });
         connect(scanner_, &panels::ScannerPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
-        connect(scanner_, &panels::ScannerPanel::memoryMapApplied, found_list_, &panels::FoundListPanel::set_modules);
+        connect(scanner_,
+                &panels::ScannerPanel::memoryMapApplied,
+                this,
+                [this](std::vector<process::ModuleInfo> modules)
+                {
+                    found_list_->set_modules(modules);
+                    address_list_->set_modules(modules);
+                    memory_view_->set_modules(std::move(modules));
+                });
         connect(undo_scan_action_,
                 &QAction::triggered,
                 this,
@@ -207,6 +215,17 @@ namespace slopkit::ui
                 [this](quint64 alignment)
                 {
                     scanner_->set_default_alignment(alignment);
+                });
+
+        settings_->set_address_mode(ui::AddressMode::module_relative);
+        connect(settings_,
+                &dialogs::SettingsDialog::addressModeChanged,
+                this,
+                [this](ui::AddressMode mode)
+                {
+                    found_list_->set_address_mode(mode);
+                    address_list_->set_address_mode(mode);
+                    memory_view_->set_address_mode(mode);
                 });
 
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);

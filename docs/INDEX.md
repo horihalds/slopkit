@@ -65,34 +65,36 @@
 - `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency.
 - `src/ui/app.hpp` — the `App`: owns the plugin host, the access worker, the attached target and the main window, and runs the Qt event loop.
 - `src/ui/app.cpp` — builds the `QApplication`, applies the Fusion style, the theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
+- `src/ui/address_format.hpp` — `AddressMode`, the `ModuleSpan`/`ModuleSpans` lookup over file-backed module images, the `name+RVA` renderer and the dual-form address parser.
+- `src/ui/address_format.cpp` — span filtering and sorting, binary-search containment, case-insensitive name lookup and `scan::parse_address` delegation.
 - `src/ui/completion_notifier.hpp` — `CompletionNotifier`: the coalescing, thread-safe bridge from the access worker's completion hook to the Qt event loop.
 - `src/ui/completion_notifier.cpp` — posts at most one queued wake-up per drain and emits `completionsAvailable()` on the UI thread.
 - `src/ui/main_window.hpp` — `MainWindow`: the menu bar, status bar and splitter zones, the owned address table and the four dialogs.
-- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, polls the panels on a 50 ms tick and submits the freeze pass to the worker.
+- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, polls the panels on a 50 ms tick, fans the module map and the address display mode out to the three views and submits the freeze pass to the worker.
 - `src/ui/theme.hpp` — the `Theme` colour-role struct, the dark/light constructors, `make_palette()` and `apply_theme()`.
 - `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
 - `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
 - `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
 - `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, icon).
 - `src/ui/components/widgets.cpp` — implements the helpers, re-applying their themed palettes when the application palette changes.
-- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over the whole stored scan result set with Address/Value/Previous columns, showing the top `kDisplayPage` rows of the static-first ordering, plus the module image spans that mark static hits.
-- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font; orders the whole set with `std::partial_sort` (static hits first) and draws their address in the success colour.
-- `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox and the async write.
-- `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value` and submits one write job with the pending-job-id guard.
+- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over the whole stored scan result set with Address/Value/Previous columns, showing the top `kDisplayPage` rows of the static-first ordering, plus the module spans and address mode that mark static hits and render their address.
+- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font; orders the whole set with `std::partial_sort` (static hits first), draws their address in the success colour and renders it as `module+RVA` in module-relative mode.
+- `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox, the async write, the module spans and the address mode.
+- `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value`, submits one write job with the pending-job-id guard and renders the Address column as `module+RVA` in module-relative mode.
 - `src/ui/panels/scanner_panel.hpp` — the scan controls with padded whole-address-space range defaults, the handoff-created scan session, the scan engine, the `memoryMapApplied` module-map signal and the bottom-right Add Address button.
 - `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, lists name-only module entries in the range dropdown, applies the handed-over session, starts first/next/undo scans, resets the engine on New Scan and raises the Add Address request.
-- `src/ui/panels/found_list_panel.hpp` — the one-line `Showing N of M results` list over the scan engine's snapshot and the address table; its entry row holds the Memory View button.
-- `src/ui/panels/found_list_panel.cpp` — shows the static-first top page of the engine's whole stored result set, detects a new result set by its shared handle, forwards the module map to the model for static marking, builds the single always-visible result line from the rows on screen and adds double-clicked hits; its entry row raises the Memory View request.
-- `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu and open/save.
-- `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions, toggles freezes and loads/saves through native file dialogs.
+- `src/ui/panels/found_list_panel.hpp` — the one-line `Showing N of M results` list over the scan engine's snapshot and the address table; its entry row holds the Memory View button, and it forwards the module map and address mode to the model.
+- `src/ui/panels/found_list_panel.cpp` — shows the static-first top page of the engine's whole stored result set, detects a new result set by its shared handle, forwards the module map and address mode to the model, builds the single always-visible result line from the rows on screen and adds double-clicked hits; its entry row raises the Memory View request.
+- `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu, open/save and the forwarded module map and address mode.
+- `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions using the model's address text, toggles freezes and loads/saves through native file dialogs.
 - `src/ui/dialogs/process_list.hpp` — the fixed-size Process List picker and its filtered, sortable process model.
 - `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states and a single failure message line.
 - `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable`.
 - `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
-- `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker.
-- `src/ui/dialogs/memory_viewer.cpp` — one cached page of address/bytes/ASCII rows with unreadable-range markers, refreshed asynchronously.
-- `src/ui/dialogs/settings.hpp` — the Settings categories and the changes it reports to the window (theme, alignment).
-- `src/ui/dialogs/settings.cpp` — Appearance, Scanning, Plugins and About pages, including the live theme switch.
+- `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker, with its module spans and address mode.
+- `src/ui/dialogs/memory_viewer.cpp` — one cached page of address/bytes/ASCII rows with unreadable-range markers refreshed asynchronously; rows and the address box render `module+RVA` in module-relative mode and Go accepts both address forms.
+- `src/ui/dialogs/settings.hpp` — the Settings categories and the changes it reports to the window (theme, address display mode, alignment).
+- `src/ui/dialogs/settings.cpp` — Appearance, Addresses, Scanning, Plugins and About pages, including the live theme and address display switches.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
 - `src/tests/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
@@ -103,7 +105,7 @@
 - `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
-- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the scanner range controls and New Scan reset, the one-line found list (including the whole-result-set static-first case), the found-results model (including static grouping/colour and whole-set ordering) and the address-table model.
+- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the scanner range controls and New Scan reset, the one-line found list (including the whole-result-set static-first case), the module-span/address-format helpers, the found-results/address-table/memory-dump models (static grouping, colour, whole-set ordering and module+RVA rendering in both modes), the Memory Viewer box/Go round-trip and the Addresses settings switch.
 - `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.

@@ -119,17 +119,12 @@ namespace slopkit::ui::panels
 
     void FoundListPanel::set_modules(std::vector<process::ModuleInfo> modules)
     {
-        std::vector<models::AddressRange> ranges;
-        ranges.reserve(modules.size());
-        for (const auto& module : modules)
-        {
-            if (!process::is_file_backed(module))
-            {
-                continue;
-            }
-            ranges.push_back(models::AddressRange {module.base, module.base + module.size});
-        }
-        model_->set_module_ranges(std::move(ranges));
+        model_->set_modules(std::move(modules));
+    }
+
+    void FoundListPanel::set_address_mode(ui::AddressMode mode)
+    {
+        model_->set_address_mode(mode);
     }
 
     void FoundListPanel::refresh()

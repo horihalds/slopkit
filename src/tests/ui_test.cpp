@@ -7,9 +7,12 @@
 #include <cstring>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <QAbstractItemView>
@@ -27,17 +30,21 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QList>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QScrollBar>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QString>
 #include <QTableView>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 
@@ -45,11 +52,14 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/plugin_access.hpp"
+#include "process/types.hpp"
 #include "scan/source.hpp"
+#include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
+#include "ui/dialogs/settings.hpp"
 #include "ui/main_window.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/models/found_results_model.hpp"
@@ -334,6 +344,29 @@ namespace
         }
         return nullptr;
     }
+
+    QRadioButton* radio_labelled(QWidget& root, const QString& text)
+    {
+        for (auto* button : root.findChildren<QRadioButton*>())
+        {
+            if (button->text() == text)
+            {
+                return button;
+            }
+        }
+        return nullptr;
+    }
+
+    // A file-backed module image fixture for the module-span tests.
+    slopkit::process::ModuleInfo module_image(std::string name, std::uint64_t base, std::uint64_t size)
+    {
+        slopkit::process::ModuleInfo module;
+        module.kind = slopkit::process::ModuleKind::elf;
+        module.name = std::move(name);
+        module.base = base;
+        module.size = size;
+        return module;
+    }
 } // namespace
 
 TEST_CASE("both themes define every colour role", "[ui]")
@@ -409,6 +442,110 @@ TEST_CASE("themed widgets follow a theme switch", "[ui]")
     CHECK(button.palette().color(QPalette::Button) == slopkit::ui::light_theme().accent);
 }
 
+TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
+{
+    slopkit::ui::ModuleSpans spans;
+    CHECK(spans.empty());
+    CHECK(spans.containing(0x1000) == nullptr);
+    CHECK(spans.find_by_name("low") == nullptr);
+
+    std::vector<slopkit::process::ModuleInfo> modules;
+    modules.push_back(module_image("low", 0x2000, 0x1000));
+    modules.push_back(module_image("high", 0x5000, 0x100));
+    // Not file-backed: dropped from the map.
+    slopkit::process::ModuleInfo anonymous;
+    anonymous.base = 0x3000;
+    anonymous.size = 0x1000;
+    modules.push_back(anonymous);
+    // Deliberately out of order; the map sorts by base.
+    modules.push_back(module_image("first", 0x1000, 0x800));
+
+    spans.set_modules(modules);
+
+    CHECK_FALSE(spans.empty());
+    REQUIRE(spans.containing(0x1000) != nullptr);
+    CHECK(spans.containing(0x1000)->name == "first");
+    CHECK(spans.containing(0x17FF)->name == "first");
+    CHECK(spans.containing(0x1800) == nullptr); // Half-open: base + size is outside.
+    CHECK(spans.containing(0x2FFF)->name == "low");
+    CHECK(spans.containing(0x3000) == nullptr); // The anonymous mapping never labels an address.
+    CHECK(spans.containing(0x0FFF) == nullptr);
+
+    // The name lookup is case-insensitive.
+    REQUIRE(spans.find_by_name("LOW") != nullptr);
+    CHECK(spans.find_by_name("High")->base == 0x5000);
+    CHECK(spans.find_by_name("missing") == nullptr);
+
+    spans.clear();
+    CHECK(spans.empty());
+}
+
+TEST_CASE("a module without a name is labelled from its path", "[ui]")
+{
+    slopkit::process::ModuleInfo module = module_image("", 0x4000, 0x100);
+    module.path                         = "/usr/lib/libc.so.6";
+    const std::vector<slopkit::process::ModuleInfo> modules {module};
+
+    slopkit::ui::ModuleSpans spans;
+    spans.set_modules(modules);
+    REQUIRE(spans.containing(0x4000) != nullptr);
+    CHECK(spans.containing(0x4000)->name == "libc.so.6");
+    CHECK(slopkit::ui::format_module_relative(*spans.containing(0x4000), 0x4000) == QStringLiteral("libc.so.6+0"));
+}
+
+TEST_CASE("module-relative addresses render as name+HEX", "[ui]")
+{
+    const slopkit::ui::ModuleSpan span {"app", 0x1000, 0x2000};
+
+    CHECK(slopkit::ui::format_module_relative(span, 0x1000) == QStringLiteral("app+0"));
+    CHECK(slopkit::ui::format_module_relative(span, 0x1040) == QStringLiteral("app+40"));
+    CHECK(slopkit::ui::format_module_relative(span, 0x1A2B) == QStringLiteral("app+A2B"));
+    // No 0x prefix and no leading zeros.
+    CHECK_FALSE(slopkit::ui::format_module_relative(span, 0x1040).contains(QStringLiteral("0x")));
+}
+
+TEST_CASE("module-relative text falls back in absolute mode and outside spans", "[ui]")
+{
+    const std::vector<slopkit::process::ModuleInfo> modules {module_image("app", 0x1000, 0x1000)};
+    slopkit::ui::ModuleSpans                        spans;
+    spans.set_modules(modules);
+
+    const auto relative = slopkit::ui::module_relative_text(slopkit::ui::AddressMode::module_relative, spans, 0x1040);
+    REQUIRE(relative.has_value());
+    CHECK(*relative == QStringLiteral("app+40"));
+
+    // Outside every span there is no module-relative text, whatever the mode.
+    CHECK_FALSE(
+        slopkit::ui::module_relative_text(slopkit::ui::AddressMode::module_relative, spans, 0x5000000).has_value());
+    // The absolute mode never produces module-relative text.
+    CHECK_FALSE(slopkit::ui::module_relative_text(slopkit::ui::AddressMode::absolute, spans, 0x1040).has_value());
+
+    slopkit::ui::ModuleSpans empty;
+    CHECK_FALSE(
+        slopkit::ui::module_relative_text(slopkit::ui::AddressMode::module_relative, empty, 0x1040).has_value());
+}
+
+TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")
+{
+    const std::vector<slopkit::process::ModuleInfo> modules {module_image("low", 0x1000, 0x1000)};
+    slopkit::ui::ModuleSpans                        spans;
+    spans.set_modules(modules);
+
+    // Absolute forms still go through scan::parse_address.
+    CHECK(slopkit::ui::parse_address_text("0x1040", spans) == std::optional<std::uint64_t> {0x1040});
+    CHECK(slopkit::ui::parse_address_text("1040", spans) == std::optional<std::uint64_t> {1040});
+
+    // module+RVA: case-insensitive name, optional 0x on the RVA.
+    CHECK(slopkit::ui::parse_address_text("LOW+40", spans) == std::optional<std::uint64_t> {0x1040});
+    CHECK(slopkit::ui::parse_address_text("low+0x40", spans) == std::optional<std::uint64_t> {0x1040});
+    CHECK(slopkit::ui::parse_address_text("low+0", spans) == std::optional<std::uint64_t> {0x1000});
+
+    // An unknown module or an unparsable RVA yields nothing.
+    CHECK_FALSE(slopkit::ui::parse_address_text("missing+40", spans).has_value());
+    CHECK_FALSE(slopkit::ui::parse_address_text("low+bogus", spans).has_value());
+    CHECK_FALSE(slopkit::ui::parse_address_text("not an address", spans).has_value());
+}
+
 TEST_CASE("the found-results model mirrors a snapshot", "[ui]")
 {
     application();
@@ -476,11 +613,11 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
     CHECK(model.hit_at(2)->address == 0x5000000);
     CHECK_FALSE(model.is_static(0x1000));
 
-    // Ranges deliberately out of order; the model sorts them.
-    model.set_module_ranges({
-        slopkit::ui::models::AddressRange {0x2000, 0x3000},
-         slopkit::ui::models::AddressRange {0x1000, 0x1800}
-    });
+    // Images deliberately out of order; the model sorts them.
+    std::vector<slopkit::process::ModuleInfo> modules;
+    modules.push_back(module_image("low", 0x2000, 0x1000));
+    modules.push_back(module_image("first", 0x1000, 0x800));
+    model.set_modules(modules);
 
     // Static hits group first in address order, the heap hit last.
     CHECK(model.hit_at(0)->address == 0x1000);
@@ -490,6 +627,22 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
     CHECK(model.is_static(0x17FF));
     CHECK_FALSE(model.is_static(0x1800)); // Half-open: base + size is outside.
     CHECK_FALSE(model.is_static(0x5000000));
+
+    // Static hits render as module+RVA by default; the heap hit stays absolute.
+    CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("first+0"));
+    CHECK(model.data(model.index(1, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("low+0"));
+    CHECK(model.data(model.index(2, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("0x5000000"));
+
+    // Switching to absolute restores the raw address text everywhere.
+    model.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("0x1000"));
+    CHECK(model.data(model.index(2, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("0x5000000"));
+    model.set_address_mode(slopkit::ui::AddressMode::module_relative);
 
     const QColor green = slopkit::ui::active_theme().success;
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::ForegroundRole)
@@ -511,7 +664,7 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
     CHECK(model.hit_at(2)->address == 0x5000000);
 
     // Dropping the map makes every hit non-static again.
-    model.set_module_ranges({});
+    model.set_modules({});
     CHECK_FALSE(model.is_static(0x1000));
     CHECK_FALSE(model.is_static(0x2000));
     CHECK(model.rowCount() == 3);
@@ -562,9 +715,7 @@ TEST_CASE("the found-results model orders the whole result set", "[ui]")
 
     const auto whole = late_static_result();
     model.set_snapshot(snapshot_over(whole), config);
-    model.set_module_ranges({
-        slopkit::ui::models::AddressRange {0x500000, 0x500100}
-    });
+    model.set_modules({module_image("late", 0x500000, 0x100)});
 
     // The page alone holds no static hit, yet the whole-list ordering puts the
     // late static hit first and still shows one page of rows.
@@ -588,9 +739,7 @@ TEST_CASE("the found-results model sorts over the whole result set", "[ui]")
 
     const auto whole = late_static_result();
     model.set_snapshot(snapshot_over(whole), config);
-    model.set_module_ranges({
-        slopkit::ui::models::AddressRange {0x500000, 0x500100}
-    });
+    model.set_modules({module_image("late", 0x500000, 0x100)});
 
     model.sort(slopkit::ui::models::FoundResultsModel::value, Qt::DescendingOrder);
 
@@ -769,6 +918,98 @@ TEST_CASE("the address-table model edits the table", "[ui]")
         model.index(0, slopkit::ui::models::AddressTableModel::value), QStringLiteral("42"), Qt::EditRole));
     CHECK(is_error);
     CHECK(message.contains(QStringLiteral("Not attached")));
+}
+
+TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    slopkit::table::AddressEntry entry;
+    entry.address = 0x1040;
+    entry.type    = slopkit::scan::ValueType::int32;
+    entry.bytes   = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(entry);
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+
+    const auto address_cell = [&model]()
+    {
+        return model.data(model.index(0, slopkit::ui::models::AddressTableModel::address), Qt::DisplayRole).toString();
+    };
+
+    // Without a module map the address stays absolute even in the default mode.
+    CHECK(address_cell() == QStringLiteral("0x1040"));
+
+    // Inside a module image the Address column renders name+RVA.
+    model.set_modules({module_image("app", 0x1000, 0x1000)});
+    CHECK(address_cell() == QStringLiteral("app+40"));
+
+    // A heap address is never labelled.
+    CHECK(model.address_text(0x5000000) == QStringLiteral("0x5000000"));
+
+    // Absolute mode restores the raw text.
+    model.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(address_cell() == QStringLiteral("0x1040"));
+}
+
+TEST_CASE("the address list delete confirmation follows the address mode", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    slopkit::table::AddressEntry entry;
+    entry.address = 0x1040;
+    entry.type    = slopkit::scan::ValueType::int32;
+    entry.bytes   = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(entry);
+    table.set_selected(0);
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    // Dismisses the modal confirmation and returns its text. `delete_selected`
+    // is synchronous, so the timer fires inside the box's nested event loop.
+    const auto confirmation_text = [&panel]()
+    {
+        QString prompt;
+        QTimer::singleShot(0,
+                           [&prompt]
+                           {
+                               for (QWidget* widget : QApplication::topLevelWidgets())
+                               {
+                                   if (auto* box = qobject_cast<QMessageBox*>(widget);
+                                       box != nullptr && box->isVisible())
+                                   {
+                                       prompt = box->text();
+                                       box->reject();
+                                       return;
+                                   }
+                               }
+                           });
+        panel.delete_selected();
+        return prompt;
+    };
+
+    // No module map yet: the confirmation echoes the absolute address.
+    CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
+
+    // Inside a module image the confirmation echoes module+RVA.
+    panel.set_modules({module_image("app", 0x1000, 0x1000)});
+    CHECK(confirmation_text() == QStringLiteral("Delete app+40?"));
+
+    // Absolute mode switches the confirmation back.
+    panel.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
 }
 
 TEST_CASE("the main window shell is built", "[ui]")
@@ -2018,7 +2259,8 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     REQUIRE(address_edit != nullptr);
 
     memory_view->click();
-    CHECK(address_edit->text() == QStringLiteral("0x1040"));
+    // The main module's map is loaded, so the box shows module+RVA by default.
+    CHECK(address_edit->text() == QStringLiteral("low+40"));
 
     // The add button reaches the same non-modal dialog as the menu action.
     auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
@@ -2026,4 +2268,174 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     CHECK_FALSE(add_dialog->isVisible());
     add_address->click();
     CHECK(add_dialog->isVisible());
+}
+
+TEST_CASE("the memory dump model renders static rows as module+RVA", "[ui]")
+{
+    application();
+
+    slopkit::ui::dialogs::MemoryDumpModel model;
+    model.set_page(0x1000, std::vector<std::byte>(32, std::byte {0}));
+
+    const auto address_cell = [&model](int row)
+    {
+        return model.data(model.index(row, slopkit::ui::dialogs::MemoryDumpModel::address), Qt::DisplayRole).toString();
+    };
+
+    // Without a module map the column keeps the 16-digit padded text.
+    CHECK(address_cell(1) == QStringLiteral("0x0000000000001010"));
+
+    model.set_modules({module_image("app", 0x1000, 0x1000)});
+    CHECK(address_cell(0) == QStringLiteral("app+0"));
+    CHECK(address_cell(1) == QStringLiteral("app+10"));
+
+    // Absolute mode restores the padded column.
+    model.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(address_cell(1) == QStringLiteral("0x0000000000001010"));
+
+    // A page outside every span stays absolute in both modes.
+    model.set_address_mode(slopkit::ui::AddressMode::module_relative);
+    model.set_page(0x5000000, std::vector<std::byte>(32, std::byte {0}));
+    CHECK(address_cell(1) == QStringLiteral("0x0000000005000010"));
+}
+
+TEST_CASE("the memory viewer box accepts module-relative addresses", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    address_edit = viewer.findChild<QLineEdit*>();
+    REQUIRE(address_edit != nullptr);
+    auto* go = button_labelled(viewer, QStringLiteral("Go"));
+    REQUIRE(go != nullptr);
+
+    viewer.set_modules({module_image("app", 0x1000, 0x1000)});
+
+    // set_address writes the display text into the box.
+    viewer.set_address(0x1040);
+    CHECK(address_edit->text() == QStringLiteral("app+40"));
+
+    // An address outside every module keeps today's text.
+    viewer.set_address(0x5000000);
+    CHECK(address_edit->text() == QStringLiteral("0x5000000"));
+
+    // Pasting a module+RVA (case-insensitively) and pressing Go navigates.
+    viewer.set_address(0x1000);
+    address_edit->setText(QStringLiteral("APP+40"));
+    go->click();
+    CHECK(address_edit->text() == QStringLiteral("app+40"));
+
+    // An unparsable value leaves the page where it was: the box keeps the raw input.
+    address_edit->setText(QStringLiteral("missing+40"));
+    go->click();
+    CHECK(address_edit->text() == QStringLiteral("missing+40"));
+}
+
+TEST_CASE("the settings dialog offers the address display choice", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost          host;
+    slopkit::scan::ScanEngine            engine;
+    slopkit::ui::dialogs::SettingsDialog settings {host, engine};
+
+    auto* categories = settings.findChild<QListWidget*>();
+    REQUIRE(categories != nullptr);
+    REQUIRE(categories->count() == 5);
+    CHECK(categories->item(0)->text() == QStringLiteral("Appearance"));
+    CHECK(categories->item(1)->text() == QStringLiteral("Addresses"));
+    CHECK(categories->item(2)->text() == QStringLiteral("Scanning"));
+
+    auto* module_relative = radio_labelled(settings, QStringLiteral("Module + RVA"));
+    REQUIRE(module_relative != nullptr);
+    auto* absolute = radio_labelled(settings, QStringLiteral("Absolute address"));
+    REQUIRE(absolute != nullptr);
+    CHECK(module_relative->isChecked());
+    CHECK_FALSE(absolute->isChecked());
+
+    int                      changes = 0;
+    slopkit::ui::AddressMode last    = slopkit::ui::AddressMode::module_relative;
+    QObject::connect(&settings,
+                     &slopkit::ui::dialogs::SettingsDialog::addressModeChanged,
+                     &settings,
+                     [&](slopkit::ui::AddressMode mode)
+                     {
+                         ++changes;
+                         last = mode;
+                     });
+
+    absolute->click();
+    CHECK(changes == 1);
+    CHECK(last == slopkit::ui::AddressMode::absolute);
+    CHECK(absolute->isChecked());
+
+    // A programmatic update keeps the radios in step without re-emitting.
+    settings.set_address_mode(slopkit::ui::AddressMode::module_relative);
+    CHECK(module_relative->isChecked());
+    CHECK(changes == 1);
+
+    // Help > About still reaches the About page after the extra category.
+    settings.select_about();
+    REQUIRE(categories->currentItem() != nullptr);
+    CHECK(categories->currentRow() == categories->count() - 1);
+    CHECK(categories->currentItem()->text() == QStringLiteral("About"));
+}
+
+TEST_CASE("the Addresses setting switches the viewer live", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+
+    slopkit::process::ModuleInfo image;
+    image.base     = 0x1000;
+    image.size     = 0x800;
+    image.entry    = 0x1040;
+    image.kind     = slopkit::process::ModuleKind::elf;
+    image.name     = "low";
+    image.path     = "/opt/low";
+    access.modules = {image};
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::MainWindow          window {worker, target, host};
+
+    attach_app_session(worker);
+
+    auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
+    REQUIRE(scanner != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [scanner]
+                    {
+                        return scanner->main_module_address() != 0;
+                    }));
+
+    auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
+    REQUIRE(viewer != nullptr);
+    auto* address_edit = viewer->findChild<QLineEdit*>();
+    REQUIRE(address_edit != nullptr);
+
+    viewer->set_address(0x1040);
+    CHECK(address_edit->text() == QStringLiteral("low+40"));
+
+    auto* settings = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
+    REQUIRE(settings != nullptr);
+    auto* module_relative = radio_labelled(*settings, QStringLiteral("Module + RVA"));
+    REQUIRE(module_relative != nullptr);
+    auto* absolute = radio_labelled(*settings, QStringLiteral("Absolute address"));
+    REQUIRE(absolute != nullptr);
+    CHECK(module_relative->isChecked());
+
+    // Clicking the setting re-renders the viewer immediately, with no reload.
+    absolute->click();
+    CHECK(address_edit->text() == QStringLiteral("0x1040"));
+
+    module_relative->click();
+    CHECK(address_edit->text() == QStringLiteral("low+40"));
 }
