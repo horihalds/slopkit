@@ -5,7 +5,7 @@
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
 - `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included.
-- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs. Defaults to an optimized `RelWithDebInfo` build when no build type is given.
+- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs. Defaults to an optimized `RelWithDebInfo` build when no build type is given, and compiles every target with `-march=native -mtune=native` unless the default-on `SLOPKIT_NATIVE` option is turned off.
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.

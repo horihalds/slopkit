@@ -21,6 +21,20 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-Wno-free-nonheap-object)
 endif()
 
+# --- CPU tuning ------------------------------------------------------------
+#
+# Build for the host CPU's full instruction set so the compiler emits every
+# modern instruction available (AVX2/AVX-512, BMI, FMA, ...), which matters
+# most for the scanner's hot loops. `-DSLOPKIT_NATIVE=OFF` restores a portable
+# build targeting the compiler's default baseline.
+option(SLOPKIT_NATIVE "Build for the host CPU with -march/-mtune=native" ON)
+
+add_library(slopkit_native INTERFACE)
+if(SLOPKIT_NATIVE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(slopkit_native INTERFACE
+        $<$<COMPILE_LANGUAGE:CXX>:-march=native;-mtune=native>)
+endif()
+
 # --- install layout --------------------------------------------------------
 #
 # GNUInstallDirs drives every install destination and the relative plugin
@@ -98,6 +112,7 @@ target_compile_definitions(slopkit PRIVATE SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKI
 target_compile_options(slopkit PRIVATE -Wall -Wextra)
 target_link_libraries(slopkit PRIVATE
     slopkit_assets
+    slopkit_native
     Qt6::Widgets
     PkgConfig::ZYDIS
     ${CMAKE_DL_LIBS})
@@ -116,6 +131,7 @@ add_library(slopkit_platform STATIC ${SLOPKIT_PLATFORM_SOURCES})
 target_include_directories(slopkit_platform PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit_platform PRIVATE -Wall -Wextra -fvisibility=hidden)
 set_target_properties(slopkit_platform PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(slopkit_platform PRIVATE slopkit_native)
 
 # The Process List classifies applications through the platform desktop-entry
 # index, so the application links the shared platform library too.
@@ -134,6 +150,7 @@ function(add_slopkit_plugin target)
     set_target_properties(${target} PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${SLOPKIT_PLUGIN_OUTPUT_DIR}
         RUNTIME_OUTPUT_DIRECTORY ${SLOPKIT_PLUGIN_OUTPUT_DIR})
+    target_link_libraries(${target} PRIVATE slopkit_native)
 endfunction()
 
 add_slopkit_plugin(slopkit-linux_proc ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/linux_proc/linux_proc_plugin.cpp)
@@ -159,6 +176,7 @@ function(add_slopkit_test_plugin target)
     set_target_properties(${target} PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}
         RUNTIME_OUTPUT_DIRECTORY ${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR})
+    target_link_libraries(${target} PRIVATE slopkit_native)
 endfunction()
 
 add_slopkit_test_plugin(slopkit_test_bad_abi ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/bad_abi_plugin.cpp)
@@ -195,6 +213,7 @@ target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2
     slopkit_platform
     slopkit_assets
+    slopkit_native
     Qt6::Widgets
     PkgConfig::ZYDIS
     ${CMAKE_DL_LIBS})

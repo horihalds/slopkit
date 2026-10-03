@@ -32,6 +32,10 @@ them for every task in this repository.
   cmake --build build
   ```
 
+- Targets are compiled for the host CPU's full instruction set by default
+  (`-march=native -mtune=native`); pass `-DSLOPKIT_NATIVE=OFF` to CMake for a
+  portable build targeting the compiler's default baseline.
+
 - Three convenience scripts at the repository root work from any directory:
   `./configure.sh` runs the configure step, `./build.sh` builds (configuring
   first when `build/` does not exist yet), and `./install.sh` configures, builds

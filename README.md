@@ -132,6 +132,14 @@ Configure and build:
 ./build.sh
 ```
 
+Targets compile for the host CPU's full instruction set by default
+(`-march=native -mtune=native`). For a portable or reproducible build, disable
+the native tuning at configure time:
+
+```sh
+cmake -G Ninja -B build -DSLOPKIT_NATIVE=OFF
+```
+
 Run the tests (Catch2 suites wired into CTest, including a `clang-format-check` test):
 
 ```sh
