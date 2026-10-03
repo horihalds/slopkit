@@ -44,8 +44,11 @@ namespace slopkit::ui::dialogs
         }
     } // namespace
 
-    SettingsDialog::SettingsDialog(plugin::PluginHost& host, scan::ScanEngine& engine, QWidget* parent)
-        : QDialog(parent), host_(host), engine_(engine)
+    SettingsDialog::SettingsDialog(plugin::PluginHost& host,
+                                   scan::ScanEngine&   engine,
+                                   SettingsController& settings,
+                                   QWidget*            parent)
+        : QDialog(parent), host_(host), engine_(engine), settings_(settings)
     {
         setWindowTitle(tr("Settings"));
         resize(760, 520);
@@ -89,6 +92,13 @@ namespace slopkit::ui::dialogs
                     }
                 });
         categories_->setCurrentRow(0);
+
+        // The dialog is a view: it shows the persisted values and follows the
+        // controller, so an external change keeps the radios in step.
+        set_dark_theme(settings_.values().dark_theme);
+        set_address_mode(settings_.values().address_mode);
+        connect(&settings_, &SettingsController::darkThemeChanged, this, &SettingsDialog::set_dark_theme);
+        connect(&settings_, &SettingsController::addressModeChanged, this, &SettingsDialog::set_address_mode);
     }
 
     QWidget* SettingsDialog::build_appearance_page()
@@ -114,17 +124,17 @@ namespace slopkit::ui::dialogs
         buttons_row->addStretch(1);
         layout->addLayout(buttons_row);
 
-        // idClicked fires only for user input, so programmatic updates (and the
-        // palette re-application) cannot loop back into this signal.
+        // idClicked fires only for user input, so the programmatic radio sync
+        // cannot loop back into the controller.
         connect(theme_group,
                 &QButtonGroup::idClicked,
                 this,
                 [this](int id)
                 {
-                    emit darkThemeChanged(id == 0);
+                    settings_.set_dark_theme(id == 0);
                 });
 
-        auto* note = new QLabel(tr("The theme applies live and is not persisted between runs."), page);
+        auto* note = new QLabel(tr("The theme applies live and is remembered between runs."), page);
         note->setWordWrap(true);
         layout->addWidget(note);
         layout->addStretch(1);
@@ -156,18 +166,18 @@ namespace slopkit::ui::dialogs
         buttons_row->addStretch(1);
         layout->addLayout(buttons_row);
 
-        // idClicked fires only for user input, so programmatic updates cannot
-        // loop back into this signal.
+        // idClicked fires only for user input, so the programmatic radio sync
+        // cannot loop back into the controller.
         connect(mode_group,
                 &QButtonGroup::idClicked,
                 this,
                 [this](int id)
                 {
-                    emit addressModeChanged(id == 0 ? ui::AddressMode::module_relative : ui::AddressMode::absolute);
+                    settings_.set_address_mode(id == 0 ? ui::AddressMode::module_relative : ui::AddressMode::absolute);
                 });
 
         auto* note = new QLabel(tr("Applies live to the found results, the address list and the Memory Viewer; "
-                                   "not persisted between runs."),
+                                   "the choice is remembered between runs."),
                                 page);
         note->setWordWrap(true);
         layout->addWidget(note);

@@ -17,12 +17,14 @@
 
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
+#include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
 #include "ui/dialogs/settings.hpp"
 #include "ui/panels/address_list_panel.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
+#include "ui/settings.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui
@@ -40,8 +42,9 @@ namespace slopkit::ui
     MainWindow::MainWindow(process::AccessWorker&   worker,
                            process::AttachedTarget& target,
                            plugin::PluginHost&      host,
+                           SettingsController&      settings,
                            QWidget*                 parent)
-        : QMainWindow(parent), worker_(worker), target_(target), host_(host)
+        : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings)
     {
         setWindowTitle(QStringLiteral("slopkit"));
         setWindowIcon(widgets::application_icon());
@@ -95,9 +98,7 @@ namespace slopkit::ui
         save_table_as_action_->setShortcut(QKeySequence::SaveAs);
         save_table_as_action_->setShortcutContext(Qt::WindowShortcut);
 
-        undo_scan_action_ = new QAction(tr("Undo Scan"), this);
-
-        add_address_action_ = new QAction(tr("Add Address Manually..."), this);
+        log_action_ = new QAction(tr("Log..."), this);
 
         settings_action_ = new QAction(tr("Settings..."), this);
 
@@ -114,11 +115,9 @@ namespace slopkit::ui
         file_menu->addSeparator();
         file_menu->addAction(quit_action_);
 
-        QMenu* edit_menu = menuBar()->addMenu(tr("Edit"));
-        edit_menu->addAction(undo_scan_action_);
-        edit_menu->addAction(add_address_action_);
-        edit_menu->addSeparator();
-        edit_menu->addAction(settings_action_);
+        QMenu* view_menu = menuBar()->addMenu(tr("View"));
+        view_menu->addAction(log_action_);
+        view_menu->addAction(settings_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
         help_menu->addAction(about_action_);
@@ -151,14 +150,6 @@ namespace slopkit::ui
                     found_list_->set_modules(modules);
                     address_list_->set_modules(modules);
                     memory_view_->set_modules(std::move(modules));
-                });
-        connect(undo_scan_action_,
-                &QAction::triggered,
-                this,
-                [this]
-                {
-                    scanner_->engine().undo();
-                    scanner_->refresh();
                 });
 
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
@@ -203,17 +194,12 @@ namespace slopkit::ui
 
         memory_view_ = new dialogs::MemoryViewerDialog(worker_, target_, this);
 
-        settings_ = new dialogs::SettingsDialog(host_, scanner_->engine(), this);
-        settings_->set_dark_theme(dark_theme_active_);
-        connect(settings_,
-                &dialogs::SettingsDialog::darkThemeChanged,
-                this,
-                [this](bool dark)
-                {
-                    dark_theme_active_ = dark;
-                    apply_theme(dark ? dark_theme() : light_theme());
-                });
-        connect(settings_,
+        log_ = new dialogs::LogDialog(this);
+
+        // The dialog is a view over the shared controller; the window is the only
+        // component that applies the persisted values to the live views.
+        settings_dialog_ = new dialogs::SettingsDialog(host_, scanner_->engine(), settings_, this);
+        connect(settings_dialog_,
                 &dialogs::SettingsDialog::alignmentChanged,
                 this,
                 [this](quint64 alignment)
@@ -221,9 +207,15 @@ namespace slopkit::ui
                     scanner_->set_default_alignment(alignment);
                 });
 
-        settings_->set_address_mode(ui::AddressMode::module_relative);
-        connect(settings_,
-                &dialogs::SettingsDialog::addressModeChanged,
+        connect(&settings_,
+                &SettingsController::darkThemeChanged,
+                this,
+                [](bool dark)
+                {
+                    apply_theme(dark ? dark_theme() : light_theme());
+                });
+        connect(&settings_,
+                &SettingsController::addressModeChanged,
                 this,
                 [this](ui::AddressMode mode)
                 {
@@ -232,8 +224,14 @@ namespace slopkit::ui
                     memory_view_->set_address_mode(mode);
                 });
 
+        // Apply the mode restored from disk before the window is first shown.
+        const ui::AddressMode persisted_mode = settings_.values().address_mode;
+        found_list_->set_address_mode(persisted_mode);
+        address_list_->set_address_mode(persisted_mode);
+        memory_view_->set_address_mode(persisted_mode);
+
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
-        connect(add_address_action_, &QAction::triggered, this, &MainWindow::show_add_address);
+        connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
     }
@@ -252,16 +250,23 @@ namespace slopkit::ui
         add_address_->activateWindow();
     }
 
+    void MainWindow::show_log()
+    {
+        log_->show();
+        log_->raise();
+        log_->activateWindow();
+    }
+
     void MainWindow::show_settings()
     {
-        settings_->show();
-        settings_->raise();
-        settings_->activateWindow();
+        settings_dialog_->show();
+        settings_dialog_->raise();
+        settings_dialog_->activateWindow();
     }
 
     void MainWindow::show_about()
     {
-        settings_->select_about();
+        settings_dialog_->select_about();
         show_settings();
     }
 
@@ -274,7 +279,6 @@ namespace slopkit::ui
         found_list_->refresh();
         address_list_->refresh();
         scan_progress_->setValue(scanner_->progress_percent());
-        undo_scan_action_->setEnabled(scanner_->engine().has_results());
         run_freeze_pass();
         refresh_target_label();
     }

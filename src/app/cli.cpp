@@ -16,6 +16,7 @@
 
 #include <unistd.h>
 
+#include "core/log.hpp"
 #include "core/version.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/plugin_access.hpp"
@@ -29,6 +30,9 @@ namespace slopkit::app
 
     namespace
     {
+        // One mebibyte, after which the file sink keeps a single rotated backup.
+        constexpr std::size_t kLogFileLimit = 1024 * 1024;
+
         std::filesystem::path self_executable_path()
         {
             std::array<char, 4096> buffer {};
@@ -211,12 +215,58 @@ namespace slopkit::app
     int run(int argc, char** argv)
     {
         const std::vector<std::string_view> args(argv + 1, argv + argc);
-        bool                                handled = false;
+
+        // The minimum level is a global flag: parse it before anything logs, so a
+        // bad value is a usage error and never reaches the command dispatch.
+        log::Level log_level = log::Level::info;
+        for (std::size_t index = 0; index < args.size(); ++index)
+        {
+            const auto       arg = args[index];
+            std::string_view value;
+            if (arg == "--log-level")
+            {
+                if (index + 1 >= args.size())
+                {
+                    std::cerr << "--log-level needs a level\n";
+                    return 2;
+                }
+                value = args[++index];
+            }
+            else if (arg.starts_with("--log-level="))
+            {
+                value = arg.substr(std::string_view("--log-level=").size());
+            }
+            else
+            {
+                continue;
+            }
+
+            if (!log::parse_level(value, log_level))
+            {
+                std::cerr << "unknown log level: " << value << '\n';
+                return 2;
+            }
+        }
+
+        auto& logger = log::Logger::instance();
+        logger.set_minimum_level(log_level);
+        logger.add_sink(log::stderr_sink());
+        logger.add_sink(log::rolling_file_sink(log::default_log_path(), kLogFileLimit));
+
+        bool handled = false;
 
         for (std::size_t index = 0; index < args.size(); ++index)
         {
             const auto arg = args[index];
-            if (arg == "--version" || arg == "-v")
+            if (arg == "--log-level")
+            {
+                ++index; // Consumed by the pre-pass above.
+            }
+            else if (arg.starts_with("--log-level="))
+            {
+                // Consumed by the pre-pass above.
+            }
+            else if (arg == "--version" || arg == "-v")
             {
                 handled = true;
                 if (const int code = print_version(std::cout, std::cerr); code != 0)
@@ -266,8 +316,9 @@ namespace slopkit::app
             else if (arg == "--help" || arg == "-h")
             {
                 handled = true;
-                std::cout << "usage: slopkit [--version] [--list-plugins] [--list-processes]\n"
-                             "               [--scan <pid> <value>] [--help]\n"
+                std::cout << "usage: slopkit [--log-level <level>] [--version] [--list-plugins]\n"
+                             "               [--list-processes] [--scan <pid> <value>] [--help]\n"
+                             "  --log-level sets the minimum level: debug|info|warning|error (default info)\n"
                              "  --scan runs one exact-value scan and prints address<TAB>type<TAB>value\n"
                              "  no flags launches the GUI\n";
             }

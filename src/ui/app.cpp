@@ -1,12 +1,11 @@
 #include "ui/app.hpp"
 
-#include <iostream>
-
 #include <QApplication>
 #include <QGuiApplication>
 #include <QStyleFactory>
 
 #include "app/cli.hpp"
+#include "core/log.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
 
@@ -28,13 +27,13 @@ namespace slopkit::ui
 
         if (!register_embedded_fonts())
         {
-            std::cerr << "slopkit: warning: the embedded fonts could not be loaded\n";
+            log::warning("ui", "the embedded fonts could not be loaded");
         }
-        apply_theme(dark_theme());
+        apply_theme(settings_.values().dark_theme ? dark_theme() : light_theme());
 
         host_.discover(app::plugin_search_directories());
 
-        window_ = std::make_unique<MainWindow>(access_worker_, target_, host_);
+        window_ = std::make_unique<MainWindow>(access_worker_, target_, host_, settings_);
         window_->show();
 
         // The worker notifies from its own thread; the queued wake-up drains the

@@ -1,11 +1,12 @@
 #include "plugin/plugin_host.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <system_error>
 #include <utility>
+
+#include "core/log.hpp"
 
 namespace slopkit::plugin
 {
@@ -22,20 +23,19 @@ namespace slopkit::plugin
             std::free(memory);
         }
 
-        const char* log_level_name(int32_t level)
+        log::Level to_log_level(int32_t level)
         {
             switch (level)
             {
             case SLOPKIT_LOG_DEBUG:
-                return "debug";
-            case SLOPKIT_LOG_INFO:
-                return "info";
+                return log::Level::debug;
             case SLOPKIT_LOG_WARN:
-                return "warn";
+                return log::Level::warning;
             case SLOPKIT_LOG_ERROR:
-                return "error";
+                return log::Level::error;
+            case SLOPKIT_LOG_INFO:
             default:
-                return "log";
+                return log::Level::info;
             }
         }
 
@@ -43,7 +43,7 @@ namespace slopkit::plugin
         {
             if (message != nullptr)
             {
-                std::fprintf(stderr, "[plugin %s] %s\n", log_level_name(level), message);
+                log::Logger::instance().log(to_log_level(level), "plugin", message);
             }
         }
     } // namespace

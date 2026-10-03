@@ -5,6 +5,7 @@
 #include "plugin/plugin_host.hpp"
 #include "scan/engine.hpp"
 #include "ui/address_format.hpp"
+#include "ui/settings.hpp"
 
 #include <QDialog>
 #include <QString>
@@ -25,13 +26,17 @@ namespace slopkit::ui::dialogs
 {
 
     // The Settings dialog: a category list on the left and the selected category
-    // on the right. Nothing is persisted between runs.
+    // on the right. It is a view over the shared SettingsController, which owns
+    // persistence and publishes the changes.
     class SettingsDialog : public QDialog
     {
         Q_OBJECT
 
     public:
-        SettingsDialog(plugin::PluginHost& host, scan::ScanEngine& engine, QWidget* parent = nullptr);
+        SettingsDialog(plugin::PluginHost& host,
+                       scan::ScanEngine&   engine,
+                       SettingsController& settings,
+                       QWidget*            parent = nullptr);
 
         // Selects the About category; used by Help > About slopkit.
         void select_about();
@@ -43,12 +48,6 @@ namespace slopkit::ui::dialogs
         void set_address_mode(ui::AddressMode mode);
 
     signals:
-        // The requested theme, so the window can re-apply the palette.
-        void darkThemeChanged(bool dark);
-
-        // The requested address display mode, forwarded to the three views.
-        void addressModeChanged(slopkit::ui::AddressMode mode);
-
         // The new fast-scan alignment default, forwarded to the scanner panel.
         void alignmentChanged(quint64 alignment);
 
@@ -67,6 +66,7 @@ namespace slopkit::ui::dialogs
 
         plugin::PluginHost& host_;
         scan::ScanEngine&   engine_;
+        SettingsController& settings_;
 
         QListWidget*          categories_ {};
         QStackedWidget*       pages_ {};

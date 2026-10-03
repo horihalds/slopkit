@@ -81,13 +81,14 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 ## 8. Window and Layout
 
 - The main window is a `QMainWindow` with a menu bar, a single full-width scan-progress bar above the central split zones, and a status bar; the window must be resizable and carry a sensible minimum size.
+- The menu bar holds exactly `File`, `View` and `Help`. `File` holds the process/table commands, `View` holds `Log...` then `Settings...`, and `Help` holds `About slopkit`; there is no `Edit` menu, and `Undo Scan` / `Add Address Manually...` are scanner-panel buttons only.
 - The file commands are reachable from the menus and carry window-scoped shortcuts: `Ctrl+T` picks the process, `Ctrl+O` opens an address table and `Ctrl+S` saves it; they fire only while the main window is focused.
 - Layouts must adapt to window size: use layouts and `QSplitter` stretch factors rather than fixed sizes, and keep the previous zone proportions (62 % scan zone / 38 % address list; the scan zone splits 50/50 between the found list and the scanner).
 - The status bar shows only the attached-process label; the scan progress is a single `QProgressBar` spanning the top of the window above the split zones (a deliberate change from the old status-bar progress bar). The process list and other dialogs never duplicate either.
-- The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Settings`) are `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window.
+- The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Log`, `Settings`) are `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window.
 - The `Process List` picker is **application-modal**: while it is open the main window accepts no keyboard or mouse input, so a half-chosen target cannot be interacted with behind it. This deliberately overrides the non-modal rule below for this dialog only.
 - The `Process List` picker is also a **fixed-size** chooser: it locks its 600x440 default size and offers no minimize or maximize affordance, so it reads as a small picker rather than a resizable window. This deliberately overrides the compositor-owned dialog size rule below. A Wayland compositor may still draw a minimize affordance for a toplevel; the locked size makes maximize a no-op there regardless.
-- The other dialogs (`Add Address`, `Memory Viewer`, `Settings`) stay **non-modal**: the main window keeps taking input while they are open.
+- The other dialogs (`Add Address`, `Memory Viewer`, `Log`, `Settings`) stay **non-modal**: the main window keeps taking input while they are open.
 - Treat a dialog's position and size as compositor-owned: never save, restore or compute them; nothing is persisted between runs.
 - Do not draw custom title bars for dialogs (see section 7). The window-manager close button has the same effect as an in-dialog close button, and the dialog can be re-opened at any time.
 - Keep the app idle-quiet: updates are event-driven and the only periodic timer is the low-frequency scan-progress/freeze tick.

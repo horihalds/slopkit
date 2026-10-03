@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstring>
 #include <expected>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <span>
@@ -40,6 +42,7 @@
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRadioButton>
@@ -53,6 +56,7 @@
 #include <QToolButton>
 #include <QToolTip>
 
+#include "core/log.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -62,6 +66,7 @@
 #include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
+#include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
 #include "ui/dialogs/settings.hpp"
@@ -71,6 +76,7 @@
 #include "ui/panels/address_list_panel.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
+#include "ui/settings.hpp"
 #include "ui/theme.hpp"
 
 namespace
@@ -118,6 +124,18 @@ namespace
             }
         }
         return texts;
+    }
+
+    // A fresh settings file under the project scratch directory, so the tests
+    // never touch the developer's real configuration.
+    QString scratch_settings_file(std::string_view name)
+    {
+        const auto      directory = std::filesystem::path(SLOPKIT_TMP_DIR) / "ui_test";
+        std::error_code error;
+        std::filesystem::create_directories(directory, error);
+        const auto path = directory / name;
+        std::filesystem::remove(path, error);
+        return QString::fromStdString(path.string());
     }
 
     // A tiny in-memory target the Process List dialog can attach to in tests.
@@ -1419,13 +1437,14 @@ TEST_CASE("the main window shell is built", "[ui]")
     slopkit::process::PluginAccess   access {host};
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
-    slopkit::ui::MainWindow          window {worker, target, host};
+    slopkit::ui::SettingsController  settings {scratch_settings_file("shell.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
 
-    // Only the three menus that actually hold commands remain.
+    // The menu bar holds exactly File, View and Help; the Edit menu is gone.
     const QList<QAction*> menus = window.menuBar()->actions();
     REQUIRE(menus.size() == 3);
     CHECK(menus[0]->text() == QStringLiteral("File"));
-    CHECK(menus[1]->text() == QStringLiteral("Edit"));
+    CHECK(menus[1]->text() == QStringLiteral("View"));
     CHECK(menus[2]->text() == QStringLiteral("Help"));
 
     CHECK(action_texts(menus[0]->menu()->actions())
@@ -1438,8 +1457,22 @@ TEST_CASE("the main window shell is built", "[ui]")
     // The toolbar is gone; the file commands live only in the menus now.
     CHECK(window.findChild<QToolBar*>(QStringLiteral("main_toolbar")) == nullptr);
 
-    // The Edit menu is now the only route to the settings dialog.
-    CHECK(menus[1]->menu()->actions().last()->text() == QStringLiteral("Settings..."));
+    // The View menu holds the log and settings entries; Help keeps About.
+    CHECK(action_texts(menus[1]->menu()->actions())
+          == QList<QString> {QStringLiteral("Log..."), QStringLiteral("Settings...")});
+    CHECK(action_texts(menus[2]->menu()->actions()) == QList<QString> {QStringLiteral("About slopkit")});
+
+    // No Edit menu survives, and Undo Scan / Add Address Manually... are gone as
+    // menu actions anywhere in the window.
+    for (QAction* menu : window.menuBar()->actions())
+    {
+        CHECK(menu->text() != QStringLiteral("Edit"));
+    }
+    for (QAction* action : window.findChildren<QAction*>())
+    {
+        CHECK(action->text() != QStringLiteral("Undo Scan"));
+        CHECK(action->text() != QStringLiteral("Add Address Manually..."));
+    }
 
     // Ctrl+T / Ctrl+O / Ctrl+S / Ctrl+Shift+S are bound to the file commands.
     const QList<QAction*> file_actions = menus[0]->menu()->actions();
@@ -1458,7 +1491,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     }
     // Save and Save As share the same diskette glyph.
     CHECK(file_actions[2]->icon().pixmap(16).toImage() == file_actions[3]->icon().pixmap(16).toImage());
-    // Quit, and every Edit/Help entry, remain icon-less.
+    // Quit, and every View/Help entry, remain icon-less.
     CHECK(file_actions[5]->icon().isNull());
     for (QAction* action : menus[1]->menu()->actions())
     {
@@ -1468,6 +1501,36 @@ TEST_CASE("the main window shell is built", "[ui]")
     {
         CHECK(action->icon().isNull());
     }
+
+    // View > Log... opens the non-modal log window; live records reach its view
+    // and the text filter hides what does not match.
+    slopkit::log::Logger::instance().clear_history();
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    QAction* log_action = menus[1]->menu()->actions().first();
+    CHECK(log_action->text() == QStringLiteral("Log..."));
+    log_action->trigger();
+    auto* log_dialog = window.findChild<slopkit::ui::dialogs::LogDialog*>();
+    REQUIRE(log_dialog != nullptr);
+    CHECK(log_dialog->isVisible());
+
+    auto* log_view = log_dialog->findChild<QPlainTextEdit*>();
+    REQUIRE(log_view != nullptr);
+    slopkit::log::info("shell", "live record");
+    QCoreApplication::processEvents();
+    CHECK(log_view->toPlainText().contains(QStringLiteral("[shell] live record")));
+
+    auto* log_search = log_dialog->findChild<QLineEdit*>();
+    REQUIRE(log_search != nullptr);
+    log_search->setText(QStringLiteral("no-such-record"));
+    CHECK(log_view->toPlainText().isEmpty());
+    log_search->clear();
+
+    // Triggering the entry again raises the same window, not a second one.
+    log_action->trigger();
+    CHECK(window.findChildren<slopkit::ui::dialogs::LogDialog*>().size() == 1);
+
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
     // The status bar carries only the detached-process label; no progress bar
     // lives there any more.
@@ -2737,7 +2800,8 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     slopkit::plugin::PluginHost      host;
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target = fake_target();
-    slopkit::ui::MainWindow          window {worker, target, host};
+    slopkit::ui::SettingsController  settings {scratch_settings_file("entry_row.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
 
     attach_app_session(worker);
 
@@ -2861,7 +2925,8 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     slopkit::plugin::PluginHost          host;
     slopkit::scan::ScanEngine            engine;
-    slopkit::ui::dialogs::SettingsDialog settings {host, engine};
+    slopkit::ui::SettingsController      controller {scratch_settings_file("settings_dialog.ini")};
+    slopkit::ui::dialogs::SettingsDialog settings {host, engine, controller};
 
     auto* categories = settings.findChild<QListWidget*>();
     REQUIRE(categories != nullptr);
@@ -2879,9 +2944,9 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     int                      changes = 0;
     slopkit::ui::AddressMode last    = slopkit::ui::AddressMode::module_relative;
-    QObject::connect(&settings,
-                     &slopkit::ui::dialogs::SettingsDialog::addressModeChanged,
-                     &settings,
+    QObject::connect(&controller,
+                     &slopkit::ui::SettingsController::addressModeChanged,
+                     &controller,
                      [&](slopkit::ui::AddressMode mode)
                      {
                          ++changes;
@@ -2892,11 +2957,16 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
     CHECK(changes == 1);
     CHECK(last == slopkit::ui::AddressMode::absolute);
     CHECK(absolute->isChecked());
+    CHECK(controller.values().address_mode == slopkit::ui::AddressMode::absolute);
 
-    // A programmatic update keeps the radios in step without re-emitting.
-    settings.set_address_mode(slopkit::ui::AddressMode::module_relative);
-    CHECK(module_relative->isChecked());
+    // Re-selecting the same value is a no-op: no signal and no radio change.
+    controller.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(changes == 1);
+
+    // A real programmatic change keeps the radios in step.
+    controller.set_address_mode(slopkit::ui::AddressMode::module_relative);
+    CHECK(module_relative->isChecked());
+    CHECK(changes == 2);
 
     // Help > About still reaches the About page after the extra category.
     settings.select_about();
@@ -2923,7 +2993,8 @@ TEST_CASE("the Addresses setting switches the viewer live", "[ui]")
     slopkit::plugin::PluginHost      host;
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target = fake_target();
-    slopkit::ui::MainWindow          window {worker, target, host};
+    slopkit::ui::SettingsController  controller {scratch_settings_file("viewer_live.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, controller};
 
     attach_app_session(worker);
 
@@ -2957,4 +3028,147 @@ TEST_CASE("the Addresses setting switches the viewer live", "[ui]")
 
     module_relative->click();
     CHECK(address_edit->text() == QStringLiteral("low+40"));
+}
+
+TEST_CASE("the window applies the persisted settings at construction", "[ui]")
+{
+    application();
+
+    const QString path = scratch_settings_file("persisted.ini");
+    {
+        std::ofstream file(path.toStdString(), std::ios::binary | std::ios::trunc);
+        file << "[appearance]\ndark_theme=false\n[addresses]\ndisplay_mode=absolute\n";
+    }
+
+    UiFakeAccess access;
+
+    slopkit::process::ModuleInfo image;
+    image.base     = 0x1000;
+    image.size     = 0x800;
+    image.entry    = 0x1040;
+    image.kind     = slopkit::process::ModuleKind::elf;
+    image.name     = "low";
+    image.path     = "/opt/low";
+    access.modules = {image};
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {path};
+    CHECK_FALSE(settings.values().dark_theme);
+    CHECK(settings.values().address_mode == slopkit::ui::AddressMode::absolute);
+
+    slopkit::ui::MainWindow window {worker, target, host, settings};
+
+    attach_app_session(worker);
+
+    auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
+    REQUIRE(scanner != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [scanner]
+                    {
+                        return scanner->main_module_address() != 0;
+                    }));
+
+    // The viewer opens in the persisted absolute mode even though the module map
+    // resolved.
+    auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
+    REQUIRE(viewer != nullptr);
+    auto* address_edit = viewer->findChild<QLineEdit*>();
+    REQUIRE(address_edit != nullptr);
+    viewer->set_address(0x1040);
+    CHECK(address_edit->text() == QStringLiteral("0x1040"));
+
+    // The Settings dialog reflects both persisted values without user input.
+    auto* dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
+    REQUIRE(dialog != nullptr);
+    auto* light = radio_labelled(*dialog, QStringLiteral("Light"));
+    REQUIRE(light != nullptr);
+    CHECK(light->isChecked());
+    auto* absolute = radio_labelled(*dialog, QStringLiteral("Absolute address"));
+    REQUIRE(absolute != nullptr);
+    CHECK(absolute->isChecked());
+}
+
+TEST_CASE("the log dialog shows live records and filters them", "[ui]")
+{
+    application();
+
+    using slopkit::log::Level;
+
+    slopkit::log::Logger::instance().clear_history();
+    slopkit::log::Logger::instance().set_minimum_level(Level::debug);
+
+    slopkit::ui::dialogs::LogDialog dialog;
+    dialog.show();
+
+    auto* view = dialog.findChild<QPlainTextEdit*>();
+    REQUIRE(view != nullptr);
+    auto* combo = dialog.findChild<QComboBox*>();
+    REQUIRE(combo != nullptr);
+    auto* search = dialog.findChild<QLineEdit*>();
+    REQUIRE(search != nullptr);
+    auto* status = dialog.findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("log_status"));
+    REQUIRE(status != nullptr);
+
+    // A record logged through the logger reaches the view once the queued
+    // wake-up is processed, with its level and category visible.
+    slopkit::log::warning("scan", "something happened");
+    QCoreApplication::processEvents();
+    CHECK(view->toPlainText().contains(QStringLiteral("warning")));
+    CHECK(view->toPlainText().contains(QStringLiteral("[scan] something happened")));
+
+    // The level filter hides records below the selected level.
+    combo->setCurrentIndex(4); // Error
+    CHECK_FALSE(view->toPlainText().contains(QStringLiteral("something happened")));
+    combo->setCurrentIndex(3); // Warning
+    CHECK(view->toPlainText().contains(QStringLiteral("something happened")));
+
+    // The text filter is a case-insensitive substring over level, category and
+    // message.
+    search->setText(QStringLiteral("SCAN"));
+    CHECK(view->toPlainText().contains(QStringLiteral("something happened")));
+    search->setText(QStringLiteral("nope"));
+    CHECK(view->toPlainText().isEmpty());
+
+    // Clear empties the view and the retained history.
+    search->clear();
+    auto* clear = button_labelled(dialog, QStringLiteral("Clear"));
+    REQUIRE(clear != nullptr);
+    clear->click();
+    CHECK(view->toPlainText().isEmpty());
+    CHECK(slopkit::log::Logger::instance().history().empty());
+    CHECK(status->text().contains(QStringLiteral("0 record(s)")));
+
+    slopkit::log::Logger::instance().set_minimum_level(Level::info);
+}
+
+TEST_CASE("the log dialog seeds itself from the retained history", "[ui]")
+{
+    application();
+
+    using slopkit::log::Level;
+
+    slopkit::log::Logger::instance().clear_history();
+    slopkit::log::Logger::instance().set_minimum_level(Level::info);
+
+    slopkit::log::info("plugin", "logged before the window opened");
+
+    slopkit::ui::dialogs::LogDialog dialog;
+    auto*                           view = dialog.findChild<QPlainTextEdit*>();
+    REQUIRE(view != nullptr);
+
+    // Nothing is shown until the window is first opened.
+    CHECK(view->toPlainText().isEmpty());
+
+    // A record queued between construction and the first show must not be
+    // duplicated by the history seeding.
+    slopkit::log::info("ui", "queued before the first show");
+    dialog.show();
+
+    const QString text = view->toPlainText();
+    CHECK(text.contains(QStringLiteral("[plugin] logged before the window opened")));
+    CHECK(text.count(QStringLiteral("queued before the first show")) == 1);
+
+    slopkit::log::Logger::instance().set_minimum_level(Level::info);
 }

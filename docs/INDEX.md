@@ -24,13 +24,15 @@
 - `src/main.cpp` — application entry point; dispatches to `slopkit::app::run`.
 - `src/core/version.hpp` — declares `slopkit::version()`.
 - `src/core/version.cpp` — implements `slopkit::version()`.
+- `src/core/log.hpp` — the process-wide `slopkit::log` logger: levels, timestamped categorised records, a bounded history, the sink registry and the stderr/rolling-file sink factories.
+- `src/core/log.cpp` — mutex-guarded level filtering, history and sink fan-out, the `HH:MM:SS.mmm level [category] message` line format and the XDG state-dir default log path.
 - `src/app/cli.hpp` — declares command-line parsing and the headless commands.
-- `src/app/cli.cpp` — parses `--version`/`--list-plugins`/`--list-processes` and runs the default GUI path.
+- `src/app/cli.cpp` — parses `--log-level`/`--version`/`--list-plugins`/`--list-processes`, installs the stderr and rolling-file log sinks and runs the default GUI path.
 - `src/plugin/plugin_api.h` — the C plugin ABI: version macros, host services, descriptors (including the module main-image flag), access-method flags and the vtable.
 - `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession` (including a caller-buffer `read_into`).
 - `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake and typed plugin calls.
 - `src/plugin/plugin_host.hpp` — plugin discovery, diagnostics and the merged process listing.
-- `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence and merges processes.
+- `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence, routes plugin log messages into `slopkit::log` and merges processes.
 - `src/platform/linux/procfs.hpp` — procfs types and queries: pids, status, exe/cmdline, mapped regions, threads, module entry points and main-image flagging.
 - `src/platform/linux/procfs.cpp` — implements procfs enumeration, text parsing, region classification, module merging, entry-point filling and main-image flagging.
 - `src/platform/linux/module_entry.hpp` — executable-image entry-point and PE-kind declaration for ELF and PE headers.
@@ -66,14 +68,18 @@
 - `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
 - `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency.
-- `src/ui/app.hpp` — the `App`: owns the plugin host, the access worker, the attached target and the main window, and runs the Qt event loop.
-- `src/ui/app.cpp` — builds the `QApplication`, applies the Fusion style, the theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
+- `src/ui/app.hpp` — the `App`: owns the plugin host, the access worker, the attached target, the settings controller and the main window, and runs the Qt event loop.
+- `src/ui/app.cpp` — builds the `QApplication`, applies the Fusion style, the persisted theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
 - `src/ui/address_format.hpp` — `AddressMode`, the `ModuleSpan`/`ModuleSpans` lookup over file-backed module images with the main-image span, the `name+RVA` and absolute renderers and the dual-form address parser.
 - `src/ui/address_format.cpp` — span filtering and sorting, marking the main image, binary-search containment, case-insensitive name lookup, `0x`-prefixed absolute rendering and `scan::parse_address` delegation.
+- `src/ui/settings.hpp` — the persisted `ui::Settings` value (theme, address display mode) and the `ui::SettingsController` that owns the INI store and publishes change signals.
+- `src/ui/settings.cpp` — `QSettings` INI load/store under the XDG config dir, defensive fallbacks for missing or unrecognised values and change-only signals.
 - `src/ui/completion_notifier.hpp` — `CompletionNotifier`: the coalescing, thread-safe bridge from the access worker's completion hook to the Qt event loop.
 - `src/ui/completion_notifier.cpp` — posts at most one queued wake-up per drain and emits `completionsAvailable()` on the UI thread.
-- `src/ui/main_window.hpp` — `MainWindow`: the menu bar, status bar and splitter zones, the owned address table and the four dialogs.
-- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, polls the panels on a 50 ms tick, fans the module map and the address display mode out to the three views and submits the freeze pass to the worker.
+- `src/ui/log_notifier.hpp` — `LogNotifier`: the thread-safe queue and coalesced queued wake-up that carries log records to the UI thread; removes its logger sink on destruction.
+- `src/ui/log_notifier.cpp` — registers the logger sink, queues records under a mutex and emits `recordsAvailable()` on the UI thread.
+- `src/ui/main_window.hpp` — `MainWindow`: the File/View/Help menu bar, status bar and splitter zones, the owned address table, the five dialogs and the shared settings controller.
+- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, polls the panels on a 50 ms tick, fans the module map and the persisted address display mode out to the three views, applies theme/address changes live, opens the log window from the View menu and submits the freeze pass to the worker.
 - `src/ui/theme.hpp` — the `Theme` colour-role struct, the dark/light constructors, `make_palette()` and `apply_theme()`.
 - `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
 - `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
@@ -98,10 +104,14 @@
 - `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
 - `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker, with its module spans and address mode.
 - `src/ui/dialogs/memory_viewer.cpp` — one cached page of address/bytes/ASCII rows with unreadable-range markers refreshed asynchronously; rows and the address box render `module+RVA` in module-relative mode and Go accepts both address forms.
-- `src/ui/dialogs/settings.hpp` — the Settings categories and the changes it reports to the window (theme, address display mode, alignment).
-- `src/ui/dialogs/settings.cpp` — Appearance, Addresses, Scanning, Plugins and About pages, including the live theme and address display switches.
+- `src/ui/dialogs/log.hpp` — the non-modal `LogDialog`: a live, filtered log view with Clear and Save As.
+- `src/ui/dialogs/log.cpp` — level and case-insensitive text filters over the records, history seeding on first show, live drain from the notifier and a record-count/path status line.
+- `src/ui/dialogs/settings.hpp` — the Settings dialog as a view over `SettingsController` (categories plus the session-only `alignmentChanged` signal).
+- `src/ui/dialogs/settings.cpp` — Appearance, Addresses, Scanning, Plugins and About pages; the theme/address radios drive the controller and follow it back.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
+- `src/tests/log_test.cpp` — logger tests: level filtering, level-name round-trips, multi-sink delivery and removal, a throwing sink, the history cap, concurrent calls and file rotation.
+- `src/tests/settings_test.cpp` — settings tests: missing-file defaults, INI round-trip, hand-written values, junk fallback and change-only signals.
 - `src/tests/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
 - `src/tests/desktop_entry_test.cpp` — `.desktop` parsing, exec basename and application classification tests.
 - `src/tests/scan_test.cpp` — value parsing, scan predicates, matcher equivalence, first/next/undo/reset (including the no-rows-while-running snapshot), region filtering, cancellation and the hidden throughput benchmark.
@@ -110,7 +120,7 @@
 - `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
-- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the scanner range controls and New Scan reset, the one-line found list (including the whole-result-set main-image-first case, the empty-until-finished and cancel-restores-rows gating, the row `Copy` submenu and the clipped-vs-fitted hover tooltip), the module-span/address-format helpers (including the absolute renderer), the found-results/address-table/memory-dump models (main-image and static grouping, colour, whole-set ordering, module+RVA rendering in both modes and the clipboard copy texts), the Memory Viewer box/Go round-trip and the Addresses settings switch.
+- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the File/View/Help window shell (no Edit menu, no Undo Scan / Add Address Manually... actions), the View > Log... window with live records and filters, the scanner range controls and New Scan reset, the one-line found list (including the whole-result-set main-image-first case, the empty-until-finished and cancel-restores-rows gating, the row `Copy` submenu and the clipped-vs-fitted hover tooltip), the module-span/address-format helpers (including the absolute renderer), the found-results/address-table/memory-dump models (main-image and static grouping, colour, whole-set ordering, module+RVA rendering in both modes and the clipboard copy texts), the Memory Viewer box/Go round-trip, the Addresses settings switch, the settings persisted at construction and the log dialog's live records, level/text filters, Clear and history seeding.
 - `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.

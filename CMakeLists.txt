@@ -219,7 +219,8 @@ target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"
-    SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}")
+    SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}"
+    SLOPKIT_TMP_DIR="${CMAKE_SOURCE_DIR}/tmp")
 target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2
     slopkit_platform

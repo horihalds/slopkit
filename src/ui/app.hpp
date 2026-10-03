@@ -8,6 +8,7 @@
 #include "process/plugin_access.hpp"
 #include "ui/completion_notifier.hpp"
 #include "ui/main_window.hpp"
+#include "ui/settings.hpp"
 
 namespace slopkit::ui
 {
@@ -36,6 +37,7 @@ namespace slopkit::ui
         CompletionNotifier      notifier_;
         process::AccessWorker   access_worker_ {access_};
         process::AttachedTarget target_;
+        SettingsController      settings_;
 
         std::unique_ptr<MainWindow> window_;
     };

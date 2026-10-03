@@ -17,6 +17,7 @@ class QAction;
 namespace slopkit::ui::dialogs
 {
     class AddAddressDialog;
+    class LogDialog;
     class MemoryViewerDialog;
     class ProcessListDialog;
     class SettingsDialog;
@@ -31,6 +32,7 @@ namespace slopkit::ui::panels
 
 namespace slopkit::ui
 {
+    class SettingsController;
 
     // The application window: menu bar, status bar and the three split zones. It
     // owns the address table and forwards every target access to the shared
@@ -43,6 +45,7 @@ namespace slopkit::ui
         MainWindow(process::AccessWorker&   worker,
                    process::AttachedTarget& target,
                    plugin::PluginHost&      host,
+                   SettingsController&      settings,
                    QWidget*                 parent = nullptr);
         ~MainWindow() override;
 
@@ -62,12 +65,14 @@ namespace slopkit::ui
         void on_add_address_requested();
         void show_process_list();
         void show_add_address();
+        void show_log();
         void show_settings();
         void show_about();
 
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
         plugin::PluginHost&      host_;
+        SettingsController&      settings_;
 
         table::AddressTable address_table_;
 
@@ -78,10 +83,8 @@ namespace slopkit::ui
         dialogs::ProcessListDialog*  process_list_ {};
         dialogs::AddAddressDialog*   add_address_ {};
         dialogs::MemoryViewerDialog* memory_view_ {};
-        dialogs::SettingsDialog*     settings_ {};
-
-        // The theme currently installed, mirrored by the Settings dialog.
-        bool dark_theme_active_ {true};
+        dialogs::LogDialog*          log_ {};
+        dialogs::SettingsDialog*     settings_dialog_ {};
 
         QLabel*       process_label_ {};
         QProgressBar* scan_progress_ {};
@@ -91,8 +94,7 @@ namespace slopkit::ui
         QAction* open_table_action_ {};
         QAction* save_table_action_ {};
         QAction* save_table_as_action_ {};
-        QAction* undo_scan_action_ {};
-        QAction* add_address_action_ {};
+        QAction* log_action_ {};
         QAction* settings_action_ {};
         QAction* about_action_ {};
 
