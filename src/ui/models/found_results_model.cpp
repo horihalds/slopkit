@@ -2,13 +2,17 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <numeric>
 #include <string_view>
 #include <utility>
 #include <vector>
 
+#include <QBrush>
+
 #include "scan/value.hpp"
 #include "ui/fonts.hpp"
+#include "ui/theme.hpp"
 
 namespace slopkit::ui::models
 {
@@ -73,6 +77,13 @@ namespace slopkit::ui::models
             return QVariant::fromValue(mono_font());
         case Qt::TextAlignmentRole:
             return static_cast<int>(Qt::AlignLeft | Qt::AlignVCenter);
+        case Qt::ForegroundRole:
+            if (index.column() == address
+                && static_hits_[static_cast<std::size_t>(order_[static_cast<std::size_t>(index.row())])])
+            {
+                return QBrush(active_theme().success);
+            }
+            break;
         default:
             break;
         }
@@ -132,10 +143,48 @@ namespace slopkit::ui::models
         return &snapshot_.hits[static_cast<std::size_t>(order_[static_cast<std::size_t>(row)])];
     }
 
+    void FoundResultsModel::set_module_ranges(std::vector<AddressRange> ranges)
+    {
+        std::ranges::sort(ranges, {}, &AddressRange::start);
+
+        beginResetModel();
+        module_ranges_ = std::move(ranges);
+        refresh_static_flags();
+        apply_sort();
+        endResetModel();
+    }
+
+    bool FoundResultsModel::is_static(std::uint64_t address) const
+    {
+        const auto after = std::upper_bound(module_ranges_.begin(),
+                                            module_ranges_.end(),
+                                            address,
+                                            [](std::uint64_t value, const AddressRange& range)
+                                            {
+                                                return value < range.start;
+                                            });
+        if (after == module_ranges_.begin())
+        {
+            return false;
+        }
+        const AddressRange& candidate = *std::prev(after);
+        return address < candidate.end;
+    }
+
     void FoundResultsModel::rebuild_order()
     {
         order_.resize(snapshot_.hits.size());
         std::iota(order_.begin(), order_.end(), 0);
+        refresh_static_flags();
+    }
+
+    void FoundResultsModel::refresh_static_flags()
+    {
+        static_hits_.resize(snapshot_.hits.size());
+        for (std::size_t i = 0; i < snapshot_.hits.size(); ++i)
+        {
+            static_hits_[i] = is_static(snapshot_.hits[i].address);
+        }
     }
 
     void FoundResultsModel::apply_sort()
@@ -145,6 +194,15 @@ namespace slopkit::ui::models
                          order_.end(),
                          [&](int lhs, int rhs)
                          {
+                             // Static hits always group above the others; the
+                             // sort order only orders within each group.
+                             const bool left_static  = static_hits_[static_cast<std::size_t>(lhs)];
+                             const bool right_static = static_hits_[static_cast<std::size_t>(rhs)];
+                             if (left_static != right_static)
+                             {
+                                 return left_static;
+                             }
+
                              const auto& left  = hits[static_cast<std::size_t>(lhs)];
                              const auto& right = hits[static_cast<std::size_t>(rhs)];
 

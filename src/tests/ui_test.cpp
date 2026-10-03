@@ -3,6 +3,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <expected>
 #include <memory>
 #include <span>
@@ -13,6 +15,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QBrush>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -41,6 +44,7 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/plugin_access.hpp"
+#include "scan/source.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
@@ -449,6 +453,117 @@ TEST_CASE("the found-results model mirrors a snapshot", "[ui]")
     CHECK(model.hit_at(0) == nullptr);
 }
 
+TEST_CASE("the found-results model marks and groups static hits", "[ui]")
+{
+    application();
+
+    slopkit::ui::models::FoundResultsModel model;
+
+    slopkit::scan::ScanConfig config;
+    config.value_type = slopkit::scan::ValueType::int32;
+
+    slopkit::scan::ScanSnapshot snapshot;
+    snapshot.hit_count = 3;
+    snapshot.hits.push_back(slopkit::scan::ScanHit {0x1000, std::vector<std::byte> {std::byte {1}}, {}});
+    snapshot.hits.push_back(slopkit::scan::ScanHit {0x5000000, std::vector<std::byte> {std::byte {5}}, {}});
+    snapshot.hits.push_back(slopkit::scan::ScanHit {0x2000, std::vector<std::byte> {std::byte {2}}, {}});
+    model.set_snapshot(snapshot, config);
+
+    // No map yet: the plain ascending address order and no static hit.
+    CHECK(model.hit_at(0)->address == 0x1000);
+    CHECK(model.hit_at(1)->address == 0x2000);
+    CHECK(model.hit_at(2)->address == 0x5000000);
+    CHECK_FALSE(model.is_static(0x1000));
+
+    // Ranges deliberately out of order; the model sorts them.
+    model.set_module_ranges({
+        slopkit::ui::models::AddressRange {0x2000, 0x3000},
+         slopkit::ui::models::AddressRange {0x1000, 0x1800}
+    });
+
+    // Static hits group first in address order, the heap hit last.
+    CHECK(model.hit_at(0)->address == 0x1000);
+    CHECK(model.hit_at(1)->address == 0x2000);
+    CHECK(model.hit_at(2)->address == 0x5000000);
+    CHECK(model.is_static(0x1000));
+    CHECK(model.is_static(0x17FF));
+    CHECK_FALSE(model.is_static(0x1800)); // Half-open: base + size is outside.
+    CHECK_FALSE(model.is_static(0x5000000));
+
+    const QColor green = slopkit::ui::active_theme().success;
+    CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::ForegroundRole)
+              .value<QBrush>()
+              .color()
+          == green);
+    CHECK(model.data(model.index(1, slopkit::ui::models::FoundResultsModel::address), Qt::ForegroundRole)
+              .value<QBrush>()
+              .color()
+          == green);
+    CHECK_FALSE(
+        model.data(model.index(2, slopkit::ui::models::FoundResultsModel::address), Qt::ForegroundRole).isValid());
+
+    // The grouping is the primary key: statics stay on top when the address
+    // column is sorted descending, now ordered descending within the group.
+    model.sort(slopkit::ui::models::FoundResultsModel::address, Qt::DescendingOrder);
+    CHECK(model.hit_at(0)->address == 0x2000);
+    CHECK(model.hit_at(1)->address == 0x1000);
+    CHECK(model.hit_at(2)->address == 0x5000000);
+
+    // Dropping the map makes every hit non-static again.
+    model.set_module_ranges({});
+    CHECK_FALSE(model.is_static(0x1000));
+    CHECK_FALSE(model.is_static(0x2000));
+    CHECK(model.rowCount() == 3);
+}
+
+TEST_CASE("the found list keeps one result line", "[ui]")
+{
+    application();
+
+    // A fresh panel already shows the pre-scan line, and it only ever has the one
+    // label, so nothing can appear or disappear and shift the table.
+    slopkit::scan::ScanEngine           idle_engine;
+    slopkit::table::AddressTable        idle_table;
+    slopkit::ui::panels::FoundListPanel idle_panel {idle_engine, idle_table};
+    auto*                               idle_header = idle_panel.findChild<QLabel*>();
+    REQUIRE(idle_header != nullptr);
+    CHECK(idle_header->text() == QStringLiteral("Showing 0 of 0 results"));
+    CHECK(idle_panel.findChildren<QLabel*>().size() == 1);
+
+    // A capped page keeps the same line and appends the cap suffix instead of
+    // adding a second status row.
+    std::vector<std::byte> bytes(12, std::byte {0});
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        const std::uint32_t value = 10;
+        std::memcpy(bytes.data() + i * 4, &value, sizeof(value));
+    }
+
+    slopkit::scan::ScanEngine engine;
+    engine.set_max_stored_hits(2);
+    slopkit::scan::ScanConfig config;
+    config.value = std::int64_t {10};
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(engine.has_results());
+    const auto snapshot = engine.snapshot();
+    REQUIRE(snapshot.hits.size() == 2);
+    REQUIRE(snapshot.hit_count == 3);
+    REQUIRE(snapshot.truncated);
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    panel.refresh();
+
+    auto* header = panel.findChild<QLabel*>();
+    REQUIRE(header != nullptr);
+    CHECK(header->text() == QStringLiteral("Showing 2 of 3 results (result cap reached)"));
+    CHECK(panel.findChildren<QLabel*>().size() == 1);
+}
+
 TEST_CASE("the address-table model edits the table", "[ui]")
 {
     application();
@@ -620,7 +735,7 @@ TEST_CASE("the main window shell is built", "[ui]")
 
     auto* found_header = found_list->findChild<QLabel*>();
     REQUIRE(found_header != nullptr);
-    CHECK(found_header->text() == QStringLiteral("Found: 0"));
+    CHECK(found_header->text() == QStringLiteral("Showing 0 of 0 results"));
 
     // The address list lost its decorative footer buttons.
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
@@ -949,7 +1064,7 @@ TEST_CASE("typing in the filter selects the first result", "[ui]")
     dialog.close();
 }
 
-TEST_CASE("the scanner range defaults to the target process bounds", "[ui]")
+TEST_CASE("the scanner range is pre-filled with the padded defaults", "[ui]")
 {
     application();
 
@@ -960,32 +1075,25 @@ TEST_CASE("the scanner range defaults to the target process bounds", "[ui]")
     low.end      = 0x3000;
     low.readable = true;
 
-    slopkit::process::RegionInfo high;
-    high.start    = 0x4000;
-    high.end      = 0x5000;
-    high.readable = true;
-
-    access.regions = {low, high};
+    access.regions = {low};
 
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target = fake_target();
 
-    attach_app_session(worker);
-
+    // No attach or map job yet: the boxes already hold the whole-address-space
+    // range, independent of the target's memory map.
     slopkit::ui::panels::ScannerPanel panel {worker, target};
 
     auto* start = address_field(panel, "Start address");
     auto* stop  = address_field(panel, "Stop address");
+    auto* combo = range_combo(panel);
     REQUIRE(start != nullptr);
     REQUIRE(stop != nullptr);
+    REQUIRE(combo != nullptr);
 
-    REQUIRE(pump_ui(worker,
-                    [&]
-                    {
-                        return !start->text().isEmpty();
-                    }));
-    CHECK(start->text() == QStringLiteral("0x1000"));
-    CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
+    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+    CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+    CHECK_FALSE(combo->isEnabled());
 }
 
 TEST_CASE("starting a scan hands the whole address space range to the engine", "[ui]")
@@ -1031,20 +1139,122 @@ TEST_CASE("starting a scan hands the whole address space range to the engine", "
                     [&]
                     {
                         panel.refresh();
-                        return start->text() == QStringLiteral("0x1000") && scan_button->isEnabled();
+                        return scan_button->isEnabled();
                     }));
     scan_button->click();
 
     const auto config = panel.engine().config();
-    CHECK(config.filter.start == 0x1000);
+    CHECK(config.filter.start == 0);
     CHECK(config.filter.stop == slopkit::scan::kMaxUserAddress);
 }
 
-TEST_CASE("the scanner range spans every region and blanks an empty map", "[ui]")
+TEST_CASE("New Scan clears the results and returns the panel to its pre-scan state", "[ui]")
 {
     application();
 
-    SECTION("the lowest non-readable region still bounds the start")
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    region.writable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("10"));
+
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    auto* undo_button = button_labelled(panel, QStringLiteral("Undo Scan"));
+    auto* next_button = button_labelled(panel, QStringLiteral("Next Scan"));
+    REQUIRE(scan_button != nullptr);
+    REQUIRE(undo_button != nullptr);
+    REQUIRE(next_button != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return scan_button->isEnabled();
+                    }));
+
+    // The first scan runs to completion and leaves a result set behind.
+    scan_button->click();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return panel.engine().has_results() && !panel.engine().is_running();
+                    }));
+    panel.refresh();
+    REQUIRE(scan_button->text() == QStringLiteral("New Scan"));
+    CHECK(undo_button->isEnabled());
+
+    // New Scan drops the result set instead of starting another scan.
+    scan_button->click();
+    panel.refresh();
+
+    CHECK_FALSE(panel.engine().has_results());
+    CHECK(scan_button->text() == QStringLiteral("First Scan"));
+    CHECK_FALSE(undo_button->isEnabled());
+    CHECK_FALSE(next_button->isEnabled());
+    CHECK(panel.progress_percent() == 0);
+
+    // The found list over the same engine is empty again.
+    slopkit::table::AddressTable        addresses;
+    slopkit::ui::panels::FoundListPanel found_list {panel.engine(), addresses};
+    found_list.refresh();
+    auto* view = found_list.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->model() != nullptr);
+    CHECK(view->model()->rowCount() == 0);
+}
+
+TEST_CASE("the scanner range always shows the padded whole-address-space defaults", "[ui]")
+{
+    application();
+
+    // Waits for the memory map, then checks the boxes hold the padded default
+    // range whatever the mapped pages are.
+    const auto expects_defaults = [](UiFakeAccess& access)
+    {
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = fake_target();
+
+        attach_app_session(worker);
+
+        slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+        auto* start = address_field(panel, "Start address");
+        auto* stop  = address_field(panel, "Stop address");
+        auto* combo = range_combo(panel);
+        REQUIRE(start != nullptr);
+        REQUIRE(stop != nullptr);
+        REQUIRE(combo != nullptr);
+
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return combo->isEnabled();
+                        }));
+        CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+        CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+    };
+
+    SECTION("an empty map")
+    {
+        UiFakeAccess access; // No regions reported.
+        expects_defaults(access);
+    }
+
+    SECTION("a low non-readable region")
     {
         UiFakeAccess access;
 
@@ -1059,29 +1269,10 @@ TEST_CASE("the scanner range spans every region and blanks an empty map", "[ui]"
         readable.readable = true;
 
         access.regions = {readable, guard};
-
-        slopkit::process::AccessWorker   worker {access};
-        slopkit::process::AttachedTarget target = fake_target();
-
-        attach_app_session(worker);
-
-        slopkit::ui::panels::ScannerPanel panel {worker, target};
-
-        auto* start = address_field(panel, "Start address");
-        auto* stop  = address_field(panel, "Stop address");
-        REQUIRE(start != nullptr);
-        REQUIRE(stop != nullptr);
-
-        REQUIRE(pump_ui(worker,
-                        [&]
-                        {
-                            return !start->text().isEmpty();
-                        }));
-        CHECK(start->text() == QStringLiteral("0x1000"));
-        CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
+        expects_defaults(access);
     }
 
-    SECTION("a lone non-readable region still bounds the range")
+    SECTION("a lone non-readable region")
     {
         UiFakeAccess access;
 
@@ -1091,51 +1282,7 @@ TEST_CASE("the scanner range spans every region and blanks an empty map", "[ui]"
         only.readable  = false;
         access.regions = {only};
 
-        slopkit::process::AccessWorker   worker {access};
-        slopkit::process::AttachedTarget target = fake_target();
-
-        attach_app_session(worker);
-
-        slopkit::ui::panels::ScannerPanel panel {worker, target};
-
-        auto* start = address_field(panel, "Start address");
-        auto* stop  = address_field(panel, "Stop address");
-        REQUIRE(start != nullptr);
-        REQUIRE(stop != nullptr);
-
-        REQUIRE(pump_ui(worker,
-                        [&]
-                        {
-                            return !start->text().isEmpty();
-                        }));
-        CHECK(start->text() == QStringLiteral("0x2000"));
-        CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
-    }
-
-    SECTION("an empty map leaves the fields blank")
-    {
-        UiFakeAccess access; // No regions reported.
-
-        slopkit::process::AccessWorker   worker {access};
-        slopkit::process::AttachedTarget target = fake_target();
-
-        attach_app_session(worker);
-
-        slopkit::ui::panels::ScannerPanel panel {worker, target};
-
-        auto* start = address_field(panel, "Start address");
-        auto* stop  = address_field(panel, "Stop address");
-        REQUIRE(start != nullptr);
-        REQUIRE(stop != nullptr);
-
-        // Let both the handoff and the map job complete and drain.
-        REQUIRE(pump_ui(worker,
-                        [&]
-                        {
-                            return access.attach_calls.load() >= 2;
-                        }));
-        CHECK(start->text().isEmpty());
-        CHECK(stop->text().isEmpty());
+        expects_defaults(access);
     }
 }
 
@@ -1197,25 +1344,85 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     // Item 0 is the whole process, then the file-backed modules by base; the
     // anonymous mapping stays out of the list.
     REQUIRE(combo->count() == 3);
-    CHECK(combo->itemText(0).startsWith(QStringLiteral("All memory")));
-    CHECK(combo->itemText(0).contains(QStringLiteral("0x1000-0x7FFFFFFFFFFF")));
-    CHECK(combo->itemText(1).contains(QStringLiteral("low")));
-    CHECK(combo->itemText(2).contains(QStringLiteral("high")));
+    CHECK(combo->itemText(0) == QStringLiteral("All memory"));
+    CHECK(combo->itemText(1) == QStringLiteral("low"));
+    CHECK(combo->itemText(2) == QStringLiteral("high"));
+    for (int i = 0; i < combo->count(); ++i)
+    {
+        CHECK_FALSE(combo->itemText(i).contains(QStringLiteral("0x")));
+    }
+    // The range moved into the tooltips instead of the entry text.
+    CHECK(combo->itemData(0, Qt::ToolTipRole).toString() == QStringLiteral("0x0000000000000000-0x00007FFFFFFFFFFF"));
     CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("/opt/low"));
 
     // Selecting a module narrows the range to its base and size.
     combo->setCurrentIndex(1);
-    CHECK(start->text() == QStringLiteral("0x1000"));
-    CHECK(stop->text() == QStringLiteral("0x1800"));
+    CHECK(start->text() == QStringLiteral("0x0000000000001000"));
+    CHECK(stop->text() == QStringLiteral("0x0000000000001800"));
 
     combo->setCurrentIndex(2);
-    CHECK(start->text() == QStringLiteral("0x2000"));
-    CHECK(stop->text() == QStringLiteral("0x2100"));
+    CHECK(start->text() == QStringLiteral("0x0000000000002000"));
+    CHECK(stop->text() == QStringLiteral("0x0000000000002100"));
 
     // Back to the whole process.
     combo->setCurrentIndex(0);
-    CHECK(start->text() == QStringLiteral("0x1000"));
-    CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
+    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+    CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+}
+
+TEST_CASE("a memory map applied to the scanner panel reaches the found list", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::ModuleInfo image;
+    image.base     = 0x1000;
+    image.size     = 0x2000;
+    image.kind     = slopkit::process::ModuleKind::elf;
+    image.name     = "app";
+    image.path     = "/opt/app";
+    access.modules = {image};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    slopkit::table::AddressTable        addresses;
+    slopkit::ui::panels::FoundListPanel found_list {panel.engine(), addresses};
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::ScannerPanel::memoryMapApplied,
+                     &found_list,
+                     &slopkit::ui::panels::FoundListPanel::set_modules);
+
+    auto* combo = range_combo(panel);
+    REQUIRE(combo != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return combo->isEnabled();
+                    }));
+
+    auto* view = found_list.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = dynamic_cast<slopkit::ui::models::FoundResultsModel*>(view->model());
+    REQUIRE(model != nullptr);
+
+    // The module image span arrived through the signal: inside is static, the
+    // half-open end and an unrelated address are not.
+    CHECK(model->is_static(0x1000));
+    CHECK(model->is_static(0x2FFF));
+    CHECK_FALSE(model->is_static(0x3000));
+    CHECK_FALSE(model->is_static(0x5000000));
 }
 
 TEST_CASE("a long module list scrolls inside the scan-range dropdown", "[ui]")
@@ -1269,13 +1476,16 @@ TEST_CASE("manual edits to the scan range survive refresh cycles", "[ui]")
     slopkit::ui::panels::ScannerPanel panel {worker, target};
 
     auto* start = address_field(panel, "Start address");
+    auto* combo = range_combo(panel);
     REQUIRE(start != nullptr);
+    REQUIRE(combo != nullptr);
 
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return start->text() == QStringLiteral("0x1000");
+                        return combo->isEnabled();
                     }));
+    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
 
     // A hand-typed value must not be rewritten by later ticks.
     start->setText(QStringLiteral("0x2000"));
@@ -1316,28 +1526,30 @@ TEST_CASE("detaching resets the scan range and re-attaching repopulates it", "[u
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return !start->text().isEmpty();
+                        return combo->isEnabled();
                     }));
+    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
 
-    // Detach: the fields clear and the dropdown resets to a disabled entry.
+    // Detach: the boxes return to the padded defaults and the dropdown resets
+    // to a disabled entry.
     target.clear();
     panel.refresh();
-    CHECK(start->text().isEmpty());
-    CHECK(stop->text().isEmpty());
+    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+    CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
     CHECK_FALSE(combo->isEnabled());
     REQUIRE(combo->count() == 1);
     CHECK(combo->itemText(0) == QStringLiteral("All memory"));
 
-    // Re-attach: the map is requested again and the fields refill.
+    // Re-attach: the map is requested again and the defaults are restored.
     target = fake_target();
     panel.refresh();
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return combo->isEnabled() && !start->text().isEmpty();
+                        return combo->isEnabled();
                     }));
-    CHECK(start->text() == QStringLiteral("0x1000"));
-    CHECK(stop->text() == QStringLiteral("0x7FFFFFFFFFFF"));
+    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+    CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
 }
 
 TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")
@@ -1373,7 +1585,7 @@ TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")
     worker.drain();
     QCoreApplication::processEvents();
 
-    CHECK(start->text().isEmpty());
+    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
     CHECK_FALSE(combo->isEnabled());
     REQUIRE(combo->count() == 1);
     CHECK(combo->itemText(0) == QStringLiteral("Loading…"));

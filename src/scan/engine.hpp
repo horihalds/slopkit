@@ -72,6 +72,10 @@ namespace slopkit::scan
         // Requests the running scan to stop; the results are left intact.
         void cancel();
 
+        // Stops a running scan and returns the engine to its constructed state:
+        // no result set, no undo history, no message, progress 0.
+        void reset();
+
         [[nodiscard]] ScanSnapshot snapshot() const;
         [[nodiscard]] bool         is_running() const noexcept;
         [[nodiscard]] ScanConfig   config() const;

@@ -155,6 +155,7 @@ namespace slopkit::ui
                     on_memory_view_requested(scanner_->main_module_address());
                 });
         connect(scanner_, &panels::ScannerPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
+        connect(scanner_, &panels::ScannerPanel::memoryMapApplied, found_list_, &panels::FoundListPanel::set_modules);
         connect(undo_scan_action_,
                 &QAction::triggered,
                 this,
@@ -272,6 +273,7 @@ namespace slopkit::ui
         found_list_->refresh();
         address_list_->refresh();
         scan_progress_->setValue(scanner_->progress_percent());
+        undo_scan_action_->setEnabled(scanner_->engine().has_results());
         run_freeze_pass();
         refresh_target_label();
     }

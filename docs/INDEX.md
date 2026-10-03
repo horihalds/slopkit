@@ -40,7 +40,7 @@
 - `src/platform/linux/desktop_entry.cpp` — parses `Name`/`Exec`/`NoDisplay` and scans `$XDG_DATA_DIRS` for applications.
 - `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs, with per-session cached memory access.
 - `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes, exposing their PE images and caching memory access per session.
-- `src/process/types.hpp` — process/module/thread descriptors, access-method flags and `AccessError`.
+- `src/process/types.hpp` — process/module/thread descriptors, the `is_file_backed` module predicate, access-method flags and `AccessError`.
 - `src/process/types.cpp` — human-readable descriptions of errors, module kinds and access methods.
 - `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the access worker depends on, including the caller-buffer `read_into`.
 - `src/process/access_worker.hpp` — job/result types and the background `AccessWorker` that serializes all target access.
@@ -58,7 +58,7 @@
 - `src/scan/source.hpp` — the `MemorySource` read/read-into/regions seam and its session and buffer constructors.
 - `src/scan/source.cpp` — builds a source over a live session or an owned test buffer.
 - `src/scan/engine.hpp` — `ScanConfig`/`ScanHit`/`ScanSnapshot` and the worker-threaded `ScanEngine`.
-- `src/scan/engine.cpp` — region filtering, parallel shard-pooled first scans over a compiled matcher, refinement scans, undo and cancellation.
+- `src/scan/engine.cpp` — region filtering, parallel shard-pooled first scans over a compiled matcher, refinement scans, undo, cancellation and resetting to the idle state.
 - `src/table/address_table.hpp` — `AddressEntry` with a stable id and the `AddressTable` model: value encoding, freeze snapshots and selection, no session.
 - `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
@@ -75,14 +75,14 @@
 - `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
 - `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, icon).
 - `src/ui/components/widgets.cpp` — implements the helpers, re-applying their themed palettes when the application palette changes.
-- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over one `scan::ScanSnapshot` page with Address/Value/Previous columns and sorting.
-- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font and keeps the display order.
+- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over one `scan::ScanSnapshot` page with Address/Value/Previous columns, sorting and the module image spans that mark static hits.
+- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font; groups static hits first and draws their address in the success colour.
 - `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox and the async write.
 - `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value` and submits one write job with the pending-job-id guard.
-- `src/ui/panels/scanner_panel.hpp` — the scan controls, the handoff-created scan session, the scan engine and the bottom-right Add Address button.
-- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, applies the handed-over session, starts first/next/undo scans and raises the Add Address request.
-- `src/ui/panels/found_list_panel.hpp` — the `Found: N` result list over the scan engine's snapshot and the address table; its entry row holds the Memory View button.
-- `src/ui/panels/found_list_panel.cpp` — shows the hits, the truncation notes and adds double-clicked hits; its entry row raises the Memory View request.
+- `src/ui/panels/scanner_panel.hpp` — the scan controls with padded whole-address-space range defaults, the handoff-created scan session, the scan engine, the `memoryMapApplied` module-map signal and the bottom-right Add Address button.
+- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, lists name-only module entries in the range dropdown, applies the handed-over session, starts first/next/undo scans, resets the engine on New Scan and raises the Add Address request.
+- `src/ui/panels/found_list_panel.hpp` — the one-line `Showing N of M results` list over the scan engine's snapshot and the address table; its entry row holds the Memory View button.
+- `src/ui/panels/found_list_panel.cpp` — shows the hits and the single always-visible result line, forwards the module map to the model for static marking, and adds double-clicked hits; its entry row raises the Memory View request.
 - `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu and open/save.
 - `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions, toggles freezes and loads/saves through native file dialogs.
 - `src/ui/dialogs/process_list.hpp` — the Process List dialog and its filtered, sortable process model.
@@ -97,13 +97,13 @@
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
 - `src/tests/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
 - `src/tests/desktop_entry_test.cpp` — `.desktop` parsing, exec basename and application classification tests.
-- `src/tests/scan_test.cpp` — value parsing, scan predicates, matcher equivalence, first/next/undo, region filtering, cancellation and the hidden throughput benchmark.
+- `src/tests/scan_test.cpp` — value parsing, scan predicates, matcher equivalence, first/next/undo/reset, region filtering, cancellation and the hidden throughput benchmark.
 - `src/tests/scan_integration_test.cpp` — self-scans the test process through the built plugin and the `--scan` command.
 - `src/tests/access_worker_test.cpp` — background access worker tests: non-blocking submits, ordering, session ownership, handoff, detach and shutdown safety.
 - `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
-- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the found-results model and the address-table model.
+- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the scanner range controls and New Scan reset, the one-line found list, the found-results model (including static grouping/colour) and the address-table model.
 - `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.

@@ -36,6 +36,12 @@ namespace slopkit::ui::panels
             return name.left(keep) + QStringLiteral("...") + name.right(max_chars - 3 - keep);
         }
 
+        // Renders an address as "0x" plus exactly 16 upper-case hex digits.
+        QString hex16(std::uint64_t value)
+        {
+            return QStringLiteral("0x") + QString::number(value, 16).toUpper().rightJustified(16, QLatin1Char('0'));
+        }
+
         // The alignment the fast scan uses when the field is left blank.
         std::size_t default_alignment(scan::ValueType type) noexcept
         {
@@ -49,6 +55,7 @@ namespace slopkit::ui::panels
     {
         setMinimumWidth(320);
         build_layout();
+        apply_range(0, scan::kMaxUserAddress);
         connect_widgets();
         refresh();
     }
@@ -65,6 +72,10 @@ namespace slopkit::ui::panels
 
     std::uint64_t ScannerPanel::main_module_address() const noexcept
     {
+        if (!map_ready_)
+        {
+            return 0;
+        }
         const process::ModuleInfo* main_module = nullptr;
         for (const auto& module : modules_)
         {
@@ -220,7 +231,16 @@ namespace slopkit::ui::panels
                 this,
                 [this]
                 {
-                    start_first_scan();
+                    if (engine_.has_results())
+                    {
+                        engine_.reset();
+                        status_.clear();
+                        status_is_error_ = false;
+                    }
+                    else
+                    {
+                        start_first_scan();
+                    }
                     refresh();
                 });
         connect(next_scan_button_,
@@ -411,42 +431,22 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::apply_memory_map(process::MemoryMapResult result)
     {
-        modules_ = std::move(result.modules);
+        modules_   = std::move(result.modules);
+        map_ready_ = true;
 
-        // The beginning of the process memory space: its lowest mapped page,
-        // readable or not. The end is the user-space ceiling; the engine walks
-        // the mapped regions and stops after the last one, so the ceiling costs
-        // no reads.
-        std::optional<std::uint64_t> lowest;
-        for (const auto& region : result.regions)
-        {
-            if (region.end <= region.start)
-            {
-                continue;
-            }
-            lowest = lowest ? std::min(*lowest, region.start) : std::optional {region.start};
-        }
-
-        process_bounds_ =
-            lowest ? std::optional {std::pair {*lowest, scan::kMaxUserAddress}} : std::nullopt;
-
-        if (process_bounds_)
-        {
-            apply_range(process_bounds_->first, process_bounds_->second);
-        }
-        else
-        {
-            start_edit_->clear();
-            stop_edit_->clear();
-        }
-
+        // The whole-process entry spans the entire user-space address range
+        // independently of the mapped pages, so the boxes and the dropdown
+        // selection can never disagree.
+        apply_range(0, scan::kMaxUserAddress);
         rebuild_range_items();
+
+        emit memoryMapApplied(modules_);
     }
 
     void ScannerPanel::apply_range(std::uint64_t start, std::uint64_t end)
     {
-        start_edit_->setText(QStringLiteral("0x") + QString::number(start, 16).toUpper());
-        stop_edit_->setText(QStringLiteral("0x") + QString::number(end, 16).toUpper());
+        start_edit_->setText(hex16(start));
+        stop_edit_->setText(hex16(end));
     }
 
     void ScannerPanel::clear_memory_map()
@@ -455,47 +455,42 @@ namespace slopkit::ui::panels
         map_pid_ = 0;
         map_plugin_.clear();
         modules_.clear();
-        process_bounds_.reset();
-        start_edit_->clear();
-        stop_edit_->clear();
+        map_ready_ = false;
+        apply_range(0, scan::kMaxUserAddress);
 
         range_updating_ = true;
         module_combo_->clear();
         module_combo_->addItem(tr("All memory"));
+        module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(scan::kMaxUserAddress), Qt::UserRole + 1);
         module_combo_->setCurrentIndex(0);
         module_combo_->setEnabled(false);
         range_updating_ = false;
+
+        emit memoryMapApplied({});
     }
 
     void ScannerPanel::rebuild_range_items()
     {
         const auto range_text = [](std::uint64_t start, std::uint64_t end)
         {
-            return QStringLiteral("0x") + QString::number(start, 16).toUpper() + QStringLiteral("-")
-                 + QStringLiteral("0x") + QString::number(end, 16).toUpper();
+            return hex16(start) + QStringLiteral("-") + hex16(end);
         };
 
         range_updating_ = true;
         module_combo_->clear();
 
-        if (process_bounds_)
-        {
-            module_combo_->addItem(
-                tr("All memory  %1").arg(range_text(process_bounds_->first, process_bounds_->second)));
-            module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(process_bounds_->first), Qt::UserRole);
-            module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(process_bounds_->second), Qt::UserRole + 1);
-        }
-        else
-        {
-            module_combo_->addItem(tr("All memory"));
-        }
+        // The range is only a tooltip now; the entry text stays a name.
+        module_combo_->addItem(tr("All memory"));
+        module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(0), Qt::UserRole);
+        module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(scan::kMaxUserAddress), Qt::UserRole + 1);
+        module_combo_->setItemData(0, range_text(0, scan::kMaxUserAddress), Qt::ToolTipRole);
 
         // Only file-backed modules are listed, ordered by their base address;
         // anonymous mappings stay covered by the whole-process entry.
         std::vector<const process::ModuleInfo*> listed;
         for (const auto& module : modules_)
         {
-            if (module.kind == process::ModuleKind::anonymous || module.size == 0)
+            if (!process::is_file_backed(module))
             {
                 continue;
             }
@@ -507,8 +502,7 @@ namespace slopkit::ui::panels
         {
             const std::uint64_t start = module->base;
             const std::uint64_t end   = module->base + module->size;
-            module_combo_->addItem(
-                QStringLiteral("%1  %2").arg(elide_name(to_qstring(module->name), 48), range_text(start, end)));
+            module_combo_->addItem(elide_name(to_qstring(module->name), 48));
             const int row = module_combo_->count() - 1;
             module_combo_->setItemData(row, QVariant::fromValue<qulonglong>(start), Qt::UserRole);
             module_combo_->setItemData(row, QVariant::fromValue<qulonglong>(end), Qt::UserRole + 1);
@@ -668,8 +662,8 @@ namespace slopkit::ui::panels
 
         scan_button_->setText(has_results ? tr("New Scan") : tr("First Scan"));
         scan_button_->setEnabled(attached && !running);
-        next_scan_button_->setEnabled(attached && !running);
-        undo_button_->setEnabled(attached && !running);
+        next_scan_button_->setEnabled(attached && has_results && !running);
+        undo_button_->setEnabled(attached && has_results && !running);
         cancel_button_->setVisible(running);
 
         progress_percent_ = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);

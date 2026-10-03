@@ -63,6 +63,10 @@ namespace slopkit::ui::panels
         // A request to open the Add Address dialog, fed by the bottom button.
         void addAddressRequested();
 
+        // The current memory map as file-backed module images, empty when
+        // detached; the found list uses it to mark and group static hits.
+        void memoryMapApplied(std::vector<process::ModuleInfo> modules);
+
     private:
         void build_layout();
         void connect_widgets();
@@ -124,16 +128,16 @@ namespace slopkit::ui::panels
         std::optional<process::JobId> handoff_pending_;
 
         // The target's memory map, fetched once per attach so the `All memory`
-        // range spans the whole process address space: its lowest mapped page
-        // up to the user-space ceiling. `map_pid_`/`map_plugin_` record which
-        // target the pending or last request belongs to, so a completion for a
-        // superseded target is dropped.
-        std::optional<process::JobId>                          map_pending_;
-        process::ProcessId                                     map_pid_ {0};
-        std::string                                            map_plugin_;
-        std::vector<process::ModuleInfo>                       modules_;
-        std::optional<std::pair<std::uint64_t, std::uint64_t>> process_bounds_;
-        bool                                                   range_updating_ {false};
+        // range spans the whole process address space (0 to the user-space
+        // ceiling) independently of the mapped pages. `map_pid_`/`map_plugin_`
+        // record which target the pending or last request belongs to, so a
+        // completion for a superseded target is dropped.
+        std::optional<process::JobId>    map_pending_;
+        process::ProcessId               map_pid_ {0};
+        std::string                      map_plugin_;
+        std::vector<process::ModuleInfo> modules_;
+        bool                             map_ready_ {false};
+        bool                             range_updating_ {false};
 
         scan::ScanEngine engine_;
     };

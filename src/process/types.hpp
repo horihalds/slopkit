@@ -40,6 +40,13 @@ namespace slopkit::process
         std::string   path;
     };
 
+    // True for a module that backs a file image and can therefore make an
+    // address static: not an anonymous mapping and not a zero-size entry.
+    [[nodiscard]] constexpr bool is_file_backed(const ModuleInfo& module) noexcept
+    {
+        return module.kind != ModuleKind::anonymous && module.size != 0;
+    }
+
     struct ThreadInfo
     {
         std::uint32_t tid {};

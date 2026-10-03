@@ -54,12 +54,8 @@ namespace slopkit::ui::panels
         layout->setContentsMargins(8, 8, 8, 8);
         layout->setSpacing(6);
 
-        header_ = widgets::section_header(tr("Found: 0"), this);
+        header_ = widgets::section_header(tr("Showing 0 of 0 results"), this);
         layout->addWidget(header_);
-
-        note_ = new widgets::StatusLabel(this);
-        note_->setVisible(false);
-        layout->addWidget(note_);
 
         model_      = new models::FoundResultsModel(this);
         table_view_ = new QTableView(this);
@@ -107,34 +103,34 @@ namespace slopkit::ui::panels
         memory_view_button_->setEnabled(attached);
     }
 
+    void FoundListPanel::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        std::vector<models::AddressRange> ranges;
+        ranges.reserve(modules.size());
+        for (const auto& module : modules)
+        {
+            if (!process::is_file_backed(module))
+            {
+                continue;
+            }
+            ranges.push_back(models::AddressRange {module.base, module.base + module.size});
+        }
+        model_->set_module_ranges(std::move(ranges));
+    }
+
     void FoundListPanel::refresh()
     {
         const scan::ScanSnapshot snapshot = engine_.snapshot();
         const scan::ScanConfig   config   = engine_.config();
 
-        header_->setText(tr("Found: %1").arg(static_cast<qulonglong>(snapshot.hit_count)));
-
-        if (snapshot.hits.size() < snapshot.hit_count)
+        QString line = tr("Showing %1 of %2 results")
+                           .arg(static_cast<qulonglong>(snapshot.hits.size()))
+                           .arg(static_cast<qulonglong>(snapshot.hit_count));
+        if (snapshot.truncated)
         {
-            QString note = tr("Showing the first %1 of %2 matches")
-                               .arg(static_cast<qulonglong>(snapshot.hits.size()))
-                               .arg(static_cast<qulonglong>(snapshot.hit_count));
-            if (snapshot.truncated)
-            {
-                note += tr(" (result cap reached)");
-            }
-            note_->set_status(widgets::StatusKind::info, note);
+            line += tr(" (result cap reached)");
         }
-        else if (snapshot.truncated)
-        {
-            note_->set_status(widgets::StatusKind::warning,
-                              tr("The result cap was reached; only the first matches are stored."));
-        }
-        else
-        {
-            note_->clear_status();
-        }
-        note_->setVisible(!note_->text().isEmpty());
+        header_->setText(line);
 
         if (has_last_ && same_config(last_config_, config) && same_snapshot(last_snapshot_, snapshot))
         {

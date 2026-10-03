@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+
+#include "process/types.hpp"
 #include "scan/engine.hpp"
 #include "table/address_table.hpp"
 
@@ -14,17 +17,12 @@ namespace slopkit::ui::models
     class FoundResultsModel;
 } // namespace slopkit::ui::models
 
-namespace slopkit::ui::widgets
-{
-    class StatusLabel;
-} // namespace slopkit::ui::widgets
-
 namespace slopkit::ui::panels
 {
 
-    // The left half of the middle zone: the `Found: N` result list. It only
-    // reads the engine's snapshot and appends double-clicked hits to the address
-    // table. Its entry row hosts the Memory View button.
+    // The left half of the middle zone: the `Showing N of M results` list. It
+    // only reads the engine's snapshot and appends double-clicked hits to the
+    // address table. Its entry row hosts the Memory View button.
     class FoundListPanel : public QWidget
     {
         Q_OBJECT
@@ -39,6 +37,10 @@ namespace slopkit::ui::panels
         // Enables the Memory View button only while a process is attached.
         void set_target_attached(bool attached);
 
+        // Announces a fresh module map; the found list marks and groups static
+        // hits. Wired from the scanner panel by the window.
+        void set_modules(std::vector<process::ModuleInfo> modules);
+
     signals:
         // A request to open the Memory Viewer at the main module's entry point
         // (or its base when the plugin reports none).
@@ -52,7 +54,6 @@ namespace slopkit::ui::panels
         table::AddressTable& table_;
 
         QLabel*                    header_ {};
-        widgets::StatusLabel*      note_ {};
         QTableView*                table_view_ {};
         models::FoundResultsModel* model_ {};
         QPushButton*               memory_view_button_ {};

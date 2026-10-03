@@ -399,6 +399,18 @@ namespace slopkit::scan
         worker_.request_stop();
     }
 
+    void ScanEngine::reset()
+    {
+        finish_worker();
+
+        const std::lock_guard lock(mutex_);
+        snapshot_ = ScanSnapshot {};
+        results_.reset();
+        history_.clear();
+        config_ = ScanConfig {};
+        source_ = MemorySource {};
+    }
+
     ScanSnapshot ScanEngine::snapshot() const
     {
         const std::lock_guard lock(mutex_);

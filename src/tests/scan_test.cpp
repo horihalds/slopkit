@@ -935,6 +935,45 @@ TEST_CASE("scanned bytes advance monotonically during a scan", "[scan]")
     CHECK(snapshot.progress == Approx(1.0f));
 }
 
+TEST_CASE("resetting the engine returns it to the constructed state", "[scan]")
+{
+    std::vector<std::byte> bytes(64);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        write_int32(bytes, i * 4, 10);
+    }
+    const auto source = slopkit::scan::make_buffer_source(bytes, kBase);
+
+    ScanEngine engine;
+    engine.first_scan(exact_config(ValueType::int32, 10), source);
+    REQUIRE(wait(engine).hit_count == 8);
+    REQUIRE(engine.has_results());
+
+    // Refine once so the history is non-empty before the reset.
+    engine.next_scan(exact_config(ValueType::int32, 10));
+    REQUIRE(wait(engine).state == ScanState::done);
+    REQUIRE(engine.has_results());
+
+    engine.reset();
+
+    CHECK_FALSE(engine.has_results());
+    CHECK(engine.result_count() == 0);
+    CHECK_FALSE(engine.is_running());
+    const auto snapshot = engine.snapshot();
+    CHECK(snapshot.state == ScanState::idle);
+    CHECK(snapshot.hits.empty());
+    CHECK(snapshot.hit_count == 0);
+    CHECK(snapshot.progress == Approx(0.0f));
+
+    // Undo is a no-op once the history is gone.
+    engine.undo();
+    CHECK_FALSE(engine.has_results());
+
+    // A following first scan still works.
+    engine.first_scan(exact_config(ValueType::int32, 10), source);
+    CHECK(wait(engine).hit_count == 8);
+}
+
 TEST_CASE("scan throughput", "[.perf]")
 {
     // A large synthetic address space with sparse `int32 == 15` needles, i.e.
