@@ -8,7 +8,6 @@
 #include <string_view>
 #include <utility>
 
-#include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -81,16 +80,12 @@ namespace slopkit::ui::dialogs
                 return QString::number(static_cast<qulonglong>(info.pid));
             case name:
                 return to_qstring(info.name);
-            case plugin:
-                return to_qstring(info.plugin_id);
-            case executable:
-                return info.exe_path.empty() ? tr("(unknown)") : to_qstring(info.exe_path);
             default:
                 break;
             }
             break;
         case Qt::FontRole:
-            if (index.column() == pid || index.column() == executable)
+            if (index.column() == pid)
             {
                 return QVariant::fromValue(mono_font());
             }
@@ -113,10 +108,6 @@ namespace slopkit::ui::dialogs
                 return tr("PID");
             case name:
                 return tr("Name");
-            case plugin:
-                return tr("Plugin");
-            case executable:
-                return tr("Executable");
             default:
                 break;
             }
@@ -260,12 +251,6 @@ namespace slopkit::ui::dialogs
                               case name:
                                   order = left.name.compare(right.name);
                                   break;
-                              case plugin:
-                                  order = left.plugin_id.compare(right.plugin_id);
-                                  break;
-                              case executable:
-                                  order = left.exe_path.compare(right.exe_path);
-                                  break;
                               default:
                                   order = left.pid < right.pid ? -1 : (left.pid > right.pid ? 1 : 0);
                                   break;
@@ -284,7 +269,12 @@ namespace slopkit::ui::dialogs
         : QDialog(parent), worker_(worker), target_(target)
     {
         setWindowTitle(tr("Process List"));
-        resize(900, 560);
+        resize(600, 440);
+
+        // Deliberate deviation from docs/UI_DESIGN.md §8: the picker is
+        // application-modal so the main window cannot be touched while a target
+        // is half-chosen. The other dialogs stay non-modal.
+        setWindowModality(Qt::ApplicationModal);
 
         build_layout();
 
@@ -316,18 +306,13 @@ namespace slopkit::ui::dialogs
         status_ = new widgets::StatusLabel(this);
         layout->addWidget(status_);
 
-        auto* controls      = new QHBoxLayout();
-        refresh_button_     = new widgets::PrimaryButton(tr("Refresh"), this);
-        auto_refresh_check_ = new QCheckBox(tr("Auto-refresh"), this);
-        auto_refresh_check_->setChecked(true);
-        search_edit_ = new QLineEdit(this);
+        auto* controls = new QHBoxLayout();
+        plugin_combo_  = new QComboBox(this);
+        search_edit_   = new QLineEdit(this);
         search_edit_->setPlaceholderText(tr("Filter by name, PID or path"));
         search_edit_->setClearButtonEnabled(true);
-        plugin_combo_ = new QComboBox(this);
-        controls->addWidget(refresh_button_);
-        controls->addWidget(auto_refresh_check_);
-        controls->addWidget(search_edit_, 1);
         controls->addWidget(plugin_combo_);
+        controls->addWidget(search_edit_, 1);
         layout->addLayout(controls);
 
         view_tabs_ = new QTabBar(this);
@@ -349,8 +334,6 @@ namespace slopkit::ui::dialogs
         table_view_->verticalHeader()->setVisible(false);
         table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::pid, QHeaderView::ResizeToContents);
         table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::name, QHeaderView::Stretch);
-        table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::plugin, QHeaderView::ResizeToContents);
-        table_view_->horizontalHeader()->setSectionResizeMode(ProcessListModel::executable, QHeaderView::Stretch);
         body->addWidget(table_view_, 3);
 
         auto* detail_panel = new widgets::Panel(tr("Details"), this);
@@ -417,8 +400,6 @@ namespace slopkit::ui::dialogs
         detail_panel->body()->addWidget(detail_body_);
         body->addWidget(detail_panel, 2);
         layout->addLayout(body, 1);
-
-        connect(refresh_button_, &QPushButton::clicked, this, &ProcessListDialog::refresh);
 
         connect(search_edit_,
                 &QLineEdit::textChanged,
@@ -494,9 +475,6 @@ namespace slopkit::ui::dialogs
                     }
                 });
 
-        // Enter must attach, not re-trigger the dialog's default button.
-        refresh_button_->setAutoDefault(false);
-
         connect(search_edit_, &QLineEdit::returnPressed, this, &ProcessListDialog::attach_selected);
 
         connect(table_view_,
@@ -552,8 +530,7 @@ namespace slopkit::ui::dialogs
 
         const process::JobId job_id = worker_.next_job_id();
         list_pending_               = job_id;
-        refresh_button_->setText(tr("Refreshing..."));
-        refresh_button_->setEnabled(false);
+        update_status();
 
         const bool submitted = worker_.submit_list(
             job_id,
@@ -564,8 +541,7 @@ namespace slopkit::ui::dialogs
                     return; // Superseded or shut down.
                 }
                 list_pending_.reset();
-                refresh_button_->setText(tr("Refresh"));
-                refresh_button_->setEnabled(true);
+                update_status();
 
                 auto& listed = std::get<process::ListResult>(result);
                 if (listed.error)
@@ -597,8 +573,6 @@ namespace slopkit::ui::dialogs
         if (!submitted)
         {
             list_pending_.reset();
-            refresh_button_->setText(tr("Refresh"));
-            refresh_button_->setEnabled(true);
             set_status("List unavailable.", true);
         }
     }
@@ -960,6 +934,11 @@ namespace slopkit::ui::dialogs
         {
             status_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
                                 to_qstring(status_text_));
+            return;
+        }
+        if (list_pending_.has_value())
+        {
+            status_->set_status(widgets::StatusKind::info, tr("Refreshing..."));
             return;
         }
         status_->set_status(widgets::StatusKind::info,

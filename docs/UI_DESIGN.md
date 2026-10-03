@@ -82,7 +82,9 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 - The file commands are reachable from the menus and carry window-scoped shortcuts: `Ctrl+T` picks the process, `Ctrl+O` opens an address table and `Ctrl+S` saves it; they fire only while the main window is focused.
 - Layouts must adapt to window size: use layouts and `QSplitter` stretch factors rather than fixed sizes, and keep the previous zone proportions (62 % scan zone / 38 % address list; the scan zone splits 50/50 between the found list and the scanner).
 - The status bar shows only the attached-process label; the scan progress is a single `QProgressBar` spanning the top of the window above the split zones (a deliberate change from the old status-bar progress bar). The process list and other dialogs never duplicate either.
-- The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Settings`) are non-modal `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window.
+- The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Settings`) are `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window.
+- The `Process List` picker is **application-modal**: while it is open the main window accepts no keyboard or mouse input, so a half-chosen target cannot be interacted with behind it. This deliberately overrides the non-modal rule below for this dialog only.
+- The other dialogs (`Add Address`, `Memory Viewer`, `Settings`) stay **non-modal**: the main window keeps taking input while they are open.
 - Treat a dialog's position and size as compositor-owned: never save, restore or compute them; nothing is persisted between runs.
 - Do not draw custom title bars for dialogs (see section 7). The window-manager close button has the same effect as an in-dialog close button, and the dialog can be re-opened at any time.
 - Keep the app idle-quiet: updates are event-driven and the only periodic timer is the low-frequency scan-progress/freeze tick.
@@ -90,7 +92,7 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 ## 9. Threading and Target Access
 
 - UI code must never touch a `process::Session` and must never call a plugin or perform a syscall. Every target access — process listing, attach, module/thread probing, the desktop-entry index, memory reads, memory writes and the freeze pass — is submitted to the background `process::AccessWorker`.
-- Submit a job and stay responsive: the last known data stays visible while a job is in flight, the affected control is disabled and relabelled (for example `Refresh` shows `Refreshing...`), and the completion is applied by `AccessWorker::drain()` on the UI thread.
+- Submit a job and stay responsive: the last known data stays visible while a job is in flight, the affected control is disabled and relabelled or, where there is no such control, the status label reports the work (for example the Process List's status area shows `Refreshing...`), and the completion is applied by `AccessWorker::drain()` on the UI thread.
 - The worker reports a queued completion through its completion hook, which only calls `ui::CompletionNotifier::post()`; the notifier coalesces the wake-up and the queued Qt event drains the completions. The hook runs on the worker thread and must never touch a widget.
 - Match every completion against the pending job id and ignore stale results (a changed selection, target, page or removed entry), so an out-of-order result never corrupts the view.
 - Only the UI thread touches widgets; the worker thread touches neither.

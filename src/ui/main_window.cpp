@@ -98,10 +98,6 @@ namespace slopkit::ui
         settings_action_ = new QAction(tr("Settings..."), this);
 
         about_action_ = new QAction(tr("About slopkit"), this);
-
-        delete_selected_action_ = new QAction(tr("Delete Selected"), this);
-
-        freeze_selected_action_ = new QAction(tr("Freeze Selected"), this);
     }
 
     void MainWindow::build_menus()
@@ -119,18 +115,6 @@ namespace slopkit::ui
         edit_menu->addAction(add_address_action_);
         edit_menu->addSeparator();
         edit_menu->addAction(settings_action_);
-
-        QMenu* table_menu = menuBar()->addMenu(tr("Table"));
-        table_menu->addAction(delete_selected_action_);
-        table_menu->addAction(freeze_selected_action_);
-        table_menu->addSeparator();
-        table_menu->addAction(save_table_action_);
-        table_menu->addAction(save_table_as_action_);
-
-        QMenu* d3d_menu    = menuBar()->addMenu(tr("D3D"));
-        auto*  placeholder = new QAction(tr("Placeholder"), this);
-        placeholder->setEnabled(false);
-        d3d_menu->addAction(placeholder);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
         help_menu->addAction(about_action_);
@@ -170,12 +154,6 @@ namespace slopkit::ui
         connect(open_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::open_table);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
         connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
-        connect(
-            delete_selected_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::delete_selected);
-        connect(freeze_selected_action_,
-                &QAction::triggered,
-                address_list_,
-                &panels::AddressListPanel::toggle_freeze_selected);
 
         auto* middle_splitter = new QSplitter(Qt::Horizontal, this);
         middle_splitter->addWidget(found_list_);

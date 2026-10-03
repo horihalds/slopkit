@@ -13,7 +13,6 @@
 #include <QDialog>
 #include <QString>
 
-class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -31,8 +30,8 @@ namespace slopkit::ui::widgets
 namespace slopkit::ui::dialogs
 {
 
-    // PID / Name / Plugin / Executable rows for one tab, search text and plugin
-    // filter of the Process List dialog.
+    // PID / Name rows for one tab, search text and plugin filter of the
+    // Process List dialog.
     class ProcessListModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -42,8 +41,6 @@ namespace slopkit::ui::dialogs
         {
             pid,
             name,
-            plugin,
-            executable,
             column_count,
         };
 
@@ -127,8 +124,6 @@ namespace slopkit::ui::dialogs
         QTabBar*          view_tabs_ {};
         QLineEdit*        search_edit_ {};
         QComboBox*        plugin_combo_ {};
-        QCheckBox*        auto_refresh_check_ {};
-        QPushButton*      refresh_button_ {};
 
         QLabel*               detail_pid_ {};
         QLabel*               detail_name_ {};

@@ -21,6 +21,7 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
@@ -633,14 +634,12 @@ TEST_CASE("the main window shell is built", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::ui::MainWindow          window {worker, target, host};
 
-    // The five menus mirror the previous top bar.
+    // Only the three menus that actually hold commands remain.
     const QList<QAction*> menus = window.menuBar()->actions();
-    REQUIRE(menus.size() == 5);
+    REQUIRE(menus.size() == 3);
     CHECK(menus[0]->text() == QStringLiteral("File"));
     CHECK(menus[1]->text() == QStringLiteral("Edit"));
-    CHECK(menus[2]->text() == QStringLiteral("Table"));
-    CHECK(menus[3]->text() == QStringLiteral("D3D"));
-    CHECK(menus[4]->text() == QStringLiteral("Help"));
+    CHECK(menus[2]->text() == QStringLiteral("Help"));
 
     CHECK(action_texts(menus[0]->menu()->actions())
           == QList<QString> {QStringLiteral("Open Process..."),
@@ -662,10 +661,6 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(file_actions[1]->shortcut() == QKeySequence(QKeySequence::Open));
     CHECK(file_actions[2]->shortcut() == QKeySequence(QKeySequence::Save));
     CHECK(file_actions[3]->shortcut() == QKeySequence(QKeySequence::SaveAs));
-
-    // The Table menu reuses the very same save-as action, so its shortcut is not
-    // registered twice.
-    CHECK(menus[2]->menu()->actions().last() == file_actions[3]);
 
     // The status bar carries only the detached-process label; no progress bar
     // lives there any more.
@@ -799,6 +794,76 @@ TEST_CASE("the process list dialog focuses the filter box and preselects the top
 
     // A successful attach dismisses the picker.
     CHECK_FALSE(dialog.isVisible());
+
+    dialog.close();
+}
+
+TEST_CASE("the process list dialog keeps itself refreshed without controls", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+
+    // The picker opens at its compact default size.
+    CHECK(dialog.size() == QSize(600, 440));
+
+    // The picker blocks the main window while it is open.
+    CHECK(dialog.windowModality() == Qt::ApplicationModal);
+    CHECK(dialog.isModal());
+
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2;
+                    }));
+
+    // Neither the Refresh button nor the Auto-refresh check box exists.
+    CHECK(button_labelled(dialog, QStringLiteral("Refresh")) == nullptr);
+    CHECK(checkbox_labelled(dialog, QStringLiteral("Auto-refresh")) == nullptr);
+    CHECK(dialog.findChildren<QCheckBox*>().isEmpty());
+
+    // The Plugins combo box leads the control row; the filter box takes the
+    // remaining width.
+    QComboBox* plugin_combo = nullptr;
+    for (auto* combo : dialog.findChildren<QComboBox*>())
+    {
+        if (combo->count() > 0 && combo->itemText(0) == QStringLiteral("All plugins"))
+        {
+            plugin_combo = combo;
+        }
+    }
+    REQUIRE(plugin_combo != nullptr);
+
+    QHBoxLayout* controls = nullptr;
+    for (auto* row : dialog.findChildren<QHBoxLayout*>())
+    {
+        if (row->indexOf(plugin_combo) >= 0 && row->indexOf(search) >= 0)
+        {
+            controls = row;
+        }
+    }
+    REQUIRE(controls != nullptr);
+    CHECK(controls->indexOf(plugin_combo) < controls->indexOf(search));
+    CHECK(controls->stretch(controls->indexOf(search)) == 1);
+
+    // Merely leaving the picker up re-lists the processes on its own.
+    const int listed = access.list_calls.load();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return access.list_calls.load() > listed;
+                    }));
 
     dialog.close();
 }
@@ -1003,6 +1068,21 @@ TEST_CASE("the process model keeps desktop applications in the processes view", 
 
     model.set_processes({mumble, shell});
     model.set_application_index({"mumble"});
+
+    // Only the PID and Name columns survive.
+    CHECK(model.columnCount() == 2);
+    CHECK(model.headerData(slopkit::ui::dialogs::ProcessListModel::pid, Qt::Horizontal, Qt::DisplayRole).toString()
+          == QStringLiteral("PID"));
+    CHECK(model.headerData(slopkit::ui::dialogs::ProcessListModel::name, Qt::Horizontal, Qt::DisplayRole).toString()
+          == QStringLiteral("Name"));
+
+    // Sorting by Name still orders the visible rows.
+    model.sort(slopkit::ui::dialogs::ProcessListModel::name, Qt::DescendingOrder);
+    REQUIRE(model.process_at(0) != nullptr);
+    CHECK(model.process_at(0)->pid == 200);
+
+    // Restore the default PID ordering for the filtering checks below.
+    model.sort(slopkit::ui::dialogs::ProcessListModel::pid, Qt::AscendingOrder);
 
     // The Processes view lists everything, desktop application included.
     CHECK(model.rowCount() == 2);

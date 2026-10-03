@@ -95,8 +95,6 @@ namespace slopkit::ui
         QAction* add_address_action_ {};
         QAction* settings_action_ {};
         QAction* about_action_ {};
-        QAction* delete_selected_action_ {};
-        QAction* freeze_selected_action_ {};
 
         QTimer* tick_timer_ {};
 
