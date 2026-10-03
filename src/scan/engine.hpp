@@ -36,16 +36,25 @@ namespace slopkit::scan
         std::vector<std::byte> previous;
     };
 
+    // The rows the result list shows at once: the top page of the static-first
+    // ordering over the whole stored result set.
+    inline constexpr std::size_t kDisplayPage = 256;
+
     struct ScanSnapshot
     {
-        ScanState            state {ScanState::idle};
-        float                progress {0.0f};
-        std::size_t          scanned_bytes {};
-        std::size_t          total_bytes {};
-        std::size_t          hit_count {};
-        bool                 truncated {};
-        std::vector<ScanHit> hits; // Capped display page.
-        std::string          message;
+        ScanState                                   state {ScanState::idle};
+        float                                       progress {0.0f};
+        std::size_t                                 scanned_bytes {};
+        std::size_t                                 total_bytes {};
+        std::size_t                                 hit_count {};
+        bool                                        truncated {};
+        // Incremental display page; used while a scan runs.
+        std::vector<ScanHit>                        hits;
+        // The whole stored result set once a scan finished (null while running or
+        // before any result). Shared with the engine, so copies stay cheap and the
+        // pointer doubles as the change signal for the result list.
+        std::shared_ptr<const std::vector<ScanHit>> result_hits;
+        std::string                                 message;
     };
 
     // Finds and refines values in an address space on a worker thread. The UI
@@ -108,7 +117,6 @@ namespace slopkit::scan
         using ResultSetPtr = std::shared_ptr<const ResultSet>;
 
         static constexpr std::size_t kMaxStoredHits  = 1'000'000;
-        static constexpr std::size_t kDisplayPage    = 256;
         static constexpr std::size_t kHistoryDepth   = 8;
         static constexpr std::size_t kMaxScanThreads = 8;
 

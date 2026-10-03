@@ -35,7 +35,10 @@ namespace slopkit::ui::models
         }
     } // namespace
 
-    FoundResultsModel::FoundResultsModel(QObject* parent) : QAbstractTableModel(parent) {}
+    FoundResultsModel::FoundResultsModel(QObject* parent)
+        : QAbstractTableModel(parent), hits_(std::make_shared<const std::vector<scan::ScanHit>>())
+    {
+    }
 
     int FoundResultsModel::rowCount(const QModelIndex& parent) const
     {
@@ -54,7 +57,7 @@ namespace slopkit::ui::models
             return {};
         }
 
-        const auto& hit = snapshot_.hits[static_cast<std::size_t>(order_[static_cast<std::size_t>(index.row())])];
+        const auto& hit = (*hits_)[static_cast<std::size_t>(order_[static_cast<std::size_t>(index.row())])];
 
         switch (role)
         {
@@ -78,8 +81,7 @@ namespace slopkit::ui::models
         case Qt::TextAlignmentRole:
             return static_cast<int>(Qt::AlignLeft | Qt::AlignVCenter);
         case Qt::ForegroundRole:
-            if (index.column() == address
-                && static_hits_[static_cast<std::size_t>(order_[static_cast<std::size_t>(index.row())])])
+            if (index.column() == address && static_hits_[static_cast<std::size_t>(index.row())])
             {
                 return QBrush(active_theme().success);
             }
@@ -115,17 +117,20 @@ namespace slopkit::ui::models
         sort_order_  = order;
 
         beginResetModel();
-        apply_sort();
+        rebuild_window();
         endResetModel();
     }
 
     void FoundResultsModel::set_snapshot(scan::ScanSnapshot snapshot, scan::ScanConfig config)
     {
         beginResetModel();
-        snapshot_ = std::move(snapshot);
-        config_   = std::move(config);
-        rebuild_order();
-        apply_sort();
+        hits_ = std::move(snapshot.result_hits);
+        if (!hits_)
+        {
+            hits_ = std::make_shared<const std::vector<scan::ScanHit>>(std::move(snapshot.hits));
+        }
+        config_ = std::move(config);
+        rebuild_window();
         endResetModel();
     }
 
@@ -140,17 +145,20 @@ namespace slopkit::ui::models
         {
             return nullptr;
         }
-        return &snapshot_.hits[static_cast<std::size_t>(order_[static_cast<std::size_t>(row)])];
+        return &(*hits_)[static_cast<std::size_t>(order_[static_cast<std::size_t>(row)])];
     }
 
     void FoundResultsModel::set_module_ranges(std::vector<AddressRange> ranges)
     {
         std::ranges::sort(ranges, {}, &AddressRange::start);
+        if (ranges == module_ranges_)
+        {
+            return;
+        }
 
         beginResetModel();
         module_ranges_ = std::move(ranges);
-        refresh_static_flags();
-        apply_sort();
+        rebuild_window();
         endResetModel();
     }
 
@@ -171,59 +179,63 @@ namespace slopkit::ui::models
         return address < candidate.end;
     }
 
-    void FoundResultsModel::rebuild_order()
+    // Shows the top `scan::kDisplayPage` rows of the whole-list ordering: the
+    // static hits first, then the current sort column with the address as the
+    // tie-breaker. The whole source range is considered through std::partial_sort,
+    // so only the visible window is ordered and kept.
+    void FoundResultsModel::rebuild_window()
     {
-        order_.resize(snapshot_.hits.size());
+        const std::size_t total = hits_->size();
+        const std::size_t shown = std::min<std::size_t>(total, scan::kDisplayPage);
+
+        order_.resize(total);
         std::iota(order_.begin(), order_.end(), 0);
+        std::partial_sort(order_.begin(),
+                          order_.begin() + static_cast<std::ptrdiff_t>(shown),
+                          order_.end(),
+                          [this](int lhs, int rhs)
+                          {
+                              // Static hits always group above the others; the
+                              // sort order only orders within each group.
+                              const bool left_static  = is_static((*hits_)[static_cast<std::size_t>(lhs)].address);
+                              const bool right_static = is_static((*hits_)[static_cast<std::size_t>(rhs)].address);
+                              if (left_static != right_static)
+                              {
+                                  return left_static;
+                              }
+
+                              const auto& left  = (*hits_)[static_cast<std::size_t>(lhs)];
+                              const auto& right = (*hits_)[static_cast<std::size_t>(rhs)];
+
+                              int by = compare_addresses(left.address, right.address);
+                              switch (sort_column_)
+                              {
+                              case value:
+                                  by = compare_bytes(left.value, right.value);
+                                  break;
+                              case previous:
+                                  by = compare_bytes(left.previous, right.previous);
+                                  break;
+                              default:
+                                  break;
+                              }
+                              if (by == 0)
+                              {
+                                  by = compare_addresses(left.address, right.address);
+                              }
+                              return sort_order_ == Qt::AscendingOrder ? by < 0 : by > 0;
+                          });
+        order_.resize(shown);
         refresh_static_flags();
     }
 
     void FoundResultsModel::refresh_static_flags()
     {
-        static_hits_.resize(snapshot_.hits.size());
-        for (std::size_t i = 0; i < snapshot_.hits.size(); ++i)
+        static_hits_.resize(order_.size());
+        for (std::size_t i = 0; i < order_.size(); ++i)
         {
-            static_hits_[i] = is_static(snapshot_.hits[i].address);
+            static_hits_[i] = is_static((*hits_)[static_cast<std::size_t>(order_[i])].address);
         }
-    }
-
-    void FoundResultsModel::apply_sort()
-    {
-        const auto& hits = snapshot_.hits;
-        std::stable_sort(order_.begin(),
-                         order_.end(),
-                         [&](int lhs, int rhs)
-                         {
-                             // Static hits always group above the others; the
-                             // sort order only orders within each group.
-                             const bool left_static  = static_hits_[static_cast<std::size_t>(lhs)];
-                             const bool right_static = static_hits_[static_cast<std::size_t>(rhs)];
-                             if (left_static != right_static)
-                             {
-                                 return left_static;
-                             }
-
-                             const auto& left  = hits[static_cast<std::size_t>(lhs)];
-                             const auto& right = hits[static_cast<std::size_t>(rhs)];
-
-                             int by = compare_addresses(left.address, right.address);
-                             switch (sort_column_)
-                             {
-                             case value:
-                                 by = compare_bytes(left.value, right.value);
-                                 break;
-                             case previous:
-                                 by = compare_bytes(left.previous, right.previous);
-                                 break;
-                             default:
-                                 break;
-                             }
-                             if (by == 0)
-                             {
-                                 by = compare_addresses(left.address, right.address);
-                             }
-                             return sort_order_ == Qt::AscendingOrder ? by < 0 : by > 0;
-                         });
     }
 
 } // namespace slopkit::ui::models

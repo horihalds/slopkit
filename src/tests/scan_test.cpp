@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -199,6 +200,106 @@ TEST_CASE("a first scan finds exact values", "[scan]")
     CHECK(snapshot.hits[0].address == kBase + 8);
     CHECK(snapshot.hits[0].previous.empty());
     CHECK(snapshot.progress == Approx(1.0f));
+}
+
+TEST_CASE("a finished scan publishes the whole stored result set", "[scan]")
+{
+    // 300 matches, more than the display page.
+    auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4);
+    for (std::size_t i = 0; i < 300; ++i)
+    {
+        write_int32(*bytes, i * 4, 10);
+    }
+
+    // Delay the first read so the running state is observable.
+    auto                        delayed = std::make_shared<std::atomic<bool>>(false);
+    slopkit::scan::MemorySource source;
+    source.read = [bytes, delayed](std::uint64_t address,
+                                   std::size_t   size) -> std::expected<std::vector<std::byte>, AccessError>
+    {
+        if (!delayed->exchange(true))
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (address < kBase || address - kBase + size > bytes->size())
+        {
+            return std::unexpected(AccessError::not_found);
+        }
+        const auto offset = static_cast<std::size_t>(address - kBase);
+        return std::vector<std::byte>(bytes->begin() + static_cast<std::ptrdiff_t>(offset),
+                                      bytes->begin() + static_cast<std::ptrdiff_t>(offset + size));
+    };
+    source.regions = [bytes]()
+    {
+        RegionInfo region;
+        region.start    = kBase;
+        region.end      = kBase + bytes->size();
+        region.readable = true;
+        region.writable = true;
+        return std::vector<RegionInfo> {region};
+    };
+
+    ScanEngine engine;
+    ScanConfig config       = exact_config(ValueType::int32, 10);
+    config.filter.alignment = 4;
+    engine.first_scan(config, source);
+
+    // While the scan runs only the incremental page exists.
+    const auto running = engine.snapshot();
+    REQUIRE(running.state == ScanState::running);
+    CHECK(running.result_hits == nullptr);
+
+    const auto snapshot = wait(engine);
+    REQUIRE(snapshot.state == ScanState::done);
+    REQUIRE(snapshot.hit_count == 300);
+    CHECK(snapshot.hits.size() == slopkit::scan::kDisplayPage);
+    REQUIRE(snapshot.result_hits != nullptr);
+    CHECK(snapshot.result_hits->size() == 300);
+
+    // The handle aliases the engine's storage, so taking another snapshot does
+    // not copy the whole result set.
+    CHECK(engine.snapshot().result_hits.get() == snapshot.result_hits.get());
+}
+
+TEST_CASE("undo republishes the whole result set through the handle", "[scan]")
+{
+    auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4);
+    for (std::size_t i = 0; i < 300; ++i)
+    {
+        write_int32(*bytes, i * 4, 10);
+    }
+
+    ScanEngine engine;
+    ScanConfig config       = exact_config(ValueType::int32, 10);
+    config.filter.alignment = 4;
+    engine.first_scan(config, mutable_source(bytes));
+    const auto first = wait(engine);
+    REQUIRE(first.state == ScanState::done);
+    REQUIRE(first.hit_count == 300);
+    REQUIRE(first.result_hits != nullptr);
+    CHECK(first.result_hits->size() == 300);
+
+    // Rewrite half the values and keep the unchanged ones.
+    for (std::size_t i = 0; i < 150; ++i)
+    {
+        write_int32(*bytes, i * 4, 20);
+    }
+    ScanConfig refinement;
+    refinement.type       = ScanType::unchanged;
+    refinement.value_type = ValueType::int32;
+    engine.next_scan(refinement);
+    const auto refined = wait(engine);
+    REQUIRE(refined.state == ScanState::done);
+    REQUIRE(refined.hit_count == 150);
+    REQUIRE(refined.result_hits != nullptr);
+    CHECK(refined.result_hits->size() == 150);
+
+    engine.undo();
+    const auto undone = engine.snapshot();
+    REQUIRE(undone.state == ScanState::done);
+    REQUIRE(undone.result_hits != nullptr);
+    CHECK(undone.result_hits->size() == 300);
+    CHECK(undone.hit_count == 300);
 }
 
 TEST_CASE("the comparison scan types respect their bounds", "[scan]")

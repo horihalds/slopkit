@@ -517,6 +517,92 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
     CHECK(model.rowCount() == 3);
 }
 
+namespace
+{
+    // A whole-list result set of 300 hits whose first 256 stored hits are all
+    // heap hits, with one static hit at index 280, past the display page.
+    std::shared_ptr<std::vector<slopkit::scan::ScanHit>> late_static_result()
+    {
+        auto whole = std::make_shared<std::vector<slopkit::scan::ScanHit>>();
+        for (int i = 0; i < 300; ++i)
+        {
+            slopkit::scan::ScanHit hit;
+            hit.address               = 0x100000 + static_cast<std::uint64_t>(i) * 4;
+            // Big-endian so a byte-wise compare orders the values like the
+            // integers they stand for.
+            const std::uint32_t value = static_cast<std::uint32_t>(i);
+            hit.value                 = {static_cast<std::byte>((value >> 24) & 0xFF),
+                                         static_cast<std::byte>((value >> 16) & 0xFF),
+                                         static_cast<std::byte>((value >> 8) & 0xFF),
+                                         static_cast<std::byte>(value & 0xFF)};
+            whole->push_back(std::move(hit));
+        }
+        (*whole)[280].address = 0x500000;
+        return whole;
+    }
+
+    slopkit::scan::ScanSnapshot snapshot_over(const std::shared_ptr<const std::vector<slopkit::scan::ScanHit>>& whole)
+    {
+        slopkit::scan::ScanSnapshot snapshot;
+        snapshot.hit_count = whole->size();
+        snapshot.hits.assign(whole->begin(), whole->begin() + static_cast<std::ptrdiff_t>(slopkit::scan::kDisplayPage));
+        snapshot.result_hits = whole;
+        return snapshot;
+    }
+} // namespace
+
+TEST_CASE("the found-results model orders the whole result set", "[ui]")
+{
+    application();
+
+    slopkit::ui::models::FoundResultsModel model;
+
+    slopkit::scan::ScanConfig config;
+    config.value_type = slopkit::scan::ValueType::int32;
+
+    const auto whole = late_static_result();
+    model.set_snapshot(snapshot_over(whole), config);
+    model.set_module_ranges({
+        slopkit::ui::models::AddressRange {0x500000, 0x500100}
+    });
+
+    // The page alone holds no static hit, yet the whole-list ordering puts the
+    // late static hit first and still shows one page of rows.
+    CHECK(model.rowCount() == slopkit::scan::kDisplayPage);
+    CHECK(model.hit_at(0)->address == 0x500000);
+    CHECK(model.is_static(model.hit_at(0)->address));
+    CHECK_FALSE(model.is_static(model.hit_at(1)->address));
+    // The rows after the static hit are the smallest addresses of the whole set.
+    CHECK(model.hit_at(1)->address == 0x100000);
+    CHECK(model.hit_at(255)->address == 0x100000 + 254 * 4);
+}
+
+TEST_CASE("the found-results model sorts over the whole result set", "[ui]")
+{
+    application();
+
+    slopkit::ui::models::FoundResultsModel model;
+
+    slopkit::scan::ScanConfig config;
+    config.value_type = slopkit::scan::ValueType::int32;
+
+    const auto whole = late_static_result();
+    model.set_snapshot(snapshot_over(whole), config);
+    model.set_module_ranges({
+        slopkit::ui::models::AddressRange {0x500000, 0x500100}
+    });
+
+    model.sort(slopkit::ui::models::FoundResultsModel::value, Qt::DescendingOrder);
+
+    // Statics stay grouped first; the largest value of the whole set, which is
+    // beyond the page, is shown right after it.
+    CHECK(model.rowCount() == slopkit::scan::kDisplayPage);
+    CHECK(model.hit_at(0)->address == 0x500000);
+    CHECK(model.hit_at(0)->value == whole->at(280).value);
+    CHECK(model.hit_at(1)->address == 0x100000 + 299 * 4);
+    CHECK(model.hit_at(2)->address == 0x100000 + 298 * 4);
+}
+
 TEST_CASE("the found list keeps one result line", "[ui]")
 {
     application();
@@ -563,6 +649,68 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     REQUIRE(header != nullptr);
     CHECK(header->text() == QStringLiteral("Showing 2 of 3 results (result cap reached)"));
     CHECK(panel.findChildren<QLabel*>().size() == 1);
+}
+
+TEST_CASE("the found list shows the static-first top of the whole result set", "[ui]")
+{
+    application();
+
+    // 300 matches at 4-byte spacing; the first page holds no static hit.
+    std::vector<std::byte> bytes(300 * 4, std::byte {0});
+    for (std::size_t i = 0; i < 300; ++i)
+    {
+        const std::uint32_t value = 10;
+        std::memcpy(bytes.data() + i * 4, &value, sizeof(value));
+    }
+
+    slopkit::scan::ScanEngine engine;
+    slopkit::scan::ScanConfig config;
+    config.value = std::int64_t {10};
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(engine.has_results());
+    REQUIRE(engine.snapshot().hit_count == 300);
+
+    slopkit::process::ModuleInfo image;
+    image.base = 0x1400; // Covers the hits from index 256 upwards.
+    image.size = 0x100;
+    image.kind = slopkit::process::ModuleKind::elf;
+    image.name = "app";
+    image.path = "/opt/app";
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    panel.set_modules({image});
+    panel.refresh();
+
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = dynamic_cast<slopkit::ui::models::FoundResultsModel*>(view->model());
+    REQUIRE(model != nullptr);
+
+    // The late static hit leads the one-page window, and the line reports the
+    // rows on screen against every match of the scan.
+    CHECK(model->rowCount() == slopkit::scan::kDisplayPage);
+    REQUIRE(model->hit_at(0) != nullptr);
+    CHECK(model->hit_at(0)->address == 0x1400);
+    CHECK(model->is_static(model->hit_at(0)->address));
+
+    auto* header = panel.findChild<QLabel*>();
+    REQUIRE(header != nullptr);
+    CHECK(header->text() == QStringLiteral("Showing 256 of 300 results"));
+
+    // Double-clicking adds exactly the hit the row shows.
+    const std::uint64_t first = model->hit_at(0)->address;
+    REQUIRE(QMetaObject::invokeMethod(
+        view,
+        "doubleClicked",
+        Qt::DirectConnection,
+        Q_ARG(QModelIndex, model->index(0, slopkit::ui::models::FoundResultsModel::address))));
+    REQUIRE(table.entries().size() == 1);
+    CHECK(table.entries()[0].address == first);
 }
 
 TEST_CASE("the address-table model edits the table", "[ui]")

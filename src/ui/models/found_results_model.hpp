@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "scan/engine.hpp"
@@ -16,11 +17,13 @@ namespace slopkit::ui::models
     {
         std::uint64_t start {};
         std::uint64_t end {};
+
+        bool operator==(const AddressRange&) const = default;
     };
 
-    // Address / Value / Previous rows over the display page of a scan snapshot.
-    // The engine hands out at most one page of hits, so the model has no paging
-    // of its own.
+    // Address / Value / Previous rows over a scan snapshot. The ordering is
+    // computed over the whole stored result set and the model shows the top
+    // display page of that ordering.
     class FoundResultsModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -57,17 +60,21 @@ namespace slopkit::ui::models
         [[nodiscard]] const scan::ScanHit* hit_at(int row) const;
 
     private:
-        void rebuild_order();
+        void rebuild_window();
         void refresh_static_flags();
-        void apply_sort();
 
-        scan::ScanSnapshot        snapshot_;
-        scan::ScanConfig          config_;
-        std::vector<int>          order_;
-        std::vector<bool>         static_hits_;
-        std::vector<AddressRange> module_ranges_;
-        int                       sort_column_ {address};
-        Qt::SortOrder             sort_order_ {Qt::AscendingOrder};
+        // The source rows: the engine's whole stored result set once a scan
+        // finished, or a local copy of the running incremental page. Never null.
+        std::shared_ptr<const std::vector<scan::ScanHit>> hits_;
+        scan::ScanConfig                                  config_;
+        // On-screen rows: the top `kDisplayPage` source indices of the whole-list
+        // ordering.
+        std::vector<int>                                  order_;
+        // Parallel to `order_`, not to `hits_`.
+        std::vector<bool>                                 static_hits_;
+        std::vector<AddressRange>                         module_ranges_;
+        int                                               sort_column_ {address};
+        Qt::SortOrder                                     sort_order_ {Qt::AscendingOrder};
     };
 
 } // namespace slopkit::ui::models

@@ -287,6 +287,7 @@ namespace slopkit::scan
             snapshot.hit_count     = count;
             snapshot.truncated     = truncated;
             snapshot.hits.clear();
+            snapshot.result_hits.reset();
             for (const auto& shard : shards)
             {
                 if (!shard.done.load(std::memory_order_acquire))
@@ -474,6 +475,7 @@ namespace slopkit::scan
         snapshot_.truncated     = truncated;
         const std::size_t page  = std::min(hits.size(), kDisplayPage);
         snapshot_.hits.assign(hits.begin(), hits.begin() + static_cast<std::ptrdiff_t>(page));
+        snapshot_.result_hits.reset();
     }
 
     void ScanEngine::publish_results_locked(ScanState state, std::string message)
@@ -486,12 +488,14 @@ namespace slopkit::scan
             snapshot_.truncated    = results_->truncated;
             const std::size_t page = std::min(results_->hits.size(), kDisplayPage);
             snapshot_.hits.assign(results_->hits.begin(), results_->hits.begin() + static_cast<std::ptrdiff_t>(page));
+            snapshot_.result_hits = std::shared_ptr<const std::vector<ScanHit>>(results_, &results_->hits);
         }
         else
         {
             snapshot_.hit_count = 0;
             snapshot_.truncated = false;
             snapshot_.hits.clear();
+            snapshot_.result_hits.reset();
         }
     }
 

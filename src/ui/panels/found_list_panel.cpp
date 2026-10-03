@@ -21,12 +21,26 @@ namespace slopkit::ui::panels
 
     namespace
     {
-        // Compares the two snapshots' display data; the engine's snapshot is a
-        // copy, so identity cannot be used.
+        // Compares the two snapshots' display data. A finished scan shares its
+        // whole result set with the engine, so its handle doubles as the change
+        // signal; only the running page (at most kDisplayPage hits) is compared
+        // element-wise.
         bool same_snapshot(const scan::ScanSnapshot& lhs, const scan::ScanSnapshot& rhs)
         {
             if (lhs.state != rhs.state || lhs.progress != rhs.progress || lhs.hit_count != rhs.hit_count
-                || lhs.truncated != rhs.truncated || lhs.message != rhs.message || lhs.hits.size() != rhs.hits.size())
+                || lhs.truncated != rhs.truncated || lhs.message != rhs.message)
+            {
+                return false;
+            }
+            if (lhs.result_hits.get() != rhs.result_hits.get())
+            {
+                return false;
+            }
+            if (lhs.result_hits)
+            {
+                return true;
+            }
+            if (lhs.hits.size() != rhs.hits.size())
             {
                 return false;
             }
@@ -123,24 +137,23 @@ namespace slopkit::ui::panels
         const scan::ScanSnapshot snapshot = engine_.snapshot();
         const scan::ScanConfig   config   = engine_.config();
 
+        if (!has_last_ || !same_config(last_config_, config) || !same_snapshot(last_snapshot_, snapshot))
+        {
+            last_snapshot_ = snapshot;
+            last_config_   = config;
+            has_last_      = true;
+            table_view_->clearSelection();
+            model_->set_snapshot(std::move(snapshot), std::move(config));
+        }
+
         QString line = tr("Showing %1 of %2 results")
-                           .arg(static_cast<qulonglong>(snapshot.hits.size()))
-                           .arg(static_cast<qulonglong>(snapshot.hit_count));
-        if (snapshot.truncated)
+                           .arg(static_cast<qulonglong>(model_->rowCount()))
+                           .arg(static_cast<qulonglong>(last_snapshot_.hit_count));
+        if (last_snapshot_.truncated)
         {
             line += tr(" (result cap reached)");
         }
         header_->setText(line);
-
-        if (has_last_ && same_config(last_config_, config) && same_snapshot(last_snapshot_, snapshot))
-        {
-            return;
-        }
-        last_snapshot_ = snapshot;
-        last_config_   = config;
-        has_last_      = true;
-        table_view_->clearSelection();
-        model_->set_snapshot(std::move(snapshot), std::move(config));
     }
 
     void FoundListPanel::add_to_table(int row)

@@ -57,8 +57,8 @@
 - `src/scan/matcher.cpp` — builds the matcher and implements the typed compares, the memchr prefilter and the alignment-stepped search.
 - `src/scan/source.hpp` — the `MemorySource` read/read-into/regions seam and its session and buffer constructors.
 - `src/scan/source.cpp` — builds a source over a live session or an owned test buffer.
-- `src/scan/engine.hpp` — `ScanConfig`/`ScanHit`/`ScanSnapshot` and the worker-threaded `ScanEngine`.
-- `src/scan/engine.cpp` — region filtering, parallel shard-pooled first scans over a compiled matcher, refinement scans, undo, cancellation and resetting to the idle state.
+- `src/scan/engine.hpp` — `ScanConfig`/`ScanHit`/`ScanSnapshot` (whose optional shared `result_hits` handle carries the whole stored set), `kDisplayPage` and the worker-threaded `ScanEngine`.
+- `src/scan/engine.cpp` — region filtering, parallel shard-pooled first scans over a compiled matcher, refinement scans, undo, cancellation and resetting to the idle state; publishes the incremental page while running and aliases the whole stored set once finished.
 - `src/table/address_table.hpp` — `AddressEntry` with a stable id and the `AddressTable` model: value encoding, freeze snapshots and selection, no session.
 - `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
@@ -75,14 +75,14 @@
 - `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
 - `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, icon).
 - `src/ui/components/widgets.cpp` — implements the helpers, re-applying their themed palettes when the application palette changes.
-- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over one `scan::ScanSnapshot` page with Address/Value/Previous columns, sorting and the module image spans that mark static hits.
-- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font; groups static hits first and draws their address in the success colour.
+- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over the whole stored scan result set with Address/Value/Previous columns, showing the top `kDisplayPage` rows of the static-first ordering, plus the module image spans that mark static hits.
+- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font; orders the whole set with `std::partial_sort` (static hits first) and draws their address in the success colour.
 - `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox and the async write.
 - `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value` and submits one write job with the pending-job-id guard.
 - `src/ui/panels/scanner_panel.hpp` — the scan controls with padded whole-address-space range defaults, the handoff-created scan session, the scan engine, the `memoryMapApplied` module-map signal and the bottom-right Add Address button.
 - `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, lists name-only module entries in the range dropdown, applies the handed-over session, starts first/next/undo scans, resets the engine on New Scan and raises the Add Address request.
 - `src/ui/panels/found_list_panel.hpp` — the one-line `Showing N of M results` list over the scan engine's snapshot and the address table; its entry row holds the Memory View button.
-- `src/ui/panels/found_list_panel.cpp` — shows the hits and the single always-visible result line, forwards the module map to the model for static marking, and adds double-clicked hits; its entry row raises the Memory View request.
+- `src/ui/panels/found_list_panel.cpp` — shows the static-first top page of the engine's whole stored result set, detects a new result set by its shared handle, forwards the module map to the model for static marking, builds the single always-visible result line from the rows on screen and adds double-clicked hits; its entry row raises the Memory View request.
 - `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu and open/save.
 - `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions, toggles freezes and loads/saves through native file dialogs.
 - `src/ui/dialogs/process_list.hpp` — the fixed-size Process List picker and its filtered, sortable process model.
@@ -103,7 +103,7 @@
 - `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
-- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the scanner range controls and New Scan reset, the one-line found list, the found-results model (including static grouping/colour) and the address-table model.
+- `src/tests/ui_test.cpp` — Qt theme/palette/widget tests plus offscreen cases for the window shell, the scanner range controls and New Scan reset, the one-line found list (including the whole-result-set static-first case), the found-results model (including static grouping/colour and whole-set ordering) and the address-table model.
 - `src/tests/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
 - `src/tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
 - `src/tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.
