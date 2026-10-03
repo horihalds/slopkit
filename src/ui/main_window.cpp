@@ -100,7 +100,7 @@ namespace slopkit::ui
 
         log_action_ = new QAction(tr("Log..."), this);
 
-        settings_action_ = new QAction(tr("Settings..."), this);
+        settings_action_ = new QAction(tr("Settings"), this);
 
         about_action_ = new QAction(tr("About slopkit"), this);
     }
