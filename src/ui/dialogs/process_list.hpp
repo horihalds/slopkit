@@ -25,6 +25,7 @@ class QVBoxLayout;
 namespace slopkit::ui::widgets
 {
     class StatusLabel;
+    enum class StatusKind;
 } // namespace slopkit::ui::widgets
 
 namespace slopkit::ui::dialogs
@@ -109,12 +110,12 @@ namespace slopkit::ui::dialogs
         void detach_selected();
         void update_buttons();
         void update_detail();
-        void update_status();
         void restore_selection();
 
         [[nodiscard]] const process::ProcessInfo* selected() const;
         [[nodiscard]] std::string                 chosen_plugin(const process::ProcessInfo& info) const;
-        void                                      set_status(std::string message, bool is_error);
+        void                                      set_message(std::string message, widgets::StatusKind kind);
+        void                                      clear_message();
 
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
@@ -137,10 +138,9 @@ namespace slopkit::ui::dialogs
         QLabel*               detail_modules_ {};
         QLabel*               detail_threads_ {};
         QLabel*               detail_inspecting_ {};
-        widgets::StatusLabel* detail_error_ {};
         QPushButton*          attach_button_ {};
         widgets::StatusLabel* attached_label_ {};
-        widgets::StatusLabel* status_ {};
+        widgets::StatusLabel* message_label_ {};
 
         QTimer* auto_refresh_timer_ {};
 
@@ -157,11 +157,9 @@ namespace slopkit::ui::dialogs
         process::AccessMethod detail_methods_ {process::AccessMethod::none};
         std::size_t           detail_module_count_ {0};
         std::size_t           detail_thread_count_ {0};
-        std::string           detail_error_message_;
 
         std::string selected_plugin_;
-        std::string status_text_;
-        bool        status_is_error_ {false};
+        std::string message_;
 
         std::optional<process::JobId> attach_pending_;
         std::optional<process::JobId> detach_pending_;

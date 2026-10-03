@@ -809,8 +809,15 @@ TEST_CASE("the process list dialog keeps itself refreshed without controls", "[u
 
     slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
 
-    // The picker opens at its compact default size.
+    // The picker opens at its compact default size and locks it: it cannot be
+    // resized, and it offers no minimize or maximize affordance.
     CHECK(dialog.size() == QSize(600, 440));
+    CHECK(dialog.minimumSize() == dialog.maximumSize());
+    CHECK_FALSE(dialog.windowFlags().testFlag(Qt::WindowMinimizeButtonHint));
+    CHECK_FALSE(dialog.windowFlags().testFlag(Qt::WindowMaximizeButtonHint));
+
+    dialog.resize(900, 700);
+    CHECK(dialog.size() == dialog.minimumSize());
 
     // The picker blocks the main window while it is open.
     CHECK(dialog.windowModality() == Qt::ApplicationModal);
@@ -845,6 +852,10 @@ TEST_CASE("the process list dialog keeps itself refreshed without controls", "[u
     }
     REQUIRE(plugin_combo != nullptr);
 
+    // The combo sizes itself to its entries instead of the empty box it had at
+    // first show, so "All plugins" is never elided.
+    CHECK(plugin_combo->sizeHint().width() > plugin_combo->fontMetrics().horizontalAdvance(plugin_combo->itemText(0)));
+
     QHBoxLayout* controls = nullptr;
     for (auto* row : dialog.findChildren<QHBoxLayout*>())
     {
@@ -856,6 +867,18 @@ TEST_CASE("the process list dialog keeps itself refreshed without controls", "[u
     REQUIRE(controls != nullptr);
     CHECK(controls->indexOf(plugin_combo) < controls->indexOf(search));
     CHECK(controls->stretch(controls->indexOf(search)) == 1);
+
+    // The control row is the dialog's first layout item: no status strip sits
+    // above it.
+    REQUIRE(dialog.layout() != nullptr);
+    REQUIRE(dialog.layout()->count() > 0);
+    CHECK(dialog.layout()->itemAt(0)->layout() == controls);
+
+    // The old "N process(es) shown" counter is gone entirely.
+    for (auto* label : dialog.findChildren<slopkit::ui::widgets::StatusLabel*>())
+    {
+        CHECK_FALSE(label->text().contains(QStringLiteral("process(es)")));
+    }
 
     // Merely leaving the picker up re-lists the processes on its own.
     const int listed = access.list_calls.load();
@@ -999,6 +1022,20 @@ TEST_CASE("a failed attach leaves the process list dialog open", "[ui]")
 
     CHECK_FALSE(target.valid());
     CHECK(dialog.isVisible());
+
+    // The message is not tied to the detail pane: it survives losing the
+    // selection.
+    table->selectionModel()->clearCurrentIndex();
+    QCoreApplication::processEvents();
+    bool message_still_shown = false;
+    for (auto* label : dialog.findChildren<slopkit::ui::widgets::StatusLabel*>())
+    {
+        if (label->text().contains(QStringLiteral("attach failed")))
+        {
+            message_still_shown = true;
+        }
+    }
+    CHECK(message_still_shown);
 
     dialog.close();
 }

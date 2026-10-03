@@ -269,14 +269,19 @@ namespace slopkit::ui::dialogs
         : QDialog(parent), worker_(worker), target_(target)
     {
         setWindowTitle(tr("Process List"));
-        resize(600, 440);
 
         // Deliberate deviation from docs/UI_DESIGN.md §8: the picker is
         // application-modal so the main window cannot be touched while a target
-        // is half-chosen. The other dialogs stay non-modal.
+        // is half-chosen, and it is a fixed-size chooser: it cannot be resized,
+        // minimized or maximized. The other dialogs stay non-modal. On Wayland
+        // the compositor may still draw a minimize affordance for a toplevel;
+        // the locked size makes maximize a no-op there.
         setWindowModality(Qt::ApplicationModal);
+        setWindowFlags((windowFlags() & ~(Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint))
+                       | Qt::CustomizeWindowHint);
 
         build_layout();
+        setFixedSize(QSize(600, 440).expandedTo(minimumSizeHint()));
 
         auto_refresh_timer_ = new QTimer(this);
         auto_refresh_timer_->setInterval(2000);
@@ -294,7 +299,6 @@ namespace slopkit::ui::dialogs
 
         update_detail();
         update_buttons();
-        update_status();
     }
 
     void ProcessListDialog::build_layout()
@@ -303,12 +307,10 @@ namespace slopkit::ui::dialogs
         layout->setContentsMargins(10, 10, 10, 10);
         layout->setSpacing(8);
 
-        status_ = new widgets::StatusLabel(this);
-        layout->addWidget(status_);
-
         auto* controls = new QHBoxLayout();
         plugin_combo_  = new QComboBox(this);
-        search_edit_   = new QLineEdit(this);
+        plugin_combo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+        search_edit_ = new QLineEdit(this);
         search_edit_->setPlaceholderText(tr("Filter by name, PID or path"));
         search_edit_->setClearButtonEnabled(true);
         controls->addWidget(plugin_combo_);
@@ -385,9 +387,6 @@ namespace slopkit::ui::dialogs
         detail_threads_->setFont(mono_font());
         detail_layout->addWidget(detail_threads_);
 
-        detail_error_ = new widgets::StatusLabel(detail_body_);
-        detail_layout->addWidget(detail_error_);
-
         attach_button_   = new widgets::PrimaryButton(tr("Attach"), detail_body_);
         auto* attach_row = new QHBoxLayout();
         attach_row->addWidget(attach_button_);
@@ -398,6 +397,13 @@ namespace slopkit::ui::dialogs
         detail_layout->addStretch(1);
 
         detail_panel->body()->addWidget(detail_body_);
+
+        // The single failure line sits below the details, so a list failure is
+        // still visible when nothing is selected.
+        message_label_ = new widgets::StatusLabel(detail_panel);
+        message_label_->setVisible(false);
+        detail_panel->body()->addWidget(message_label_);
+
         body->addWidget(detail_panel, 2);
         layout->addLayout(body, 1);
 
@@ -499,11 +505,18 @@ namespace slopkit::ui::dialogs
         search_edit_->setFocus(Qt::OtherFocusReason);
     }
 
-    void ProcessListDialog::set_status(std::string message, bool is_error)
+    void ProcessListDialog::set_message(std::string message, widgets::StatusKind kind)
     {
-        status_text_     = std::move(message);
-        status_is_error_ = is_error;
-        update_status();
+        message_ = std::move(message);
+        message_label_->set_status(kind, to_qstring(message_));
+        message_label_->setVisible(true);
+    }
+
+    void ProcessListDialog::clear_message()
+    {
+        message_.clear();
+        message_label_->clear_status();
+        message_label_->setVisible(false);
     }
 
     const process::ProcessInfo* ProcessListDialog::selected() const
@@ -530,7 +543,6 @@ namespace slopkit::ui::dialogs
 
         const process::JobId job_id = worker_.next_job_id();
         list_pending_               = job_id;
-        update_status();
 
         const bool submitted = worker_.submit_list(
             job_id,
@@ -541,16 +553,16 @@ namespace slopkit::ui::dialogs
                     return; // Superseded or shut down.
                 }
                 list_pending_.reset();
-                update_status();
 
                 auto& listed = std::get<process::ListResult>(result);
                 if (listed.error)
                 {
-                    set_status(std::string("could not list processes: ")
-                                   + std::string(process::describe(*listed.error)),
-                               true);
+                    set_message(std::string("could not list processes: ")
+                                    + std::string(process::describe(*listed.error)),
+                                widgets::StatusKind::error);
                     return;
                 }
+                clear_message();
 
                 plugin_ids_.clear();
                 for (const auto& info : listed.processes)
@@ -573,7 +585,7 @@ namespace slopkit::ui::dialogs
         if (!submitted)
         {
             list_pending_.reset();
-            set_status("List unavailable.", true);
+            set_message("List unavailable.", widgets::StatusKind::error);
         }
     }
 
@@ -591,6 +603,7 @@ namespace slopkit::ui::dialogs
         const int index = plugin_combo_->findData(previous);
         plugin_combo_->setCurrentIndex(index >= 0 ? index : 0);
         plugin_combo_->setVisible(!plugin_ids_.empty());
+        plugin_combo_->updateGeometry();
 
         // Keep the model's filter in step with the combo.
         model_->set_plugin_filter(plugin_combo_->currentData().toString());
@@ -643,7 +656,6 @@ namespace slopkit::ui::dialogs
         probe_selection();
         update_detail();
         update_buttons();
-        update_status();
     }
 
     void ProcessListDialog::restore_selection()
@@ -671,7 +683,6 @@ namespace slopkit::ui::dialogs
             detail_methods_      = process::AccessMethod::none;
             detail_module_count_ = 0;
             detail_thread_count_ = 0;
-            detail_error_message_.clear();
             return;
         }
         if (probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info->pid))
@@ -687,7 +698,7 @@ namespace slopkit::ui::dialogs
         detail_methods_      = process::AccessMethod::none;
         detail_module_count_ = 0;
         detail_thread_count_ = 0;
-        detail_error_message_.clear();
+        clear_message();
 
         const process::JobId job_id = worker_.next_job_id();
         probe_pending_              = job_id;
@@ -716,8 +727,8 @@ namespace slopkit::ui::dialogs
                 auto& probe = std::get<process::ProbeResult>(result);
                 if (probe.error)
                 {
-                    detail_error_message_ =
-                        std::string("cannot inspect: ") + std::string(process::describe(*probe.error));
+                    set_message(std::string("cannot inspect: ") + std::string(process::describe(*probe.error)),
+                                widgets::StatusKind::warning);
                 }
                 else
                 {
@@ -726,8 +737,9 @@ namespace slopkit::ui::dialogs
                     detail_thread_count_ = probe.threads;
                     if (probe.modules_error)
                     {
-                        detail_error_message_ =
-                            std::string("modules unavailable: ") + std::string(process::describe(*probe.modules_error));
+                        set_message(std::string("modules unavailable: ")
+                                        + std::string(process::describe(*probe.modules_error)),
+                                    widgets::StatusKind::warning);
                     }
                 }
                 update_detail();
@@ -744,8 +756,7 @@ namespace slopkit::ui::dialogs
         const auto* info = selected();
         if (info == nullptr)
         {
-            set_status("Select a process first.", true);
-            return;
+            return; // Nothing to attach; the Details hint covers the empty selection.
         }
         if (attach_pending_.has_value())
         {
@@ -776,7 +787,8 @@ namespace slopkit::ui::dialogs
                 if (attached.error)
                 {
                     target_.clear();
-                    set_status(std::string("attach failed: ") + std::string(process::describe(*attached.error)), true);
+                    set_message(std::string("attach failed: ") + std::string(process::describe(*attached.error)),
+                                widgets::StatusKind::error);
                     update_buttons();
                     emit targetChanged();
                     return;
@@ -788,7 +800,6 @@ namespace slopkit::ui::dialogs
                 target_.plugin_id    = attached.info->plugin_id;
                 target_.method       = attached.info->method;
                 target_.session_live = true;
-                set_status(target_.label() + "; methods: " + process::describe(target_.method), false);
                 update_buttons();
                 emit targetChanged();
                 close(); // The picker has done its job once we are attached.
@@ -796,7 +807,7 @@ namespace slopkit::ui::dialogs
         if (!submitted)
         {
             attach_pending_.reset();
-            set_status("Attach unavailable.", true);
+            set_message("Attach unavailable.", widgets::StatusKind::error);
             update_buttons();
         }
     }
@@ -805,7 +816,7 @@ namespace slopkit::ui::dialogs
     {
         if (!target_.valid())
         {
-            set_status("Not attached.", true);
+            set_message("Not attached.", widgets::StatusKind::error);
             return;
         }
         if (detach_pending_.has_value())
@@ -826,14 +837,13 @@ namespace slopkit::ui::dialogs
                                                          }
                                                          detach_pending_.reset();
                                                          target_.clear();
-                                                         set_status("Detached.", false);
                                                          update_buttons();
                                                          emit targetChanged();
                                                      });
         if (!submitted)
         {
             detach_pending_.reset();
-            set_status("Detach unavailable.", true);
+            set_message("Detach unavailable.", widgets::StatusKind::error);
             update_buttons();
         }
     }
@@ -886,12 +896,6 @@ namespace slopkit::ui::dialogs
         detail_access_->setText(tr("Access methods: %1").arg(to_qstring(process::describe(detail_methods_))));
         detail_modules_->setText(tr("Modules: %1").arg(static_cast<qulonglong>(detail_module_count_)));
         detail_threads_->setText(tr("Threads: %1").arg(static_cast<qulonglong>(detail_thread_count_)));
-
-        detail_error_->setVisible(!detail_error_message_.empty());
-        if (!detail_error_message_.empty())
-        {
-            detail_error_->set_status(widgets::StatusKind::warning, to_qstring(detail_error_message_));
-        }
     }
 
     void ProcessListDialog::update_claimants(const process::ProcessInfo& info)
@@ -926,23 +930,6 @@ namespace slopkit::ui::dialogs
                     });
             claimants_layout_->addWidget(button);
         }
-    }
-
-    void ProcessListDialog::update_status()
-    {
-        if (!status_text_.empty())
-        {
-            status_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                to_qstring(status_text_));
-            return;
-        }
-        if (list_pending_.has_value())
-        {
-            status_->set_status(widgets::StatusKind::info, tr("Refreshing..."));
-            return;
-        }
-        status_->set_status(widgets::StatusKind::info,
-                            tr("%1 process(es) shown").arg(model_ != nullptr ? model_->rowCount() : 0));
     }
 
 } // namespace slopkit::ui::dialogs

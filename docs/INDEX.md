@@ -85,8 +85,8 @@
 - `src/ui/panels/found_list_panel.cpp` — shows the hits and the single always-visible result line, forwards the module map to the model for static marking, and adds double-clicked hits; its entry row raises the Memory View request.
 - `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu and open/save.
 - `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions, toggles freezes and loads/saves through native file dialogs.
-- `src/ui/dialogs/process_list.hpp` — the Process List dialog and its filtered, sortable process model.
-- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states.
+- `src/ui/dialogs/process_list.hpp` — the fixed-size Process List picker and its filtered, sortable process model.
+- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states and a single failure message line.
 - `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable`.
 - `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
 - `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker.
