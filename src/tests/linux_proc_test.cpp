@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "platform/linux/memory.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/plugin_access.hpp"
 #include "process/types.hpp"
@@ -193,7 +194,55 @@ TEST_CASE("linux-proc reads and writes target memory", "[linux_proc]")
     REQUIRE(readback->size() == pattern.size());
     REQUIRE(std::equal(readback->begin(), readback->end(), pattern.begin()));
 
+    // read_into writes straight into the caller buffer through the cached
+    // descriptor, and reports the same bytes as read().
+    std::array<std::byte, 16> into {};
+    const auto                into_count = session->read_into(address + 64, into);
+    REQUIRE(into_count.has_value());
+    REQUIRE(*into_count == into.size());
+    for (std::size_t i = 0; i < into.size(); ++i)
+    {
+        REQUIRE(into[i] == static_cast<std::byte>((64 + i) % 251));
+    }
+
     CHECK(session->last_method() != AccessMethod::none);
+}
+
+TEST_CASE("the cached descriptor path reports like the one-shot helper", "[linux_proc]")
+{
+    auto* page =
+        static_cast<std::byte*>(::mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    REQUIRE(page != MAP_FAILED);
+    for (std::size_t i = 0; i < kPageSize; ++i)
+    {
+        page[i] = static_cast<std::byte>(i % 251);
+    }
+    const auto address = reinterpret_cast<std::uint64_t>(page);
+
+    slopkit::platform::MemAccess access(static_cast<ProcessId>(::getpid()));
+
+    std::array<std::byte, 64> buffer {};
+    const auto                result = access.read(address + 128, buffer);
+    REQUIRE(result.has_value());
+    REQUIRE(result->bytes == buffer.size());
+    for (std::size_t i = 0; i < buffer.size(); ++i)
+    {
+        REQUIRE(buffer[i] == static_cast<std::byte>((128 + i) % 251));
+    }
+
+    // The cached-descriptor fallback reports an unmapped address as unmapped.
+    std::array<std::byte, 8> none {};
+    const auto               missing = access.read(0x1, none);
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error() == slopkit::platform::MemoryError::unmapped);
+
+    // The one-shot helper keeps reporting the same result.
+    const auto oneshot = slopkit::platform::read_memory(static_cast<ProcessId>(::getpid()), address + 128, none);
+    REQUIRE(oneshot.has_value());
+    REQUIRE(oneshot->bytes == none.size());
+    CHECK(none[0] == static_cast<std::byte>((128) % 251));
+
+    ::munmap(page, kPageSize);
 }
 
 TEST_CASE("linux-proc reports clean errors", "[linux_proc]")

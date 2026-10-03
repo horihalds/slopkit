@@ -5,7 +5,7 @@
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
 - `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included.
-- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs.
+- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the `slopkit_platform` library, the `add_slopkit_plugin` helper and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, hicolor icons and docs. Defaults to an optimized `RelWithDebInfo` build when no build type is given.
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
@@ -24,7 +24,7 @@
 - `src/app/cli.hpp` — declares command-line parsing and the headless commands.
 - `src/app/cli.cpp` — parses `--version`/`--list-plugins`/`--list-processes` and runs the default GUI path.
 - `src/plugin/plugin_api.h` — the C plugin ABI: version macros, host services, descriptors, access-method flags and the vtable.
-- `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession`.
+- `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession` (including a caller-buffer `read_into`).
 - `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake and typed plugin calls.
 - `src/plugin/plugin_host.hpp` — plugin discovery, diagnostics and the merged process listing.
 - `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence and merges processes.
@@ -32,17 +32,17 @@
 - `src/platform/linux/procfs.cpp` — implements procfs enumeration, text parsing, region classification and module merging.
 - `src/platform/linux/module_entry.hpp` — executable-image entry-point declaration for ELF and PE headers.
 - `src/platform/linux/module_entry.cpp` — parses ELF/PE headers and reads a mapped file's header through `/proc`.
-- `src/platform/linux/memory.hpp` — ptrace-free memory read/write primitives and their result types.
-- `src/platform/linux/memory.cpp` — process_vm_* with a /proc/<pid>/mem fallback and per-call primitive reporting.
+- `src/platform/linux/memory.hpp` — ptrace-free memory read/write primitives, their result types and the cached-descriptor `MemAccess`.
+- `src/platform/linux/memory.cpp` — process_vm_* with a cached /proc/<pid>/mem fallback, plus one-shot wrappers for the stateless helpers.
 - `src/platform/linux/wine.hpp` — Wine/Proton detection types and classification entry points.
 - `src/platform/linux/wine.cpp` — environ/cmdline/maps heuristics that classify a process as Wine or Proton.
 - `src/platform/linux/desktop_entry.hpp` — `.desktop` entry parser and the application-executable index.
 - `src/platform/linux/desktop_entry.cpp` — parses `Name`/`Exec`/`NoDisplay` and scans `$XDG_DATA_DIRS` for applications.
-- `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs.
-- `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes and exposing their PE images.
+- `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs, with per-session cached memory access.
+- `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes, exposing their PE images and caching memory access per session.
 - `src/process/types.hpp` — process/module/thread descriptors, access-method flags and `AccessError`.
 - `src/process/types.cpp` — human-readable descriptions of errors, module kinds and access methods.
-- `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the access worker depends on.
+- `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the access worker depends on, including the caller-buffer `read_into`.
 - `src/process/access_worker.hpp` — job/result types and the background `AccessWorker` that serializes all target access.
 - `src/process/access_worker.cpp` — the worker thread, request/completion queues, worker-owned session and the job bodies.
 - `src/process/attachment.hpp` — `AttachedTarget`: metadata-only identity of the app-wide attachment (the session lives in the access worker).
@@ -53,10 +53,12 @@
 - `src/scan/types.cpp` — string descriptions for the scan enums.
 - `src/scan/value.hpp` — parsed scan values, literal parsing/formatting and the comparison predicates.
 - `src/scan/value.cpp` — implements value parsing (decimal, hex, string, byte array), formatting and matching.
-- `src/scan/source.hpp` — the `MemorySource` read/regions seam and its session and buffer constructors.
+- `src/scan/matcher.hpp` — the per-scan compiled `Matcher`: bound needle, exact/real/bytes/generic kinds and the find/match contract.
+- `src/scan/matcher.cpp` — builds the matcher and implements the typed compares, the memchr prefilter and the alignment-stepped search.
+- `src/scan/source.hpp` — the `MemorySource` read/read-into/regions seam and its session and buffer constructors.
 - `src/scan/source.cpp` — builds a source over a live session or an owned test buffer.
 - `src/scan/engine.hpp` — `ScanConfig`/`ScanHit`/`ScanSnapshot` and the worker-threaded `ScanEngine`.
-- `src/scan/engine.cpp` — region filtering, chunked first scans, refinement scans, undo and cancellation.
+- `src/scan/engine.cpp` — region filtering, parallel shard-pooled first scans over a compiled matcher, refinement scans, undo and cancellation.
 - `src/table/address_table.hpp` — `AddressEntry` with a stable id and the `AddressTable` model: value encoding, freeze snapshots and selection, no session.
 - `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
@@ -95,7 +97,7 @@
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
 - `src/tests/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
 - `src/tests/desktop_entry_test.cpp` — `.desktop` parsing, exec basename and application classification tests.
-- `src/tests/scan_test.cpp` — value parsing, scan predicates, first/next/undo, region filtering and cancellation.
+- `src/tests/scan_test.cpp` — value parsing, scan predicates, matcher equivalence, first/next/undo, region filtering, cancellation and the hidden throughput benchmark.
 - `src/tests/scan_integration_test.cpp` — self-scans the test process through the built plugin and the `--scan` command.
 - `src/tests/access_worker_test.cpp` — background access worker tests: non-blocking submits, ordering, session ownership, handoff, detach and shutdown safety.
 - `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.

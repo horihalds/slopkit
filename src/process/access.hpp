@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <expected>
 #include <memory>
@@ -24,12 +25,29 @@ namespace slopkit::process
         [[nodiscard]] virtual AccessMethod     advertised_methods() const noexcept = 0;
         [[nodiscard]] virtual AccessMethod     last_method() const noexcept        = 0;
 
-        virtual std::expected<std::vector<std::byte>, AccessError>  read(std::uint64_t address, std::size_t size) = 0;
-        virtual std::expected<std::size_t, AccessError>             write(std::uint64_t              address,
-                                                                          std::span<const std::byte> data)        = 0;
-        virtual std::expected<std::vector<ModuleInfo>, AccessError> modules()                                     = 0;
-        virtual std::expected<std::vector<ThreadInfo>, AccessError> threads()                                     = 0;
-        virtual std::expected<std::vector<RegionInfo>, AccessError> regions()                                     = 0;
+        virtual std::expected<std::vector<std::byte>, AccessError> read(std::uint64_t address, std::size_t size) = 0;
+        virtual std::expected<std::size_t, AccessError>            write(std::uint64_t              address,
+                                                                         std::span<const std::byte> data)        = 0;
+
+        // Reads into a caller-owned buffer. The default implementation goes
+        // through read() and copies, so simple backends and test fakes need not
+        // override it; a real backend overrides it to read straight into
+        // `buffer` and avoid the per-read allocation.
+        virtual std::expected<std::size_t, AccessError> read_into(std::uint64_t address, std::span<std::byte> buffer)
+        {
+            auto data = read(address, buffer.size());
+            if (!data)
+            {
+                return std::unexpected(data.error());
+            }
+            const std::size_t count = std::min<std::size_t>(data->size(), buffer.size());
+            std::copy_n(data->begin(), static_cast<std::ptrdiff_t>(count), buffer.begin());
+            return count;
+        }
+
+        virtual std::expected<std::vector<ModuleInfo>, AccessError> modules() = 0;
+        virtual std::expected<std::vector<ThreadInfo>, AccessError> threads() = 0;
+        virtual std::expected<std::vector<RegionInfo>, AccessError> regions() = 0;
     };
 
     // Move-only handle to an attached process. All operations return
@@ -85,6 +103,15 @@ namespace slopkit::process
                 return std::unexpected(AccessError::internal);
             }
             return backend_->write(address, data);
+        }
+
+        std::expected<std::size_t, AccessError> read_into(std::uint64_t address, std::span<std::byte> buffer)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->read_into(address, buffer);
         }
 
         std::expected<std::vector<ModuleInfo>, AccessError> modules()

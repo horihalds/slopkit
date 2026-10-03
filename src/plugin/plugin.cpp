@@ -383,6 +383,35 @@ namespace slopkit::plugin
     }
 
     std::expected<std::size_t, process::AccessError>
+    PluginSession::read_into(std::uint64_t address, std::span<std::byte> buffer, process::AccessMethod& used)
+    {
+        used = process::AccessMethod::none;
+        if (!valid())
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+
+        std::size_t    read   = 0;
+        std::uint32_t  method = 0;
+        slopkit_result result {};
+        try
+        {
+            result = plugin_->vtable_->read_memory(handle_, address, buffer.data(), buffer.size(), &read, &method);
+        }
+        catch (...)
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (result.code != SLOPKIT_OK)
+        {
+            return std::unexpected(Plugin::classify(result));
+        }
+
+        used = static_cast<process::AccessMethod>(method);
+        return std::min(read, buffer.size());
+    }
+
+    std::expected<std::size_t, process::AccessError>
     PluginSession::write(std::uint64_t address, std::span<const std::byte> data, process::AccessMethod& used)
     {
         used = process::AccessMethod::none;

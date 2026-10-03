@@ -28,7 +28,10 @@ namespace
 
     struct Session
     {
+        explicit Session(slopkit::process::ProcessId process_id) : pid(process_id), mem(process_id) {}
+
         slopkit::process::ProcessId pid {};
+        platform::MemAccess         mem;
     };
 
     std::unordered_set<Session*>& sessions()
@@ -289,7 +292,7 @@ namespace
             }
 
             const auto destination = std::span<std::byte>(static_cast<std::byte*>(buffer), size);
-            const auto result      = platform::read_memory(session->pid, address, destination);
+            const auto result      = session->mem.read(address, destination);
             if (!result)
             {
                 return fail(status_for(result.error()), message_for(result.error()));
@@ -343,7 +346,7 @@ namespace
             }
 
             const auto source = std::span<const std::byte>(static_cast<const std::byte*>(buffer), size);
-            const auto result = platform::write_memory(session->pid, address, source);
+            const auto result = session->mem.write(address, source);
             if (!result)
             {
                 return fail(status_for(result.error()), message_for(result.error()));

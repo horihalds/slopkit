@@ -4,6 +4,8 @@
 #include <expected>
 #include <utility>
 
+#include "scan/matcher.hpp"
+
 namespace slopkit::scan
 {
 
@@ -11,10 +13,13 @@ namespace slopkit::scan
     {
         // Region spans are read in bounded chunks so progress advances and
         // cancellation is noticed promptly.
-        constexpr std::size_t kChunkBytes = 1u << 20;
+        constexpr std::size_t kChunkBytes = 1u << 22;
+
+        // A first scan is partitioned into ~32 MB shards that workers pull in
+        // parallel; shards are independent, so this is only about load balance.
+        constexpr std::size_t kShardBytes = 1u << 25;
 
         // How often the worker publishes progress, to limit lock churn.
-        constexpr std::size_t kPublishEveryChunk     = 16;
         constexpr std::size_t kPublishEveryCandidate = 1024;
 
         std::uint64_t align_up(std::uint64_t value, std::uint64_t alignment)
@@ -89,6 +94,214 @@ namespace slopkit::scan
                 total += static_cast<std::size_t>(span.end - span.begin);
             }
             return total;
+        }
+
+        // The first scan is split into shards that workers pull dynamically. A
+        // shard boundary is aligned so the candidate grid is exactly the one the
+        // sequential scan would have walked; `limit` is the end of the containing
+        // span, beyond which a read may not go.
+        struct Shard
+        {
+            std::uint64_t begin {};
+            std::uint64_t end {};
+            std::uint64_t limit {};
+        };
+
+        std::vector<Shard> build_shards(const std::vector<Span>& spans, std::uint64_t alignment)
+        {
+            std::vector<Shard> shards;
+            for (const auto& span : spans)
+            {
+                std::uint64_t cursor = span.begin;
+                while (cursor < span.end)
+                {
+                    std::uint64_t end = std::min<std::uint64_t>(cursor + kShardBytes, span.end);
+                    if (alignment > 1)
+                    {
+                        end = std::min(align_up(end, alignment), span.end);
+                    }
+                    if (end <= cursor)
+                    {
+                        end = span.end;
+                    }
+                    shards.push_back(Shard {cursor, end, span.end});
+                    cursor = end;
+                }
+            }
+            return shards;
+        }
+
+        // One worker's hits for one shard, with a release flag the progress
+        // publisher uses to skip shards that are still being written.
+        struct ShardHits
+        {
+            std::vector<ScanHit> hits;
+            std::atomic<bool>    done {false};
+        };
+
+        struct ScannedShard
+        {
+            std::vector<ScanHit> hits;
+            bool                 cancelled {};
+        };
+
+        // Walks one shard in chunks, reading one extra window across the chunk
+        // and shard boundaries so windows that straddle them are not skipped.
+        // Candidates only start inside the chunk, so `scanned` accounting is
+        // unchanged. Dynamic slots are claimed from `stored` so the total number
+        // of kept hits never exceeds `cap`.
+        ScannedShard scan_shard_range(const Shard&              shard,
+                                      const Matcher&            matcher,
+                                      const MemorySource&       source,
+                                      std::uint64_t             alignment,
+                                      std::size_t               size,
+                                      std::size_t               cap,
+                                      std::vector<std::byte>&   buffer,
+                                      std::atomic<std::size_t>& stored,
+                                      std::atomic<std::size_t>& scanned,
+                                      std::atomic<std::size_t>& found,
+                                      const std::stop_token&    token,
+                                      const std::atomic<bool>&  cancel_requested)
+        {
+            ScannedShard      result;
+            const std::size_t overlap = size > alignment ? size - static_cast<std::size_t>(alignment) : 0;
+
+            std::uint64_t cursor = shard.begin;
+            while (cursor < shard.end)
+            {
+                if (token.stop_requested() || cancel_requested.load())
+                {
+                    result.cancelled = true;
+                    return result;
+                }
+
+                std::size_t chunk = static_cast<std::size_t>(std::min<std::uint64_t>(shard.end - cursor, kChunkBytes));
+                if (alignment > 1)
+                {
+                    chunk -= chunk % static_cast<std::size_t>(alignment);
+                }
+                if (chunk == 0)
+                {
+                    chunk = static_cast<std::size_t>(shard.end - cursor);
+                }
+
+                const std::size_t available = static_cast<std::size_t>(shard.limit - cursor);
+                const std::size_t read_size = std::min(chunk + overlap, available);
+
+                std::span<const std::byte>                                  bytes;
+                std::expected<std::vector<std::byte>, process::AccessError> owned;
+                if (source.read_into)
+                {
+                    if (buffer.size() < read_size)
+                    {
+                        buffer.resize(read_size);
+                    }
+                    std::expected<std::size_t, process::AccessError> count;
+                    try
+                    {
+                        count = source.read_into(cursor, std::span<std::byte>(buffer.data(), read_size));
+                    }
+                    catch (...)
+                    {
+                        count = std::unexpected(process::AccessError::internal);
+                    }
+                    if (count && *count > 0)
+                    {
+                        bytes = std::span<const std::byte>(buffer.data(), *count);
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        owned = source.read(cursor, read_size);
+                    }
+                    catch (...)
+                    {
+                        owned = std::unexpected(process::AccessError::internal);
+                    }
+                    if (owned && !owned->empty())
+                    {
+                        bytes = std::span<const std::byte>(*owned);
+                    }
+                }
+
+                if (!bytes.empty())
+                {
+                    const auto record = [&](std::uint64_t address, const std::byte* first)
+                    {
+                        found.fetch_add(1, std::memory_order_relaxed);
+                        if (stored.fetch_add(1, std::memory_order_relaxed) < cap)
+                        {
+                            result.hits.push_back(ScanHit {address, std::vector<std::byte>(first, first + size), {}});
+                        }
+                    };
+
+                    if (matcher.matches_all())
+                    {
+                        for (std::size_t offset = 0; offset + size <= bytes.size();
+                             offset += static_cast<std::size_t>(alignment))
+                        {
+                            record(cursor + offset, bytes.data() + offset);
+                        }
+                    }
+                    else
+                    {
+                        for (std::size_t offset = 0; offset < bytes.size();)
+                        {
+                            const std::size_t hit =
+                                matcher.find(bytes, offset, bytes.size(), static_cast<std::size_t>(alignment));
+                            if (hit == bytes.size())
+                            {
+                                break;
+                            }
+                            record(cursor + hit, bytes.data() + hit);
+                            offset = hit + static_cast<std::size_t>(alignment);
+                        }
+                    }
+                }
+
+                scanned.fetch_add(chunk, std::memory_order_relaxed);
+                cursor += chunk;
+            }
+            return result;
+        }
+
+        // Refreshes the running snapshot from the finished shards only, gathering
+        // at most `page` hits in address order.
+        void merge_page_locked(ScanSnapshot&                 snapshot,
+                               const std::vector<ShardHits>& shards,
+                               std::size_t                   page,
+                               std::size_t                   scanned,
+                               std::size_t                   total,
+                               std::size_t                   count,
+                               bool                          truncated)
+        {
+            snapshot.state = ScanState::running;
+            snapshot.progress =
+                total == 0
+                    ? 1.0f
+                    : std::min(1.0f, static_cast<float>(static_cast<double>(scanned) / static_cast<double>(total)));
+            snapshot.scanned_bytes = scanned;
+            snapshot.total_bytes   = total;
+            snapshot.hit_count     = count;
+            snapshot.truncated     = truncated;
+            snapshot.hits.clear();
+            for (const auto& shard : shards)
+            {
+                if (!shard.done.load(std::memory_order_acquire))
+                {
+                    continue;
+                }
+                for (const auto& hit : shard.hits)
+                {
+                    if (snapshot.hits.size() >= page)
+                    {
+                        return;
+                    }
+                    snapshot.hits.push_back(hit);
+                }
+            }
         }
     } // namespace
 
@@ -226,6 +439,16 @@ namespace slopkit::scan
         return max_stored_hits_.load();
     }
 
+    void ScanEngine::set_max_threads(std::size_t threads) noexcept
+    {
+        max_threads_.store(threads);
+    }
+
+    std::size_t ScanEngine::max_threads() const noexcept
+    {
+        return max_threads_.load();
+    }
+
     void ScanEngine::publish_running_locked(
         const std::vector<ScanHit>& hits, std::size_t scanned, std::size_t total, std::size_t count, bool truncated)
     {
@@ -307,6 +530,8 @@ namespace slopkit::scan
             return;
         }
 
+        const Matcher matcher = Matcher::build(config);
+
         std::vector<Span> spans;
         try
         {
@@ -319,94 +544,114 @@ namespace slopkit::scan
             return;
         }
 
-        const std::size_t   total     = total_bytes(spans);
-        const std::uint64_t alignment = config.filter.alignment == 0 ? 1 : config.filter.alignment;
+        const std::size_t        total     = total_bytes(spans);
+        const std::uint64_t      alignment = config.filter.alignment == 0 ? 1 : config.filter.alignment;
+        const std::size_t        cap       = max_stored_hits_.load();
+        const std::vector<Shard> shards    = build_shards(spans, alignment);
 
-        auto              next            = std::make_shared<std::vector<ScanHit>>();
-        std::size_t       scanned         = 0;
-        std::size_t       count           = 0;
-        bool              truncated       = false;
-        std::size_t       since_publish   = 0;
-        const bool        initial_unknown = config.type == ScanType::unknown_initial_value;
-        const std::size_t cap             = max_stored_hits_.load();
-
+        std::vector<ShardHits> shard_hits(shards.size());
         {
             const std::lock_guard lock(mutex_);
-            publish_running_locked(*next, 0, total, 0, false);
+            merge_page_locked(snapshot_, shard_hits, kDisplayPage, 0, total, 0, false);
         }
 
-        for (const auto& span : spans)
+        std::atomic<std::size_t> index {0};
+        std::atomic<std::size_t> scanned {0};
+        std::atomic<std::size_t> stored {0};
+        std::atomic<std::size_t> found {0};
+
+        const std::size_t requested = max_threads_.load();
+        const std::size_t automatic = std::clamp<std::size_t>(std::thread::hardware_concurrency(), 1, kMaxScanThreads);
+        const std::size_t wanted    = requested == 0 ? automatic : requested;
+        std::size_t       thread_count = std::min<std::size_t>(wanted, kMaxScanThreads);
+        thread_count                   = std::min<std::size_t>(thread_count, std::max<std::size_t>(shards.size(), 1));
+
+        const auto work = [&]
         {
-            std::uint64_t cursor = span.begin;
-            while (cursor < span.end)
+            // Reused per worker so a chunk read does not allocate every time.
+            std::vector<std::byte> buffer;
+            for (;;)
             {
-                if (token.stop_requested() || cancel_requested_.load())
+                const std::size_t slot = index.fetch_add(1, std::memory_order_relaxed);
+                if (slot >= shards.size())
+                {
+                    break;
+                }
+
+                ScannedShard result   = scan_shard_range(shards[slot],
+                                                         matcher,
+                                                         source,
+                                                         alignment,
+                                                         size,
+                                                         cap,
+                                                         buffer,
+                                                         stored,
+                                                         scanned,
+                                                         found,
+                                                         token,
+                                                         cancel_requested_);
+                shard_hits[slot].hits = std::move(result.hits);
+                shard_hits[slot].done.store(true, std::memory_order_release);
+
                 {
                     const std::lock_guard lock(mutex_);
-                    publish_results_locked(ScanState::cancelled, "Scan cancelled; the previous results were kept.");
-                    return;
+                    const std::size_t     count = found.load(std::memory_order_relaxed);
+                    merge_page_locked(snapshot_,
+                                      shard_hits,
+                                      kDisplayPage,
+                                      scanned.load(std::memory_order_relaxed),
+                                      total,
+                                      count,
+                                      count > cap);
                 }
+                if (result.cancelled)
+                {
+                    break;
+                }
+            }
+        };
 
-                std::size_t chunk = static_cast<std::size_t>(std::min<std::uint64_t>(span.end - cursor, kChunkBytes));
-                if (alignment > 1)
-                {
-                    chunk -= chunk % static_cast<std::size_t>(alignment);
-                }
-                if (chunk == 0)
-                {
-                    chunk = static_cast<std::size_t>(span.end - cursor);
-                }
-
-                std::expected<std::vector<std::byte>, process::AccessError> data;
-                try
-                {
-                    data = source.read(cursor, chunk);
-                }
-                catch (...)
-                {
-                    data = std::unexpected(process::AccessError::internal);
-                }
-
-                if (data && !data->empty())
-                {
-                    const std::span<const std::byte> bytes(*data);
-                    for (std::size_t offset = 0; offset + size <= bytes.size();
-                         offset += static_cast<std::size_t>(alignment))
-                    {
-                        const auto window = bytes.subspan(offset, size);
-                        const bool keep =
-                            initial_unknown
-                            || matches(
-                                config.type, config.value_type, window, config.value, config.value_upper, config.hex);
-                        if (!keep)
-                        {
-                            continue;
-                        }
-                        ++count;
-                        if (next->size() < cap)
-                        {
-                            next->push_back(
-                                ScanHit {cursor + offset, std::vector<std::byte>(window.begin(), window.end()), {}});
-                        }
-                        else
-                        {
-                            truncated = true;
-                        }
-                    }
-                }
-
-                scanned += chunk;
-                cursor += chunk;
-                if (++since_publish >= kPublishEveryChunk)
-                {
-                    since_publish = 0;
-                    const std::lock_guard lock(mutex_);
-                    publish_running_locked(*next, scanned, total, count, truncated);
-                }
+        if (thread_count <= 1)
+        {
+            work();
+        }
+        else
+        {
+            std::vector<std::jthread> pool;
+            pool.reserve(thread_count);
+            for (std::size_t thread = 0; thread < thread_count; ++thread)
+            {
+                pool.emplace_back(work);
             }
         }
 
-        finish_success(std::move(next), count, truncated, true);
+        if (token.stop_requested() || cancel_requested_.load())
+        {
+            const std::lock_guard lock(mutex_);
+            publish_results_locked(ScanState::cancelled, "Scan cancelled; the previous results were kept.");
+            return;
+        }
+
+        const std::size_t count = found.load(std::memory_order_relaxed);
+        auto              next  = std::make_shared<std::vector<ScanHit>>();
+        next->reserve(std::min(count, cap));
+        for (auto& shard : shard_hits)
+        {
+            for (auto& hit : shard.hits)
+            {
+                next->push_back(std::move(hit));
+            }
+        }
+        // Address order makes the result independent of the thread count and of
+        // the order in which the shards happened to finish.
+        std::sort(next->begin(),
+                  next->end(),
+                  [](const ScanHit& left, const ScanHit& right)
+                  {
+                      return left.address < right.address;
+                  });
+
+        finish_success(std::move(next), count, count > cap, true);
     }
 
     void

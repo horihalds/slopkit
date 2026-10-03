@@ -1,5 +1,6 @@
 #include <catch2/catch.hpp>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -589,4 +590,25 @@ TEST_CASE("memory map jobs report the target modules and regions", "[worker]")
     CHECK(map.regions[0].start == 0x1000);
     CHECK(map.regions[0].end == 0x2000);
     CHECK(map.regions[0].readable);
+}
+
+TEST_CASE("the default session read_into copies through read", "[worker]")
+{
+    auto backend       = std::make_unique<FakeBackend>();
+    backend->memory[0] = std::byte {0x2a};
+    backend->memory[1] = std::byte {0x2b};
+
+    slopkit::process::Session session {std::move(backend)};
+
+    std::array<std::byte, 4> buffer {};
+    const auto               count = session.read_into(FakeBackend::kBase, buffer);
+    REQUIRE(count.has_value());
+    REQUIRE(*count == buffer.size());
+    CHECK(buffer[0] == std::byte {0x2a});
+    CHECK(buffer[1] == std::byte {0x2b});
+
+    // Errors propagate exactly like read().
+    const auto missing = session.read_into(FakeBackend::kBase + 0x100, buffer);
+    REQUIRE_FALSE(missing.has_value());
+    CHECK(missing.error() == AccessError::not_found);
 }

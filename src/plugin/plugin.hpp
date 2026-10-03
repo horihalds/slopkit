@@ -62,6 +62,8 @@ namespace slopkit::plugin
         std::expected<std::vector<std::byte>, process::AccessError>
         read(std::uint64_t address, std::size_t size, process::AccessMethod& used);
         std::expected<std::size_t, process::AccessError>
+        read_into(std::uint64_t address, std::span<std::byte> buffer, process::AccessMethod& used);
+        std::expected<std::size_t, process::AccessError>
         write(std::uint64_t address, std::span<const std::byte> data, process::AccessMethod& used);
         std::expected<std::vector<process::ModuleInfo>, process::AccessError> modules();
         std::expected<std::vector<process::ThreadInfo>, process::AccessError> threads();

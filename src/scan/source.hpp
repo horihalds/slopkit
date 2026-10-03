@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -17,14 +18,20 @@ namespace slopkit::scan
     using ReadFn =
         std::function<std::expected<std::vector<std::byte>, process::AccessError>(std::uint64_t, std::size_t)>;
 
+    // Reads up to `buffer.size()` bytes into caller memory and reports how many
+    // bytes were read; the error mirrors the process seam.
+    using ReadIntoFn =
+        std::function<std::expected<std::size_t, process::AccessError>(std::uint64_t, std::span<std::byte>)>;
+
     // Supplies the regions a scan walks.
     using RegionsFn = std::function<std::vector<process::RegionInfo>()>;
 
-    // The address space a scan walks: a read callback plus the regions to visit.
+    // The address space a scan walks: read callbacks plus the regions to visit.
     struct MemorySource
     {
-        ReadFn    read;
-        RegionsFn regions;
+        ReadFn     read;
+        ReadIntoFn read_into; // Reads into caller memory; read() is used when unset.
+        RegionsFn  regions;
     };
 
     // Reads and enumerates through a live session. The session must outlive the

@@ -13,6 +13,10 @@ namespace slopkit::scan
         {
             return session.read(address, size);
         };
+        source.read_into = [&session](std::uint64_t address, std::span<std::byte> buffer)
+        {
+            return session.read_into(address, buffer);
+        };
         source.regions = [&session]()
         {
             auto regions = session.regions();
@@ -42,6 +46,26 @@ namespace slopkit::scan
             const std::size_t available = shared->size() - static_cast<std::size_t>(offset);
             const std::size_t take      = std::min(size, available);
             return std::vector<std::byte>(first, first + static_cast<std::ptrdiff_t>(take));
+        };
+        source.read_into = [shared,
+                            base](std::uint64_t        address,
+                                  std::span<std::byte> buffer) -> std::expected<std::size_t, process::AccessError>
+        {
+            if (address < base)
+            {
+                return std::unexpected(process::AccessError::not_found);
+            }
+            const std::uint64_t offset = address - base;
+            if (offset > shared->size())
+            {
+                return std::unexpected(process::AccessError::not_found);
+            }
+            const std::size_t available = shared->size() - static_cast<std::size_t>(offset);
+            const std::size_t take      = std::min(buffer.size(), available);
+            std::copy_n(shared->begin() + static_cast<std::ptrdiff_t>(offset),
+                        static_cast<std::ptrdiff_t>(take),
+                        buffer.begin());
+            return take;
         };
         source.regions = [shared, base]()
         {

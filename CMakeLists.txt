@@ -5,6 +5,22 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Default to an optimized build: without a build type CMake passes no -O flag at
+# all, so every hot path (the scanner above all) runs unoptimized. An explicit
+# -DCMAKE_BUILD_TYPE=... on the command line still wins, and multi-config
+# generators pick their configuration at build time.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+endif()
+
+# GCC's -Wfree-nonheap-object (part of -Wall) mis-fires on libstdc++'s
+# std::variant copy assignment once optimization kicks in (see GCC PR 106155);
+# silence that known false positive so the optimized build stays warning-clean.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-Wno-free-nonheap-object)
+endif()
+
 # --- install layout --------------------------------------------------------
 #
 # GNUInstallDirs drives every install destination and the relative plugin

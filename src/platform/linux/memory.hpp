@@ -43,4 +43,27 @@ namespace slopkit::platform
     std::expected<MemoryTransfer, MemoryError>
     write_memory(process::ProcessId pid, std::uint64_t address, std::span<const std::byte> data);
 
+    // Memory access with cached /proc/<pid>/mem descriptors. process_vm_readv /
+    // process_vm_writev are tried first exactly as before, but the descriptors
+    // are opened once instead of per call. pread/pwrite do not use the shared
+    // file offset, so a single instance may serve several scanning threads.
+    class MemAccess
+    {
+    public:
+        explicit MemAccess(process::ProcessId pid) noexcept;
+        MemAccess(const MemAccess&)            = delete;
+        MemAccess& operator=(const MemAccess&) = delete;
+        MemAccess(MemAccess&& other) noexcept;
+        MemAccess& operator=(MemAccess&& other) noexcept;
+        ~MemAccess();
+
+        std::expected<MemoryTransfer, MemoryError> read(std::uint64_t address, std::span<std::byte> buffer);
+        std::expected<MemoryTransfer, MemoryError> write(std::uint64_t address, std::span<const std::byte> data);
+
+    private:
+        process::ProcessId pid_ {};
+        int                read_fd_ {-1};
+        int                write_fd_ {-1};
+    };
+
 } // namespace slopkit::platform

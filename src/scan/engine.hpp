@@ -86,6 +86,11 @@ namespace slopkit::scan
         void                      set_max_stored_hits(std::size_t maximum) noexcept;
         [[nodiscard]] std::size_t max_stored_hits() const noexcept;
 
+        // Overrides the first-scan worker count: 0 means automatic, 1 forces the
+        // sequential path. Used by the tests and the throughput benchmark.
+        void                      set_max_threads(std::size_t threads) noexcept;
+        [[nodiscard]] std::size_t max_threads() const noexcept;
+
     private:
         // The full result set of a scan; `count` may exceed `hits.size()` when
         // the stored hits were capped.
@@ -98,9 +103,10 @@ namespace slopkit::scan
 
         using ResultSetPtr = std::shared_ptr<const ResultSet>;
 
-        static constexpr std::size_t kMaxStoredHits = 1'000'000;
-        static constexpr std::size_t kDisplayPage   = 256;
-        static constexpr std::size_t kHistoryDepth  = 8;
+        static constexpr std::size_t kMaxStoredHits  = 1'000'000;
+        static constexpr std::size_t kDisplayPage    = 256;
+        static constexpr std::size_t kHistoryDepth   = 8;
+        static constexpr std::size_t kMaxScanThreads = 8;
 
         void run_first(ScanConfig config, MemorySource source, const std::stop_token& token);
         void run_next(ScanConfig config, ResultSetPtr previous, MemorySource source, const std::stop_token& token);
@@ -125,6 +131,7 @@ namespace slopkit::scan
         MemorySource              source_;
         std::atomic<bool>         cancel_requested_ {false};
         std::atomic<std::size_t>  max_stored_hits_ {kMaxStoredHits};
+        std::atomic<std::size_t>  max_threads_ {0};
         std::jthread              worker_;
     };
 

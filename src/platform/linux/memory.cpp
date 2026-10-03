@@ -39,8 +39,56 @@ namespace slopkit::platform
         }
     } // namespace
 
-    std::expected<MemoryTransfer, MemoryError>
-    read_memory(process::ProcessId pid, std::uint64_t address, std::span<std::byte> buffer)
+    MemAccess::MemAccess(process::ProcessId pid) noexcept : pid_(pid)
+    {
+        if (pid_ != 0)
+        {
+            read_fd_  = ::open(mem_path(pid_).c_str(), O_RDONLY | O_CLOEXEC);
+            write_fd_ = ::open(mem_path(pid_).c_str(), O_RDWR | O_CLOEXEC);
+        }
+    }
+
+    MemAccess::MemAccess(MemAccess&& other) noexcept
+        : pid_(other.pid_), read_fd_(other.read_fd_), write_fd_(other.write_fd_)
+    {
+        other.read_fd_  = -1;
+        other.write_fd_ = -1;
+    }
+
+    MemAccess& MemAccess::operator=(MemAccess&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (read_fd_ >= 0)
+            {
+                ::close(read_fd_);
+            }
+            if (write_fd_ >= 0)
+            {
+                ::close(write_fd_);
+            }
+            pid_            = other.pid_;
+            read_fd_        = other.read_fd_;
+            write_fd_       = other.write_fd_;
+            other.read_fd_  = -1;
+            other.write_fd_ = -1;
+        }
+        return *this;
+    }
+
+    MemAccess::~MemAccess()
+    {
+        if (read_fd_ >= 0)
+        {
+            ::close(read_fd_);
+        }
+        if (write_fd_ >= 0)
+        {
+            ::close(write_fd_);
+        }
+    }
+
+    std::expected<MemoryTransfer, MemoryError> MemAccess::read(std::uint64_t address, std::span<std::byte> buffer)
     {
         if (buffer.empty())
         {
@@ -49,24 +97,21 @@ namespace slopkit::platform
 
         ::iovec    local {buffer.data(), buffer.size()};
         ::iovec    remote {reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)), buffer.size()};
-        const auto count = ::process_vm_readv(static_cast<pid_t>(pid), &local, 1, &remote, 1, 0);
+        const auto count = ::process_vm_readv(static_cast<pid_t>(pid_), &local, 1, &remote, 1, 0);
         if (count > 0)
         {
             return MemoryTransfer {static_cast<std::size_t>(count), MemoryPrimitive::process_vm};
         }
         const int vm_error = errno;
 
-        // Fallback: /proc/<pid>/mem. No ptrace, no attach, no stop.
-        const int descriptor = ::open(mem_path(pid).c_str(), O_RDONLY | O_CLOEXEC);
-        if (descriptor < 0)
+        // Fallback: the cached /proc/<pid>/mem descriptor. No ptrace, no attach.
+        if (read_fd_ < 0)
         {
             return std::unexpected(map_errno(vm_error));
         }
 
-        const auto bytes       = ::pread(descriptor, buffer.data(), buffer.size(), static_cast<off_t>(address));
+        const auto bytes       = ::pread(read_fd_, buffer.data(), buffer.size(), static_cast<off_t>(address));
         const int  pread_error = errno;
-        ::close(descriptor);
-
         if (bytes > 0)
         {
             return MemoryTransfer {static_cast<std::size_t>(bytes), MemoryPrimitive::procfs_mem};
@@ -78,8 +123,7 @@ namespace slopkit::platform
         return std::unexpected(map_errno(pread_error));
     }
 
-    std::expected<MemoryTransfer, MemoryError>
-    write_memory(process::ProcessId pid, std::uint64_t address, std::span<const std::byte> data)
+    std::expected<MemoryTransfer, MemoryError> MemAccess::write(std::uint64_t address, std::span<const std::byte> data)
     {
         if (data.empty())
         {
@@ -88,23 +132,20 @@ namespace slopkit::platform
 
         ::iovec    local {const_cast<std::byte*>(data.data()), data.size()};
         ::iovec    remote {reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)), data.size()};
-        const auto count = ::process_vm_writev(static_cast<pid_t>(pid), &local, 1, &remote, 1, 0);
+        const auto count = ::process_vm_writev(static_cast<pid_t>(pid_), &local, 1, &remote, 1, 0);
         if (count > 0)
         {
             return MemoryTransfer {static_cast<std::size_t>(count), MemoryPrimitive::process_vm};
         }
         const int vm_error = errno;
 
-        const int descriptor = ::open(mem_path(pid).c_str(), O_RDWR | O_CLOEXEC);
-        if (descriptor < 0)
+        if (write_fd_ < 0)
         {
             return std::unexpected(map_errno(vm_error));
         }
 
-        const auto bytes        = ::pwrite(descriptor, data.data(), data.size(), static_cast<off_t>(address));
+        const auto bytes        = ::pwrite(write_fd_, data.data(), data.size(), static_cast<off_t>(address));
         const int  pwrite_error = errno;
-        ::close(descriptor);
-
         if (bytes > 0)
         {
             return MemoryTransfer {static_cast<std::size_t>(bytes), MemoryPrimitive::procfs_mem};
@@ -114,6 +155,20 @@ namespace slopkit::platform
             return std::unexpected(MemoryError::unmapped);
         }
         return std::unexpected(map_errno(pwrite_error));
+    }
+
+    std::expected<MemoryTransfer, MemoryError>
+    read_memory(process::ProcessId pid, std::uint64_t address, std::span<std::byte> buffer)
+    {
+        MemAccess access(pid);
+        return access.read(address, buffer);
+    }
+
+    std::expected<MemoryTransfer, MemoryError>
+    write_memory(process::ProcessId pid, std::uint64_t address, std::span<const std::byte> data)
+    {
+        MemAccess access(pid);
+        return access.write(address, data);
     }
 
 } // namespace slopkit::platform

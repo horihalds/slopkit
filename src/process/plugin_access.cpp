@@ -1,5 +1,6 @@
 #include "process/plugin_access.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <expected>
 #include <memory>
@@ -44,7 +45,7 @@ namespace slopkit::process
 
             [[nodiscard]] AccessMethod last_method() const noexcept override
             {
-                return last_method_;
+                return last_method_.load(std::memory_order_relaxed);
             }
 
             std::expected<std::vector<std::byte>, AccessError> read(std::uint64_t address, std::size_t size) override
@@ -53,7 +54,19 @@ namespace slopkit::process
                 auto         result = session_.read(address, size, used);
                 if (result)
                 {
-                    last_method_ = used;
+                    last_method_.store(used, std::memory_order_relaxed);
+                }
+                return result;
+            }
+
+            std::expected<std::size_t, AccessError> read_into(std::uint64_t        address,
+                                                              std::span<std::byte> buffer) override
+            {
+                AccessMethod used   = AccessMethod::none;
+                auto         result = session_.read_into(address, buffer, used);
+                if (result)
+                {
+                    last_method_.store(used, std::memory_order_relaxed);
                 }
                 return result;
             }
@@ -65,7 +78,7 @@ namespace slopkit::process
                 auto         result = session_.write(address, data, used);
                 if (result)
                 {
-                    last_method_ = used;
+                    last_method_.store(used, std::memory_order_relaxed);
                 }
                 return result;
             }
@@ -86,11 +99,11 @@ namespace slopkit::process
             }
 
         private:
-            plugin::PluginSession session_;
-            ProcessId             pid_ {};
-            AccessMethod          advertised_ {AccessMethod::none};
-            std::string           plugin_id_;
-            AccessMethod          last_method_ {AccessMethod::none};
+            plugin::PluginSession     session_;
+            ProcessId                 pid_ {};
+            AccessMethod              advertised_ {AccessMethod::none};
+            std::string               plugin_id_;
+            std::atomic<AccessMethod> last_method_ {AccessMethod::none};
         };
     } // namespace
 
