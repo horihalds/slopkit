@@ -12,6 +12,8 @@
 #include <QMenuBar>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QVBoxLayout>
+#include <QWidget>
 
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
@@ -138,12 +140,6 @@ namespace slopkit::ui
     {
         process_label_ = new QLabel(to_qstring(target_.label()), this);
         statusBar()->addWidget(process_label_);
-
-        scan_progress_ = new QProgressBar(this);
-        scan_progress_->setRange(0, 100);
-        scan_progress_->setValue(0);
-        scan_progress_->setFormat(QStringLiteral("%p%"));
-        statusBar()->addPermanentWidget(scan_progress_);
     }
 
     void MainWindow::build_central()
@@ -151,8 +147,14 @@ namespace slopkit::ui
         scanner_    = new panels::ScannerPanel(worker_, target_, this);
         found_list_ = new panels::FoundListPanel(scanner_->engine(), address_table_, this);
 
-        connect(scanner_, &panels::ScannerPanel::memoryViewRequested, this, &MainWindow::on_memory_view_requested);
-        connect(scanner_, &panels::ScannerPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
+        connect(found_list_,
+                &panels::FoundListPanel::memoryViewRequested,
+                this,
+                [this]
+                {
+                    on_memory_view_requested(scanner_->main_module_address());
+                });
+        connect(found_list_, &panels::FoundListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(undo_scan_action_,
                 &QAction::triggered,
                 this,
@@ -187,7 +189,18 @@ namespace slopkit::ui
         vertical_splitter->setStretchFactor(0, 62);
         vertical_splitter->setStretchFactor(1, 38);
 
-        setCentralWidget(vertical_splitter);
+        scan_progress_ = new QProgressBar(this);
+        scan_progress_->setRange(0, 100);
+        scan_progress_->setValue(0);
+        scan_progress_->setFormat(QStringLiteral("%p%"));
+
+        // The scan progress spans the width of the window above the split zones.
+        auto* column        = new QWidget(this);
+        auto* column_layout = new QVBoxLayout(column);
+        column_layout->setContentsMargins(0, 0, 0, 0);
+        column_layout->addWidget(scan_progress_);
+        column_layout->addWidget(vertical_splitter, 1);
+        setCentralWidget(column);
     }
 
     void MainWindow::build_dialogs()
@@ -279,6 +292,7 @@ namespace slopkit::ui
     void MainWindow::refresh_target_label()
     {
         process_label_->setText(to_qstring(target_.label()));
+        found_list_->set_target_attached(target_.valid());
     }
 
     void MainWindow::run_freeze_pass()

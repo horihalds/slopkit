@@ -8,7 +8,6 @@
 
 #include <QAction>
 #include <QFileDialog>
-#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QMenu>
@@ -93,30 +92,6 @@ namespace slopkit::ui::panels
                 [this](const QPoint& position)
                 {
                     show_context_menu(position);
-                });
-
-        auto* footer   = new QHBoxLayout();
-        auto* advanced = widgets::secondary_button(tr("Advanced Options"), this);
-        auto* extras   = widgets::secondary_button(tr("Table Extras"), this);
-        footer->addWidget(advanced);
-        footer->addStretch(1);
-        footer->addWidget(extras);
-        layout->addLayout(footer);
-
-        connect(advanced,
-                &QPushButton::clicked,
-                this,
-                [this]
-                {
-                    QMessageBox::information(
-                        this, tr("Advanced Options"), tr("Advanced options are not implemented yet."));
-                });
-        connect(extras,
-                &QPushButton::clicked,
-                this,
-                [this]
-                {
-                    QMessageBox::information(this, tr("Table Extras"), tr("Table extras are not implemented yet."));
                 });
 
         status_label_ = new widgets::StatusLabel(this);

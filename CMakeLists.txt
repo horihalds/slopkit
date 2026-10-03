@@ -148,6 +148,7 @@ endfunction()
 add_slopkit_test_plugin(slopkit_test_bad_abi ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/bad_abi_plugin.cpp)
 add_slopkit_test_plugin(slopkit_test_no_entry ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/no_entry_plugin.cpp)
 add_slopkit_test_plugin(slopkit_test_missing_regions ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/missing_regions_plugin.cpp)
+add_slopkit_test_plugin(slopkit_test_old_abi_minor ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/old_abi_minor_plugin.cpp)
 
 # --- formatting ------------------------------------------------------------
 
@@ -168,7 +169,7 @@ list(FILTER SLOPKIT_TEST_SUPPORT_SOURCES EXCLUDE REGEX ".*/main\\.cpp$")
 
 file(GLOB SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/tests/*.cpp)
 add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES})
-add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions)
+add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor)
 target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"

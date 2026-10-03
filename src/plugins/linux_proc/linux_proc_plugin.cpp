@@ -382,7 +382,8 @@ namespace
             }
             reset_arena();
 
-            const auto modules = platform::modules_from_maps(platform::read_maps(session->pid));
+            auto modules = platform::modules_from_maps(platform::read_maps(session->pid));
+            platform::fill_module_entry_points(session->pid, modules);
             auto* array = static_cast<slopkit_module_info*>(host_alloc(sizeof(slopkit_module_info) * modules.size()));
             if (array == nullptr && !modules.empty())
             {
@@ -398,6 +399,7 @@ namespace
                 array[count].kind   = static_cast<int32_t>(module.kind);
                 array[count].name   = intern(module.name);
                 array[count].path   = module.path.empty() ? nullptr : intern(module.path);
+                array[count].entry  = module.entry;
                 ++count;
             }
 

@@ -55,4 +55,10 @@ namespace slopkit::platform
     // anonymous mapping as its own module.
     [[nodiscard]] std::vector<process::ModuleInfo> modules_from_maps(const std::vector<MappedRegion>& regions);
 
+    // Fills ModuleInfo::entry for every file-backed module whose first mapping
+    // starts the file, reading the header through /proc/<pid>/root<path>.
+    // Modules that are anonymous, do not start at their file's first mapping,
+    // have a non-absolute path or whose header cannot be read keep a zero entry.
+    void fill_module_entry_points(process::ProcessId pid, std::vector<process::ModuleInfo>& modules);
+
 } // namespace slopkit::platform

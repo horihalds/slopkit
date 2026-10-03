@@ -42,10 +42,13 @@
 #include "process/attachment.hpp"
 #include "process/plugin_access.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/dialogs/add_address.hpp"
+#include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
 #include "ui/main_window.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/models/found_results_model.hpp"
+#include "ui/panels/address_list_panel.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
 #include "ui/theme.hpp"
@@ -277,6 +280,55 @@ namespace
         }
         return nullptr;
     }
+
+    // The nearest widgets::Panel ancestor of a widget, or nullptr.
+    QWidget* ancestor_panel(QWidget* widget)
+    {
+        for (auto* parent = widget->parentWidget(); parent != nullptr; parent = parent->parentWidget())
+        {
+            if (qobject_cast<slopkit::ui::widgets::Panel*>(parent) != nullptr)
+            {
+                return parent;
+            }
+        }
+        return nullptr;
+    }
+
+    bool panel_has_title(QWidget* panel, const QString& title)
+    {
+        for (auto* label : panel->findChildren<QLabel*>())
+        {
+            if (label->text() == title)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    QCheckBox* checkbox_labelled(QWidget& root, const QString& text)
+    {
+        for (auto* box : root.findChildren<QCheckBox*>())
+        {
+            if (box->text() == text)
+            {
+                return box;
+            }
+        }
+        return nullptr;
+    }
+
+    QPushButton* button_labelled(QWidget& root, const QString& text)
+    {
+        for (auto* button : root.findChildren<QPushButton*>())
+        {
+            if (button->text() == text)
+            {
+                return button;
+            }
+        }
+        return nullptr;
+    }
 } // namespace
 
 TEST_CASE("both themes define every colour role", "[ui]")
@@ -500,19 +552,31 @@ TEST_CASE("the main window shell is built", "[ui]")
     // registered twice.
     CHECK(menus[2]->menu()->actions().last() == file_actions[3]);
 
-    // The status bar shows the detached target and the scan progress.
+    // The status bar carries only the detached-process label; no progress bar
+    // lives there any more.
     auto* process_label = window.statusBar()->findChild<QLabel*>();
     REQUIRE(process_label != nullptr);
     CHECK(process_label->text() == QStringLiteral("No Process Selected"));
+    CHECK(window.statusBar()->findChild<QProgressBar*>() == nullptr);
 
-    auto* progress = window.statusBar()->findChild<QProgressBar*>();
+    // The central widget is a column: the single full-width progress bar sits
+    // above the split zones.
+    auto* column = window.centralWidget();
+    REQUIRE(column != nullptr);
+    auto* progress = column->findChild<QProgressBar*>();
     REQUIRE(progress != nullptr);
     CHECK(progress->value() == 0);
 
     // Two split zones inside the middle zone, the address list below them.
-    auto* vertical = qobject_cast<QSplitter*>(window.centralWidget());
+    QSplitter* vertical = nullptr;
+    for (auto* splitter : column->findChildren<QSplitter*>())
+    {
+        if (splitter->orientation() == Qt::Vertical)
+        {
+            vertical = splitter;
+        }
+    }
     REQUIRE(vertical != nullptr);
-    CHECK(vertical->orientation() == Qt::Vertical);
     REQUIRE(vertical->count() == 2);
 
     auto* middle = qobject_cast<QSplitter*>(vertical->widget(0));
@@ -536,9 +600,34 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(has_hex_checkbox);
     CHECK(scanner->findChild<QToolButton*>() == nullptr);
 
+    // The decorative "advanced" checkboxes are gone; the remaining disabled
+    // placeholders live inside the Memory Scan Options panel.
+    CHECK(checkbox_labelled(*scanner, QStringLiteral("Lua formula")) == nullptr);
+    CHECK(checkbox_labelled(*scanner, QStringLiteral("Enable Speedhack")) == nullptr);
+
+    auto* not_check          = checkbox_labelled(*scanner, QStringLiteral("Not"));
+    auto* unrandomizer_check = checkbox_labelled(*scanner, QStringLiteral("Unrandomizer"));
+    REQUIRE(not_check != nullptr);
+    REQUIRE(unrandomizer_check != nullptr);
+    CHECK_FALSE(not_check->isEnabled());
+    CHECK_FALSE(unrandomizer_check->isEnabled());
+    auto* options_panel = ancestor_panel(not_check);
+    REQUIRE(options_panel != nullptr);
+    CHECK(panel_has_title(options_panel, QStringLiteral("Memory Scan Options")));
+    CHECK(ancestor_panel(unrandomizer_check) == options_panel);
+
     auto* found_header = found_list->findChild<QLabel*>();
     REQUIRE(found_header != nullptr);
     CHECK(found_header->text() == QStringLiteral("Found: 0"));
+
+    // The address list lost its decorative footer buttons.
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+    for (auto* button : address_list->findChildren<QPushButton*>())
+    {
+        CHECK(button->text() != QStringLiteral("Advanced Options"));
+        CHECK(button->text() != QStringLiteral("Table Extras"));
+    }
 
     // A live theme switch re-installs the application palette.
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
@@ -1280,4 +1369,175 @@ TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")
     CHECK_FALSE(combo->isEnabled());
     REQUIRE(combo->count() == 1);
     CHECK(combo->itemText(0) == QStringLiteral("Loading…"));
+}
+
+TEST_CASE("the scanner resolves the main module entry point", "[ui]")
+{
+    application();
+
+    const auto address_for = [](std::uint64_t low_entry)
+    {
+        UiFakeAccess access;
+
+        slopkit::process::ModuleInfo high;
+        high.base  = 0x2000;
+        high.size  = 0x100;
+        high.entry = 0x2100;
+        high.kind  = slopkit::process::ModuleKind::elf;
+        high.name  = "high";
+        high.path  = "/opt/high";
+
+        slopkit::process::ModuleInfo low;
+        low.base  = 0x1000;
+        low.size  = 0x800;
+        low.entry = low_entry;
+        low.kind  = slopkit::process::ModuleKind::elf;
+        low.name  = "low";
+        low.path  = "/opt/low";
+
+        slopkit::process::ModuleInfo anon;
+        anon.base = 0x4000;
+        anon.size = 0x1000;
+        anon.kind = slopkit::process::ModuleKind::anonymous;
+        anon.name = "[anon]";
+
+        // Deliberately out of base order to prove the resolution sorts.
+        access.modules = {high, anon, low};
+
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = fake_target();
+        attach_app_session(worker);
+
+        slopkit::ui::panels::ScannerPanel panel {worker, target};
+        pump_ui(worker,
+                [&]
+                {
+                    return panel.main_module_address() != 0;
+                });
+        return panel.main_module_address();
+    };
+
+    // A known entry point wins over the module base...
+    CHECK(address_for(0x1040) == 0x1040);
+
+    // ...and a zero entry falls back to the lowest-base module.
+    CHECK(address_for(0) == 0x1000);
+
+    // Without a memory map there is no address at all.
+    UiFakeAccess                      no_map_access;
+    slopkit::process::AccessWorker    no_map_worker {no_map_access};
+    slopkit::process::AttachedTarget  invalid_target;
+    slopkit::ui::panels::ScannerPanel no_map_panel {no_map_worker, invalid_target};
+    CHECK(no_map_panel.main_module_address() == 0);
+}
+
+TEST_CASE("the found-results entry row drives the viewer and the add dialog", "[ui]")
+{
+    application();
+
+    slopkit::scan::ScanEngine           engine;
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+
+    auto* memory_view = button_labelled(panel, QStringLiteral("Memory View"));
+    auto* add_address = button_labelled(panel, QStringLiteral("Add Address Manually"));
+    REQUIRE(memory_view != nullptr);
+    REQUIRE(add_address != nullptr);
+
+    // The view button waits for an attached target.
+    CHECK_FALSE(memory_view->isEnabled());
+
+    panel.resize(600, 400);
+    panel.show();
+    QCoreApplication::processEvents();
+
+    // Both buttons share one row directly below the hits table.
+    auto* hits = panel.findChild<QTableView*>();
+    REQUIRE(hits != nullptr);
+    CHECK(memory_view->y() == add_address->y());
+    CHECK(memory_view->x() < add_address->x());
+    CHECK(memory_view->y() > hits->y());
+
+    bool view_requested = false;
+    bool add_requested  = false;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::memoryViewRequested,
+                     &panel,
+                     [&]
+                     {
+                         view_requested = true;
+                     });
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::addAddressRequested,
+                     &panel,
+                     [&]
+                     {
+                         add_requested = true;
+                     });
+
+    panel.set_target_attached(true);
+    CHECK(memory_view->isEnabled());
+    memory_view->click();
+    add_address->click();
+    CHECK(view_requested);
+    CHECK(add_requested);
+
+    panel.set_target_attached(false);
+    CHECK_FALSE(memory_view->isEnabled());
+}
+
+TEST_CASE("the found-list entry row opens the viewer at the main module entry", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+
+    slopkit::process::ModuleInfo image;
+    image.base     = 0x1000;
+    image.size     = 0x800;
+    image.entry    = 0x1040;
+    image.kind     = slopkit::process::ModuleKind::elf;
+    image.name     = "low";
+    image.path     = "/opt/low";
+    access.modules = {image};
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::MainWindow          window {worker, target, host};
+
+    attach_app_session(worker);
+
+    auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
+    REQUIRE(found_list != nullptr);
+    auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
+    REQUIRE(scanner != nullptr);
+
+    auto* memory_view = button_labelled(*found_list, QStringLiteral("Memory View"));
+    auto* add_address = button_labelled(*found_list, QStringLiteral("Add Address Manually"));
+    REQUIRE(memory_view != nullptr);
+    REQUIRE(add_address != nullptr);
+
+    // The window enables the view button once the target is attached and the
+    // main module's map has landed.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return memory_view->isEnabled() && scanner->main_module_address() != 0;
+                    }));
+
+    auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
+    REQUIRE(viewer != nullptr);
+    auto* address_edit = viewer->findChild<QLineEdit*>();
+    REQUIRE(address_edit != nullptr);
+
+    memory_view->click();
+    CHECK(address_edit->text() == QStringLiteral("0x1040"));
+
+    // The add button reaches the same non-modal dialog as the menu action.
+    auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
+    REQUIRE(add_dialog != nullptr);
+    CHECK_FALSE(add_dialog->isVisible());
+    add_address->click();
+    CHECK(add_dialog->isVisible());
 }

@@ -53,12 +53,9 @@ namespace slopkit::ui::panels
 
         [[nodiscard]] int progress_percent() const noexcept;
 
-    signals:
-        // A request to open the Memory Viewer at an address.
-        void memoryViewRequested(quint64 address);
-
-        // A request to open the Add Address dialog.
-        void addAddressRequested();
+        // Entry point of the target's main module, or its base when the plugin
+        // reports none; 0 before a memory map has been applied.
+        [[nodiscard]] std::uint64_t main_module_address() const noexcept;
 
     private:
         void build_layout();
@@ -102,10 +99,6 @@ namespace slopkit::ui::panels
         QLineEdit* alignment_edit_ {};
         QCheckBox* pause_scanning_check_ {};
 
-        QPushButton* memory_view_button_ {};
-        QPushButton* add_address_button_ {};
-
-        QProgressBar*         scan_progress_ {};
         widgets::StatusLabel* status_label_ {};
 
         std::string status_;

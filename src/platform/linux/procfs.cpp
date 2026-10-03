@@ -1,5 +1,7 @@
 #include "platform/linux/procfs.hpp"
 
+#include "platform/linux/module_entry.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -446,6 +448,34 @@ namespace slopkit::platform
 
         std::ranges::sort(modules, {}, &process::ModuleInfo::base);
         return modules;
+    }
+
+    void fill_module_entry_points(process::ProcessId pid, std::vector<process::ModuleInfo>& modules)
+    {
+        const auto root = std::filesystem::path("/proc") / std::to_string(pid) / "root";
+
+        for (auto& module : modules)
+        {
+            // Only a module whose first mapping starts the file has a readable,
+            // unambiguous image header at its base.
+            if (module.kind == process::ModuleKind::anonymous || module.path.empty() || module.offset != 0)
+            {
+                continue;
+            }
+
+            const std::filesystem::path path(module.path);
+            if (!path.is_absolute())
+            {
+                continue;
+            }
+
+            const auto image = read_image_entry(root / path.relative_path());
+            if (!image)
+            {
+                continue;
+            }
+            module.entry = image->address + (image->relative ? module.base : 0);
+        }
     }
 
 } // namespace slopkit::platform

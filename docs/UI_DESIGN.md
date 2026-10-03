@@ -78,10 +78,10 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 
 ## 8. Window and Layout
 
-- The main window is a `QMainWindow` with a menu bar, a status bar and the splitter-based central widget; the window must be resizable and carry a sensible minimum size.
+- The main window is a `QMainWindow` with a menu bar, a single full-width scan-progress bar above the central split zones, and a status bar; the window must be resizable and carry a sensible minimum size.
 - The file commands are reachable from the menus and carry window-scoped shortcuts: `Ctrl+T` picks the process, `Ctrl+O` opens an address table and `Ctrl+S` saves it; they fire only while the main window is focused.
 - Layouts must adapt to window size: use layouts and `QSplitter` stretch factors rather than fixed sizes, and keep the previous zone proportions (62 % scan zone / 38 % address list; the scan zone splits 50/50 between the found list and the scanner).
-- The status bar shows the attached-process label and the scan progress; the process list and other dialogs never duplicate them.
+- The status bar shows only the attached-process label; the scan progress is a single `QProgressBar` spanning the top of the window above the split zones (a deliberate change from the old status-bar progress bar). The process list and other dialogs never duplicate either.
 - The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Settings`) are non-modal `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window.
 - Treat a dialog's position and size as compositor-owned: never save, restore or compute them; nothing is persisted between runs.
 - Do not draw custom title bars for dialogs (see section 7). The window-manager close button has the same effect as an in-dialog close button, and the dialog can be re-opened at any time.

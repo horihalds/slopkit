@@ -417,6 +417,7 @@ namespace
                     images.push_back(std::move(module));
                 }
             }
+            platform::fill_module_entry_points(session->pid, images);
 
             auto* array = static_cast<slopkit_module_info*>(host_alloc(sizeof(slopkit_module_info) * images.size()));
             if (array == nullptr && !images.empty())
@@ -433,6 +434,7 @@ namespace
                 array[count].kind   = static_cast<int32_t>(image.kind);
                 array[count].name   = intern(image.name);
                 array[count].path   = image.path.empty() ? nullptr : intern(image.path);
+                array[count].entry  = image.entry;
                 ++count;
             }
 

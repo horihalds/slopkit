@@ -14,6 +14,7 @@
 
 #include "plugin/plugin_host.hpp"
 #include "process/plugin_access.hpp"
+#include "process/types.hpp"
 
 namespace
 {
@@ -93,6 +94,18 @@ TEST_CASE("linux-proc lists modules, threads and regions of the current process"
     const auto modules = session->modules();
     REQUIRE(modules.has_value());
     CHECK_FALSE(modules->empty());
+
+    // modules_from_maps sorts by base, so the first non-anonymous module with a
+    // path is the executable and its entry point must land inside the image.
+    const auto main_module =
+        std::ranges::find_if(*modules,
+                             [](const slopkit::process::ModuleInfo& module)
+                             {
+                                 return module.kind != slopkit::process::ModuleKind::anonymous && !module.path.empty();
+                             });
+    REQUIRE(main_module != modules->end());
+    CHECK(main_module->entry != 0);
+    CHECK(main_module->entry >= main_module->base);
 
     const auto threads = session->threads();
     REQUIRE(threads.has_value());

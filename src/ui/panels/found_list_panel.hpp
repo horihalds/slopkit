@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class QLabel;
+class QPushButton;
 class QTableView;
 
 namespace slopkit::ui::models
@@ -35,6 +36,17 @@ namespace slopkit::ui::panels
         // so the selection and the sort survive an idle poll.
         void refresh();
 
+        // Enables the Memory View button only while a process is attached.
+        void set_target_attached(bool attached);
+
+    signals:
+        // A request to open the Memory Viewer at the main module's entry point
+        // (or its base when the plugin reports none).
+        void memoryViewRequested();
+
+        // A request to open the Add Address dialog.
+        void addAddressRequested();
+
     private:
         void add_to_table(int row);
         void show_context_menu(const QPoint& position);
@@ -46,6 +58,7 @@ namespace slopkit::ui::panels
         widgets::StatusLabel*      note_ {};
         QTableView*                table_view_ {};
         models::FoundResultsModel* model_ {};
+        QPushButton*               memory_view_button_ {};
 
         // The snapshot currently shown, so an unchanged poll does not reset the
         // model (a reset would drop the selection and re-run the sort).

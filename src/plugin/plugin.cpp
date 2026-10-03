@@ -118,6 +118,13 @@ namespace slopkit::plugin
         {
             return std::unexpected("incompatible ABI major version " + std::to_string(major));
         }
+        const auto minor = static_cast<std::uint32_t>(vtable->abi_version & 0xffff);
+        if (minor < SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
+        {
+            return std::unexpected("incompatible ABI version " + std::to_string(major) + "." + std::to_string(minor)
+                                   + " (host requires " + std::to_string(SLOPKIT_PLUGIN_ABI_VERSION_MAJOR) + "."
+                                   + std::to_string(SLOPKIT_PLUGIN_ABI_VERSION_MINOR) + ")");
+        }
         if (vtable->struct_size < sizeof(slopkit_plugin_vtable))
         {
             return std::unexpected("vtable struct too small");
@@ -436,6 +443,7 @@ namespace slopkit::plugin
             module.base   = array[i].base;
             module.size   = array[i].size;
             module.offset = array[i].offset;
+            module.entry  = array[i].entry;
             module.kind   = module_kind_from_abi(array[i].kind);
             if (array[i].name != nullptr)
             {

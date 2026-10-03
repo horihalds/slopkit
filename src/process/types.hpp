@@ -33,6 +33,8 @@ namespace slopkit::process
         std::uint64_t base {};
         std::uint64_t size {};
         std::uint64_t offset {};
+        // Absolute entry point of the image; 0 when unknown.
+        std::uint64_t entry {};
         ModuleKind    kind {ModuleKind::anonymous};
         std::string   name;
         std::string   path;

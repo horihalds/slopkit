@@ -30,6 +30,8 @@
 - `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence and merges processes.
 - `src/platform/linux/procfs.hpp` — procfs types and queries: pids, status, exe/cmdline, mapped regions and threads.
 - `src/platform/linux/procfs.cpp` — implements procfs enumeration, text parsing, region classification and module merging.
+- `src/platform/linux/module_entry.hpp` — executable-image entry-point declaration for ELF and PE headers.
+- `src/platform/linux/module_entry.cpp` — parses ELF/PE headers and reads a mapped file's header through `/proc`.
 - `src/platform/linux/memory.hpp` — ptrace-free memory read/write primitives and their result types.
 - `src/platform/linux/memory.cpp` — process_vm_* with a /proc/<pid>/mem fallback and per-call primitive reporting.
 - `src/platform/linux/wine.hpp` — Wine/Proton detection types and classification entry points.

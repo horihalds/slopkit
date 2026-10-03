@@ -72,6 +72,27 @@ namespace slopkit::ui::panels
         return progress_percent_;
     }
 
+    std::uint64_t ScannerPanel::main_module_address() const noexcept
+    {
+        const process::ModuleInfo* main_module = nullptr;
+        for (const auto& module : modules_)
+        {
+            if (module.kind == process::ModuleKind::anonymous || module.path.empty())
+            {
+                continue;
+            }
+            if (main_module == nullptr || module.base < main_module->base)
+            {
+                main_module = &module;
+            }
+        }
+        if (main_module == nullptr)
+        {
+            return 0;
+        }
+        return main_module->entry != 0 ? main_module->entry : main_module->base;
+    }
+
     void ScannerPanel::build_layout()
     {
         auto* layout = new QVBoxLayout(this);
@@ -123,12 +144,6 @@ namespace slopkit::ui::panels
         }
         value_type_combo_->setCurrentIndex(2); // 4 Bytes
         layout->addWidget(value_type_combo_);
-
-        scan_progress_ = new QProgressBar(this);
-        scan_progress_->setRange(0, 100);
-        scan_progress_->setValue(0);
-        scan_progress_->setFormat(QStringLiteral("%p%"));
-        layout->addWidget(scan_progress_);
 
         auto* options = new widgets::Panel(tr("Memory Scan Options"), this);
         layout->addWidget(options);
@@ -185,25 +200,13 @@ namespace slopkit::ui::panels
         pause_scanning_check_->setToolTip(tr("Accepted as a setting; no effect until a plugin can suspend the target"));
         options_body->addWidget(pause_scanning_check_);
 
-        layout->addWidget(widgets::section_header(tr("Extra options"), this));
+        options_body->addWidget(widgets::section_header(tr("Extra options"), options));
         auto* extra_row = new QHBoxLayout();
-        extra_row->addWidget(
-            unavailable_checkbox(tr("Lua formula"), tr("Disabled: a Lua interpreter is not a project dependency")));
         extra_row->addWidget(
             unavailable_checkbox(tr("Not"), tr("Disabled: the scan engine does not invert comparisons yet")));
         extra_row->addWidget(unavailable_checkbox(tr("Unrandomizer"), tr("Disabled: requires code injection")));
-        extra_row->addWidget(unavailable_checkbox(tr("Enable Speedhack"), tr("Disabled: requires code injection")));
         extra_row->addStretch(1);
-        layout->addLayout(extra_row);
-
-        auto* entry_row     = new QHBoxLayout();
-        memory_view_button_ = widgets::secondary_button(tr("Memory View"), this);
-        memory_view_button_->setToolTip(tr("Open the Memory Viewer at the start address (or address 0)"));
-        add_address_button_ = widgets::secondary_button(tr("Add Address Manually"), this);
-        entry_row->addWidget(memory_view_button_);
-        entry_row->addWidget(add_address_button_);
-        entry_row->addStretch(1);
-        layout->addLayout(entry_row);
+        options_body->addLayout(extra_row);
 
         status_label_ = new widgets::StatusLabel(this);
         layout->addWidget(status_label_);
@@ -253,16 +256,6 @@ namespace slopkit::ui::panels
                     engine_.cancel();
                     refresh();
                 });
-
-        connect(memory_view_button_,
-                &QPushButton::clicked,
-                this,
-                [this]
-                {
-                    const auto address = scan::parse_address(start_edit_->text().toStdString());
-                    emit       memoryViewRequested(address.has_value() ? *address : std::uint64_t {0});
-                });
-        connect(add_address_button_, &QPushButton::clicked, this, &ScannerPanel::addAddressRequested);
 
         connect(scan_type_combo_,
                 &QComboBox::currentIndexChanged,
@@ -686,10 +679,8 @@ namespace slopkit::ui::panels
         next_scan_button_->setEnabled(attached && !running);
         undo_button_->setEnabled(attached && !running);
         cancel_button_->setVisible(running);
-        memory_view_button_->setEnabled(attached);
 
         progress_percent_ = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);
-        scan_progress_->setValue(progress_percent_);
 
         if (!status_.empty())
         {

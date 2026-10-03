@@ -55,6 +55,21 @@ TEST_CASE("A plugin without the regions entry point is rejected", "[plugin]")
     REQUIRE(host.find("old-abi") == nullptr);
 }
 
+TEST_CASE("A plugin built against an older ABI minor is rejected", "[plugin]")
+{
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_TEST_PLUGIN_DIR});
+
+    bool saw_old_minor = false;
+    for (const auto& diagnostic : host.diagnostics())
+    {
+        saw_old_minor = saw_old_minor
+                     || (diagnostic.message.find("incompatible ABI version") != std::string::npos
+                         && diagnostic.message.find("1.1") != std::string::npos);
+    }
+    REQUIRE(saw_old_minor);
+}
+
 TEST_CASE("A missing plugin directory is not fatal", "[plugin]")
 {
     slopkit::plugin::PluginHost host;
