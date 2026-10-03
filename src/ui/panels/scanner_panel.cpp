@@ -25,15 +25,6 @@ namespace slopkit::ui::panels
             return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
         }
 
-        // A disabled control that explains why it is unavailable.
-        QCheckBox* unavailable_checkbox(const QString& label, const QString& reason)
-        {
-            auto* box = new QCheckBox(label);
-            box->setEnabled(false);
-            box->setToolTip(reason);
-            return box;
-        }
-
         // Shortens a long module name, keeping its head and tail readable.
         QString elide_name(const QString& name, int max_chars)
         {
@@ -199,14 +190,6 @@ namespace slopkit::ui::panels
         pause_scanning_check_ = new QCheckBox(tr("Pause the game while scanning"));
         pause_scanning_check_->setToolTip(tr("Accepted as a setting; no effect until a plugin can suspend the target"));
         options_body->addWidget(pause_scanning_check_);
-
-        options_body->addWidget(widgets::section_header(tr("Extra options"), options));
-        auto* extra_row = new QHBoxLayout();
-        extra_row->addWidget(
-            unavailable_checkbox(tr("Not"), tr("Disabled: the scan engine does not invert comparisons yet")));
-        extra_row->addWidget(unavailable_checkbox(tr("Unrandomizer"), tr("Disabled: requires code injection")));
-        extra_row->addStretch(1);
-        options_body->addLayout(extra_row);
 
         status_label_ = new widgets::StatusLabel(this);
         layout->addWidget(status_label_);

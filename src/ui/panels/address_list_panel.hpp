@@ -10,6 +10,7 @@
 #include <QWidget>
 
 class QPoint;
+class QPushButton;
 class QTableView;
 
 namespace slopkit::ui::models
@@ -55,6 +56,9 @@ namespace slopkit::ui::panels
         // A request to show an address, fed by the context menu.
         void browseRequested(quint64 address);
 
+        // A request to open the Add Address dialog, fed by the footer button.
+        void addAddressRequested();
+
     private:
         void show_context_menu(const QPoint& position);
         void set_status(const QString& message, bool is_error);
@@ -63,6 +67,7 @@ namespace slopkit::ui::panels
         table::AddressTable&       table_;
         models::AddressTableModel* model_ {};
         QTableView*                table_view_ {};
+        QPushButton*               add_address_button_ {};
         widgets::StatusLabel*      status_label_ {};
 
         // The pre-filled path of the open/save dialogs.

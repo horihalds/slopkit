@@ -44,9 +44,6 @@ namespace slopkit::ui::panels
         // (or its base when the plugin reports none).
         void memoryViewRequested();
 
-        // A request to open the Add Address dialog.
-        void addAddressRequested();
-
     private:
         void add_to_table(int row);
         void show_context_menu(const QPoint& position);
