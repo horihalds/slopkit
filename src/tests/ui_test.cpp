@@ -407,6 +407,40 @@ namespace
         return nullptr;
     }
 
+    // The position of `widget` among the window's focusable controls in focus-
+    // chain order, or -1 when it is not in the window's chain. Non-focusable
+    // widgets are skipped because Tab skips them too, and the walk stops when
+    // the ring wraps back to the window, so a broken chain cannot hang.
+    int focusable_chain_index(QWidget& window, const QWidget* widget)
+    {
+        int index = 0;
+        for (const QWidget* current = window.nextInFocusChain(); current != &window;
+             current                = current->nextInFocusChain())
+        {
+            if (current->focusPolicy() == Qt::NoFocus)
+            {
+                continue;
+            }
+            if (current == widget)
+            {
+                return index;
+            }
+            ++index;
+        }
+        return -1;
+    }
+
+    // Asserts that both widgets are in `window`'s focus chain and that no other
+    // focusable control sits between them, i.e. Tab reaches `after` from `before`.
+    void check_tab_order(QWidget& window, const QWidget* before, const QWidget* after)
+    {
+        const int before_index = focusable_chain_index(window, before);
+        const int after_index  = focusable_chain_index(window, after);
+        CHECK(before_index >= 0);
+        CHECK(after_index >= 0);
+        CHECK(before_index + 1 == after_index);
+    }
+
     QRadioButton* radio_labelled(QWidget& root, const QString& text)
     {
         for (auto* button : root.findChildren<QRadioButton*>())
@@ -2248,6 +2282,131 @@ TEST_CASE("the action icons are non-null multi-size icons", "[ui]")
         CHECK_FALSE(icon.isNull());
         CHECK(icon.availableSizes().contains(QSize(16, 16)));
     }
+}
+
+TEST_CASE("widgets::chain_tab_order chains widgets in order", "[ui]")
+{
+    application();
+
+    QWidget window;
+    // The first focusable widget of a window is fixed by construction, so the
+    // desired first control is created first; the rest arrive out of order and
+    // chaining is what puts them right.
+    auto*   first  = new QPushButton(QStringLiteral("first"), &window);
+    auto*   third  = new QPushButton(QStringLiteral("third"), &window);
+    auto*   second = new QPushButton(QStringLiteral("second"), &window);
+
+    slopkit::ui::widgets::chain_tab_order({first, second, third});
+
+    // Walking the window's focus chain meets the three buttons in the declared
+    // order, from just after the window until the ring wraps back to it.
+    std::vector<QWidget*> chain;
+    for (QWidget* widget = window.nextInFocusChain(); widget != &window; widget = widget->nextInFocusChain())
+    {
+        chain.push_back(widget);
+    }
+    REQUIRE(chain.size() == 3);
+    CHECK(chain[0] == first);
+    CHECK(chain[1] == second);
+    CHECK(chain[2] == third);
+    CHECK(third->nextInFocusChain() == &window);
+
+    // A null entry is skipped, so the widgets around it stay chained.
+    QWidget other;
+    auto*   alpha = new QPushButton(QStringLiteral("alpha"), &other);
+    auto*   omega = new QPushButton(QStringLiteral("omega"), &other);
+    slopkit::ui::widgets::chain_tab_order({alpha, nullptr, omega});
+    CHECK(alpha->nextInFocusChain() == omega);
+}
+
+TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("tab_order.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
+    REQUIRE(scanner != nullptr);
+    auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
+    REQUIRE(found_list != nullptr);
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    // The two type combos are found by the value they show on a fresh window.
+    auto combo_showing = [](QWidget& root, const QString& text) -> QComboBox*
+    {
+        for (auto* combo : root.findChildren<QComboBox*>())
+        {
+            if (combo->currentText() == text)
+            {
+                return combo;
+            }
+        }
+        return nullptr;
+    };
+
+    auto* first_scan     = button_labelled(*scanner, QStringLiteral("First Scan"));
+    auto* next_scan      = button_labelled(*scanner, QStringLiteral("Next Scan"));
+    auto* undo_scan      = button_labelled(*scanner, QStringLiteral("Undo Scan"));
+    auto* cancel         = button_labelled(*scanner, QStringLiteral("Cancel"));
+    auto* hex            = checkbox_labelled(*scanner, QStringLiteral("Hex"));
+    auto* value          = address_field(*scanner, "Value");
+    auto* upper_value    = address_field(*scanner, "Upper value");
+    auto* scan_type      = combo_showing(*scanner, QStringLiteral("Exact Value"));
+    auto* value_type     = combo_showing(*scanner, QStringLiteral("4 Bytes"));
+    auto* memory_region  = range_combo(*scanner);
+    auto* start_address  = address_field(*scanner, "Start address");
+    auto* stop_address   = address_field(*scanner, "Stop address");
+    auto* writable       = checkbox_labelled(*scanner, QStringLiteral("Writable"));
+    auto* executable     = checkbox_labelled(*scanner, QStringLiteral("Executable"));
+    auto* copy_on_write  = checkbox_labelled(*scanner, QStringLiteral("CopyOnWrite"));
+    auto* fast_scan      = checkbox_labelled(*scanner, QStringLiteral("Fast Scan"));
+    auto* alignment      = address_field(*scanner, "Alignment");
+    auto* pause          = checkbox_labelled(*scanner, QStringLiteral("Pause the game while scanning"));
+    auto* hits           = found_list->findChild<QTableView*>();
+    auto* memory_view    = button_labelled(*found_list, QStringLiteral("Memory View"));
+    auto* add_address    = button_labelled(*scanner, QStringLiteral("Add Address Manually"));
+    auto* table_settings = button_labelled(*scanner, QStringLiteral("Table Settings"));
+    auto* addresses      = address_list->findChild<QTableView*>();
+
+    const std::vector<QWidget*> order {
+        first_scan, next_scan,     undo_scan,     cancel,       hex,         value,          upper_value,   scan_type,
+        value_type, memory_region, start_address, stop_address, writable,    executable,     copy_on_write, fast_scan,
+        alignment,  pause,         hits,          memory_view,  add_address, table_settings, addresses};
+    for (QWidget* widget : order)
+    {
+        REQUIRE(widget != nullptr);
+    }
+
+    // Tab walks the whole sequence in order, so every control is in the chain
+    // and nothing has dropped out of it.
+    for (std::size_t index = 0; index + 1 < order.size(); ++index)
+    {
+        check_tab_order(window, order[index], order[index + 1]);
+    }
+
+    // The hidden-by-default controls keep their slots: Qt skips a hidden widget
+    // while tabbing but leaves it in the chain.
+    CHECK(cancel->isHidden());
+    CHECK(upper_value->isHidden());
+
+    // The first focusable control of the window's chain is the First Scan button.
+    QWidget* head = nullptr;
+    for (QWidget* widget = window.nextInFocusChain(); widget != &window; widget = widget->nextInFocusChain())
+    {
+        if (widget->focusPolicy() != Qt::NoFocus)
+        {
+            head = widget;
+            break;
+        }
+    }
+    CHECK(head == first_scan);
 }
 
 TEST_CASE("the process list dialog focuses the filter box and preselects the top result", "[ui]")

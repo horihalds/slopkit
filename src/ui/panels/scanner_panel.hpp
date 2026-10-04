@@ -59,6 +59,14 @@ namespace slopkit::ui::panels
         // before a memory map has been applied.
         [[nodiscard]] std::uint64_t main_module_address() const noexcept;
 
+        // The seam the window joins its cross-panel chain through: the last
+        // control of the scanner's own run and the footer pair. They exist only
+        // so the window can splice the found list's controls between the pause
+        // check and the footer buttons; the widgets themselves stay private.
+        [[nodiscard]] QWidget* tab_order_last() const noexcept;         // Pause the game while scanning
+        [[nodiscard]] QWidget* tab_order_footer_first() const noexcept; // Add Address Manually
+        [[nodiscard]] QWidget* tab_order_footer_last() const noexcept;  // Table Settings
+
     signals:
         // A request to open the Add Address dialog, fed by the bottom button.
         void addAddressRequested();
@@ -74,6 +82,7 @@ namespace slopkit::ui::panels
     private:
         void build_layout();
         void connect_widgets();
+        void apply_tab_order();
 
         void request_scan_session();
         void request_memory_map();

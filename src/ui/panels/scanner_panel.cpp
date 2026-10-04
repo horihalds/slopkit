@@ -86,6 +86,21 @@ namespace slopkit::ui::panels
         return main_module->entry != 0 ? main_module->entry : main_module->base;
     }
 
+    QWidget* ScannerPanel::tab_order_last() const noexcept
+    {
+        return pause_scanning_check_;
+    }
+
+    QWidget* ScannerPanel::tab_order_footer_first() const noexcept
+    {
+        return add_address_button_;
+    }
+
+    QWidget* ScannerPanel::tab_order_footer_last() const noexcept
+    {
+        return table_settings_button_;
+    }
+
     void ScannerPanel::build_layout()
     {
         auto* layout = new QVBoxLayout(this);
@@ -207,6 +222,33 @@ namespace slopkit::ui::panels
         layout->addLayout(footer);
 
         update_value_inputs();
+        apply_tab_order();
+    }
+
+    void ScannerPanel::apply_tab_order()
+    {
+        // The field run ends at the pause check; the hop from there to the
+        // footer buttons is left to the window, because the found list's table
+        // and Memory View button are spliced in between.
+        widgets::chain_tab_order({scan_button_,
+                                  next_scan_button_,
+                                  undo_button_,
+                                  cancel_button_,
+                                  hex_check_,
+                                  value_edit_,
+                                  value_upper_edit_,
+                                  scan_type_combo_,
+                                  value_type_combo_,
+                                  module_combo_,
+                                  start_edit_,
+                                  stop_edit_,
+                                  writable_check_,
+                                  executable_check_,
+                                  copy_on_write_check_,
+                                  fast_scan_check_,
+                                  alignment_edit_,
+                                  pause_scanning_check_});
+        widgets::chain_tab_order({add_address_button_, table_settings_button_});
     }
 
     void ScannerPanel::connect_widgets()

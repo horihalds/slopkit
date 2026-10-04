@@ -1,5 +1,7 @@
 #pragma once
 
+#include <initializer_list>
+
 #include <QColor>
 #include <QComboBox>
 #include <QFrame>
@@ -30,6 +32,13 @@ namespace slopkit::ui::widgets
 
     // Muted, word-wrapped helper text placed under a field or panel.
     [[nodiscard]] QLabel* hint_text(const QString& text, QWidget* parent = nullptr);
+
+    // Chains `widgets` so that Tab moves focus from each one to the next; a null
+    // entry is skipped, so an optional control can be passed. All widgets must
+    // belong to one window. Each panel chains the controls it builds and the window
+    // chains the hops between panels: that is how the main window's tab order is
+    // assembled.
+    void chain_tab_order(std::initializer_list<QWidget*> widgets);
 
     // Accent-filled button for the primary action. Fusion derives the hover and
     // pressed shades from the button colour, and the palette is re-applied when

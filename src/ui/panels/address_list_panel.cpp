@@ -102,6 +102,11 @@ namespace slopkit::ui::panels
         refresh();
     }
 
+    QWidget* AddressListPanel::tab_order_first() const noexcept
+    {
+        return table_view_;
+    }
+
     void AddressListPanel::set_status(const QString& message, bool is_error)
     {
         if (message == status_ && is_error == status_is_error_)

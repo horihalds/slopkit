@@ -270,6 +270,23 @@ namespace slopkit::ui
         column_layout->addWidget(scan_progress_);
         column_layout->addWidget(vertical_splitter, 1);
         setCentralWidget(column);
+
+        apply_tab_order();
+    }
+
+    void MainWindow::apply_tab_order()
+    {
+        // Declaring the whole junction as one run makes the four cross-panel
+        // links unambiguous, whatever order the panels chained their own
+        // controls in: the scanner's field run, then the found list's hits table
+        // and Memory View button, then the scanner's footer buttons, then the
+        // address list.
+        widgets::chain_tab_order({scanner_->tab_order_last(),
+                                  found_list_->tab_order_first(),
+                                  found_list_->tab_order_last(),
+                                  scanner_->tab_order_footer_first(),
+                                  scanner_->tab_order_footer_last(),
+                                  address_list_->tab_order_first()});
     }
 
     void MainWindow::build_dialogs()

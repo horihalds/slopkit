@@ -118,6 +118,8 @@ namespace slopkit::ui::panels
         layout->addLayout(entry_row);
 
         connect(memory_view_button_, &QPushButton::clicked, this, &FoundListPanel::memoryViewRequested);
+
+        widgets::chain_tab_order({table_view_, memory_view_button_});
     }
 
     void FoundListPanel::set_target_attached(bool attached)
@@ -133,6 +135,16 @@ namespace slopkit::ui::panels
     void FoundListPanel::set_address_mode(ui::AddressMode mode)
     {
         model_->set_address_mode(mode);
+    }
+
+    QWidget* FoundListPanel::tab_order_first() const noexcept
+    {
+        return table_view_;
+    }
+
+    QWidget* FoundListPanel::tab_order_last() const noexcept
+    {
+        return memory_view_button_;
     }
 
     void FoundListPanel::refresh()

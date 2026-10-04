@@ -51,6 +51,12 @@ namespace slopkit::ui::panels
         // and the `Copy` submenu (module + RVA, absolute, address + value).
         void populate_row_menu(QMenu& menu, int row);
 
+        // The seam the window splices between the scanner's pause check and its
+        // footer buttons: the hits table (first) and the Memory View button
+        // (last) of the found list's own run.
+        [[nodiscard]] QWidget* tab_order_first() const noexcept; // the hits table
+        [[nodiscard]] QWidget* tab_order_last() const noexcept;  // Memory View
+
     signals:
         // A request to open the Memory Viewer at the main module's entry point
         // (or its base when the plugin reports none).

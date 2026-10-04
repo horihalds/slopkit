@@ -92,6 +92,7 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 - Treat a dialog's position and size as compositor-owned: never save, restore or compute them; nothing is persisted between runs.
 - Do not draw custom title bars for dialogs (see section 7). The window-manager close button has the same effect as an in-dialog close button, and the dialog can be re-opened at any time.
 - Keep the app idle-quiet: updates are event-driven and the only periodic timer is the low-frequency scan-progress/freeze tick.
+- The main window's Tab order is fixed at construction and walks the scan flow: First Scan → Next Scan → Undo Scan → Cancel → Hex → Value → Upper value → scan type → value type → memory region → Start address → Stop address → Writable → Executable → CopyOnWrite → Fast Scan → alignment → Pause the game while scanning → the hits table → Memory View → Add Address Manually → Table Settings → the address list. Each panel owns the run it builds (through `ui::widgets::chain_tab_order()`), while `MainWindow::apply_tab_order()` links only the hops between panels; a hidden control keeps its slot (Qt skips it while tabbing), and the UI test asserts the whole order so a layout edit cannot silently move a control.
 
 ## 9. Threading and Target Access
 

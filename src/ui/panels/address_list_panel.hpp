@@ -87,6 +87,10 @@ namespace slopkit::ui::panels
         // Sets the directory the file dialogs start in.
         void set_dialog_directory(const QString& directory);
 
+        // The address list's only focusable control; the window joins its own
+        // chain onto it, so no panel-local chain call is needed.
+        [[nodiscard]] QWidget* tab_order_first() const noexcept; // the address list
+
     signals:
         // A request to show an address, fed by the context menu.
         void browseRequested(quint64 address);

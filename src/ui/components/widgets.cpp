@@ -98,6 +98,24 @@ namespace slopkit::ui::widgets
         return label;
     }
 
+    void chain_tab_order(std::initializer_list<QWidget*> widgets)
+    {
+        QWidget* previous = nullptr;
+        for (QWidget* widget : widgets)
+        {
+            // A null entry is an absent optional control, not a break in the run.
+            if (widget == nullptr)
+            {
+                continue;
+            }
+            if (previous != nullptr)
+            {
+                QWidget::setTabOrder(previous, widget);
+            }
+            previous = widget;
+        }
+    }
+
     PrimaryButton::PrimaryButton(const QString& text, QWidget* parent) : QPushButton(text, parent)
     {
         apply_palette();

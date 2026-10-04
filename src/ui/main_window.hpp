@@ -85,6 +85,7 @@ namespace slopkit::ui
         void build_status_bar();
         void build_central();
         void build_dialogs();
+        void apply_tab_order();
         void refresh_target_label();
         void run_freeze_pass();
 
