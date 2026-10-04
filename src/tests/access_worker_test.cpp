@@ -723,3 +723,78 @@ TEST_CASE("job lifecycle detail is debug-only", "[worker][log]")
         CHECK(record.level != slopkit::log::Level::debug);
     }
 }
+
+TEST_CASE("worker construction and destruction stay healthy under repetition", "[worker]")
+{
+    GatedAccess access {false};
+
+    constexpr int kCycles = 200;
+
+    std::atomic<int>  callbacks {0};
+    std::atomic<int>  cycles_done {0};
+    std::atomic<bool> failed {false};
+    std::atomic<bool> finished {false};
+
+    // Run the cycles off the test thread so a reintroduced race is reported as a
+    // failed test instead of parking this process forever in a join().
+    std::thread driver {[&]
+                        {
+                            int done = 0;
+                            for (int i = 0; i < kCycles && !failed.load(); ++i)
+                            {
+                                auto       worker    = std::make_unique<AccessWorker>(access);
+                                bool       called    = false;
+                                const bool submitted = worker->submit_list(worker->next_job_id(),
+                                                                           [&](JobResult&&)
+                                                                           {
+                                                                               ++callbacks;
+                                                                               called = true;
+                                                                           });
+                                if (submitted
+                                    && pump(*worker,
+                                            [&]
+                                            {
+                                                return called;
+                                            }))
+                                {
+                                    worker.reset();
+                                    cycles_done = ++done;
+                                }
+                                else
+                                {
+                                    failed = true;
+                                }
+                            }
+                            // Idle construct/destroy exercises the destructor handshake
+                            // without a job in flight.
+                            for (int i = 0; i < kCycles && !failed.load(); ++i)
+                            {
+                                auto worker = std::make_unique<AccessWorker>(access);
+                                worker.reset();
+                                cycles_done = ++done;
+                            }
+                            finished = true;
+                        }};
+
+    const auto deadline = std::chrono::steady_clock::now() + 30s;
+    while (!finished.load() && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(10ms);
+    }
+
+    if (finished.load())
+    {
+        driver.join();
+    }
+    else
+    {
+        // A regression parked the driver; detach it so the process still exits,
+        // then report the failure from this (the test's own) thread.
+        driver.detach();
+    }
+
+    CHECK_FALSE(failed.load());
+    CHECK(finished.load());
+    CHECK(cycles_done.load() == 2 * kCycles);
+    CHECK(callbacks.load() == kCycles);
+}

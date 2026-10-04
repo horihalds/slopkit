@@ -17,13 +17,15 @@
 namespace slopkit::process
 {
 
-    AccessWorker::AccessWorker(ProcessAccess& access)
-        : access_(access), worker_(
-                               [this](std::stop_token token)
-                               {
-                                   run(token);
-                               })
+    AccessWorker::AccessWorker(ProcessAccess& access) : access_(access)
     {
+        // A std::jthread may run its start routine before its constructor
+        // returns, so run() must not be reachable while the members it touches
+        // (mutex_, cv_, requests_, completion_hook_) are still being built.
+        worker_ = std::jthread {[this](std::stop_token token)
+                                {
+                                    run(token);
+                                }};
         log::debug(log::category::process, "access worker started");
     }
 
@@ -33,7 +35,13 @@ namespace slopkit::process
         // queues, so no callback can be invoked while its owner is destroyed and
         // no worker thread outlives the App.
         worker_.request_stop();
-        cv_.notify_all();
+        {
+            // stopping_ is what the wait predicate reads, so it is published
+            // under the mutex that guards it, like submit() does with the queue.
+            const std::lock_guard lock(mutex_);
+            stopping_ = true;
+            cv_.notify_all();
+        }
         if (worker_.joinable())
         {
             worker_.join();
@@ -57,9 +65,9 @@ namespace slopkit::process
                 cv_.wait(lock,
                          [&]
                          {
-                             return token.stop_requested() || !requests_.empty();
+                             return stopping_ || !requests_.empty();
                          });
-                if (token.stop_requested())
+                if (stopping_)
                 {
                     break;
                 }
@@ -95,17 +103,15 @@ namespace slopkit::process
 
     bool AccessWorker::submit(Request request)
     {
-        if (worker_.get_stop_token().stop_requested())
-        {
-            return false;
-        }
-
-        log::debug(log::category::process, std::format("queued job {} ({})", request.id, job_kind_name(request.kind)));
-
         {
             const std::lock_guard lock(mutex_);
+            if (stopping_)
+            {
+                return false;
+            }
             requests_.push_back(std::move(request));
         }
+        log::debug(log::category::process, std::format("queued job {} ({})", request.id, job_kind_name(request.kind)));
         cv_.notify_one();
         return true;
     }

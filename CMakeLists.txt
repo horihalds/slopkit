@@ -222,6 +222,8 @@ if(CLANG_FORMAT_EXECUTABLE)
     add_test(NAME clang-format-check
         COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${SLOPKIT_FORMAT_SOURCES}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    # A pathological hang must fail fast instead of blocking the whole run.
+    set_tests_properties(clang-format-check PROPERTIES TIMEOUT 60)
 endif()
 
 # Application modules (everything but the entry point) are compiled into the
@@ -258,8 +260,10 @@ qt_add_resources(slopkit_tests "slopkit_icons"
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)
-# Widget tests run headless through the offscreen QPA platform.
-catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+# Widget tests run headless through the offscreen QPA platform. A pathological
+# hang must fail within a minute (the slowest legitimate case is ~2s) instead of
+# blocking the whole suite.
+catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
 # --- install ---------------------------------------------------------------
 

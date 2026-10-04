@@ -210,7 +210,6 @@ namespace slopkit::process
         AttachResult            do_detach();
 
         ProcessAccess&          access_;
-        std::jthread            worker_;
         std::mutex              mutex_;
         std::condition_variable cv_;
         std::deque<Request>     requests_;
@@ -219,6 +218,12 @@ namespace slopkit::process
         std::optional<Session>  session_;         // worker thread only
         std::atomic<bool>       attached_ {false};
         std::atomic<JobId>      next_id_ {1};
+        bool                    stopping_ {false}; // guarded by mutex_
+
+        // Declared last: the worker thread started by the constructor touches
+        // mutex_, cv_, requests_ and completion_hook_ before it can process a
+        // job, so it must not exist while those members are still being built.
+        std::jthread worker_;
     };
 
 } // namespace slopkit::process
