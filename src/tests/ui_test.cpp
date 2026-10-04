@@ -2409,6 +2409,33 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
     CHECK(head == first_scan);
 }
 
+TEST_CASE("re-activating the main window focuses the scanner value box and selects its text", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("window_activate.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
+    REQUIRE(scanner != nullptr);
+    auto* value = address_field(*scanner, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("4242"));
+
+    window.show();
+
+    QEvent activate {QEvent::WindowActivate};
+    QCoreApplication::sendEvent(&window, &activate);
+
+    CHECK(window.focusWidget() == value);
+    CHECK(value->selectedText() == QStringLiteral("4242"));
+}
+
 TEST_CASE("the process list dialog focuses the filter box and preselects the top result", "[ui]")
 {
     application();
@@ -3050,6 +3077,217 @@ TEST_CASE("New Scan clears the results and returns the panel to its pre-scan sta
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     CHECK(view->model()->rowCount() == 0);
+}
+
+TEST_CASE("the scanner value box focuses and selects all its text", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+    panel.show();
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("1234"));
+
+    panel.focus_value_input();
+
+    CHECK(panel.focusWidget() == value);
+    CHECK(value->selectedText() == QStringLiteral("1234"));
+}
+
+TEST_CASE("Enter in the scanner value box runs the first scan then a next scan", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    region.writable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("10"));
+
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    REQUIRE(scan_button != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return scan_button->isEnabled();
+                    }));
+
+    std::vector<slopkit::log::Record> records;
+    const LevelGuard                  level_guard;
+    const SinkGuard                   sink_guard(
+        [&records](const slopkit::log::Record& record)
+        {
+            records.push_back(record);
+        });
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::debug);
+
+    const auto press_enter = [](QLineEdit* edit)
+    {
+        QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+        QCoreApplication::sendEvent(edit, &enter);
+    };
+
+    // Enter starts the very first scan, so the button turns into New Scan.
+    press_enter(value);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return panel.engine().has_results() && !panel.engine().is_running();
+                    }));
+    panel.refresh();
+    CHECK(scan_button->text() == QStringLiteral("New Scan"));
+
+    // Enter again refines the existing result set instead of resetting it: the
+    // engine publishes a fresh result handle once the refinement finishes.
+    const auto before = panel.engine().snapshot().result_hits;
+    value->setText(QStringLiteral("20"));
+    press_enter(value);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return panel.engine().snapshot().result_hits != before && !panel.engine().is_running();
+                    }));
+    CHECK(panel.engine().has_results());
+
+    int first_records = 0;
+    int next_records  = 0;
+    for (const auto& record : records)
+    {
+        if (record.category == "ui" && record.message == "First Scan")
+        {
+            ++first_records;
+        }
+        if (record.category == "ui" && record.message == "Next Scan")
+        {
+            ++next_records;
+        }
+    }
+    CHECK(first_records == 1);
+    CHECK(next_records == 1);
+}
+
+TEST_CASE("Enter in the scanner value box rejects an empty value through the log", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    REQUIRE(scan_button != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return scan_button->isEnabled();
+                    }));
+
+    std::vector<slopkit::log::Record> records;
+    const LevelGuard                  level_guard;
+    const SinkGuard                   sink_guard(
+        [&records](const slopkit::log::Record& record)
+        {
+            records.push_back(record);
+        });
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    value->clear();
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(value, &enter);
+
+    bool saw_reject = false;
+    for (const auto& record : records)
+    {
+        if (record.category == "scan" && record.level == slopkit::log::Level::warning
+            && record.message.starts_with("Value: "))
+        {
+            saw_reject = true;
+        }
+    }
+    CHECK(saw_reject);
+    CHECK_FALSE(panel.engine().has_results());
+}
+
+TEST_CASE("the scanner value box is skipped when its scan type needs no value", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+    panel.show();
+
+    auto* value = address_field(panel, "Value");
+    auto* start = address_field(panel, "Start address");
+    REQUIRE(value != nullptr);
+    REQUIRE(start != nullptr);
+
+    // "Unknown initial value" needs no value, so the field is disabled.
+    for (auto* combo : panel.findChildren<QComboBox*>())
+    {
+        if (combo->currentText() == QStringLiteral("Exact Value"))
+        {
+            combo->setCurrentText(QStringLiteral("Unknown initial value"));
+        }
+    }
+    CHECK_FALSE(value->isEnabled());
+
+    start->setFocus();
+    panel.focus_value_input();
+    CHECK(panel.focusWidget() != value);
 }
 
 TEST_CASE("the scanner range always shows the padded whole-address-space defaults", "[ui]")

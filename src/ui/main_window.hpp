@@ -16,6 +16,7 @@
 #include <QTimer>
 
 class QAction;
+class QEvent;
 
 namespace slopkit::ui::dialogs
 {
@@ -72,6 +73,11 @@ namespace slopkit::ui
         // Replaces the prompt the open flow uses, so a test can answer without a
         // dialog.
         void set_table_conflict_prompt(TableConflictPrompt prompt);
+
+    protected:
+        // Focuses the scanner's value box whenever the window becomes active
+        // again, so alt-tabbing back leaves the keyboard ready for a new value.
+        bool event(QEvent* event) override;
 
     private slots:
         void on_tick();

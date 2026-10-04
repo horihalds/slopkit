@@ -48,6 +48,11 @@ namespace slopkit::ui::panels
         // Sets the fast-scan alignment field, used by the Settings dialog.
         void set_default_alignment(std::uint64_t alignment);
 
+        // Focuses the scan value field and selects its whole content, so the
+        // user can type a new value immediately; a no-op when the field is
+        // disabled because the scan type needs no value.
+        void focus_value_input();
+
         // Polled by the window's tick: refreshes the enable state and the
         // progress bar, and logs a changed engine message.
         void refresh();
@@ -93,6 +98,7 @@ namespace slopkit::ui::panels
         void on_range_selected(int index);
         void start_first_scan();
         void start_next_scan();
+        void activate_scan_from_input();
         void update_value_inputs();
 
         [[nodiscard]] scan::ScanType                               current_scan_type() const noexcept;

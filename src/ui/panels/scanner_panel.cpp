@@ -72,6 +72,16 @@ namespace slopkit::ui::panels
         return progress_percent_;
     }
 
+    void ScannerPanel::focus_value_input()
+    {
+        if (!value_edit_->isEnabled()) // no value needed for this scan type
+        {
+            return;
+        }
+        value_edit_->setFocus(Qt::OtherFocusReason);
+        value_edit_->selectAll();
+    }
+
     std::uint64_t ScannerPanel::main_module_address() const noexcept
     {
         if (!map_ready_)
@@ -306,6 +316,8 @@ namespace slopkit::ui::panels
                 });
         connect(add_address_button_, &QPushButton::clicked, this, &ScannerPanel::addAddressRequested);
         connect(table_settings_button_, &QPushButton::clicked, this, &ScannerPanel::tableSettingsRequested);
+
+        connect(value_edit_, &QLineEdit::returnPressed, this, &ScannerPanel::activate_scan_from_input);
 
         connect(scan_type_combo_,
                 &QComboBox::currentIndexChanged,
@@ -681,6 +693,25 @@ namespace slopkit::ui::panels
             return;
         }
         engine_.next_scan(*config);
+    }
+
+    void ScannerPanel::activate_scan_from_input()
+    {
+        if (engine_.is_running())
+        {
+            return;
+        }
+        if (engine_.has_results())
+        {
+            log::debug(log::category::ui, "Next Scan");
+            start_next_scan();
+        }
+        else
+        {
+            log::debug(log::category::ui, "First Scan");
+            start_first_scan();
+        }
+        refresh();
     }
 
     void ScannerPanel::set_default_alignment(std::uint64_t alignment)

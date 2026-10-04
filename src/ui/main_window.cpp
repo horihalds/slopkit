@@ -8,6 +8,7 @@
 
 #include <QAction>
 #include <QCoreApplication>
+#include <QEvent>
 #include <QFileInfo>
 #include <QKeySequence>
 #include <QMenu>
@@ -422,6 +423,15 @@ namespace slopkit::ui
     void MainWindow::remember_file_path(const QString& path)
     {
         settings_.set_last_directory(QFileInfo(path).absolutePath());
+    }
+
+    bool MainWindow::event(QEvent* event)
+    {
+        if (event->type() == QEvent::WindowActivate)
+        {
+            scanner_->focus_value_input();
+        }
+        return QMainWindow::event(event);
     }
 
     void MainWindow::on_tick()
