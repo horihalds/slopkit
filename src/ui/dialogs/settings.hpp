@@ -10,6 +10,7 @@
 #include <QDialog>
 #include <QString>
 
+class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -47,6 +48,9 @@ namespace slopkit::ui::dialogs
         // Keeps the Addresses selector in step without re-emitting.
         void set_address_mode(ui::AddressMode mode);
 
+        // Keeps the Tables switch in step without re-emitting.
+        void set_auto_load_last_table(bool enabled);
+
     signals:
         // The new fast-scan alignment default, forwarded to the scanner panel.
         void alignmentChanged(quint64 alignment);
@@ -57,12 +61,14 @@ namespace slopkit::ui::dialogs
     private:
         [[nodiscard]] QWidget* build_appearance_page();
         [[nodiscard]] QWidget* build_addresses_page();
+        [[nodiscard]] QWidget* build_tables_page();
         [[nodiscard]] QWidget* build_scanning_page();
         [[nodiscard]] QWidget* build_plugins_page();
         [[nodiscard]] QWidget* build_about_page();
 
         void apply_scanning();
         void refresh_plugins();
+        void refresh_last_table();
 
         plugin::PluginHost& host_;
         scan::ScanEngine&   engine_;
@@ -74,6 +80,8 @@ namespace slopkit::ui::dialogs
         QRadioButton*         light_button_ {};
         QRadioButton*         module_relative_button_ {};
         QRadioButton*         absolute_button_ {};
+        QCheckBox*            auto_load_check_ {};
+        QLabel*               last_table_label_ {};
         QLineEdit*            alignment_edit_ {};
         QLineEdit*            result_cap_edit_ {};
         QPlainTextEdit*       plugins_view_ {};

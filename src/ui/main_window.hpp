@@ -31,6 +31,11 @@ namespace slopkit::ui::panels
     class ScannerPanel;
 } // namespace slopkit::ui::panels
 
+namespace slopkit::ui::widgets
+{
+    class StatusLabel;
+} // namespace slopkit::ui::widgets
+
 namespace slopkit::ui
 {
     class SettingsController;
@@ -52,6 +57,8 @@ namespace slopkit::ui
 
     private slots:
         void on_tick();
+        void remember_table_path(const QString& path);
+        void remember_file_path(const QString& path);
 
     private:
         void build_actions();
@@ -90,8 +97,9 @@ namespace slopkit::ui
         dialogs::LogDialog*           log_ {};
         dialogs::SettingsDialog*      settings_dialog_ {};
 
-        QLabel*       process_label_ {};
-        QProgressBar* scan_progress_ {};
+        QLabel*               process_label_ {};
+        widgets::StatusLabel* address_status_ {};
+        QProgressBar*         scan_progress_ {};
 
         QAction* quit_action_ {};
         QAction* open_process_action_ {};

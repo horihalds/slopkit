@@ -8,6 +8,7 @@
 
 #include <QAction>
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
@@ -131,7 +132,14 @@ namespace slopkit::ui
     void MainWindow::build_status_bar()
     {
         process_label_ = new QLabel(to_qstring(target_.label()), this);
+        process_label_->setObjectName(QStringLiteral("process_label"));
         statusBar()->addWidget(process_label_);
+
+        // The address list reports its outcomes here, in the permanent right
+        // slot, so a transient status message never hides it.
+        address_status_ = new widgets::StatusLabel(this);
+        address_status_->setObjectName(QStringLiteral("address_status"));
+        statusBar()->addPermanentWidget(address_status_, 1);
     }
 
     void MainWindow::build_central()
@@ -162,6 +170,14 @@ namespace slopkit::ui
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(address_list_, &panels::AddressListPanel::tableLoaded, this, &MainWindow::on_table_loaded);
+        connect(address_list_,
+                &panels::AddressListPanel::statusChanged,
+                this,
+                [this](const QString& message, bool is_error)
+                {
+                    address_status_->set_status(is_error ? widgets::StatusKind::error : widgets::StatusKind::info,
+                                                message);
+                });
         connect(open_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::open_table);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
         connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
@@ -253,6 +269,23 @@ namespace slopkit::ui
         connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
+
+        // Seed the remembered table and the dialog directory, then wire the
+        // remembering slots so the seed value is not written back.
+        const Settings& persisted = settings_.values();
+        address_list_->set_table_path(persisted.last_table_path);
+        address_list_->set_dialog_directory(persisted.last_directory);
+        log_->set_dialog_directory(persisted.last_directory);
+
+        connect(address_list_, &panels::AddressListPanel::tablePathChanged, this, &MainWindow::remember_table_path);
+        connect(log_, &dialogs::LogDialog::logSaved, this, &MainWindow::remember_file_path);
+
+        // With the switch on, the remembered table is loaded exactly like a manual
+        // Ctrl+O; a failure only reports and keeps the path remembered.
+        if (persisted.auto_load_last_table && !persisted.last_table_path.isEmpty())
+        {
+            static_cast<void>(address_list_->load_table(persisted.last_table_path));
+        }
     }
 
     void MainWindow::show_process_list()
@@ -299,6 +332,17 @@ namespace slopkit::ui
     {
         settings_dialog_->select_about();
         show_settings();
+    }
+
+    void MainWindow::remember_table_path(const QString& path)
+    {
+        settings_.set_last_table_path(path);
+        settings_.set_last_directory(QFileInfo(path).absolutePath());
+    }
+
+    void MainWindow::remember_file_path(const QString& path)
+    {
+        settings_.set_last_directory(QFileInfo(path).absolutePath());
     }
 
     void MainWindow::on_tick()

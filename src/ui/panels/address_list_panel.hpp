@@ -19,11 +19,6 @@ namespace slopkit::ui::models
     class AddressTableModel;
 } // namespace slopkit::ui::models
 
-namespace slopkit::ui::widgets
-{
-    class StatusLabel;
-} // namespace slopkit::ui::widgets
-
 namespace slopkit::ui::panels
 {
 
@@ -67,12 +62,29 @@ namespace slopkit::ui::panels
         // Chooses how static addresses are shown in the Address column.
         void set_address_mode(ui::AddressMode mode);
 
+        // Seeds the remembered table path; an unchanged value is not reported.
+        void set_table_path(const QString& path);
+
+        // The table slopkit last loaded or saved.
+        [[nodiscard]] QString table_path() const;
+
+        // Sets the directory the file dialogs start in.
+        void set_dialog_directory(const QString& directory);
+
     signals:
         // A request to show an address, fed by the context menu.
         void browseRequested(quint64 address);
 
         // A table file was loaded into the panel's table.
         void tableLoaded();
+
+        // The remembered table path changed on a load or a save, so the window
+        // can persist it.
+        void tablePathChanged(const QString& path);
+
+        // A status line outcome for the window's status area; emitted only when
+        // the text or its kind actually changes.
+        void statusChanged(const QString& message, bool is_error);
 
     private:
         void show_context_menu(const QPoint& position);
@@ -82,10 +94,12 @@ namespace slopkit::ui::panels
         table::AddressTable&       table_;
         models::AddressTableModel* model_ {};
         QTableView*                table_view_ {};
-        widgets::StatusLabel*      status_label_ {};
 
         // The pre-filled path of the open/save dialogs.
         QString table_path_;
+        // The directory the file dialogs start in.
+        QString dialog_directory_;
+        // The last status emitted, so a repeated report is not re-emitted.
         QString status_;
         bool    status_is_error_ {false};
     };

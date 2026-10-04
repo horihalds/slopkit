@@ -9,6 +9,7 @@
 #include <system_error>
 
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -65,6 +66,7 @@ namespace slopkit::ui::dialogs
         categories_ = new QListWidget(this);
         categories_->addItem(tr("Appearance"));
         categories_->addItem(tr("Addresses"));
+        categories_->addItem(tr("Tables"));
         categories_->addItem(tr("Scanning"));
         categories_->addItem(tr("Plugins"));
         categories_->addItem(tr("About"));
@@ -74,6 +76,7 @@ namespace slopkit::ui::dialogs
         pages_ = new QStackedWidget(this);
         pages_->addWidget(build_appearance_page());
         pages_->addWidget(build_addresses_page());
+        pages_->addWidget(build_tables_page());
         pages_->addWidget(build_scanning_page());
         pages_->addWidget(build_plugins_page());
         pages_->addWidget(build_about_page());
@@ -100,8 +103,12 @@ namespace slopkit::ui::dialogs
         // controller, so an external change keeps the radios in step.
         set_dark_theme(settings_.values().dark_theme);
         set_address_mode(settings_.values().address_mode);
+        set_auto_load_last_table(settings_.values().auto_load_last_table);
+        refresh_last_table();
         connect(&settings_, &SettingsController::darkThemeChanged, this, &SettingsDialog::set_dark_theme);
         connect(&settings_, &SettingsController::addressModeChanged, this, &SettingsDialog::set_address_mode);
+        connect(
+            &settings_, &SettingsController::autoLoadLastTableChanged, this, &SettingsDialog::set_auto_load_last_table);
     }
 
     QWidget* SettingsDialog::build_appearance_page()
@@ -193,6 +200,47 @@ namespace slopkit::ui::dialogs
         return page;
     }
 
+    QWidget* SettingsDialog::build_tables_page()
+    {
+        auto* page   = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        layout->addWidget(widgets::section_header(tr("Tables"), page));
+
+        auto_load_check_ = new QCheckBox(tr("Load the last table when slopkit starts"), page);
+        auto_load_check_->setObjectName(QStringLiteral("auto_load_last_table"));
+        layout->addWidget(auto_load_check_);
+
+        last_table_label_ = new QLabel(page);
+        last_table_label_->setFont(mono_font());
+        last_table_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(last_table_label_);
+
+        auto* note = new QLabel(tr("The switch, the last table and the file dialogs' directory are remembered "
+                                   "between runs; the switch applies at the next start."),
+                                page);
+        note->setWordWrap(true);
+        layout->addWidget(note);
+        layout->addStretch(1);
+
+        // clicked fires only for user input, so the programmatic sync cannot loop
+        // back into the controller.
+        connect(auto_load_check_,
+                &QCheckBox::clicked,
+                this,
+                [this](bool checked)
+                {
+                    log::debug(log::category::ui,
+                               checked ? "settings: auto-load last table enabled"
+                                       : "settings: auto-load last table disabled");
+                    settings_.set_auto_load_last_table(checked);
+                });
+
+        return page;
+    }
+
     QWidget* SettingsDialog::build_scanning_page()
     {
         auto* page   = new QWidget(this);
@@ -281,6 +329,7 @@ namespace slopkit::ui::dialogs
     {
         QDialog::showEvent(event);
         refresh_plugins();
+        refresh_last_table();
     }
 
     void SettingsDialog::select_about()
@@ -310,6 +359,17 @@ namespace slopkit::ui::dialogs
         {
             absolute_button_->setChecked(true);
         }
+    }
+
+    void SettingsDialog::set_auto_load_last_table(bool enabled)
+    {
+        auto_load_check_->setChecked(enabled);
+    }
+
+    void SettingsDialog::refresh_last_table()
+    {
+        const QString path = settings_.values().last_table_path;
+        last_table_label_->setText(path.isEmpty() ? tr("Last table: none yet") : tr("Last table: %1").arg(path));
     }
 
     void SettingsDialog::apply_scanning()

@@ -25,6 +25,7 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QEvent>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHelpEvent>
@@ -1522,6 +1523,145 @@ TEST_CASE("loading a table reports the entry count and emits tableLoaded", "[ui]
     CHECK(loaded_signals == 1);
 }
 
+TEST_CASE("a table load is remembered in the settings", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("remember_table.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    const QString path = scratch_settings_file("remember_table.skt");
+    write_table_with_settings(path, "alpha", false, false);
+    REQUIRE(address_list->load_table(path));
+
+    CHECK(address_list->table_path() == path);
+    CHECK(settings.values().last_table_path == path);
+    CHECK(settings.values().last_directory == QFileInfo(path).absolutePath());
+}
+
+TEST_CASE("a log save is remembered in the settings", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("remember_log.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* log = window.findChild<slopkit::ui::dialogs::LogDialog*>();
+    REQUIRE(log != nullptr);
+
+    const QString path = scratch_settings_file("saved.log");
+    log->save_to(path);
+
+    CHECK(QFileInfo::exists(path));
+    CHECK(settings.values().last_directory == QFileInfo(path).absolutePath());
+}
+
+TEST_CASE("the auto-load switch opens the remembered table at start-up", "[ui]")
+{
+    application();
+
+    const QString table_path = scratch_settings_file("autoload.skt");
+    {
+        slopkit::table::AddressTable writer;
+        slopkit::table::AddressEntry entry;
+        entry.address = 0x2000;
+        entry.type    = slopkit::scan::ValueType::int32;
+        entry.bytes   = {std::byte {7}, std::byte {0}, std::byte {0}, std::byte {0}};
+        writer.add(entry);
+        REQUIRE(slopkit::table::save(std::filesystem::path(table_path.toStdString()), writer).has_value());
+    }
+
+    const QString settings_path = scratch_settings_file("autoload.ini");
+    {
+        slopkit::ui::SettingsController seed {settings_path};
+        seed.set_auto_load_last_table(true);
+        seed.set_last_table_path(table_path);
+    }
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {settings_path};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+    auto* view = address_list->findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->model() != nullptr);
+    CHECK(view->model()->rowCount() == 1);
+}
+
+TEST_CASE("the auto-load switch off leaves the table empty", "[ui]")
+{
+    application();
+
+    const QString table_path = scratch_settings_file("autoload_off.skt");
+    write_table_with_settings(table_path, "alpha", false, false);
+
+    const QString settings_path = scratch_settings_file("autoload_off.ini");
+    {
+        slopkit::ui::SettingsController seed {settings_path};
+        seed.set_auto_load_last_table(false);
+        seed.set_last_table_path(table_path);
+    }
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {settings_path};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+    CHECK(address_list->table_path() == table_path); // remembered for a later save
+
+    auto* view = address_list->findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->model() != nullptr);
+    CHECK(view->model()->rowCount() == 0);
+}
+
+TEST_CASE("a failed auto-load reports and keeps the remembered path", "[ui]")
+{
+    application();
+
+    const QString missing       = QStringLiteral("/nonexistent/slopkit/missing.skt");
+    const QString settings_path = scratch_settings_file("autoload_fail.ini");
+    {
+        slopkit::ui::SettingsController seed {settings_path};
+        seed.set_auto_load_last_table(true);
+        seed.set_last_table_path(missing);
+    }
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {settings_path};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_status =
+        window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
+    REQUIRE(address_status != nullptr);
+    CHECK(address_status->text().contains(QStringLiteral("Open failed")));
+
+    CHECK(settings.values().last_table_path == missing);
+}
+
 TEST_CASE("the main window shell is built", "[ui]")
 {
     application();
@@ -1626,11 +1766,15 @@ TEST_CASE("the main window shell is built", "[ui]")
 
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
-    // The status bar carries only the detached-process label; no progress bar
+    // The status bar carries the detached-process label in its left slot and the
+    // address list's status line in its permanent right slot; no progress bar
     // lives there any more.
-    auto* process_label = window.statusBar()->findChild<QLabel*>();
+    auto* process_label = window.statusBar()->findChild<QLabel*>(QStringLiteral("process_label"));
     REQUIRE(process_label != nullptr);
     CHECK(process_label->text() == QStringLiteral("No Process Selected"));
+    auto* address_status =
+        window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
+    CHECK(address_status != nullptr);
     CHECK(window.statusBar()->findChild<QProgressBar*>() == nullptr);
 
     // The central widget is a column: the single full-width progress bar sits
@@ -3257,19 +3401,15 @@ TEST_CASE("loading a table auto attaches to its target process", "[ui]")
     CHECK(target.name == "alpha");
 
     QCoreApplication::processEvents();
-    auto* process_label = window.statusBar()->findChild<QLabel*>();
+    auto* process_label = window.statusBar()->findChild<QLabel*>(QStringLiteral("process_label"));
     REQUIRE(process_label != nullptr);
     CHECK(process_label->text().contains(QStringLiteral("alpha")));
 
-    bool reported = false;
-    for (auto* label : address_list->findChildren<slopkit::ui::widgets::StatusLabel*>())
-    {
-        if (label->text().contains(QStringLiteral("Attached to alpha")))
-        {
-            reported = true;
-        }
-    }
-    CHECK(reported);
+    auto* address_status =
+        window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
+    REQUIRE(address_status != nullptr);
+    CHECK(address_list->findChildren<slopkit::ui::widgets::StatusLabel*>().isEmpty());
+    CHECK(address_status->text().contains(QStringLiteral("Attached to alpha")));
 }
 
 TEST_CASE("an auto attach is skipped while a session is live", "[ui]")
@@ -3297,13 +3437,13 @@ TEST_CASE("an auto attach is skipped while a session is live", "[ui]")
     CHECK(target.pid == 42);
     CHECK(access.list_calls.load() == 0);
 
-    bool reported = false;
-    for (auto* label : address_list->findChildren<slopkit::ui::widgets::StatusLabel*>())
+    bool  reported = false;
+    auto* address_status =
+        window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
+    REQUIRE(address_status != nullptr);
+    if (address_status->text().contains(QStringLiteral("skipped")))
     {
-        if (label->text().contains(QStringLiteral("skipped")))
-        {
-            reported = true;
-        }
+        reported = true;
     }
     CHECK(reported);
 }
@@ -3331,14 +3471,10 @@ TEST_CASE("a failed auto attach leaves the target detached", "[ui]")
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        for (auto* label : address_list->findChildren<slopkit::ui::widgets::StatusLabel*>())
-                        {
-                            if (label->text().contains(QStringLiteral("auto attach failed")))
-                            {
-                                return true;
-                            }
-                        }
-                        return false;
+                        auto* address_status = window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(
+                            QStringLiteral("address_status"));
+                        return address_status != nullptr
+                            && address_status->text().contains(QStringLiteral("auto attach failed"));
                     }));
     CHECK_FALSE(target.valid());
 }
@@ -3545,10 +3681,11 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     auto* categories = settings.findChild<QListWidget*>();
     REQUIRE(categories != nullptr);
-    REQUIRE(categories->count() == 5);
+    REQUIRE(categories->count() == 6);
     CHECK(categories->item(0)->text() == QStringLiteral("Appearance"));
     CHECK(categories->item(1)->text() == QStringLiteral("Addresses"));
-    CHECK(categories->item(2)->text() == QStringLiteral("Scanning"));
+    CHECK(categories->item(2)->text() == QStringLiteral("Tables"));
+    CHECK(categories->item(3)->text() == QStringLiteral("Scanning"));
 
     auto* module_relative = radio_labelled(settings, QStringLiteral("Module + RVA"));
     REQUIRE(module_relative != nullptr);
@@ -3588,6 +3725,55 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
     REQUIRE(categories->currentItem() != nullptr);
     CHECK(categories->currentRow() == categories->count() - 1);
     CHECK(categories->currentItem()->text() == QStringLiteral("About"));
+}
+
+TEST_CASE("the Tables setting toggles the auto-load switch", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost          host;
+    slopkit::scan::ScanEngine            engine;
+    slopkit::ui::SettingsController      controller {scratch_settings_file("tables_dialog.ini")};
+    slopkit::ui::dialogs::SettingsDialog settings {host, engine, controller};
+
+    auto* box = settings.findChild<QCheckBox*>(QStringLiteral("auto_load_last_table"));
+    REQUIRE(box != nullptr);
+    CHECK_FALSE(box->isChecked());
+
+    bool saw_last_table = false;
+    for (auto* label : settings.findChildren<QLabel*>())
+    {
+        if (label->text().contains(QStringLiteral("Last table:")))
+        {
+            saw_last_table = true;
+        }
+    }
+    CHECK(saw_last_table);
+
+    int  changes = 0;
+    bool last    = false;
+    QObject::connect(&controller,
+                     &slopkit::ui::SettingsController::autoLoadLastTableChanged,
+                     &controller,
+                     [&](bool enabled)
+                     {
+                         ++changes;
+                         last = enabled;
+                     });
+
+    box->click();
+    CHECK(changes == 1);
+    CHECK(last);
+    CHECK(controller.values().auto_load_last_table);
+
+    // Re-selecting the same value is a no-op.
+    controller.set_auto_load_last_table(true);
+    CHECK(changes == 1);
+
+    // A real programmatic change ticks the box without re-emitting.
+    controller.set_auto_load_last_table(false);
+    CHECK_FALSE(box->isChecked());
+    CHECK(changes == 2);
 }
 
 TEST_CASE("the Addresses setting switches the viewer live", "[ui]")

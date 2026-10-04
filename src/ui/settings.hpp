@@ -11,12 +11,19 @@
 namespace slopkit::ui
 {
 
-    // The persisted application settings: the appearance and the address
-    // display mode, with the defaults applied when the file is missing.
+    // The persisted application settings: the appearance, the address display
+    // mode and the table/file-dialog memory, with the defaults applied when the
+    // file is missing.
     struct Settings
     {
         bool        dark_theme {true};
         AddressMode address_mode {AddressMode::module_relative};
+        // Whether the last table is loaded again at the next start.
+        bool        auto_load_last_table {false};
+        // The table slopkit last loaded or saved.
+        QString     last_table_path;
+        // The directory the file dialogs last used.
+        QString     last_directory;
 
         bool operator==(const Settings&) const = default;
     };
@@ -37,10 +44,14 @@ namespace slopkit::ui
 
         void set_dark_theme(bool dark);
         void set_address_mode(AddressMode mode);
+        void set_auto_load_last_table(bool enabled);
+        void set_last_table_path(const QString& path);
+        void set_last_directory(const QString& directory);
 
     signals:
         void darkThemeChanged(bool dark);
         void addressModeChanged(slopkit::ui::AddressMode mode);
+        void autoLoadLastTableChanged(bool enabled);
 
     private:
         void                         load();

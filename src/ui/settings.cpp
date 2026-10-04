@@ -14,10 +14,13 @@ namespace slopkit::ui
 {
     namespace
     {
-        constexpr auto kDarkThemeKey   = "appearance/dark_theme";
-        constexpr auto kDisplayModeKey = "addresses/display_mode";
-        constexpr auto kModuleRelative = "module_relative";
-        constexpr auto kAbsolute       = "absolute";
+        constexpr auto kDarkThemeKey     = "appearance/dark_theme";
+        constexpr auto kDisplayModeKey   = "addresses/display_mode";
+        constexpr auto kAutoLoadKey      = "tables/auto_load_last";
+        constexpr auto kLastTableKey     = "tables/last_path";
+        constexpr auto kLastDirectoryKey = "files/last_directory";
+        constexpr auto kModuleRelative   = "module_relative";
+        constexpr auto kAbsolute         = "absolute";
 
         std::optional<bool> parse_bool(const QVariant& value)
         {
@@ -90,6 +93,37 @@ namespace slopkit::ui
         emit addressModeChanged(mode);
     }
 
+    void SettingsController::set_auto_load_last_table(bool enabled)
+    {
+        if (values_.auto_load_last_table == enabled)
+        {
+            return;
+        }
+        values_.auto_load_last_table = enabled;
+        store();
+        emit autoLoadLastTableChanged(enabled);
+    }
+
+    void SettingsController::set_last_table_path(const QString& path)
+    {
+        if (values_.last_table_path == path)
+        {
+            return;
+        }
+        values_.last_table_path = path;
+        store();
+    }
+
+    void SettingsController::set_last_directory(const QString& directory)
+    {
+        if (values_.last_directory == directory)
+        {
+            return;
+        }
+        values_.last_directory = directory;
+        store();
+    }
+
     void SettingsController::load()
     {
         const auto file_path = store_->fileName().toStdString();
@@ -124,10 +158,28 @@ namespace slopkit::ui
                          std::format("settings file {}: malformed {} value", file_path, kDisplayModeKey));
         }
 
+        const auto auto_load_key = QString::fromLatin1(kAutoLoadKey);
+        if (const auto auto_load = parse_bool(store_->value(auto_load_key)); auto_load.has_value())
+        {
+            values_.auto_load_last_table = *auto_load;
+        }
+        else if (store_->contains(auto_load_key))
+        {
+            log::warning(log::category::app,
+                         std::format("settings file {}: malformed {} value", file_path, kAutoLoadKey));
+        }
+
+        values_.last_table_path = store_->value(QString::fromLatin1(kLastTableKey)).toString();
+        values_.last_directory  = store_->value(QString::fromLatin1(kLastDirectoryKey)).toString();
+
         log::debug(log::category::app,
-                   std::format("settings loaded: dark_theme={}, address_mode={}",
+                   std::format("settings loaded: dark_theme={}, address_mode={}, auto_load_last={}, "
+                               "last_table={}, last_directory={}",
                                values_.dark_theme,
-                               values_.address_mode == AddressMode::absolute ? "absolute" : "module_relative"));
+                               values_.address_mode == AddressMode::absolute ? "absolute" : "module_relative",
+                               values_.auto_load_last_table,
+                               values_.last_table_path.toStdString(),
+                               values_.last_directory.toStdString()));
     }
 
     void SettingsController::store()
@@ -138,6 +190,9 @@ namespace slopkit::ui
         store_->setValue(
             QString::fromLatin1(kDisplayModeKey),
             QString::fromLatin1(values_.address_mode == AddressMode::absolute ? kAbsolute : kModuleRelative));
+        store_->setValue(QString::fromLatin1(kAutoLoadKey), values_.auto_load_last_table);
+        store_->setValue(QString::fromLatin1(kLastTableKey), values_.last_table_path);
+        store_->setValue(QString::fromLatin1(kLastDirectoryKey), values_.last_directory);
         store_->sync();
     }
 

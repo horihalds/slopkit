@@ -184,16 +184,25 @@ namespace slopkit::ui::dialogs
         render();
     }
 
+    void LogDialog::set_dialog_directory(const QString& directory)
+    {
+        dialog_directory_ = directory;
+    }
+
     void LogDialog::save_as()
     {
         log::debug(log::category::ui, "log save as requested");
-        const QString path =
-            QFileDialog::getSaveFileName(this, tr("Save Log"), QString(), tr("Log files (*.log);;All files (*)"));
+        const QString path = QFileDialog::getSaveFileName(
+            this, tr("Save Log"), dialog_directory_, tr("Log files (*.log);;All files (*)"));
         if (path.isEmpty())
         {
             return;
         }
+        save_to(path);
+    }
 
+    void LogDialog::save_to(const QString& path)
+    {
         QFile file(path);
         if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
         {
@@ -204,6 +213,7 @@ namespace slopkit::ui::dialogs
         file.write(view_->toPlainText().toUtf8());
         log::debug(log::category::ui, std::format("log saved to {}", path.toStdString()));
         status_->set_status(widgets::StatusKind::success, tr("Saved %1").arg(path));
+        emit logSaved(path);
     }
 
     void LogDialog::update_status(int shown)

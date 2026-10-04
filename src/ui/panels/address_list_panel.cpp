@@ -8,7 +8,9 @@
 #include <utility>
 
 #include <QAction>
+#include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QMenu>
@@ -19,7 +21,6 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "table/serializer.hpp"
-#include "ui/components/widgets.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/table_file.hpp"
 
@@ -98,32 +99,23 @@ namespace slopkit::ui::panels
                     show_context_menu(position);
                 });
 
-        status_label_ = new widgets::StatusLabel(this);
-        layout->addWidget(status_label_);
-
         refresh();
     }
 
     void AddressListPanel::set_status(const QString& message, bool is_error)
     {
+        if (message == status_ && is_error == status_is_error_)
+        {
+            return;
+        }
         status_          = message;
         status_is_error_ = is_error;
-        refresh();
+        emit statusChanged(message, is_error);
     }
 
     void AddressListPanel::refresh()
     {
         model_->refresh();
-
-        if (!status_.isEmpty())
-        {
-            status_label_->set_status(status_is_error_ ? widgets::StatusKind::error : widgets::StatusKind::info,
-                                      status_);
-        }
-        else
-        {
-            status_label_->clear_status();
-        }
     }
 
     void AddressListPanel::set_modules(std::vector<process::ModuleInfo> modules)
@@ -136,11 +128,32 @@ namespace slopkit::ui::panels
         model_->set_address_mode(mode);
     }
 
+    void AddressListPanel::set_table_path(const QString& path)
+    {
+        if (table_path_ == path)
+        {
+            return;
+        }
+        table_path_ = path;
+        emit tablePathChanged(path);
+    }
+
+    QString AddressListPanel::table_path() const
+    {
+        return table_path_;
+    }
+
+    void AddressListPanel::set_dialog_directory(const QString& directory)
+    {
+        dialog_directory_ = directory;
+    }
+
     void AddressListPanel::open_table()
     {
         log::debug(log::category::ui, "open table requested");
-        const QString path = QFileDialog::getOpenFileName(
-            this, tr("Open Table"), table_path_, tr("Address tables (*.skt);;All files (*)"));
+        const QString start = dialog_directory_.isEmpty() ? table_path_ : dialog_directory_;
+        const QString path =
+            QFileDialog::getOpenFileName(this, tr("Open Table"), start, tr("Address tables (*.skt);;All files (*)"));
         if (path.isEmpty())
         {
             return;
@@ -150,7 +163,7 @@ namespace slopkit::ui::panels
 
     bool AddressListPanel::load_table(const QString& path)
     {
-        table_path_ = path;
+        set_table_path(path);
         if (const auto result = table::load(std::filesystem::path(path.toStdString()), table_); !result)
         {
             log::warning(log::category::ui, std::format("table load failed: {}", result.error()));
@@ -176,20 +189,23 @@ namespace slopkit::ui::panels
     void AddressListPanel::save_table_as()
     {
         log::debug(log::category::ui, "save table as requested");
-        const QString suggested = table_path_.isEmpty() ? default_table_path() : table_path_;
-        const QString chosen    = QFileDialog::getSaveFileName(
+        QString suggested = table_path_.isEmpty() ? default_table_path() : table_path_;
+        if (!dialog_directory_.isEmpty())
+        {
+            suggested = QDir(dialog_directory_).filePath(QFileInfo(suggested).fileName());
+        }
+        const QString chosen = QFileDialog::getSaveFileName(
             this, tr("Save Table As"), suggested, tr("Address tables (*.skt);;All files (*)"));
         if (chosen.isEmpty())
         {
             return;
         }
-        const QString path = table_file_path(chosen);
-        table_path_        = path;
-        save_to_path(path);
+        save_to_path(table_file_path(chosen));
     }
 
     void AddressListPanel::save_to_path(const QString& path)
     {
+        set_table_path(path);
         if (const auto result = table::save(std::filesystem::path(path.toStdString()), table_); !result)
         {
             set_status(tr("Save failed: %1").arg(to_qstring(result.error())), true);

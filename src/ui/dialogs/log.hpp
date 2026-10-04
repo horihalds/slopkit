@@ -29,6 +29,17 @@ namespace slopkit::ui::dialogs
     public:
         explicit LogDialog(QWidget* parent = nullptr);
 
+        // Sets the directory the Save As dialog starts in.
+        void set_dialog_directory(const QString& directory);
+
+        // Writes `path` with the visible lines and reports the outcome. Split out
+        // of save_as() so tests can drive a save without the native file dialog.
+        void save_to(const QString& path);
+
+    signals:
+        // A log file was written, so the window can remember its directory.
+        void logSaved(const QString& path);
+
     protected:
         void showEvent(QShowEvent* event) override;
 
@@ -45,6 +56,7 @@ namespace slopkit::ui::dialogs
         widgets::StatusLabel*       status_ {};
         LogNotifier                 notifier_;
         std::vector<log::Record>    records_;
+        QString                     dialog_directory_;
         bool                        seeded_ {false};
     };
 
