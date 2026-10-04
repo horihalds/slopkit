@@ -24,6 +24,7 @@
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
 #include "ui/dialogs/settings.hpp"
+#include "ui/dialogs/table_settings.hpp"
 #include "ui/panels/address_list_panel.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
@@ -146,6 +147,7 @@ namespace slopkit::ui
                     on_memory_view_requested(scanner_->main_module_address());
                 });
         connect(scanner_, &panels::ScannerPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
+        connect(scanner_, &panels::ScannerPanel::tableSettingsRequested, this, &MainWindow::show_table_settings);
         connect(scanner_,
                 &panels::ScannerPanel::memoryMapApplied,
                 this,
@@ -159,6 +161,7 @@ namespace slopkit::ui
 
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
+        connect(address_list_, &panels::AddressListPanel::tableLoaded, this, &MainWindow::on_table_loaded);
         connect(open_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::open_table);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
         connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
@@ -205,6 +208,8 @@ namespace slopkit::ui
                 });
 
         add_address_ = new dialogs::AddAddressDialog(address_table_, this);
+
+        table_settings_ = new dialogs::TableSettingsDialog(address_table_, this);
 
         memory_view_ = new dialogs::MemoryViewerDialog(worker_, target_, this);
 
@@ -266,6 +271,14 @@ namespace slopkit::ui
         add_address_->activateWindow();
     }
 
+    void MainWindow::show_table_settings()
+    {
+        log::debug(log::category::ui, "opening Table Settings dialog");
+        table_settings_->show();
+        table_settings_->raise();
+        table_settings_->activateWindow();
+    }
+
     void MainWindow::show_log()
     {
         log::debug(log::category::ui, "opening Log dialog");
@@ -313,6 +326,129 @@ namespace slopkit::ui
     void MainWindow::on_add_address_requested()
     {
         show_add_address();
+    }
+
+    void MainWindow::on_table_loaded()
+    {
+        const table::TableSettings& settings = address_table_.settings();
+        if (!settings.auto_attach || settings.target_process.empty())
+        {
+            return;
+        }
+
+        if (target_.valid())
+        {
+            log::info(log::category::ui, std::format("auto attach skipped: already attached to {}", target_.label()));
+            address_list_->report_status("Table auto attach skipped: already attached.", false);
+            return;
+        }
+
+        // One listing at a time; a newer load supersedes whatever is in flight.
+        if (target_lookup_pending_.has_value())
+        {
+            return;
+        }
+
+        const std::string    name           = settings.target_process;
+        const bool           match_exe_path = settings.match_exe_path;
+        const process::JobId job_id         = worker_.next_job_id();
+        target_lookup_pending_              = job_id;
+
+        log::debug(log::category::ui, std::format("auto attach: looking up process '{}'", name));
+
+        const bool submitted = worker_.submit_list(
+            job_id,
+            [this, job_id, name, match_exe_path](process::JobResult&& result)
+            {
+                if (target_lookup_pending_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                target_lookup_pending_.reset();
+
+                auto& listed = std::get<process::ListResult>(result);
+                if (listed.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("auto attach listing failed: {}", process::describe(*listed.error)));
+                    address_list_->report_status(
+                        std::format("Table auto attach failed: {}", process::describe(*listed.error)), true);
+                    return;
+                }
+
+                const process::ProcessInfo* match =
+                    process::match_process_by_name(listed.processes, name, match_exe_path);
+                if (match == nullptr)
+                {
+                    log::warning(log::category::ui, std::format("auto attach: no process named '{}'", name));
+                    address_list_->report_status(std::format("Table auto attach: no process named '{}'.", name), true);
+                    return;
+                }
+
+                // Keep the process identity before the listing result goes away.
+                const process::ProcessId pid    = match->pid;
+                const std::string        pname  = match->name;
+                const std::string        plugin = match->plugin_id;
+
+                if (auto_attach_pending_.has_value())
+                {
+                    return; // Another attach already runs.
+                }
+                const process::JobId attach_job = worker_.next_job_id();
+                auto_attach_pending_            = attach_job;
+
+                log::debug(log::category::ui, std::format("auto attach: attaching to pid {} via {}", pid, plugin));
+
+                const bool attach_submitted = worker_.submit_attach_app(
+                    attach_job,
+                    pid,
+                    plugin,
+                    [this, attach_job, pid, pname](process::JobResult&& attach_result)
+                    {
+                        if (auto_attach_pending_ != attach_job)
+                        {
+                            return; // Superseded or shut down.
+                        }
+                        auto_attach_pending_.reset();
+
+                        const auto& attached = std::get<process::AttachResult>(attach_result);
+                        if (attached.error)
+                        {
+                            target_.clear();
+                            log::warning(log::category::ui,
+                                         std::format("auto attach to pid {} failed: {}",
+                                                     pid,
+                                                     process::describe(*attached.error)));
+                            address_list_->report_status(
+                                std::format("Table auto attach failed: {}", process::describe(*attached.error)), true);
+                            refresh_target_label();
+                            return;
+                        }
+
+                        target_.clear();
+                        target_.pid          = pid;
+                        target_.name         = pname;
+                        target_.plugin_id    = attached.info->plugin_id;
+                        target_.method       = attached.info->method;
+                        target_.session_live = true;
+                        log::info(log::category::ui,
+                                  std::format("auto attached to pid {} via {}", pid, attached.info->plugin_id));
+                        refresh_target_label();
+                        address_list_->report_status(std::format("Attached to {}.", pname), false);
+                    });
+                if (!attach_submitted)
+                {
+                    auto_attach_pending_.reset();
+                    log::warning(log::category::ui, "auto attach unavailable");
+                    address_list_->report_status("Table auto attach unavailable.", true);
+                }
+            });
+        if (!submitted)
+        {
+            target_lookup_pending_.reset();
+            log::warning(log::category::ui, "auto attach listing unavailable");
+            address_list_->report_status("Table auto attach unavailable.", true);
+        }
     }
 
     void MainWindow::refresh_target_label()

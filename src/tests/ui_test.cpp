@@ -64,6 +64,7 @@
 #include "process/plugin_access.hpp"
 #include "process/types.hpp"
 #include "scan/source.hpp"
+#include "table/serializer.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
@@ -71,6 +72,7 @@
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
 #include "ui/dialogs/settings.hpp"
+#include "ui/dialogs/table_settings.hpp"
 #include "ui/main_window.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/models/found_results_model.hpp"
@@ -305,6 +307,17 @@ namespace
         target.method       = slopkit::process::AccessMethod::procfs_mem;
         target.session_live = true;
         return target;
+    }
+
+    // Writes a `.skt` table carrying only the given settings.
+    void
+    write_table_with_settings(const QString& path, const std::string& target, bool auto_attach, bool match_exe_path)
+    {
+        slopkit::table::AddressTable table;
+        table.settings().target_process = target;
+        table.settings().auto_attach    = auto_attach;
+        table.settings().match_exe_path = match_exe_path;
+        REQUIRE(slopkit::table::save(std::filesystem::path(path.toStdString()), table).has_value());
     }
 
     // The scan-range dropdown, located by its tooltip.
@@ -1463,6 +1476,45 @@ TEST_CASE("the address list delete confirmation follows the address mode", "[ui]
     // Absolute mode switches the confirmation back.
     panel.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
+}
+
+TEST_CASE("loading a table reports the entry count and emits tableLoaded", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::table::AddressTable     table;
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    int loaded_signals = 0;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::tableLoaded,
+                     [&loaded_signals]
+                     {
+                         ++loaded_signals;
+                     });
+
+    const QString path = scratch_settings_file("load_seam.skt");
+    {
+        slopkit::table::AddressTable writer;
+        slopkit::table::AddressEntry entry;
+        entry.address = 0x1040;
+        entry.type    = slopkit::scan::ValueType::int32;
+        entry.bytes   = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        writer.add(entry);
+        REQUIRE(slopkit::table::save(std::filesystem::path(path.toStdString()), writer).has_value());
+    }
+
+    CHECK(panel.load_table(path));
+    CHECK(table.size() == 1);
+    CHECK(loaded_signals == 1);
+
+    // An unreadable path fails without emitting the signal.
+    CHECK_FALSE(panel.load_table(QStringLiteral("/nonexistent/slopkit/table.skt")));
+    CHECK(loaded_signals == 1);
 }
 
 TEST_CASE("the main window shell is built", "[ui]")
@@ -2944,6 +2996,10 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     CHECK(scanner->isAncestorOf(add_address));
     CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) == nullptr);
 
+    auto* table_settings = button_labelled(*scanner, QStringLiteral("Table Settings"));
+    REQUIRE(table_settings != nullptr);
+    CHECK(scanner->isAncestorOf(table_settings));
+
     // The window enables the view button once the target is attached and the
     // main module's map has landed.
     REQUIRE(pump_ui(worker,
@@ -2955,13 +3011,16 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     window.show();
     QCoreApplication::processEvents();
 
-    // The two buttons share one window-wide row: Memory View on the left and Add
-    // Address Manually against the window's right edge.
-    const QPoint memory_view_pos = memory_view->mapTo(&window, QPoint(0, 0));
-    const QPoint add_address_pos = add_address->mapTo(&window, QPoint(0, 0));
+    // The three buttons share one window-wide row: Memory View on the left, Add
+    // Address Manually next and Table Settings against the window's right edge.
+    const QPoint memory_view_pos    = memory_view->mapTo(&window, QPoint(0, 0));
+    const QPoint add_address_pos    = add_address->mapTo(&window, QPoint(0, 0));
+    const QPoint table_settings_pos = table_settings->mapTo(&window, QPoint(0, 0));
     CHECK(memory_view_pos.y() == add_address_pos.y());
+    CHECK(add_address_pos.y() == table_settings_pos.y());
     CHECK(memory_view_pos.x() < add_address_pos.x());
-    CHECK(window.width() - add_address->mapTo(&window, add_address->rect().topRight()).x() <= 24);
+    CHECK(add_address_pos.x() < table_settings_pos.x());
+    CHECK(window.width() - table_settings->mapTo(&window, table_settings->rect().topRight()).x() <= 24);
 
     auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
     REQUIRE(viewer != nullptr);
@@ -2978,6 +3037,219 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     CHECK_FALSE(add_dialog->isVisible());
     add_address->click();
     CHECK(add_dialog->isVisible());
+
+    // The Table Settings button reaches its own non-modal dialog.
+    auto* settings_dialog = window.findChild<slopkit::ui::dialogs::TableSettingsDialog*>();
+    REQUIRE(settings_dialog != nullptr);
+    CHECK_FALSE(settings_dialog->isVisible());
+    table_settings->click();
+    CHECK(settings_dialog->isVisible());
+}
+
+TEST_CASE("the table settings dialog edits the table settings in place", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable              table;
+    slopkit::ui::dialogs::TableSettingsDialog dialog {table};
+
+    auto* target_edit = dialog.findChild<QLineEdit*>();
+    REQUIRE(target_edit != nullptr);
+    auto check_boxes = dialog.findChildren<QCheckBox*>();
+    REQUIRE(check_boxes.size() == 2);
+    QCheckBox* auto_attach    = nullptr;
+    QCheckBox* match_exe_path = nullptr;
+    for (QCheckBox* box : check_boxes)
+    {
+        if (box->text().contains(QStringLiteral("Auto attach")))
+        {
+            auto_attach = box;
+        }
+        else if (box->text().contains(QStringLiteral("Match by")))
+        {
+            match_exe_path = box;
+        }
+    }
+    REQUIRE(auto_attach != nullptr);
+    REQUIRE(match_exe_path != nullptr);
+
+    dialog.show();
+    QCoreApplication::processEvents();
+    CHECK(target_edit->text().isEmpty());
+    CHECK_FALSE(auto_attach->isChecked());
+
+    // Enabling auto attach with an empty name is refused and reverted.
+    auto_attach->setChecked(true);
+    CHECK_FALSE(auto_attach->isChecked());
+    CHECK_FALSE(table.settings().auto_attach);
+
+    // Editing the target name writes straight through to the table.
+    target_edit->setText(QStringLiteral("game"));
+    emit target_edit->editingFinished();
+    CHECK(table.settings().target_process == "game");
+
+    // With a name set the toggles stick.
+    auto_attach->setChecked(true);
+    CHECK(table.settings().auto_attach);
+    match_exe_path->setChecked(true);
+    CHECK(table.settings().match_exe_path);
+}
+
+TEST_CASE("loading a table auto attaches to its target process", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    const QString path = scratch_settings_file("auto_attach.skt");
+    write_table_with_settings(path, "alpha", true, false);
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 10 && target.session_live;
+                    }));
+    CHECK(target.name == "alpha");
+
+    QCoreApplication::processEvents();
+    auto* process_label = window.statusBar()->findChild<QLabel*>();
+    REQUIRE(process_label != nullptr);
+    CHECK(process_label->text().contains(QStringLiteral("alpha")));
+
+    bool reported = false;
+    for (auto* label : address_list->findChildren<slopkit::ui::widgets::StatusLabel*>())
+    {
+        if (label->text().contains(QStringLiteral("Attached to alpha")))
+        {
+            reported = true;
+        }
+    }
+    CHECK(reported);
+}
+
+TEST_CASE("an auto attach is skipped while a session is live", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_skip.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    const QString path = scratch_settings_file("auto_attach_skip.skt");
+    write_table_with_settings(path, "alpha", true, false);
+
+    CHECK(address_list->load_table(path));
+    QCoreApplication::processEvents();
+
+    // The live session is kept and the skip is reported.
+    CHECK(target.pid == 42);
+    CHECK(access.list_calls.load() == 0);
+
+    bool reported = false;
+    for (auto* label : address_list->findChildren<slopkit::ui::widgets::StatusLabel*>())
+    {
+        if (label->text().contains(QStringLiteral("skipped")))
+        {
+            reported = true;
+        }
+    }
+    CHECK(reported);
+}
+
+TEST_CASE("a failed auto attach leaves the target detached", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes    = sample_processes();
+    access.attach_fails = true;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_fail.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    const QString path = scratch_settings_file("auto_attach_fail.skt");
+    write_table_with_settings(path, "alpha", true, false);
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        for (auto* label : address_list->findChildren<slopkit::ui::widgets::StatusLabel*>())
+                        {
+                            if (label->text().contains(QStringLiteral("auto attach failed")))
+                            {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }));
+    CHECK_FALSE(target.valid());
+}
+
+TEST_CASE("auto attach needs the flag and a target name", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+
+    SECTION("the flag is off")
+    {
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target;
+        slopkit::plugin::PluginHost      host;
+        slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_off.ini")};
+        slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+        auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+        REQUIRE(address_list != nullptr);
+
+        const QString path = scratch_settings_file("auto_attach_off.skt");
+        write_table_with_settings(path, "alpha", false, false);
+        CHECK(address_list->load_table(path));
+        CHECK(target.pid == 0);
+        CHECK(access.list_calls.load() == 0);
+    }
+
+    SECTION("the target name is empty")
+    {
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target;
+        slopkit::plugin::PluginHost      host;
+        slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_noname.ini")};
+        slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+        auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+        REQUIRE(address_list != nullptr);
+
+        const QString path = scratch_settings_file("auto_attach_noname.skt");
+        write_table_with_settings(path, "", true, false);
+        CHECK(address_list->load_table(path));
+        CHECK(target.pid == 0);
+        CHECK(access.list_calls.load() == 0);
+    }
 }
 
 TEST_CASE("the memory dump model renders static rows as module+RVA", "[ui]")

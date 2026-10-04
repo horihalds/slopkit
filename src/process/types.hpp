@@ -47,6 +47,12 @@ namespace slopkit::process
     // otherwise the lowest-based file-backed image. nullptr when there is none.
     [[nodiscard]] const ModuleInfo* main_module(std::span<const ModuleInfo> modules) noexcept;
 
+    // The process whose name, or executable basename when match_exe_path is set,
+    // equals `name` case-insensitively. The lowest pid wins; nullptr when none
+    // match or when the name is empty.
+    [[nodiscard]] const ProcessInfo*
+    match_process_by_name(std::span<const ProcessInfo> processes, std::string_view name, bool match_exe_path) noexcept;
+
     // True for a module that backs a file image and can therefore make an
     // address static: not an anonymous mapping and not a zero-size entry.
     [[nodiscard]] constexpr bool is_file_backed(const ModuleInfo& module) noexcept

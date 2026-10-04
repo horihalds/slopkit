@@ -1,7 +1,37 @@
 #include "process/types.hpp"
 
+#include <cctype>
+#include <cstddef>
+
 namespace slopkit::process
 {
+
+    namespace
+    {
+        std::string_view basename(std::string_view path) noexcept
+        {
+            const auto slash = path.find_last_of('/');
+            return slash == std::string_view::npos ? path : path.substr(slash + 1);
+        }
+
+        bool equals_ignore_case(std::string_view lhs, std::string_view rhs) noexcept
+        {
+            if (lhs.size() != rhs.size())
+            {
+                return false;
+            }
+            for (std::size_t i = 0; i < lhs.size(); ++i)
+            {
+                const auto a = static_cast<unsigned char>(lhs[i]);
+                const auto b = static_cast<unsigned char>(rhs[i]);
+                if (std::tolower(a) != std::tolower(b))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    } // namespace
 
     const ModuleInfo* main_module(std::span<const ModuleInfo> modules) noexcept
     {
@@ -22,6 +52,31 @@ namespace slopkit::process
             }
         }
         return lowest;
+    }
+
+    const ProcessInfo*
+    match_process_by_name(std::span<const ProcessInfo> processes, std::string_view name, bool match_exe_path) noexcept
+    {
+        if (name.empty())
+        {
+            return nullptr;
+        }
+
+        const ProcessInfo* best = nullptr;
+        for (const ProcessInfo& info : processes)
+        {
+            const bool matches = equals_ignore_case(info.name, name)
+                              || (match_exe_path && equals_ignore_case(basename(info.exe_path), name));
+            if (!matches)
+            {
+                continue;
+            }
+            if (best == nullptr || info.pid < best->pid)
+            {
+                best = &info;
+            }
+        }
+        return best;
     }
 
     std::string_view describe(AccessError error) noexcept

@@ -12,6 +12,7 @@
 #include "process/types.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
+#include "table/table_settings.hpp"
 
 namespace slopkit::table
 {
@@ -66,8 +67,14 @@ namespace slopkit::table
         // ignored, so a completion for a removed entry is harmless.
         void apply_write(std::uint64_t entry_id, std::vector<std::byte> bytes);
 
+        // The table's persisted settings; owned by the table so save/load
+        // round-trips them.
+        [[nodiscard]] TableSettings&       settings() noexcept;
+        [[nodiscard]] const TableSettings& settings() const noexcept;
+
     private:
         std::vector<AddressEntry> entries_;
+        TableSettings             settings_;
         int                       selected_ {-1};
         double                    next_freeze_time_ {0.0};
         std::uint64_t             next_id_ {1};

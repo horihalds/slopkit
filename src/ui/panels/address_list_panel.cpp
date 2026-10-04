@@ -21,6 +21,7 @@
 #include "table/serializer.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/models/address_table_model.hpp"
+#include "ui/table_file.hpp"
 
 namespace slopkit::ui::panels
 {
@@ -139,19 +140,26 @@ namespace slopkit::ui::panels
     {
         log::debug(log::category::ui, "open table requested");
         const QString path = QFileDialog::getOpenFileName(
-            this, tr("Open Table"), table_path_, tr("Address tables (*.txt);;All files (*)"));
+            this, tr("Open Table"), table_path_, tr("Address tables (*.skt);;All files (*)"));
         if (path.isEmpty())
         {
             return;
         }
-        table_path_ = path;
+        static_cast<void>(load_table(path));
+    }
 
+    bool AddressListPanel::load_table(const QString& path)
+    {
+        table_path_ = path;
         if (const auto result = table::load(std::filesystem::path(path.toStdString()), table_); !result)
         {
+            log::warning(log::category::ui, std::format("table load failed: {}", result.error()));
             set_status(tr("Open failed: %1").arg(to_qstring(result.error())), true);
-            return;
+            return false;
         }
         set_status(tr("Loaded %1 entries.").arg(static_cast<qulonglong>(table_.size())), false);
+        emit tableLoaded();
+        return true;
     }
 
     void AddressListPanel::save_table()
@@ -168,13 +176,15 @@ namespace slopkit::ui::panels
     void AddressListPanel::save_table_as()
     {
         log::debug(log::category::ui, "save table as requested");
-        const QString path = QFileDialog::getSaveFileName(
-            this, tr("Save Table As"), table_path_, tr("Address tables (*.txt);;All files (*)"));
-        if (path.isEmpty())
+        const QString suggested = table_path_.isEmpty() ? default_table_path() : table_path_;
+        const QString chosen    = QFileDialog::getSaveFileName(
+            this, tr("Save Table As"), suggested, tr("Address tables (*.skt);;All files (*)"));
+        if (chosen.isEmpty())
         {
             return;
         }
-        table_path_ = path;
+        const QString path = table_file_path(chosen);
+        table_path_        = path;
         save_to_path(path);
     }
 
@@ -229,9 +239,14 @@ namespace slopkit::ui::panels
         set_status(entry.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
     }
 
+    void AddressListPanel::report_status(std::string_view message, bool is_error)
+    {
+        set_status(to_qstring(message), is_error);
+    }
+
     void AddressListPanel::report_freeze_error(std::string_view message)
     {
-        set_status(tr("Freeze failed: %1").arg(to_qstring(message)), true);
+        report_status(std::format("Freeze failed: {}", message), true);
     }
 
     void AddressListPanel::show_context_menu(const QPoint& position)

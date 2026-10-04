@@ -63,6 +63,10 @@ namespace slopkit::ui::panels
         // A request to open the Add Address dialog, fed by the bottom button.
         void addAddressRequested();
 
+        // A request to open the Table Settings dialog, fed by the bottom-right
+        // button.
+        void tableSettingsRequested();
+
         // The current memory map as file-backed module images, empty when
         // detached; the found list uses it to mark and group static hits.
         void memoryMapApplied(std::vector<process::ModuleInfo> modules);
@@ -100,6 +104,7 @@ namespace slopkit::ui::panels
         QPushButton*                undo_button_ {};
         QPushButton*                cancel_button_ {};
         QPushButton*                add_address_button_ {};
+        QPushButton*                table_settings_button_ {};
 
         QLineEdit* start_edit_ {};
         QLineEdit* stop_edit_ {};

@@ -127,10 +127,13 @@ namespace slopkit::table
             return std::nullopt;
         }
 
-        std::expected<AddressEntry, std::string> parse_entry(std::string_view text, int line_number)
+        // Runs the key/value token loop over a payload line, calling `visit` for
+        // every token. A broken token returns an error naming the line; the
+        // visitor may reject a key or a value as well.
+        template<typename Visitor>
+        std::expected<void, std::string> parse_key_values(std::string_view text, int line_number, Visitor&& visit)
         {
-            AddressEntry entry;
-            std::size_t  position = 0;
+            std::size_t position = 0;
             while (position < text.size())
             {
                 while (position < text.size() && (text[position] == ' ' || text[position] == '\t'))
@@ -195,6 +198,34 @@ namespace slopkit::table
                     position = end == std::string_view::npos ? text.size() : end;
                 }
 
+                auto result = visit(key, std::move(value));
+                if (!result)
+                {
+                    return result;
+                }
+            }
+            return {};
+        }
+
+        std::optional<bool> parse_bool(std::string_view text)
+        {
+            if (text == "1")
+            {
+                return true;
+            }
+            if (text == "0")
+            {
+                return false;
+            }
+            return std::nullopt;
+        }
+
+        std::expected<AddressEntry, std::string> parse_entry(std::string_view text, int line_number)
+        {
+            AddressEntry entry;
+            const auto   visit = [&entry, line_number](const std::string& key,
+                                                       std::string        value) -> std::expected<void, std::string>
+            {
                 if (key == "description")
                 {
                     entry.description = std::move(value);
@@ -238,8 +269,56 @@ namespace slopkit::table
                 {
                     return std::unexpected(std::format("line {}: unknown key '{}'", line_number, key));
                 }
+                return {};
+            };
+            auto parsed = parse_key_values(text, line_number, visit);
+            if (!parsed)
+            {
+                return std::unexpected(parsed.error());
             }
             return entry;
+        }
+
+        std::expected<TableSettings, std::string> parse_settings(std::string_view text, int line_number)
+        {
+            TableSettings settings;
+            const auto    visit = [&settings, line_number](const std::string& key,
+                                                           std::string        value) -> std::expected<void, std::string>
+            {
+                if (key == "target")
+                {
+                    settings.target_process = std::move(value);
+                }
+                else if (key == "auto_attach")
+                {
+                    const auto flag = parse_bool(value);
+                    if (!flag)
+                    {
+                        return std::unexpected(std::format("line {}: invalid boolean '{}'", line_number, value));
+                    }
+                    settings.auto_attach = *flag;
+                }
+                else if (key == "match_exe_path")
+                {
+                    const auto flag = parse_bool(value);
+                    if (!flag)
+                    {
+                        return std::unexpected(std::format("line {}: invalid boolean '{}'", line_number, value));
+                    }
+                    settings.match_exe_path = *flag;
+                }
+                else
+                {
+                    return std::unexpected(std::format("line {}: unknown key '{}'", line_number, key));
+                }
+                return {};
+            };
+            auto parsed = parse_key_values(text, line_number, visit);
+            if (!parsed)
+            {
+                return std::unexpected(parsed.error());
+            }
+            return settings;
         }
     } // namespace
 
@@ -279,6 +358,14 @@ namespace slopkit::table
         }
 
         file << "slopkit-table 1\n";
+        const TableSettings& settings = table.settings();
+        if (!settings.empty())
+        {
+            file << std::format("settings target=\"{}\" auto_attach={} match_exe_path={}\n",
+                                escape(settings.target_process),
+                                settings.auto_attach ? 1 : 0,
+                                settings.match_exe_path ? 1 : 0);
+        }
         for (const auto& entry : table.entries())
         {
             file << std::format("entry description=\"{}\" address=0x{:X} type={} frozen={} hex={} value={}\n",
@@ -321,6 +408,17 @@ namespace slopkit::table
             }
             if (view.starts_with("slopkit-table"))
             {
+                continue;
+            }
+            if (view.starts_with("settings"))
+            {
+                auto settings = parse_settings(view.substr(8), line_number);
+                if (!settings)
+                {
+                    log::warning(log::category::table, std::format("{}: {}", path.string(), settings.error()));
+                    return std::unexpected(settings.error());
+                }
+                loaded.settings() = std::move(*settings);
                 continue;
             }
             if (!view.starts_with("entry"))

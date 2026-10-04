@@ -195,12 +195,15 @@ namespace slopkit::ui::panels
 
         layout->addStretch(1);
 
-        // The Add Address button sits against the window's right edge, in the
-        // bottom row shared with the found list's Memory View button.
-        auto* footer        = new QHBoxLayout();
-        add_address_button_ = widgets::secondary_button(tr("Add Address Manually"), this);
+        // The Add Address and Table Settings buttons sit against the window's
+        // right edge, in the bottom row shared with the found list's Memory
+        // View button; Table Settings is the right-most control.
+        auto* footer           = new QHBoxLayout();
+        add_address_button_    = widgets::secondary_button(tr("Add Address Manually"), this);
+        table_settings_button_ = widgets::secondary_button(tr("Table Settings"), this);
         footer->addStretch(1);
         footer->addWidget(add_address_button_);
+        footer->addWidget(table_settings_button_);
         layout->addLayout(footer);
 
         update_value_inputs();
@@ -260,6 +263,7 @@ namespace slopkit::ui::panels
                     refresh();
                 });
         connect(add_address_button_, &QPushButton::clicked, this, &ScannerPanel::addAddressRequested);
+        connect(table_settings_button_, &QPushButton::clicked, this, &ScannerPanel::tableSettingsRequested);
 
         connect(scan_type_combo_,
                 &QComboBox::currentIndexChanged,

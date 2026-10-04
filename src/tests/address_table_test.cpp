@@ -185,7 +185,7 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     original.entries()[1].description = "he said \"hi\"";
     original.entries()[1].hex         = true;
 
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_roundtrip.txt";
+    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_roundtrip.skt";
     std::filesystem::remove(path);
 
     REQUIRE(slopkit::table::save(path, original).has_value());
@@ -217,7 +217,7 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
 
 TEST_CASE("the serializer rejects malformed files", "[table]")
 {
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed.txt";
+    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed.skt";
     std::filesystem::remove(path);
 
     {
@@ -244,7 +244,7 @@ TEST_CASE("the serializer rejects malformed files", "[table]")
 
     std::filesystem::remove(path);
 
-    CHECK_FALSE(slopkit::table::load("/nonexistent/slopkit/table.txt", table).has_value());
+    CHECK_FALSE(slopkit::table::load("/nonexistent/slopkit/table.skt", table).has_value());
 }
 
 TEST_CASE("entry mutations are recorded on the table category", "[table][log]")
@@ -283,7 +283,7 @@ TEST_CASE("a malformed table file is recorded with its line number", "[table][lo
     LevelGuard level;
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::warning);
 
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed_log.txt";
+    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed_log.skt";
     std::filesystem::remove(path);
     {
         std::ofstream file(path);

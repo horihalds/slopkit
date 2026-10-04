@@ -159,4 +159,14 @@ namespace slopkit::table
         }
     }
 
+    TableSettings& AddressTable::settings() noexcept
+    {
+        return settings_;
+    }
+
+    const TableSettings& AddressTable::settings() const noexcept
+    {
+        return settings_;
+    }
+
 } // namespace slopkit::table

@@ -21,6 +21,7 @@ namespace slopkit::ui::dialogs
     class MemoryViewerDialog;
     class ProcessListDialog;
     class SettingsDialog;
+    class TableSettingsDialog;
 } // namespace slopkit::ui::dialogs
 
 namespace slopkit::ui::panels
@@ -63,8 +64,10 @@ namespace slopkit::ui
 
         void on_memory_view_requested(quint64 address);
         void on_add_address_requested();
+        void on_table_loaded();
         void show_process_list();
         void show_add_address();
+        void show_table_settings();
         void show_log();
         void show_settings();
         void show_about();
@@ -80,11 +83,12 @@ namespace slopkit::ui
         panels::FoundListPanel*   found_list_ {};
         panels::AddressListPanel* address_list_ {};
 
-        dialogs::ProcessListDialog*  process_list_ {};
-        dialogs::AddAddressDialog*   add_address_ {};
-        dialogs::MemoryViewerDialog* memory_view_ {};
-        dialogs::LogDialog*          log_ {};
-        dialogs::SettingsDialog*     settings_dialog_ {};
+        dialogs::ProcessListDialog*   process_list_ {};
+        dialogs::AddAddressDialog*    add_address_ {};
+        dialogs::TableSettingsDialog* table_settings_ {};
+        dialogs::MemoryViewerDialog*  memory_view_ {};
+        dialogs::LogDialog*           log_ {};
+        dialogs::SettingsDialog*      settings_dialog_ {};
 
         QLabel*       process_label_ {};
         QProgressBar* scan_progress_ {};
@@ -102,6 +106,11 @@ namespace slopkit::ui
 
         // In-flight freeze job, if any; one at a time.
         std::optional<process::JobId> freeze_pending_;
+
+        // The two stages of a table-driven auto attach: the process listing and
+        // then the attach itself.
+        std::optional<process::JobId> target_lookup_pending_;
+        std::optional<process::JobId> auto_attach_pending_;
     };
 
 } // namespace slopkit::ui

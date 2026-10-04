@@ -47,6 +47,14 @@ namespace slopkit::ui::panels
         void delete_selected();
         void toggle_freeze_selected();
 
+        // Loads a table file into the panel's table, reports the outcome and
+        // emits tableLoaded() on success. Split out of open_table() so tests can
+        // drive a load without the native file dialog.
+        [[nodiscard]] bool load_table(const QString& path);
+
+        // Reports a status line outcome; report_freeze_error() forwards to it.
+        void report_status(std::string_view message, bool is_error);
+
         // Reports a freeze failure raised outside the panel.
         void report_freeze_error(std::string_view message);
 
@@ -62,6 +70,9 @@ namespace slopkit::ui::panels
     signals:
         // A request to show an address, fed by the context menu.
         void browseRequested(quint64 address);
+
+        // A table file was loaded into the panel's table.
+        void tableLoaded();
 
     private:
         void show_context_menu(const QPoint& position);
