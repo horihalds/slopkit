@@ -79,6 +79,35 @@ namespace slopkit::process
         return best;
     }
 
+    const ProcessInfo* match_process_by_exe_path(std::span<const ProcessInfo> processes,
+                                                 std::string_view             exe_path) noexcept
+    {
+        if (exe_path.empty())
+        {
+            return nullptr;
+        }
+
+        const std::string_view wanted = basename(exe_path);
+        if (wanted.empty())
+        {
+            return nullptr;
+        }
+
+        const ProcessInfo* best = nullptr;
+        for (const ProcessInfo& info : processes)
+        {
+            if (!equals_ignore_case(basename(info.exe_path), wanted))
+            {
+                continue;
+            }
+            if (best == nullptr || info.pid < best->pid)
+            {
+                best = &info;
+            }
+        }
+        return best;
+    }
+
     std::string_view describe(AccessError error) noexcept
     {
         switch (error)

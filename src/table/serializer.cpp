@@ -289,6 +289,10 @@ namespace slopkit::table
                 {
                     settings.target_process = std::move(value);
                 }
+                else if (key == "exe_path")
+                {
+                    settings.exe_path = std::move(value);
+                }
                 else if (key == "auto_attach")
                 {
                     const auto flag = parse_bool(value);
@@ -361,8 +365,9 @@ namespace slopkit::table
         const TableSettings& settings = table.settings();
         if (!settings.empty())
         {
-            file << std::format("settings target=\"{}\" auto_attach={} match_exe_path={}\n",
+            file << std::format("settings target=\"{}\" exe_path=\"{}\" auto_attach={} match_exe_path={}\n",
                                 escape(settings.target_process),
+                                escape(settings.exe_path),
                                 settings.auto_attach ? 1 : 0,
                                 settings.match_exe_path ? 1 : 0);
         }

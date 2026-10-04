@@ -774,9 +774,10 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        const process::ProcessId pid    = info->pid;
-        const std::string        name   = info->name;
-        const std::string        plugin = chosen_plugin(*info);
+        const process::ProcessId pid      = info->pid;
+        const std::string        name     = info->name;
+        const std::string        exe_path = info->exe_path;
+        const std::string        plugin   = chosen_plugin(*info);
 
         const process::JobId job_id = worker_.next_job_id();
         attach_pending_             = job_id;
@@ -788,7 +789,7 @@ namespace slopkit::ui::dialogs
             job_id,
             pid,
             plugin,
-            [this, pid, name, job_id](process::JobResult&& result)
+            [this, pid, name, exe_path, job_id](process::JobResult&& result)
             {
                 if (attach_pending_ != job_id)
                 {
@@ -812,6 +813,7 @@ namespace slopkit::ui::dialogs
                 target_.clear();
                 target_.pid          = pid;
                 target_.name         = name;
+                target_.exe_path     = exe_path;
                 target_.plugin_id    = attached.info->plugin_id;
                 target_.method       = attached.info->method;
                 target_.session_live = true;

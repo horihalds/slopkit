@@ -47,13 +47,13 @@
 - `src/platform/linux/desktop_entry.cpp` — parses `Name`/`Exec`/`NoDisplay` and scans `$XDG_DATA_DIRS` for applications, recording the index summary and malformed entries.
 - `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs, with per-session cached memory access and failure/enumeration records through the host log hook.
 - `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes, exposing their PE images, caching memory access per session and reporting failures through the host log hook.
-- `src/process/types.hpp` — process/module/thread descriptors, the `is_file_backed` module predicate, the `main_module` and `match_process_by_name` resolvers, access-method flags and `AccessError`.
-- `src/process/types.cpp` — implements the `main_module` resolution, the case-insensitive `match_process_by_name` lookup and the human-readable descriptions of errors, module kinds and access methods.
+- `src/process/types.hpp` — process/module/thread descriptors, the `is_file_backed` module predicate, the `main_module`, `match_process_by_name` and `match_process_by_exe_path` resolvers, access-method flags and `AccessError`.
+- `src/process/types.cpp` — implements the `main_module` resolution, the case-insensitive process-name and executable-basename lookups and the human-readable descriptions of errors, module kinds and access methods.
 - `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the access worker depends on, including the caller-buffer `read_into`.
 - `src/process/access_worker.hpp` — job/result types and the background `AccessWorker` that serializes all target access.
 - `src/process/access_worker.cpp` — the worker thread, request/completion queues, worker-owned session and the job bodies, recording the job lifecycle at `debug` and each failure once at `warning`.
-- `src/process/attachment.hpp` — `AttachedTarget`: metadata-only identity of the app-wide attachment (the session lives in the access worker).
-- `src/process/attachment.cpp` — formats the process label and clears the metadata.
+- `src/process/attachment.hpp` — `AttachedTarget`: metadata-only identity of the app-wide attachment (pid, name, executable path, plugin; the session lives in the access worker).
+- `src/process/attachment.cpp` — formats the process label and clears the metadata, including the executable path.
 - `src/process/plugin_access.hpp` — embedded `ProcessAccess` implementation over `PluginHost`.
 - `src/process/plugin_access.cpp` — attaches through plugins and tracks the access method actually used.
 - `src/scan/types.hpp` — the scan value/scan/state enums, the region filter and their descriptions.
@@ -70,7 +70,7 @@
 - `src/table/address_table.cpp` — encodes entry values on the UI thread and builds freeze write snapshots.
 - `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files.
 - `src/table/serializer.cpp` — hand-rolled table-file reader and writer, no serialization dependency, recording load/save summaries and malformed-line warnings.
-- `src/table/table_settings.hpp` — the per-table `TableSettings` value (target process, auto attach, match by exe path) owned by `AddressTable` and persisted in the table file.
+- `src/table/table_settings.hpp` — the per-table `TableSettings` value (target process, executable path, auto attach, match by exe path) owned by `AddressTable` and persisted in the table file.
 - `src/table/table_settings.cpp` — implements `TableSettings::empty()`.
 - `src/ui/app.hpp` — the `App`: owns the plugin host, the access worker, the attached target, the settings controller and the main window, and runs the Qt event loop.
 - `src/ui/app.cpp` — builds the `QApplication`, applies the Fusion style, the persisted theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
@@ -90,8 +90,8 @@
 - `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
 - `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
 - `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
-- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, status label, primary/secondary button, panel, icon).
-- `src/ui/components/widgets.cpp` — implements the helpers, re-applying their themed palettes when the application palette changes.
+- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, hint text, status label, primary/secondary button, panel, icon).
+- `src/ui/components/widgets.cpp` — implements the helpers (including the muted word-wrapped hint text), re-applying their themed palettes when the application palette changes.
 - `src/ui/components/elided_tooltip_delegate.hpp` — the item delegate that reveals a cell's full text as a tooltip only when the column clips it.
 - `src/ui/components/elided_tooltip_delegate.cpp` — measures the cell text against the view's text rectangle and shows or hides the tooltip accordingly.
 - `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over the whole stored scan result set with Address/Value/Previous columns, showing the top `kDisplayPage` rows of the main-image-first ordering, plus the module spans and address mode that mark static hits and render their address, and the `CopyFormat` clipboard texts.
@@ -105,7 +105,7 @@
 - `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu, the `.skt` open/save, the programmatic `load_table()` seam, the `tableLoaded` signal, the status reporter and the forwarded module map and address mode.
 - `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions using the model's address text, toggles freezes, emits `tableLoaded()` after a successful `.skt` load and loads/saves through native file dialogs with the `.skt` filter.
 - `src/ui/dialogs/process_list.hpp` — the fixed-size Process List picker and its filtered, sortable process model.
-- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states and a single failure message line, recording refreshes/probes at `debug`, attach/detach at `info` and failures at `warning`.
+- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states and a single failure message line, carrying the executable path into the attached target, recording refreshes/probes at `debug`, attach/detach at `info` and failures at `warning`.
 - `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable`.
 - `src/ui/dialogs/add_address.cpp` — description/address/type/size form that appends an address entry.
 - `src/ui/dialogs/memory_viewer.hpp` — the hex-dump Memory Viewer over the shared attachment and the access worker, with its module spans and address mode.
@@ -114,8 +114,8 @@
 - `src/ui/dialogs/log.cpp` — level and case-insensitive text filters over the records, history seeding on first show, live drain from the notifier, a record-count/path status line and Clear/Save As records.
 - `src/ui/dialogs/settings.hpp` — the Settings dialog as a view over `SettingsController` (categories plus the session-only `alignmentChanged` signal).
 - `src/ui/dialogs/settings.cpp` — Appearance, Addresses, Scanning, Plugins and About pages; the theme/address radios drive the controller and follow it back.
-- `src/ui/dialogs/table_settings.hpp` — the non-modal Table Settings dialog editing the current table's target process, auto attach and match-by-exe-path settings.
-- `src/ui/dialogs/table_settings.cpp` — writes the fields into `AddressTable::settings()` on edit, refuses auto attach without a target name and re-reads the settings on every show.
+- `src/ui/dialogs/table_settings.hpp` — the non-modal Table Settings dialog editing the current table's target process, executable path, auto attach and match-by-exe-path settings, showing the attached process and exposing a refresh hook.
+- `src/ui/dialogs/table_settings.cpp` — groups the fields into labelled cards with hints, writes them into `AddressTable::settings()` on edit, refuses auto attach without the selected identifier (and the path toggle without a path), fills name and path from the attached process and re-reads the settings on every show.
 - `src/tests/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`).
 - `src/tests/version_test.cpp` — Catch2 tests for `slopkit::version()`.
 - `src/tests/log_test.cpp` — logger tests: level filtering, level-name round-trips, multi-sink delivery and removal, a throwing sink, the history cap, concurrent calls and file rotation.
@@ -126,7 +126,7 @@
 - `src/tests/scan_integration_test.cpp` — self-scans the test process through the built plugin and the `--scan` command.
 - `src/tests/access_worker_test.cpp` — background access worker tests: non-blocking submits, ordering, session ownership, handoff, detach and shutdown safety.
 - `src/tests/address_table_test.cpp` — address model id/encode/freeze/apply-write tests plus the table-file save/load round-trip.
-- `src/tests/table_settings_test.cpp` — table-settings `empty()`/round-trip/legacy-reset/malformed-line tests and the `match_process_by_name` rules.
+- `src/tests/table_settings_test.cpp` — table-settings `empty()`/round-trip/legacy-reset/malformed-line tests with executable-path persistence and the `match_process_by_name`/`match_process_by_exe_path` rules.
 - `src/tests/table_file_test.cpp` — the `.skt` naming rules (`table_file_path`, `default_table_path`).
 - `src/tests/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
 - `src/tests/wine_detect_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.

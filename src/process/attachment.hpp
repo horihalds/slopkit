@@ -14,6 +14,7 @@ namespace slopkit::process
     {
         ProcessId    pid {};
         std::string  name;
+        std::string  exe_path; // Empty when the plugin reported none.
         std::string  plugin_id;
         AccessMethod method {AccessMethod::none};
         bool         session_live {false};

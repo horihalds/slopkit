@@ -72,6 +72,7 @@ TEST_CASE("table settings default to empty and detect configuration", "[table]")
     TableSettings settings;
     CHECK(settings.empty());
     CHECK(settings.target_process.empty());
+    CHECK(settings.exe_path.empty());
     CHECK_FALSE(settings.auto_attach);
     CHECK_FALSE(settings.match_exe_path);
 
@@ -79,6 +80,10 @@ TEST_CASE("table settings default to empty and detect configuration", "[table]")
     CHECK_FALSE(settings.empty());
 
     settings.target_process.clear();
+    settings.exe_path = "/usr/bin/game";
+    CHECK_FALSE(settings.empty());
+
+    settings.exe_path.clear();
     settings.auto_attach = true;
     CHECK_FALSE(settings.empty());
 
@@ -91,6 +96,7 @@ TEST_CASE("table settings survive a save/load round-trip", "[table]")
 {
     AddressTable table;
     table.settings().target_process = "game \"one\"";
+    table.settings().exe_path       = "/usr/bin/game \"one\"";
     table.settings().auto_attach    = true;
     table.settings().match_exe_path = true;
     table.add(make_entry(kBase, ValueType::int32, {1, 2, 3, 4}));
@@ -105,9 +111,30 @@ TEST_CASE("table settings survive a save/load round-trip", "[table]")
     std::filesystem::remove(path);
 
     CHECK(loaded.settings().target_process == "game \"one\"");
+    CHECK(loaded.settings().exe_path == "/usr/bin/game \"one\"");
     CHECK(loaded.settings().auto_attach);
     CHECK(loaded.settings().match_exe_path);
     CHECK(loaded.size() == 1);
+}
+
+TEST_CASE("a settings line without an executable path still loads", "[table]")
+{
+    const auto path = scratch_file("legacy_settings.skt");
+    std::filesystem::remove(path);
+    {
+        std::ofstream file(path);
+        file << "slopkit-table 1\n";
+        file << "settings target=\"old\" auto_attach=1 match_exe_path=1\n";
+    }
+
+    AddressTable table;
+    REQUIRE(slopkit::table::load(path, table).has_value());
+    std::filesystem::remove(path);
+
+    CHECK(table.settings().target_process == "old");
+    CHECK(table.settings().exe_path.empty());
+    CHECK(table.settings().auto_attach);
+    CHECK(table.settings().match_exe_path);
 }
 
 TEST_CASE("a settings-only table round-trips its settings", "[table]")
@@ -260,5 +287,40 @@ TEST_CASE("processes are matched by name, exe basename and lowest pid", "[proces
     {
         CHECK(slopkit::process::match_process_by_name(processes, "gamma", true) == nullptr);
         CHECK(slopkit::process::match_process_by_name(processes, "", true) == nullptr);
+    }
+}
+
+TEST_CASE("processes are matched by executable path", "[process]")
+{
+    const ProcessInfo alpha = make_process(20, "alpha", "/usr/bin/alpha");
+    const ProcessInfo beta  = make_process(10, "beta", "/usr/bin/Alpha");
+    const ProcessInfo other = make_process(5, "gamma", "/usr/bin/gamma");
+
+    const std::vector<ProcessInfo> processes {alpha, beta, other};
+
+    SECTION("the exe basename match is case-insensitive")
+    {
+        const auto* match = slopkit::process::match_process_by_exe_path(processes, "/opt/ALPHA");
+        REQUIRE(match != nullptr);
+        CHECK(match->pid == 10);
+    }
+
+    SECTION("the lowest pid wins")
+    {
+        const ProcessInfo              copy = make_process(3, "copy", "/other/alpha");
+        const std::vector<ProcessInfo> more {alpha, copy};
+        const auto*                    match = slopkit::process::match_process_by_exe_path(more, "/usr/bin/alpha");
+        REQUIRE(match != nullptr);
+        CHECK(match->pid == 3);
+    }
+
+    SECTION("an empty path returns nullptr")
+    {
+        CHECK(slopkit::process::match_process_by_exe_path(processes, "") == nullptr);
+    }
+
+    SECTION("no match returns nullptr")
+    {
+        CHECK(slopkit::process::match_process_by_exe_path(processes, "/usr/bin/missing") == nullptr);
     }
 }

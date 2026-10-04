@@ -53,6 +53,12 @@ namespace slopkit::process
     [[nodiscard]] const ProcessInfo*
     match_process_by_name(std::span<const ProcessInfo> processes, std::string_view name, bool match_exe_path) noexcept;
 
+    // The process whose executable basename equals the basename of `exe_path`,
+    // case-insensitively. The lowest pid wins; nullptr for an empty path or
+    // when none match.
+    [[nodiscard]] const ProcessInfo* match_process_by_exe_path(std::span<const ProcessInfo> processes,
+                                                               std::string_view             exe_path) noexcept;
+
     // True for a module that backs a file image and can therefore make an
     // address static: not an anonymous mapping and not a zero-size entry.
     [[nodiscard]] constexpr bool is_file_backed(const ModuleInfo& module) noexcept

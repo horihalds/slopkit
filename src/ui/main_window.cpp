@@ -209,7 +209,7 @@ namespace slopkit::ui
 
         add_address_ = new dialogs::AddAddressDialog(address_table_, this);
 
-        table_settings_ = new dialogs::TableSettingsDialog(address_table_, this);
+        table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
 
         memory_view_ = new dialogs::MemoryViewerDialog(worker_, target_, this);
 
@@ -331,7 +331,16 @@ namespace slopkit::ui
     void MainWindow::on_table_loaded()
     {
         const table::TableSettings& settings = address_table_.settings();
-        if (!settings.auto_attach || settings.target_process.empty())
+
+        // Which field identifies the process is the toggle's choice; a ticked
+        // toggle without a path keeps the pre-exe_path behaviour.
+        const bool use_path = settings.match_exe_path && !settings.exe_path.empty();
+
+        if (!settings.auto_attach)
+        {
+            return;
+        }
+        if (!use_path && settings.target_process.empty())
         {
             return;
         }
@@ -349,16 +358,18 @@ namespace slopkit::ui
             return;
         }
 
-        const std::string    name           = settings.target_process;
+        const std::string    identifier     = use_path ? settings.exe_path : settings.target_process;
         const bool           match_exe_path = settings.match_exe_path;
         const process::JobId job_id         = worker_.next_job_id();
         target_lookup_pending_              = job_id;
 
-        log::debug(log::category::ui, std::format("auto attach: looking up process '{}'", name));
+        log::debug(
+            log::category::ui,
+            std::format("auto attach: looking up {} '{}'", use_path ? "executable path" : "process name", identifier));
 
         const bool submitted = worker_.submit_list(
             job_id,
-            [this, job_id, name, match_exe_path](process::JobResult&& result)
+            [this, job_id, identifier, use_path, match_exe_path](process::JobResult&& result)
             {
                 if (target_lookup_pending_ != job_id)
                 {
@@ -376,19 +387,26 @@ namespace slopkit::ui
                     return;
                 }
 
+                // A ticked toggle without a path falls back to the old
+                // name-or-executable-basename match.
                 const process::ProcessInfo* match =
-                    process::match_process_by_name(listed.processes, name, match_exe_path);
+                    use_path ? process::match_process_by_exe_path(listed.processes, identifier)
+                             : process::match_process_by_name(listed.processes, identifier, match_exe_path);
                 if (match == nullptr)
                 {
-                    log::warning(log::category::ui, std::format("auto attach: no process named '{}'", name));
-                    address_list_->report_status(std::format("Table auto attach: no process named '{}'.", name), true);
+                    const std::string_view field = use_path ? "executable path" : "process name";
+                    log::warning(log::category::ui,
+                                 std::format("auto attach: no process matching {} '{}'", field, identifier));
+                    address_list_->report_status(
+                        std::format("Table auto attach: no process matching {} '{}'.", field, identifier), true);
                     return;
                 }
 
                 // Keep the process identity before the listing result goes away.
-                const process::ProcessId pid    = match->pid;
-                const std::string        pname  = match->name;
-                const std::string        plugin = match->plugin_id;
+                const process::ProcessId pid      = match->pid;
+                const std::string        pname    = match->name;
+                const std::string        exe_path = match->exe_path;
+                const std::string        plugin   = match->plugin_id;
 
                 if (auto_attach_pending_.has_value())
                 {
@@ -403,7 +421,7 @@ namespace slopkit::ui
                     attach_job,
                     pid,
                     plugin,
-                    [this, attach_job, pid, pname](process::JobResult&& attach_result)
+                    [this, attach_job, pid, pname, exe_path](process::JobResult&& attach_result)
                     {
                         if (auto_attach_pending_ != attach_job)
                         {
@@ -428,6 +446,7 @@ namespace slopkit::ui
                         target_.clear();
                         target_.pid          = pid;
                         target_.name         = pname;
+                        target_.exe_path     = exe_path;
                         target_.plugin_id    = attached.info->plugin_id;
                         target_.method       = attached.info->method;
                         target_.session_live = true;
@@ -455,6 +474,7 @@ namespace slopkit::ui
     {
         process_label_->setText(to_qstring(target_.label()));
         found_list_->set_target_attached(target_.valid());
+        table_settings_->refresh_target();
     }
 
     void MainWindow::run_freeze_pass()

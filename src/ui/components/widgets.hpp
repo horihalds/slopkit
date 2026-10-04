@@ -28,6 +28,9 @@ namespace slopkit::ui::widgets
     // Muted title label used to head a section or panel.
     [[nodiscard]] QLabel* section_header(const QString& text, QWidget* parent = nullptr);
 
+    // Muted, word-wrapped helper text placed under a field or panel.
+    [[nodiscard]] QLabel* hint_text(const QString& text, QWidget* parent = nullptr);
+
     // Accent-filled button for the primary action. Fusion derives the hover and
     // pressed shades from the button colour, and the palette is re-applied when
     // the application palette changes, so a theme switch keeps the accent.

@@ -303,6 +303,7 @@ namespace
         slopkit::process::AttachedTarget target;
         target.pid          = 42;
         target.name         = "fake";
+        target.exe_path     = "/usr/bin/fake";
         target.plugin_id    = "fake";
         target.method       = slopkit::process::AccessMethod::procfs_mem;
         target.session_live = true;
@@ -310,11 +311,15 @@ namespace
     }
 
     // Writes a `.skt` table carrying only the given settings.
-    void
-    write_table_with_settings(const QString& path, const std::string& target, bool auto_attach, bool match_exe_path)
+    void write_table_with_settings(const QString&     path,
+                                   const std::string& target,
+                                   bool               auto_attach,
+                                   bool               match_exe_path,
+                                   const std::string& exe_path = {})
     {
         slopkit::table::AddressTable table;
         table.settings().target_process = target;
+        table.settings().exe_path       = exe_path;
         table.settings().auto_attach    = auto_attach;
         table.settings().match_exe_path = match_exe_path;
         REQUIRE(slopkit::table::save(std::filesystem::path(path.toStdString()), table).has_value());
@@ -3051,10 +3056,29 @@ TEST_CASE("the table settings dialog edits the table settings in place", "[ui]")
     application();
 
     slopkit::table::AddressTable              table;
-    slopkit::ui::dialogs::TableSettingsDialog dialog {table};
+    slopkit::process::AttachedTarget          target;
+    slopkit::ui::dialogs::TableSettingsDialog dialog {table, target};
 
-    auto* target_edit = dialog.findChild<QLineEdit*>();
+    auto* target_panel = dialog.findChild<slopkit::ui::widgets::Panel*>();
+    REQUIRE(target_panel != nullptr);
+    CHECK(panel_has_title(target_panel, QStringLiteral("Target process")));
+
+    auto* target_edit   = dialog.findChild<QLineEdit*>(QStringLiteral("target_edit"));
+    auto* exe_path_edit = dialog.findChild<QLineEdit*>(QStringLiteral("exe_path_edit"));
     REQUIRE(target_edit != nullptr);
+    REQUIRE(exe_path_edit != nullptr);
+    auto* use_attached = dialog.findChild<QPushButton*>(QStringLiteral("use_attached_button"));
+    REQUIRE(use_attached != nullptr);
+    CHECK_FALSE(use_attached->isEnabled());
+    bool reports_detached = false;
+    for (auto* label : dialog.findChildren<QLabel*>())
+    {
+        if (label->text() == QStringLiteral("No process is attached."))
+        {
+            reports_detached = true;
+        }
+    }
+    CHECK(reports_detached);
     auto check_boxes = dialog.findChildren<QCheckBox*>();
     REQUIRE(check_boxes.size() == 2);
     QCheckBox* auto_attach    = nullptr;
@@ -3076,12 +3100,20 @@ TEST_CASE("the table settings dialog edits the table settings in place", "[ui]")
     dialog.show();
     QCoreApplication::processEvents();
     CHECK(target_edit->text().isEmpty());
+    CHECK(exe_path_edit->text().isEmpty());
     CHECK_FALSE(auto_attach->isChecked());
 
     // Enabling auto attach with an empty name is refused and reverted.
     auto_attach->setChecked(true);
     CHECK_FALSE(auto_attach->isChecked());
     CHECK_FALSE(table.settings().auto_attach);
+
+    // A path alone does not satisfy the name the toggle still selects.
+    exe_path_edit->setText(QStringLiteral("/usr/bin/game"));
+    emit exe_path_edit->editingFinished();
+    CHECK(table.settings().exe_path == "/usr/bin/game");
+    auto_attach->setChecked(true);
+    CHECK_FALSE(auto_attach->isChecked());
 
     // Editing the target name writes straight through to the table.
     target_edit->setText(QStringLiteral("game"));
@@ -3093,6 +3125,109 @@ TEST_CASE("the table settings dialog edits the table settings in place", "[ui]")
     CHECK(table.settings().auto_attach);
     match_exe_path->setChecked(true);
     CHECK(table.settings().match_exe_path);
+
+    // Ticking the path toggle with an empty path while auto attach is on is
+    // refused and reverted.
+    match_exe_path->setChecked(false);
+    CHECK_FALSE(table.settings().match_exe_path);
+    exe_path_edit->setText(QString());
+    emit exe_path_edit->editingFinished();
+    CHECK(table.settings().exe_path.empty());
+    match_exe_path->setChecked(true);
+    CHECK_FALSE(match_exe_path->isChecked());
+    CHECK_FALSE(table.settings().match_exe_path);
+}
+
+TEST_CASE("the table settings dialog fills from the attached process", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable              table;
+    slopkit::process::AttachedTarget          target = fake_target();
+    slopkit::ui::dialogs::TableSettingsDialog dialog {table, target};
+
+    // Both cards are present.
+    bool has_target_panel   = false;
+    bool has_attached_panel = false;
+    for (auto* panel : dialog.findChildren<slopkit::ui::widgets::Panel*>())
+    {
+        if (panel_has_title(panel, QStringLiteral("Target process")))
+        {
+            has_target_panel = true;
+        }
+        if (panel_has_title(panel, QStringLiteral("Attached process")))
+        {
+            has_attached_panel = true;
+        }
+    }
+    CHECK(has_target_panel);
+    CHECK(has_attached_panel);
+
+    auto* use_attached = dialog.findChild<QPushButton*>(QStringLiteral("use_attached_button"));
+    REQUIRE(use_attached != nullptr);
+    CHECK(use_attached->isEnabled());
+
+    // The card shows the attached identity and its executable path.
+    bool shows_name = false;
+    bool shows_path = false;
+    for (auto* label : dialog.findChildren<QLabel*>())
+    {
+        if (label->text().contains(QStringLiteral("fake (42)")))
+        {
+            shows_name = true;
+        }
+        if (label->text() == QStringLiteral("/usr/bin/fake"))
+        {
+            shows_path = true;
+        }
+    }
+    CHECK(shows_name);
+    CHECK(shows_path);
+
+    // Pressing the button fills both fields and writes through, leaving the
+    // checkboxes exactly as the user set them.
+    use_attached->click();
+    CHECK(table.settings().target_process == "fake");
+    CHECK(table.settings().exe_path == "/usr/bin/fake");
+    CHECK_FALSE(table.settings().auto_attach);
+    CHECK_FALSE(table.settings().match_exe_path);
+
+    // Detaching flips the card and disables the button.
+    target.clear();
+    dialog.refresh_target();
+    CHECK_FALSE(use_attached->isEnabled());
+}
+
+TEST_CASE("the table settings dialog fills only the name when the path is unknown", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable     table;
+    slopkit::process::AttachedTarget target = fake_target();
+    target.exe_path.clear();
+    slopkit::ui::dialogs::TableSettingsDialog dialog {table, target};
+
+    bool reports_unknown = false;
+    for (auto* label : dialog.findChildren<QLabel*>())
+    {
+        if (label->text().contains(QStringLiteral("executable path unknown")))
+        {
+            reports_unknown = true;
+        }
+    }
+    CHECK(reports_unknown);
+
+    auto* exe_path_edit = dialog.findChild<QLineEdit*>(QStringLiteral("exe_path_edit"));
+    auto* use_attached  = dialog.findChild<QPushButton*>(QStringLiteral("use_attached_button"));
+    REQUIRE(exe_path_edit != nullptr);
+    REQUIRE(use_attached != nullptr);
+
+    // Only the name is filled; an existing path is left alone.
+    exe_path_edit->setText(QStringLiteral("/keep/me"));
+    emit exe_path_edit->editingFinished();
+    use_attached->click();
+    CHECK(table.settings().target_process == "fake");
+    CHECK(table.settings().exe_path == "/keep/me");
 }
 
 TEST_CASE("loading a table auto attaches to its target process", "[ui]")
@@ -3206,6 +3341,87 @@ TEST_CASE("a failed auto attach leaves the target detached", "[ui]")
                         return false;
                     }));
     CHECK_FALSE(target.valid());
+}
+
+TEST_CASE("a table can auto attach by executable path", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_path.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    const QString path = scratch_settings_file("auto_attach_path.skt");
+    write_table_with_settings(path, "", true, true, "/usr/bin/beta");
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 20 && target.session_live;
+                    }));
+    CHECK(target.name == "beta");
+    CHECK(target.exe_path == "/usr/bin/beta");
+}
+
+TEST_CASE("a legacy name table keeps matching through the toggle", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_legacy.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    // A ticked toggle without a path keeps the pre-exe_path behaviour.
+    const QString path = scratch_settings_file("auto_attach_legacy.skt");
+    write_table_with_settings(path, "alpha", true, true);
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 10 && target.session_live;
+                    }));
+    CHECK(target.name == "alpha");
+}
+
+TEST_CASE("a path with the toggle off is not used for auto attach", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_path_off.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    // The toggle is off, so the empty name is the selected field: no attach.
+    const QString path = scratch_settings_file("auto_attach_path_off.skt");
+    write_table_with_settings(path, "", true, false, "/usr/bin/beta");
+
+    CHECK(address_list->load_table(path));
+    QCoreApplication::processEvents();
+    CHECK(target.pid == 0);
+    CHECK(access.list_calls.load() == 0);
 }
 
 TEST_CASE("auto attach needs the flag and a target name", "[ui]")

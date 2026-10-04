@@ -30,6 +30,7 @@ namespace slopkit::process
         }
         pid = 0;
         name.clear();
+        exe_path.clear();
         plugin_id.clear();
         method       = AccessMethod::none;
         session_live = false;

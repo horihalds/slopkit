@@ -67,6 +67,15 @@ namespace slopkit::ui::widgets
         return label;
     }
 
+    QLabel* hint_text(const QString& text, QWidget* parent)
+    {
+        // A status label in the muted "info" colour, so the hint follows the
+        // theme without a hard-coded colour.
+        auto* label = new StatusLabel(parent);
+        label->set_status(StatusKind::info, text);
+        return label;
+    }
+
     PrimaryButton::PrimaryButton(const QString& text, QWidget* parent) : QPushButton(text, parent)
     {
         apply_palette();
