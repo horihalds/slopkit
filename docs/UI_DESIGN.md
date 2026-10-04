@@ -8,6 +8,7 @@ These rules apply to all user interface work in this project. Read this file bef
 - The application runs on the Fusion style (`QStyleFactory::create("Fusion")`) so both themes render identically regardless of the desktop's platform theme.
 - Target platform is Linux with **Wayland** as the primary display server (see section 7).
 - UI code follows the project's C++ standard (C++23); see `AGENTS.md`.
+- The project ships two UI binaries: the main `slopkit` application and the `slopkit-sandbox` practice target launched from the Help menu. Both link the shared `slopkit_ui_common` static library (`ui/theme`, `ui/fonts`, `ui/settings` and `ui/components/`), so the sandbox renders with the same palette, fonts and components instead of duplicating them.
 
 ## 2. Visual Direction
 
@@ -81,7 +82,7 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 ## 8. Window and Layout
 
 - The main window is a `QMainWindow` with a menu bar, a single full-width scan-progress bar above the central split zones, and a status bar; the window must be resizable and carry a sensible minimum size.
-- The menu bar holds exactly `File`, `View` and `Help`. `File` holds the process/table commands, `View` holds `Log` then `Settings`, and `Help` holds `About slopkit`; there is no `Edit` menu, and `Undo Scan` / `Add Address Manually...` are scanner-panel buttons only.
+- The menu bar holds exactly `File`, `View` and `Help`. `File` holds the process/table commands, `View` holds `Log` then `Settings`, and `Help` holds `Launch Practice Target` then `About slopkit`; there is no `Edit` menu, and `Undo Scan` / `Add Address Manually...` are scanner-panel buttons only.
 - The file commands are reachable from the menus and carry window-scoped shortcuts: `Ctrl+T` picks the process, `Ctrl+O` opens an address table and `Ctrl+S` saves it; they fire only while the main window is focused.
 - Layouts must adapt to window size: use layouts and `QSplitter` stretch factors rather than fixed sizes. The scan zone is pinned to the scanner panel's content height (the vertical splitter gives it no stretch) and the address list absorbs every remaining pixel, which keeps the hits table's bottom edge level with the `Memory Scan Options` panel; the scan zone splits 50/50 between the found list and the scanner.
 - The status bar carries the attached-process label in its left slot and the address list's status line in its permanent right slot; the scan progress is a single `QProgressBar` spanning the top of the window above the split zones (a deliberate change from the old status-bar progress bar). This deliberately replaces the earlier rule that the status bar showed only the attached-process label; the process list and other dialogs never duplicate either.

@@ -101,6 +101,7 @@ namespace slopkit::ui
         void show_process_list();
         void show_add_address();
         void show_table_settings();
+        void on_launch_sandbox_requested();
         void show_log();
         void show_settings();
         void show_about();
@@ -143,6 +144,7 @@ namespace slopkit::ui
         QAction* save_table_as_action_ {};
         QAction* log_action_ {};
         QAction* settings_action_ {};
+        QAction* launch_sandbox_action_ {};
         QAction* about_action_ {};
 
         QTimer* tick_timer_ {};

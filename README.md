@@ -23,6 +23,7 @@ cancel, overwrite the open table or merge the file's addresses into it.
 | Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans. | Implemented |
 | Address list | Track found addresses, edit and freeze their values, and save or reopen the table. | Implemented |
 | Memory browser | Hex dump of live memory around a chosen address. | Implemented |
+| Practice target | A separate `slopkit-sandbox` process exposing values of every scan type; launch it from `Help > Launch Practice Target` and attach to practise the scanner. | Implemented |
 | Disassembler | Instruction decoding (Zydis) of live memory. | Planned |
 | Debugger | Breakpoints, stepping and register inspection. | Planned |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
@@ -177,6 +178,7 @@ The prefix is applied at configure time, because the desktop entry bakes the
 absolute path of the installed binary. The resulting layout is:
 
 - `<prefix>/bin/slopkit`
+- `<prefix>/bin/slopkit-sandbox` — the practice target, launched from slopkit's Help menu
 - `<prefix>/<libdir>/slopkit/plugins/libslopkit-linux_proc.so` and
   `libslopkit-wine_proton.so`
 - `<prefix>/share/applications/slopkit.desktop`
@@ -198,6 +200,7 @@ configure time (see the dependency list above).
 - `src/scan/` — the headless scan engine: value parsing, memory sources and the worker scan.
 - `src/table/` — the address-table model and its line-oriented file format.
 - `src/ui/` — the Qt 6 Widgets shell: main window, theme/palette, fonts, panels, dialogs and table models.
+- `src/sandbox/` — the `slopkit-sandbox` practice target: its value store, window and entry point.
 - `docs/` — project documentation, including `docs/INDEX.md` and `docs/UI_DESIGN.md`.
 - `assets/` — embedded assets such as the UI font and its license.
 - `reference/` — read-only reference material; never modified.

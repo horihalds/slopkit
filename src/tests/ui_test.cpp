@@ -2059,10 +2059,12 @@ TEST_CASE("the main window shell is built", "[ui]")
     // The toolbar is gone; the file commands live only in the menus now.
     CHECK(window.findChild<QToolBar*>(QStringLiteral("main_toolbar")) == nullptr);
 
-    // The View menu holds the log and settings entries; Help keeps About.
+    // The View menu holds the log and settings entries; Help offers the practice
+    // target ahead of About.
     CHECK(action_texts(menus[1]->menu()->actions())
           == QList<QString> {QStringLiteral("Log"), QStringLiteral("Settings")});
-    CHECK(action_texts(menus[2]->menu()->actions()) == QList<QString> {QStringLiteral("About slopkit")});
+    CHECK(action_texts(menus[2]->menu()->actions())
+          == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
 
     // No Edit menu survives, and Undo Scan / Add Address Manually... are gone as
     // menu actions anywhere in the window.

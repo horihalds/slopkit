@@ -18,6 +18,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "app/sandbox.hpp"
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "ui/components/widgets.hpp"
@@ -170,6 +171,8 @@ namespace slopkit::ui
 
         settings_action_ = new QAction(tr("Settings"), this);
 
+        launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
+
         about_action_ = new QAction(tr("About slopkit"), this);
     }
 
@@ -188,6 +191,8 @@ namespace slopkit::ui
         view_menu->addAction(settings_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
+        help_menu->addAction(launch_sandbox_action_);
+        help_menu->addSeparator();
         help_menu->addAction(about_action_);
     }
 
@@ -241,6 +246,7 @@ namespace slopkit::ui
                                                 message);
                 });
         connect(open_table_action_, &QAction::triggered, this, &MainWindow::on_open_table_requested);
+        connect(launch_sandbox_action_, &QAction::triggered, this, &MainWindow::on_launch_sandbox_requested);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
         connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
 
@@ -412,6 +418,19 @@ namespace slopkit::ui
     {
         settings_dialog_->select_about();
         show_settings();
+    }
+
+    void MainWindow::on_launch_sandbox_requested()
+    {
+        const auto result = app::launch_sandbox();
+        if (!result)
+        {
+            log::warning(log::category::ui, std::format("launch practice target failed: {}", result.error()));
+            address_list_->report_status(result.error(), true);
+            return;
+        }
+        log::info(log::category::ui, std::format("practice target started (pid {})", *result));
+        address_list_->report_status(std::format("Practice target started (pid {}).", *result), false);
     }
 
     void MainWindow::remember_table_path(const QString& path)

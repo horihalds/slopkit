@@ -110,6 +110,43 @@ foreach(name IN LISTS SLOPKIT_ACTION_ICON_NAMES)
     list(APPEND SLOPKIT_ACTION_ICON_PNGS ${pngs})
 endforeach()
 
+# Qt resources are registered per executable, so every binary that paints the
+# slopkit icons calls this on itself instead of receiving them through a
+# library.
+function(slopkit_add_icon_resources target)
+    qt_add_resources(${target} "slopkit_icons"
+        PREFIX "/icons"
+        BASE "${CMAKE_BINARY_DIR}/icons"
+        FILES ${SLOPKIT_ICON_PNGS} ${SLOPKIT_ACTION_ICON_PNGS})
+endfunction()
+
+# --- shared UI library -----------------------------------------------------
+#
+# The reusable presentation pieces shared by slopkit and slopkit-sandbox:
+# theme, fonts, settings and the widget components, plus the logger and the
+# version string both binaries need. scan/process/plugin/table stay out, which
+# is also what keeps the sandbox structurally incapable of target access.
+
+set(SLOPKIT_UI_COMMON_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/core/log.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/version.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/fonts.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/settings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/components/elided_tooltip_delegate.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/components/message_box.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/components/widgets.cpp)
+
+add_library(slopkit_ui_common STATIC ${SLOPKIT_UI_COMMON_SOURCES})
+target_include_directories(slopkit_ui_common PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(slopkit_ui_common PRIVATE -Wall -Wextra)
+set_target_properties(slopkit_ui_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Only fonts.cpp needs the embedded faces, so the asset target stays private
+# and its generated include directory does not leak to the consumers.
+target_link_libraries(slopkit_ui_common
+    PRIVATE slopkit_assets
+    PUBLIC slopkit_native Qt6::Widgets)
+
 # --- application -----------------------------------------------------------
 
 # Plugin sources are excluded from the application binary: every plugin defines
@@ -119,12 +156,17 @@ file(GLOB_RECURSE SLOPKIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cp
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/tests/.*")
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/plugins/.*")
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/platform/.*")
+# The sandbox is its own executable, never part of the app binary.
+list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/sandbox/.*")
+# The shared UI library compiles these, so neither the app nor the tests may.
+list(REMOVE_ITEM SLOPKIT_SOURCES ${SLOPKIT_UI_COMMON_SOURCES})
 
 add_executable(slopkit ${SLOPKIT_SOURCES})
 target_include_directories(slopkit PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(slopkit PRIVATE SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}")
 target_compile_options(slopkit PRIVATE -Wall -Wextra)
 target_link_libraries(slopkit PRIVATE
+    slopkit_ui_common
     slopkit_assets
     slopkit_native
     Qt6::Widgets
@@ -133,10 +175,27 @@ target_link_libraries(slopkit PRIVATE
 
 # Every generated icon size is embedded as :/icons/<N>x<N>/apps/slopkit.png,
 # the action glyphs as :/icons/actions/<N>x<N>/<name>.png.
-qt_add_resources(slopkit "slopkit_icons"
-    PREFIX "/icons"
-    BASE "${CMAKE_BINARY_DIR}/icons"
-    FILES ${SLOPKIT_ICON_PNGS} ${SLOPKIT_ACTION_ICON_PNGS})
+slopkit_add_icon_resources(slopkit)
+
+# --- sandbox (practice target) ---------------------------------------------
+#
+# A second UI binary: the practice target slopkit launches from its Help menu.
+# It links only the shared presentation library, never scan/process/plugin, so
+# it is structurally incapable of doing target access.
+
+set(SLOPKIT_SANDBOX_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/sandbox/main.cpp
+    ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_values.cpp
+    ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_window.cpp)
+
+add_executable(slopkit-sandbox ${SLOPKIT_SANDBOX_SOURCES})
+target_include_directories(slopkit-sandbox PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(slopkit-sandbox PRIVATE -Wall -Wextra)
+target_link_libraries(slopkit-sandbox PRIVATE
+    slopkit_ui_common
+    slopkit_native
+    Qt6::Widgets)
+slopkit_add_icon_resources(slopkit-sandbox)
 
 # --- platform library ------------------------------------------------------
 
@@ -231,8 +290,15 @@ endif()
 set(SLOPKIT_TEST_SUPPORT_SOURCES ${SLOPKIT_SOURCES})
 list(FILTER SLOPKIT_TEST_SUPPORT_SOURCES EXCLUDE REGEX ".*/main\\.cpp$")
 
+# The sandbox's non-entry-point sources are compiled into the test binary too,
+# so its value layout, its window and the real-engine self-scan are exercised
+# in-process; `main.cpp` stays out because the tests own the entry point.
+set(SLOPKIT_TEST_SANDBOX_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_values.cpp
+    ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_window.cpp)
+
 file(GLOB SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/tests/*.cpp)
-add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES})
+add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES} ${SLOPKIT_TEST_SANDBOX_SOURCES})
 # The tests load the bundled plugins the same way the app does, so they need the
 # same exported symbols for the platform library's diagnostics.
 set_target_properties(slopkit_tests PROPERTIES ENABLE_EXPORTS ON)
@@ -247,16 +313,14 @@ target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_TMP_DIR="${CMAKE_SOURCE_DIR}/tmp")
 target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2
+    slopkit_ui_common
     slopkit_platform
     slopkit_assets
     slopkit_native
     Qt6::Widgets
     PkgConfig::ZYDIS
     ${CMAKE_DL_LIBS})
-qt_add_resources(slopkit_tests "slopkit_icons"
-    PREFIX "/icons"
-    BASE "${CMAKE_BINARY_DIR}/icons"
-    FILES ${SLOPKIT_ICON_PNGS} ${SLOPKIT_ACTION_ICON_PNGS})
+slopkit_add_icon_resources(slopkit_tests)
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)
@@ -273,6 +337,10 @@ configure_file(${CMAKE_SOURCE_DIR}/assets/slopkit.desktop.in
     ${CMAKE_BINARY_DIR}/slopkit.desktop @ONLY)
 
 install(TARGETS slopkit RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# The practice target lands beside slopkit so the Help action resolves it as a
+# sibling binary.
+install(TARGETS slopkit-sandbox RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Plugins go under the library dir, where the installed binary looks for them
 # (see SLOPKIT_PLUGIN_RELATIVE_DIR above).
