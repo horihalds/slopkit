@@ -15,6 +15,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
@@ -29,7 +30,8 @@ namespace slopkit::ui::dialogs
 
     namespace
     {
-        constexpr std::size_t kMaxSize = 4096;
+        constexpr std::size_t kMaxSize          = 4096;
+        constexpr int         kDefaultTypeIndex = static_cast<int>(scan::ValueType::int32); // 4 Bytes
 
         bool parse_size(std::string_view text, std::size_t& out)
         {
@@ -60,26 +62,29 @@ namespace slopkit::ui::dialogs
         auto* form = new QFormLayout();
         form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
-        description_edit_ = new QLineEdit(tr("New address"), this);
+        description_edit_ = new QLineEdit(this);
+        description_edit_->setObjectName(QStringLiteral("description_edit"));
         form->addRow(tr("Description"), description_edit_);
 
         address_edit_ = new QLineEdit(this);
+        address_edit_->setObjectName(QStringLiteral("address_edit"));
         address_edit_->setFont(mono_font());
         address_edit_->setPlaceholderText(QStringLiteral("0x1234"));
         form->addRow(tr("Address"), address_edit_);
 
         type_combo_ = new QComboBox(this);
+        type_combo_->setObjectName(QStringLiteral("type_combo"));
         for (const char* name : scan::kValueTypeNames)
         {
             type_combo_->addItem(QString::fromUtf8(name));
         }
-        type_combo_->setCurrentIndex(2); // 4 Bytes
         form->addRow(tr("Type"), type_combo_);
 
         size_row_         = new QWidget(this);
         auto* size_layout = new QHBoxLayout(size_row_);
         size_layout->setContentsMargins(0, 0, 0, 0);
-        size_edit_ = new QLineEdit(QStringLiteral("32"), size_row_);
+        size_edit_ = new QLineEdit(size_row_);
+        size_edit_->setObjectName(QStringLiteral("size_edit"));
         size_edit_->setFont(mono_font());
         size_layout->addWidget(size_edit_);
         form->addRow(tr("Size (bytes)"), size_row_);
@@ -87,6 +92,7 @@ namespace slopkit::ui::dialogs
         layout->addLayout(form);
 
         hex_check_ = new QCheckBox(tr("Show as hex"), this);
+        hex_check_->setObjectName(QStringLiteral("hex_check"));
         layout->addWidget(hex_check_);
 
         status_ = new widgets::StatusLabel(this);
@@ -110,7 +116,15 @@ namespace slopkit::ui::dialogs
                     update_size_row();
                 });
 
-        update_size_row();
+        reset_form();
+    }
+
+    void AddAddressDialog::showEvent(QShowEvent* event)
+    {
+        QDialog::showEvent(event);
+        // Every opening starts from a clean form, so a previous entry is never
+        // submitted twice by accident.
+        reset_form();
     }
 
     void AddAddressDialog::update_size_row()
@@ -118,6 +132,17 @@ namespace slopkit::ui::dialogs
         const auto type    = static_cast<scan::ValueType>(type_combo_->currentIndex());
         const bool dynamic = type == scan::ValueType::string || type == scan::ValueType::byte_array;
         size_row_->setVisible(dynamic);
+    }
+
+    void AddAddressDialog::reset_form()
+    {
+        description_edit_->setText(tr("New address"));
+        address_edit_->clear();
+        type_combo_->setCurrentIndex(kDefaultTypeIndex);
+        size_edit_->setText(QStringLiteral("32"));
+        hex_check_->setChecked(false);
+        status_->clear_status();
+        update_size_row();
     }
 
     void AddAddressDialog::commit()
@@ -155,7 +180,9 @@ namespace slopkit::ui::dialogs
         entry.bytes.assign(size, std::byte {0});
         table_.add(std::move(entry));
 
-        status_->set_status(widgets::StatusKind::info, tr("Address added."));
+        // A confirmed add closes the dialog; the new row is the feedback.
+        log::info(log::category::ui, "add address accepted");
+        accept();
     }
 
 } // namespace slopkit::ui::dialogs

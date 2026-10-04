@@ -8,6 +8,7 @@
 class QCheckBox;
 class QComboBox;
 class QLineEdit;
+class QShowEvent;
 
 namespace slopkit::ui::widgets
 {
@@ -26,9 +27,13 @@ namespace slopkit::ui::dialogs
     public:
         explicit AddAddressDialog(table::AddressTable& table, QWidget* parent = nullptr);
 
+    protected:
+        void showEvent(QShowEvent* event) override;
+
     private:
         void commit();
         void update_size_row();
+        void reset_form();
 
         table::AddressTable& table_;
 
