@@ -96,6 +96,10 @@ namespace slopkit::scan
         // True once a scan has produced a result set, even an empty one.
         [[nodiscard]] bool has_results() const;
 
+        // True while the undo history holds a refinement to restore, i.e. a Next
+        // Scan has been applied that has not been undone yet.
+        [[nodiscard]] bool can_undo() const;
+
         // Lowers or raises the stored-hit cap; takes effect on the next scan.
         void                      set_max_stored_hits(std::size_t maximum) noexcept;
         [[nodiscard]] std::size_t max_stored_hits() const noexcept;

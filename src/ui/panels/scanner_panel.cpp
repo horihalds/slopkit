@@ -733,7 +733,7 @@ namespace slopkit::ui::panels
         scan_button_->setText(has_results ? tr("New Scan") : tr("First Scan"));
         scan_button_->setEnabled(attached && !running);
         next_scan_button_->setEnabled(attached && has_results && !running);
-        undo_button_->setEnabled(attached && has_results && !running);
+        undo_button_->setEnabled(attached && has_results && !running && engine_.can_undo());
         cancel_button_->setVisible(running);
 
         progress_percent_ = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);

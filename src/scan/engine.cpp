@@ -461,6 +461,12 @@ namespace slopkit::scan
         return results_ != nullptr;
     }
 
+    bool ScanEngine::can_undo() const
+    {
+        const std::lock_guard lock(mutex_);
+        return !history_.empty();
+    }
+
     void ScanEngine::set_max_stored_hits(std::size_t maximum) noexcept
     {
         max_stored_hits_.store(maximum == 0 ? 1 : maximum);

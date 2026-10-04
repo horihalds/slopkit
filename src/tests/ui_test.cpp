@@ -3057,7 +3057,7 @@ TEST_CASE("New Scan clears the results and returns the panel to its pre-scan sta
                     }));
     panel.refresh();
     REQUIRE(scan_button->text() == QStringLiteral("New Scan"));
-    CHECK(undo_button->isEnabled());
+    CHECK_FALSE(undo_button->isEnabled());
 
     // New Scan drops the result set instead of starting another scan.
     scan_button->click();
@@ -3077,6 +3077,76 @@ TEST_CASE("New Scan clears the results and returns the panel to its pre-scan sta
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     CHECK(view->model()->rowCount() == 0);
+}
+
+TEST_CASE("Undo Scan is gated on a refinement being available", "[ui]")
+{
+    application();
+
+    UiFakeAccess                 access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    region.writable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("10"));
+
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    auto* undo_button = button_labelled(panel, QStringLiteral("Undo Scan"));
+    auto* next_button = button_labelled(panel, QStringLiteral("Next Scan"));
+    REQUIRE(scan_button != nullptr);
+    REQUIRE(undo_button != nullptr);
+    REQUIRE(next_button != nullptr);
+
+    // Wait until the handed-over session has arrived and scanning is possible.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return scan_button->isEnabled();
+                    }));
+
+    // A first scan leaves a result set but no history, so Undo Scan stays off.
+    scan_button->click();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return panel.engine().has_results() && !panel.engine().is_running();
+                    }));
+    panel.refresh();
+    CHECK_FALSE(panel.engine().can_undo());
+    CHECK_FALSE(undo_button->isEnabled());
+    REQUIRE(next_button->isEnabled());
+
+    // A refinement records the previous set, which enables Undo Scan.
+    next_button->click();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return panel.engine().can_undo() && !panel.engine().is_running();
+                    }));
+    panel.refresh();
+    CHECK(undo_button->isEnabled());
+
+    // Undoing the only refinement exhausts the history and disables the button.
+    undo_button->click();
+    panel.refresh();
+    CHECK_FALSE(panel.engine().can_undo());
+    CHECK_FALSE(undo_button->isEnabled());
+    CHECK(panel.engine().has_results());
 }
 
 TEST_CASE("the scanner value box focuses and selects all its text", "[ui]")

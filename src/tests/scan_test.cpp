@@ -453,6 +453,44 @@ TEST_CASE("undo republishes the whole result set through the handle", "[scan]")
     CHECK(undone.hit_count == 300);
 }
 
+TEST_CASE("undo availability tracks the refinement history", "[scan]")
+{
+    auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4);
+    for (std::size_t i = 0; i < 300; ++i)
+    {
+        write_int32(*bytes, i * 4, 10);
+    }
+
+    ScanEngine engine;
+    ScanConfig config       = exact_config(ValueType::int32, 10);
+    config.filter.alignment = 4;
+
+    // A first scan clears the history, so there is nothing to undo yet.
+    engine.first_scan(config, mutable_source(bytes));
+    REQUIRE(wait(engine).state == ScanState::done);
+    CHECK_FALSE(engine.can_undo());
+
+    // Refining pushes the previous set onto the history.
+    ScanConfig refinement;
+    refinement.type       = ScanType::unchanged;
+    refinement.value_type = ValueType::int32;
+    engine.next_scan(refinement);
+    REQUIRE(wait(engine).state == ScanState::done);
+    CHECK(engine.can_undo());
+
+    // Undoing the only refinement exhausts the history again.
+    engine.undo();
+    CHECK_FALSE(engine.can_undo());
+    REQUIRE(engine.has_results());
+
+    // Another refinement makes undo available again; reset drops the history.
+    engine.next_scan(refinement);
+    REQUIRE(wait(engine).state == ScanState::done);
+    CHECK(engine.can_undo());
+    engine.reset();
+    CHECK_FALSE(engine.can_undo());
+}
+
 TEST_CASE("the comparison scan types respect their bounds", "[scan]")
 {
     std::vector<std::byte> bytes(32);
