@@ -14,9 +14,20 @@
 - `assets/fonts/NotoSansMono-Regular.ttf` — bundled monospace UI font (Noto Sans Mono Regular).
 - `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
 - `assets/icons/icon.svg` — vector source of the program/desktop icon (rasterised into the hicolor set and the embedded window icon).
-- `assets/icons/open.svg` — folder glyph source for the File > Open Table menu icon.
-- `assets/icons/save.svg` — diskette glyph source shared by the File > Save Table and Save Table As menu icons.
-- `assets/icons/target.svg` — crosshair glyph source for the File > Open Process menu icon.
+- `assets/icons/cancel.svg` — cancel glyph source (embedded as `ActionIcon::cancel`).
+- `assets/icons/checkmark.svg` — checkmark glyph source (embedded as `ActionIcon::checkmark`).
+- `assets/icons/chip.svg` — chip glyph source (embedded as `ActionIcon::chip`).
+- `assets/icons/diskette.svg` — diskette glyph source (shared by the File > Save Table and Save Table As menu icons; embedded as `ActionIcon::diskette`).
+- `assets/icons/error.svg` — error glyph source (embedded as `ActionIcon::error`).
+- `assets/icons/file.svg` — file glyph source (embedded as `ActionIcon::file`).
+- `assets/icons/folder.svg` — folder glyph source (File > Open Table's icon; embedded as `ActionIcon::folder`).
+- `assets/icons/home.svg` — home glyph source (embedded as `ActionIcon::home`).
+- `assets/icons/info.svg` — info glyph source (embedded as `ActionIcon::info`).
+- `assets/icons/ok.svg` — ok glyph source (embedded as `ActionIcon::ok`).
+- `assets/icons/search.svg` — search glyph source (embedded as `ActionIcon::search`).
+- `assets/icons/settings.svg` — settings glyph source (embedded as `ActionIcon::settings`).
+- `assets/icons/target.svg` — crosshair glyph source (File > Open Process's icon and the Table Settings Use Attached Process button; embedded as `ActionIcon::target`).
+- `assets/icons/warning.svg` — warning glyph source (embedded as `ActionIcon::warning`).
 - `assets/slopkit.desktop.in` — desktop entry template with the configured `Exec` path.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.

@@ -27,12 +27,34 @@ namespace slopkit::ui::widgets
         {
             switch (which)
             {
-            case ActionIcon::open:
-                return "open";
-            case ActionIcon::save:
-                return "save";
+            case ActionIcon::cancel:
+                return "cancel";
+            case ActionIcon::checkmark:
+                return "checkmark";
+            case ActionIcon::chip:
+                return "chip";
+            case ActionIcon::diskette:
+                return "diskette";
+            case ActionIcon::error:
+                return "error";
+            case ActionIcon::file:
+                return "file";
+            case ActionIcon::folder:
+                return "folder";
+            case ActionIcon::home:
+                return "home";
+            case ActionIcon::info:
+                return "info";
+            case ActionIcon::ok:
+                return "ok";
+            case ActionIcon::search:
+                return "search";
+            case ActionIcon::settings:
+                return "settings";
             case ActionIcon::target:
                 return "target";
+            case ActionIcon::warning:
+                return "warning";
             }
             std::unreachable();
         }

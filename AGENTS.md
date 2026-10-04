@@ -70,10 +70,9 @@ them for every task in this repository.
 - Qt 6 Widgets (`Qt6::Core`, `Qt6::Gui`, `Qt6::Widgets`) is the UI toolkit; the
   build requires the Qt 6 development packages and does not vendor Qt.
 - ImageMagick is a build-time dependency: configure rasterises
-  `assets/icons/icon.svg` into the desktop/window icon set and the
-  `assets/icons/{open,save,target}.svg` action glyphs into embedded Qt resources,
-  and fails with an actionable message when neither `magick` nor `convert` is on
-  the `PATH`.
+  `assets/icons/icon.svg` into the desktop/window icon set and every other
+  `assets/icons/*.svg` action glyph into embedded Qt resources, and fails with an
+  actionable message when neither `magick` nor `convert` is on the `PATH`.
 
 ## Reference tree
 

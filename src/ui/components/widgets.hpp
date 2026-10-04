@@ -113,12 +113,24 @@ namespace slopkit::ui::widgets
     [[nodiscard]] QIcon application_icon();
 
     // UI action glyphs; each maps to the generated
-    // `:/icons/actions/<N>x<N>/<name>.png` resource set.
+    // `:/icons/actions/<N>x<N>/<name>.png` resource set and mirrors the
+    // `assets/icons/<name>.svg` artwork one-to-one.
     enum class ActionIcon
     {
-        open,
-        save,
+        cancel,
+        checkmark,
+        chip,
+        diskette,
+        error,
+        file,
+        folder,
+        home,
+        info,
+        ok,
+        search,
+        settings,
         target,
+        warning,
     };
 
     // Multi-size action icon for a menu or button; never null for a known kind.

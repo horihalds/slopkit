@@ -97,11 +97,15 @@ set(SLOPKIT_ICON_SIZES 16 24 32 48 64 128 256 512)
 slopkit_icon_pngs(${CMAKE_SOURCE_DIR}/assets/icons/icon.svg SLOPKIT_ICON_PNGS SIZES ${SLOPKIT_ICON_SIZES})
 
 # UI action glyphs: rendered with the same ImageMagick step and embedded (never
-# installed) under :/icons/actions/<N>x<N>/<name>.png. Menu icons paint at 16
-# logical px, so the larger sizes only serve HiDPI/fractional scaling.
+# installed) under :/icons/actions/<N>x<N>/<name>.png. The names mirror
+# widgets::ActionIcon one-to-one; menu icons paint at 16 logical px, so the
+# larger sizes only serve HiDPI/fractional scaling.
 set(SLOPKIT_ACTION_ICON_SIZES 16 24 32 48 64)
+set(SLOPKIT_ACTION_ICON_NAMES
+    cancel checkmark chip diskette error file folder home
+    info ok search settings target warning)
 set(SLOPKIT_ACTION_ICON_PNGS "")
-foreach(name IN ITEMS open save target)
+foreach(name IN LISTS SLOPKIT_ACTION_ICON_NAMES)
     slopkit_action_icon_pngs(${CMAKE_SOURCE_DIR}/assets/icons/${name}.svg pngs SIZES ${SLOPKIT_ACTION_ICON_SIZES})
     list(APPEND SLOPKIT_ACTION_ICON_PNGS ${pngs})
 endforeach()
