@@ -16,6 +16,8 @@
 
 #include <unistd.h>
 
+#include <QString>
+
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "core/version.hpp"
@@ -291,7 +293,8 @@ namespace slopkit::app
                               log::level_name(log_level),
                               log_path.string()));
 
-        bool handled = false;
+        bool    handled = false;
+        QString table_path;
 
         for (std::size_t index = 0; index < args.size(); ++index)
         {
@@ -355,14 +358,23 @@ namespace slopkit::app
             {
                 handled = true;
                 std::cout << "usage: slopkit [--log-level <level>] [--version] [--list-plugins]\n"
-                             "               [--list-processes] [--scan <pid> <value>] [--help]\n"
+                             "               [--list-processes] [--scan <pid> <value>] [--help] [<table.skt>]\n"
                              "  --log-level sets the minimum level: debug|info|warning|error (default info)\n"
                              "  --scan runs one exact-value scan and prints address<TAB>type<TAB>value\n"
-                             "  no flags launches the GUI\n";
+                             "  <table.skt> opens that address table; no flags launches the GUI\n";
+            }
+            else if (arg.starts_with('-'))
+            {
+                std::cerr << "unknown option: " << arg << '\n';
+                return 2;
+            }
+            else if (table_path.isEmpty())
+            {
+                table_path = QString::fromUtf8(arg.data(), static_cast<qsizetype>(arg.size()));
             }
             else
             {
-                std::cerr << "unknown option: " << arg << '\n';
+                std::cerr << "too many table arguments: " << arg << '\n';
                 return 2;
             }
         }
@@ -372,8 +384,13 @@ namespace slopkit::app
             return 0;
         }
 
+        if (!table_path.isEmpty())
+        {
+            log::info(log::category::app, std::format("opening table {}", table_path.toStdString()));
+        }
+
         ui::App app;
-        return app.run(argc, argv);
+        return app.run(argc, argv, table_path);
     }
 
 } // namespace slopkit::app

@@ -11,6 +11,10 @@ attach a process, run first/next/undo scans, move results into an editable and
 freezable address list, save and reopen the table, and browse raw memory. The
 disassembler and debugger are still planned.
 
+Address tables are `.skt` files: double-clicking one in the file manager opens
+slopkit with that table, and if an instance is already running it asks whether to
+cancel, overwrite the open table or merge the file's addresses into it.
+
 ## Tools
 
 | Tool | Purpose | Status |

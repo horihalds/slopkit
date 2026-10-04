@@ -215,6 +215,64 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     CHECK(loaded.entries()[0].id != loaded.entries()[1].id);
 }
 
+TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")
+{
+    AddressTable table;
+    auto         existing = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+    existing.description  = "health";
+    existing.active       = true;
+    table.add(existing);
+    table.settings().target_process = "current";
+    table.set_selected(0);
+    const std::uint64_t existing_id = table.entries()[0].id;
+
+    auto duplicate  = existing; // same address, type and description
+    duplicate.bytes = {std::byte {9}, std::byte {9}, std::byte {9}, std::byte {9}}; // different bytes count as present
+
+    auto new_address        = make_entry(kBase + 4, ValueType::int32, {2, 0, 0, 0});
+    new_address.description = "mana";
+
+    auto new_type        = make_entry(kBase, ValueType::float64, {});
+    new_type.description = "health";
+
+    auto new_text        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+    new_text.description = "stamina";
+
+    const std::vector<AddressEntry> incoming {duplicate, new_address, new_type, new_text};
+    const auto                      summary = table.merge(incoming);
+
+    CHECK(summary.added == 3);
+    CHECK(summary.skipped == 1);
+    REQUIRE(table.size() == 4);
+    CHECK(table.entries()[0].id == existing_id);
+    CHECK(table.entries()[0].bytes == existing.bytes); // the existing row wins
+    CHECK(table.entries()[0].active);
+    CHECK(table.entries()[1].description == "mana");
+    CHECK(table.entries()[2].type == ValueType::float64);
+    CHECK(table.entries()[3].description == "stamina");
+    CHECK(table.entries()[1].id != existing_id);
+    CHECK(table.selected() == 0); // selection untouched
+    CHECK(table.settings().target_process == "current");
+}
+
+TEST_CASE("merge adds an incoming duplicate only once and is idempotent", "[table]")
+{
+    AddressTable table;
+    auto         row = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+    row.description  = "health";
+
+    const std::vector<AddressEntry> incoming {row, row};
+    const auto                      first = table.merge(incoming);
+    CHECK(first.added == 1);
+    CHECK(first.skipped == 1);
+    REQUIRE(table.size() == 1);
+
+    const auto second = table.merge(incoming);
+    CHECK(second.added == 0);
+    CHECK(second.skipped == 2);
+    REQUIRE(table.size() == 1);
+}
+
 TEST_CASE("the serializer rejects malformed files", "[table]")
 {
     const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed.skt";

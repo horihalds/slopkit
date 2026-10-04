@@ -241,6 +241,7 @@ target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"
     SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_TEST_LOGGING_PLUGIN_DIR="${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR}"
+    SLOPKIT_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
     SLOPKIT_TMP_DIR="${CMAKE_SOURCE_DIR}/tmp")
 target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2
@@ -277,15 +278,32 @@ install(TARGETS slopkit-linux_proc slopkit-wine_proton
 install(FILES ${CMAKE_BINARY_DIR}/slopkit.desktop
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
+# The `.skt` MIME type is registered through shared-mime-info; `install.sh`
+# refreshes the database afterwards.
+install(FILES ${CMAKE_SOURCE_DIR}/assets/application-x-slopkit-table.xml
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/mime/packages)
+
 foreach(size IN LISTS SLOPKIT_ICON_SIZES)
     install(FILES ${CMAKE_BINARY_DIR}/icons/${size}x${size}/apps/slopkit.png
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${size}x${size}/apps)
+endforeach()
+
+# The `.skt` MIME type reuses the application icon: desktops resolve the icon
+# name `application-x-slopkit-table` through the same hicolor tree.
+foreach(size IN LISTS SLOPKIT_ICON_SIZES)
+    install(FILES ${CMAKE_BINARY_DIR}/icons/${size}x${size}/apps/slopkit.png
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${size}x${size}/mimetypes
+        RENAME application-x-slopkit-table.png)
 endforeach()
 
 # The vector is installed as well, so SVG-aware desktops get a crisp icon.
 install(FILES ${CMAKE_SOURCE_DIR}/assets/icons/icon.svg
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps
     RENAME slopkit.svg)
+
+install(FILES ${CMAKE_SOURCE_DIR}/assets/icons/icon.svg
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/mimetypes
+    RENAME application-x-slopkit-table.svg)
 
 install(FILES ${CMAKE_SOURCE_DIR}/README.md ${CMAKE_SOURCE_DIR}/assets/fonts/OFL.txt
     DESTINATION ${CMAKE_INSTALL_DOCDIR})

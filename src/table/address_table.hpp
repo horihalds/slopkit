@@ -29,6 +29,14 @@ namespace slopkit::table
         bool                   hex {false};
     };
 
+    // How many incoming rows a merge added and how many it dropped because an
+    // equal entry (address, type and description) was already present.
+    struct MergeSummary
+    {
+        std::size_t added {};
+        std::size_t skipped {};
+    };
+
     // The address list shown in the bottom zone. It owns no session: writes are
     // encoded here and executed by the AccessWorker.
     class AddressTable
@@ -41,6 +49,11 @@ namespace slopkit::table
         // Replaces every entry with fresh ids. The serializer uses this when
         // loading so a file load does not log one record per row.
         void replace(std::vector<AddressEntry> entries);
+
+        // Appends every incoming entry that is not already present (same address,
+        // type and description) with a fresh id. Existing entries, the selection
+        // and the settings are left untouched.
+        MergeSummary merge(std::span<const AddressEntry> incoming);
 
         [[nodiscard]] std::span<AddressEntry>       entries() noexcept;
         [[nodiscard]] std::span<const AddressEntry> entries() const noexcept;

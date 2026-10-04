@@ -60,6 +60,37 @@ namespace slopkit::table
         selected_ = entries_.empty() ? -1 : static_cast<int>(entries_.size()) - 1;
     }
 
+    MergeSummary AddressTable::merge(std::span<const AddressEntry> incoming)
+    {
+        MergeSummary summary;
+        for (const auto& entry : incoming)
+        {
+            const bool exists = std::ranges::any_of(entries_,
+                                                    [&](const AddressEntry& candidate)
+                                                    {
+                                                        return candidate.address == entry.address
+                                                            && candidate.type == entry.type
+                                                            && candidate.description == entry.description;
+                                                    });
+            if (exists)
+            {
+                ++summary.skipped;
+                continue;
+            }
+
+            AddressEntry copy = entry;
+            copy.id           = next_id_++;
+            entries_.push_back(std::move(copy));
+            ++summary.added;
+        }
+        if (summary.added > 0)
+        {
+            log::info(log::category::table,
+                      std::format("merged {} entry/entries ({} skipped)", summary.added, summary.skipped));
+        }
+        return summary;
+    }
+
     std::span<AddressEntry> AddressTable::entries() noexcept
     {
         return entries_;

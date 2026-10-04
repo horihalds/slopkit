@@ -148,7 +148,7 @@ namespace slopkit::ui::panels
         dialog_directory_ = directory;
     }
 
-    void AddressListPanel::open_table()
+    std::optional<QString> AddressListPanel::choose_table_path()
     {
         log::debug(log::category::ui, "open table requested");
         const QString start = dialog_directory_.isEmpty() ? table_path_ : dialog_directory_;
@@ -156,22 +156,53 @@ namespace slopkit::ui::panels
             QFileDialog::getOpenFileName(this, tr("Open Table"), start, tr("Address tables (*.skt);;All files (*)"));
         if (path.isEmpty())
         {
-            return;
+            return std::nullopt;
         }
-        static_cast<void>(load_table(path));
+        return path;
+    }
+
+    std::optional<table::AddressTable> AddressListPanel::parse_table(const QString& path)
+    {
+        table::AddressTable parsed;
+        if (const auto result = table::load(std::filesystem::path(path.toStdString()), parsed); !result)
+        {
+            log::warning(log::category::ui, std::format("table load failed: {}", result.error()));
+            set_status(tr("Open failed: %1").arg(to_qstring(result.error())), true);
+            return std::nullopt;
+        }
+        return parsed;
+    }
+
+    void AddressListPanel::adopt_table(const QString& path, table::AddressTable&& loaded)
+    {
+        set_table_path(path);
+        table_ = std::move(loaded);
+        model_->refresh();
+        set_status(tr("Loaded %1 entries.").arg(static_cast<qulonglong>(table_.size())), false);
+        emit tableLoaded();
+    }
+
+    table::MergeSummary AddressListPanel::merge_table(const table::AddressTable& incoming)
+    {
+        const auto summary = table_.merge(incoming.entries());
+        model_->refresh();
+        set_status(tr("Merged: %1 added, %2 skipped.")
+                       .arg(static_cast<qulonglong>(summary.added))
+                       .arg(static_cast<qulonglong>(summary.skipped)),
+                   false);
+        return summary;
     }
 
     bool AddressListPanel::load_table(const QString& path)
     {
-        set_table_path(path);
-        if (const auto result = table::load(std::filesystem::path(path.toStdString()), table_); !result)
+        auto parsed = parse_table(path);
+        if (!parsed)
         {
-            log::warning(log::category::ui, std::format("table load failed: {}", result.error()));
-            set_status(tr("Open failed: %1").arg(to_qstring(result.error())), true);
+            // The path is still remembered, so a later save keeps the target.
+            set_table_path(path);
             return false;
         }
-        set_status(tr("Loaded %1 entries.").arg(static_cast<qulonglong>(table_.size())), false);
-        emit tableLoaded();
+        adopt_table(path, std::move(*parsed));
         return true;
     }
 

@@ -2,11 +2,14 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "platform/linux/desktop_entry.hpp"
+#include "table/address_table.hpp"
+#include "table/serializer.hpp"
 
 namespace
 {
@@ -27,6 +30,12 @@ Exec=widget-editor --new
         std::filesystem::create_directories(path.parent_path());
         std::ofstream file(path, std::ios::binary);
         file << content;
+    }
+
+    std::string read_file(const std::filesystem::path& path)
+    {
+        std::ifstream file(path, std::ios::binary);
+        return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
     }
 } // namespace
 
@@ -98,4 +107,51 @@ TEST_CASE("scanning an applications directory collects visible applications", "[
     REQUIRE(exes.size() == 2);
     CHECK(exes[0] == "deep-app");
     CHECK(exes[1] == "widget-editor");
+}
+
+TEST_CASE("the .skt MIME package declares the type, the glob and the magic", "[desktop_entry]")
+{
+    const auto path = std::filesystem::path(SLOPKIT_ASSET_DIR) / "application-x-slopkit-table.xml";
+    REQUIRE(std::filesystem::exists(path));
+    const std::string xml = read_file(path);
+
+    CHECK(xml.find("<mime-type type=\"application/x-slopkit-table\">") != std::string::npos);
+    CHECK(xml.find("<glob pattern=\"*.skt\"/>") != std::string::npos);
+    CHECK(xml.find("<match value=\"slopkit-table\" type=\"string\" offset=\"0\"/>") != std::string::npos);
+}
+
+TEST_CASE("the .skt MIME magic matches the serializer's first line", "[desktop_entry]")
+{
+    constexpr std::string_view marker = "<match value=\"";
+    const std::string xml = read_file(std::filesystem::path(SLOPKIT_ASSET_DIR) / "application-x-slopkit-table.xml");
+    const auto        marker_at = xml.find(marker);
+    REQUIRE(marker_at != std::string::npos);
+    const auto value_at  = marker_at + marker.size();
+    const auto value_end = xml.find('\"', value_at);
+    REQUIRE(value_end != std::string::npos);
+    const std::string magic = xml.substr(value_at, value_end - value_at);
+    REQUIRE_FALSE(magic.empty());
+
+    const auto                   path = std::filesystem::temp_directory_path() / "slopkit_mime_magic_test.skt";
+    slopkit::table::AddressTable table;
+    REQUIRE(slopkit::table::save(path, table).has_value());
+    std::ifstream file(path, std::ios::binary);
+    std::string   first_line;
+    std::getline(file, first_line);
+    std::filesystem::remove(path);
+
+    CHECK(first_line.starts_with(magic));
+}
+
+TEST_CASE("the slopkit desktop template advertises the .skt handler", "[desktop_entry]")
+{
+    const auto path = std::filesystem::path(SLOPKIT_ASSET_DIR) / "slopkit.desktop.in";
+    REQUIRE(std::filesystem::exists(path));
+    const std::string content = read_file(path);
+
+    CHECK(content.find("MimeType=application/x-slopkit-table;") != std::string::npos);
+
+    const auto entry = slopkit::platform::parse_desktop_entry(content);
+    REQUIRE(entry.has_value());
+    CHECK(entry->exec.ends_with("%f"));
 }

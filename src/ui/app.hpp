@@ -2,6 +2,9 @@
 
 #include <memory>
 
+#include <QString>
+
+#include "app/instance_server.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -26,8 +29,10 @@ namespace slopkit::ui
 
         // Builds the QApplication, applies the application identity, discovers
         // the plugins, shows the main window and runs the event loop. Returns
-        // the process exit code. Must be called at most once per process.
-        int run(int argc, char** argv);
+        // the process exit code. Must be called at most once per process. A
+        // non-empty `initial_table_path` opens that table instead of the
+        // remembered auto-load one.
+        int run(int argc, char** argv, const QString& initial_table_path = QString());
 
     private:
         plugin::PluginHost      host_;
@@ -40,6 +45,10 @@ namespace slopkit::ui
         SettingsController      settings_;
 
         std::unique_ptr<MainWindow> window_;
+
+        // Declared after the window so it is reset before the window on
+        // shutdown; the listener must not outlive the open flow it feeds.
+        std::unique_ptr<app::InstanceServer> server_;
     };
 
 } // namespace slopkit::ui

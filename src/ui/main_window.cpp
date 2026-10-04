@@ -48,8 +48,10 @@ namespace slopkit::ui
                            process::AttachedTarget& target,
                            plugin::PluginHost&      host,
                            SettingsController&      settings,
+                           const QString&           initial_table_path,
                            QWidget*                 parent)
-        : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings)
+        : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings),
+          initial_table_path_(initial_table_path)
     {
         setWindowTitle(QStringLiteral("slopkit"));
         setWindowIcon(widgets::application_icon());
@@ -61,6 +63,13 @@ namespace slopkit::ui
         build_central();
         build_dialogs();
 
+        // A table path handed over on the command line is opened in preference to
+        // the remembered auto-load table.
+        if (!initial_table_path_.isEmpty())
+        {
+            static_cast<void>(open_table_request(initial_table_path_));
+        }
+
         // Event-driven updates only: the tick polls the scan progress, applies a
         // missed drain and submits the freeze pass.
         tick_timer_ = new QTimer(this);
@@ -69,6 +78,58 @@ namespace slopkit::ui
     }
 
     MainWindow::~MainWindow() = default;
+
+    bool MainWindow::open_table_request(const QString& path)
+    {
+        auto parsed = address_list_->parse_table(path);
+        if (!parsed)
+        {
+            // parse_table already reported "Open failed: ..." through the panel.
+            return false;
+        }
+
+        if (address_table_.empty())
+        {
+            address_list_->adopt_table(path, std::move(*parsed));
+            return true;
+        }
+
+        const dialogs::TableConflictInfo info {
+            .incoming_path    = path,
+            .incoming_entries = parsed->size(),
+            .current_path     = address_list_->table_path(),
+            .current_entries  = address_table_.size(),
+        };
+
+        switch (table_conflict_prompt_(this, info))
+        {
+        case dialogs::TableConflictChoice::overwrite:
+            address_list_->adopt_table(path, std::move(*parsed));
+            return true;
+        case dialogs::TableConflictChoice::merge:
+            static_cast<void>(address_list_->merge_table(*parsed));
+            return true;
+        case dialogs::TableConflictChoice::cancel:
+            address_list_->report_status("Open cancelled.", false);
+            return false;
+        }
+        std::unreachable();
+    }
+
+    void MainWindow::set_table_conflict_prompt(TableConflictPrompt prompt)
+    {
+        table_conflict_prompt_ = std::move(prompt);
+    }
+
+    void MainWindow::on_open_table_requested()
+    {
+        const std::optional<QString> path = address_list_->choose_table_path();
+        if (!path.has_value())
+        {
+            return;
+        }
+        static_cast<void>(open_table_request(*path));
+    }
 
     void MainWindow::build_actions()
     {
@@ -178,7 +239,7 @@ namespace slopkit::ui
                     address_status_->set_status(is_error ? widgets::StatusKind::error : widgets::StatusKind::info,
                                                 message);
                 });
-        connect(open_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::open_table);
+        connect(open_table_action_, &QAction::triggered, this, &MainWindow::on_open_table_requested);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
         connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
 
@@ -281,8 +342,9 @@ namespace slopkit::ui
         connect(log_, &dialogs::LogDialog::logSaved, this, &MainWindow::remember_file_path);
 
         // With the switch on, the remembered table is loaded exactly like a manual
-        // Ctrl+O; a failure only reports and keeps the path remembered.
-        if (persisted.auto_load_last_table && !persisted.last_table_path.isEmpty())
+        // Ctrl+O; a failure only reports and keeps the path remembered. An explicit
+        // launch path wins over the remembered one.
+        if (initial_table_path_.isEmpty() && persisted.auto_load_last_table && !persisted.last_table_path.isEmpty())
         {
             static_cast<void>(address_list_->load_table(persisted.last_table_path));
         }

@@ -104,6 +104,19 @@ them for every task in this repository.
   in the same change so every file stays indexed exactly once.
 - Be terse when writing the index
 
+## Address tables and `.skt` files
+
+- An address table is an `.skt` file registered as `application/x-slopkit-table`
+  (`assets/application-x-slopkit-table.xml`), so a double-click opens slopkit and
+  the file carries the slopkit icon. Keep the MIME `slopkit-table` magic token in
+  sync with the first line `src/table/serializer.cpp` writes.
+- `install.sh` finishes the registration (MIME/desktop database refresh and the
+  per-user default handler) for a `$HOME` prefix; a system prefix only prints the
+  commands.
+- A second launch hands its `<table.skt>` path to the running instance over the
+  per-user abstract socket in `src/app/instance*`; the running window then runs
+  the same open flow as File > Open Table.
+
 ## Maintaining this file
 
 - Treat this file as a living document: update it whenever future work changes the project's rules, conventions, or toolchain.

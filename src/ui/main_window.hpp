@@ -1,15 +1,18 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "table/address_table.hpp"
+#include "ui/dialogs/table_conflict.hpp"
 
 #include <QLabel>
 #include <QMainWindow>
 #include <QProgressBar>
+#include <QString>
 #include <QTimer>
 
 class QAction;
@@ -52,13 +55,29 @@ namespace slopkit::ui
                    process::AttachedTarget& target,
                    plugin::PluginHost&      host,
                    SettingsController&      settings,
-                   QWidget*                 parent = nullptr);
+                   const QString&           initial_table_path = QString(),
+                   QWidget*                 parent             = nullptr);
         ~MainWindow() override;
+
+        // The conflict prompt the open flow uses by default: the themed
+        // Cancel/Overwrite/Merge dialog.
+        using TableConflictPrompt =
+            std::function<dialogs::TableConflictChoice(QWidget* parent, const dialogs::TableConflictInfo& info)>;
+
+        // Opens `path` as the address table: an empty table is replaced at once,
+        // a non-empty one goes through the conflict prompt. Returns false when
+        // the file could not be parsed or the user cancelled.
+        [[nodiscard]] bool open_table_request(const QString& path);
+
+        // Replaces the prompt the open flow uses, so a test can answer without a
+        // dialog.
+        void set_table_conflict_prompt(TableConflictPrompt prompt);
 
     private slots:
         void on_tick();
         void remember_table_path(const QString& path);
         void remember_file_path(const QString& path);
+        void on_open_table_requested();
 
     private:
         void build_actions();
@@ -83,6 +102,15 @@ namespace slopkit::ui
         process::AttachedTarget& target_;
         plugin::PluginHost&      host_;
         SettingsController&      settings_;
+
+        // The table path passed on the command line; empty when none.
+        QString initial_table_path_;
+
+        // The conflict prompt; the default runs the themed dialog.
+        TableConflictPrompt table_conflict_prompt_ = [](QWidget* parent, const dialogs::TableConflictInfo& info)
+        {
+            return dialogs::ask_table_conflict(parent, info);
+        };
 
         table::AddressTable address_table_;
 

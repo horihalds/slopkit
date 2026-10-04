@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string_view>
 
 #include "process/access_worker.hpp"
@@ -36,15 +37,30 @@ namespace slopkit::ui::panels
                          QWidget*                 parent = nullptr);
 
         // Entry points used by the menu bar and the toolbar.
-        void open_table();
         void save_table();
         void save_table_as();
         void delete_selected();
         void toggle_freeze_selected();
 
-        // Loads a table file into the panel's table, reports the outcome and
-        // emits tableLoaded() on success. Split out of open_table() so tests can
-        // drive a load without the native file dialog.
+        // Runs the native file dialog only and returns the chosen path, or
+        // nullopt when the dialog was cancelled. Split out of load_table() so
+        // tests can drive a load without the native file dialog.
+        [[nodiscard]] std::optional<QString> choose_table_path();
+
+        // Parses a table file into a scratch table without touching the panel
+        // state; reports a failure the same way load_table() does.
+        [[nodiscard]] std::optional<table::AddressTable> parse_table(const QString& path);
+
+        // Replaces the panel's table with a parsed one, remembers the path and
+        // reports the outcome; emits tableLoaded().
+        void adopt_table(const QString& path, table::AddressTable&& loaded);
+
+        // Appends the incoming entries that are not already present, keeps the
+        // current path and settings and reports the outcome without emitting
+        // tableLoaded().
+        table::MergeSummary merge_table(const table::AddressTable& incoming);
+
+        // Loads a table file into the panel's table (parse_table + adopt_table).
         [[nodiscard]] bool load_table(const QString& path);
 
         // Reports a status line outcome; report_freeze_error() forwards to it.
