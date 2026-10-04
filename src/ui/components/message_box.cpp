@@ -1,8 +1,12 @@
 #include "ui/components/message_box.hpp"
 
+#include <algorithm>
 #include <array>
 #include <utility>
 
+#include <QFont>
+#include <QFontMetrics>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -135,6 +139,20 @@ namespace slopkit::ui::widgets
         update_icon();
     }
 
+    int MessageBox::exec()
+    {
+        // Qt's platform plugins append the application display name to a window
+        // whose title does not already end with it, which would turn the box's
+        // title into "Delete Entry - slopkit". The box shows its own title only,
+        // so hide the display name while the modal loop runs. Title formatting
+        // happens when a window is created, so no other window is affected.
+        const QString display_name = QGuiApplication::applicationDisplayName();
+        QGuiApplication::setApplicationDisplayName(QString());
+        const int code = QDialog::exec();
+        QGuiApplication::setApplicationDisplayName(display_name);
+        return code;
+    }
+
     void MessageBox::set_icon(MessageBoxIcon icon)
     {
         icon_ = icon;
@@ -152,6 +170,16 @@ namespace slopkit::ui::widgets
     void MessageBox::set_title(const QString& title)
     {
         setWindowTitle(title);
+
+        // The decoration font is owned by the window manager and this code must
+        // not assume a decoration size, so keep the box at least as wide as the
+        // title text itself; font metrics are logical and scale with the DPI.
+        if (!title.isEmpty())
+        {
+            QFont title_font = font();
+            title_font.setBold(true);
+            setMinimumWidth(std::max(minimumWidth(), QFontMetrics(title_font).horizontalAdvance(title)));
+        }
     }
 
     void MessageBox::set_text(const QString& text)

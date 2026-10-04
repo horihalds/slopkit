@@ -50,14 +50,19 @@ namespace slopkit::ui::widgets
 
     // A themed, modal message box: an optional kind glyph beside a word-wrapped
     // main text and an optional muted informative line, over a right-aligned row
-    // of standard buttons. Nothing about its position or size is hard-coded; the
-    // compositor places it and the layouts size it.
+    // of standard buttons. Nothing about its position is hard-coded; the
+    // compositor places it and the layouts size it (the window is only kept at
+    // least as wide as its title).
     class MessageBox : public QDialog
     {
         Q_OBJECT
 
     public:
         explicit MessageBox(QWidget* parent = nullptr);
+
+        // Runs the box modally. The platform's window-title decoration is given
+        // the title on its own; the application display name is not appended.
+        int exec() override;
 
         void set_icon(MessageBoxIcon icon);
         void set_buttons(MessageBoxButtons buttons);

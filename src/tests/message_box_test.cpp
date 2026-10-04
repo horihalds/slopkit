@@ -4,6 +4,9 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFont>
+#include <QFontMetrics>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
@@ -401,6 +404,60 @@ namespace
                                                               MessageBoxButton::ok | MessageBoxButton::cancel,
                                                               MessageBoxButton::ok);
         CHECK(result == MessageBoxResult::cancel);
+    }
+
+    TEST_CASE("the message box hides the application display name while it runs", "[ui]")
+    {
+        ensure_application();
+
+        const QString original = QStringLiteral("slopkit");
+        QGuiApplication::setApplicationDisplayName(original);
+
+        bool title_without_suffix = false;
+
+        MessageBox box;
+        box.set_title(QStringLiteral("Delete Entry"));
+        box.set_text(QStringLiteral("Delete this entry?"));
+        box.set_buttons(MessageBoxButton::yes | MessageBoxButton::no);
+
+        on_box(
+            [&title_without_suffix](MessageBox& shown)
+            {
+                // The platform appends the display name to a title unless it is
+                // left empty, so the modal run hides it.
+                title_without_suffix = QGuiApplication::applicationDisplayName().isEmpty();
+                shown.reject();
+            });
+        box.exec();
+
+        const bool restored = QGuiApplication::applicationDisplayName() == original;
+        CHECK(title_without_suffix);
+        CHECK(restored);
+    }
+
+    TEST_CASE("the message box is wide enough for its title", "[ui]")
+    {
+        ensure_application();
+
+        const QString title = QStringLiteral("A long message box title that must not be elided");
+
+        MessageBox box;
+        box.set_title(title);
+        box.set_text(QStringLiteral("message"));
+
+        QFont title_font = box.font();
+        title_font.setBold(true);
+        const int needed = QFontMetrics(title_font).horizontalAdvance(title);
+        CHECK(box.minimumWidth() >= needed);
+
+        box.show();
+        QApplication::processEvents();
+        CHECK(box.width() >= needed);
+        box.close();
+
+        MessageBox small;
+        small.set_title(QStringLiteral("Hi"));
+        CHECK(small.minimumWidth() < needed);
     }
 
 } // namespace
