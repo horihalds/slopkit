@@ -2866,6 +2866,382 @@ TEST_CASE("typing in the filter selects the first result", "[ui]")
     dialog.close();
 }
 
+TEST_CASE("Up and Down step the process list highlight with wrap-around", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    const auto step = [&](int key)
+    {
+        QKeyEvent event {QEvent::KeyPress, key, Qt::NoModifier};
+        QCoreApplication::sendEvent(search, &event);
+        QCoreApplication::processEvents();
+    };
+
+    // Down walks to the next row while the filter box keeps the focus.
+    step(Qt::Key_Down);
+    CHECK(table->currentIndex().row() == 1);
+    CHECK(dialog.focusWidget() == search);
+
+    // Down on the last row wraps to the first.
+    step(Qt::Key_Down);
+    CHECK(table->currentIndex().row() == 0);
+
+    // Up on the first row wraps to the last.
+    step(Qt::Key_Up);
+    CHECK(table->currentIndex().row() == 1);
+
+    // Up walks back.
+    step(Qt::Key_Up);
+    CHECK(table->currentIndex().row() == 0);
+    CHECK(dialog.focusWidget() == search);
+
+    dialog.close();
+}
+
+TEST_CASE("the process list highlight stays put on a single filtered result", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2;
+                    }));
+
+    search->setText(QStringLiteral("alpha"));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 1
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    const auto step = [&](int key)
+    {
+        QKeyEvent event {QEvent::KeyPress, key, Qt::NoModifier};
+        QCoreApplication::sendEvent(search, &event);
+        QCoreApplication::processEvents();
+    };
+
+    // Wrapping around a single row leaves it current and attaches nothing: a
+    // successful attach would have cleared the target's invalidity and closed
+    // the picker.
+    step(Qt::Key_Down);
+    CHECK(table->currentIndex().row() == 0);
+    step(Qt::Key_Up);
+    CHECK(table->currentIndex().row() == 0);
+    CHECK_FALSE(target.valid());
+    CHECK(dialog.isVisible());
+
+    dialog.close();
+}
+
+TEST_CASE("the process list dialog ignores arrows when the list is empty", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access; // Empty listing.
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 0;
+                    }));
+
+    const auto step = [&](int key)
+    {
+        QKeyEvent event {QEvent::KeyPress, key, Qt::NoModifier};
+        QCoreApplication::sendEvent(search, &event);
+        QCoreApplication::processEvents();
+    };
+
+    // No rows: the arrows are no-ops, no attach is submitted and nothing crashes.
+    step(Qt::Key_Down);
+    step(Qt::Key_Up);
+    CHECK(table->currentIndex().row() < 0);
+    CHECK(access.attach_calls.load() == 0);
+    CHECK_FALSE(target.valid());
+
+    dialog.close();
+}
+
+TEST_CASE("the process list filter box keeps its other keys", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    // Ctrl+Down is left for the line edit: the highlight does not move.
+    QKeyEvent ctrl_down {QEvent::KeyPress, Qt::Key_Down, Qt::ControlModifier};
+    QCoreApplication::sendEvent(search, &ctrl_down);
+    QCoreApplication::processEvents();
+    CHECK(table->currentIndex().row() == 0);
+
+    // Typing reaches the line edit; both rows still match via their path.
+    QKeyEvent typed {QEvent::KeyPress, Qt::Key_U, Qt::NoModifier, QStringLiteral("u")};
+    QCoreApplication::sendEvent(search, &typed);
+    QCoreApplication::processEvents();
+    CHECK(search->text() == QStringLiteral("u"));
+    CHECK(search->cursorPosition() == 1);
+
+    // ...and caret movement is not swallowed.
+    QKeyEvent left {QEvent::KeyPress, Qt::Key_Left, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &left);
+    QCoreApplication::processEvents();
+    CHECK(search->cursorPosition() == 0);
+
+    dialog.close();
+}
+
+TEST_CASE("Enter attaches the row the arrow keys highlighted", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    // Down highlights pid 20 (beta)...
+    QKeyEvent down {QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &down);
+    QCoreApplication::processEvents();
+    REQUIRE(table->currentIndex().row() == 1);
+
+    // ...and Enter in the filter box attaches it and dismisses the picker.
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &enter);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.valid();
+                    }));
+    CHECK(target.pid == 20);
+    CHECK_FALSE(dialog.isVisible());
+
+    dialog.close();
+}
+
+TEST_CASE("rapid arrow steps still attach the final highlighted row", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    // Three rapid downs on a two-row list land back on row 1 (pid 20).
+    for (int i = 0; i < 3; ++i)
+    {
+        QKeyEvent down {QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier};
+        QCoreApplication::sendEvent(search, &down);
+    }
+    QCoreApplication::processEvents();
+    REQUIRE(table->currentIndex().row() == 1);
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &enter);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.valid();
+                    }));
+    CHECK(target.pid == 20);
+    CHECK_FALSE(dialog.isVisible());
+
+    dialog.close();
+}
+
+TEST_CASE("a failed attach of a stepped row keeps the highlight and the picker", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes    = sample_processes();
+    access.attach_fails = true;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    QKeyEvent down {QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &down);
+    QCoreApplication::processEvents();
+    REQUIRE(table->currentIndex().row() == 1);
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &enter);
+
+    // The failure is surfaced, the picker stays up and the stepped row stays current.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        for (auto* label : dialog.findChildren<slopkit::ui::widgets::StatusLabel*>())
+                        {
+                            if (label->text().contains(QStringLiteral("attach failed")))
+                            {
+                                return true;
+                            }
+                        }
+                        return false;
+                    }));
+    CHECK_FALSE(target.valid());
+    CHECK(dialog.isVisible());
+    CHECK(table->currentIndex().row() == 1);
+
+    dialog.close();
+}
+
+TEST_CASE("a stepped process row survives the picker's auto-refresh", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* search = dialog.findChild<QLineEdit*>();
+    auto* table  = dialog.findChild<QTableView*>();
+    REQUIRE(search != nullptr);
+    REQUIRE(table != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table->model() != nullptr && table->model()->rowCount() == 2
+                            && table->currentIndex().row() == 0;
+                    }));
+
+    // Step to the last row.
+    QKeyEvent down {QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &down);
+    QCoreApplication::processEvents();
+    REQUIRE(table->currentIndex().row() == 1);
+
+    // The picker re-lists on its own; the stepped row stays current.
+    const int listed = access.list_calls.load();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return access.list_calls.load() > listed && table->model() != nullptr
+                            && table->model()->rowCount() == 2 && table->currentIndex().row() == 1;
+                    }));
+    CHECK(table->currentIndex().row() == 1);
+
+    // ...and Enter still attaches that pid.
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(search, &enter);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.valid();
+                    }));
+    CHECK(target.pid == 20);
+
+    dialog.close();
+}
+
 TEST_CASE("the scanner range is pre-filled with the padded defaults", "[ui]")
 {
     application();

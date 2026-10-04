@@ -10,9 +10,11 @@
 #include <utility>
 
 #include <QComboBox>
+#include <QEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -485,6 +487,7 @@ namespace slopkit::ui::dialogs
                 });
 
         connect(search_edit_, &QLineEdit::returnPressed, this, &ProcessListDialog::attach_selected);
+        search_edit_->installEventFilter(this);
 
         connect(table_view_,
                 &QTableView::activated,
@@ -507,6 +510,28 @@ namespace slopkit::ui::dialogs
         request_application_index();
         refresh();
         search_edit_->setFocus(Qt::OtherFocusReason);
+    }
+
+    bool ProcessListDialog::eventFilter(QObject* watched, QEvent* event)
+    {
+        if (watched == search_edit_ && event->type() == QEvent::KeyPress)
+        {
+            auto* key = static_cast<QKeyEvent*>(event);
+            if (key->modifiers() == Qt::NoModifier)
+            {
+                if (key->key() == Qt::Key_Down)
+                {
+                    step_selection(1);
+                    return true;
+                }
+                if (key->key() == Qt::Key_Up)
+                {
+                    step_selection(-1);
+                    return true;
+                }
+            }
+        }
+        return QDialog::eventFilter(watched, event);
     }
 
     void ProcessListDialog::set_message(std::string message, widgets::StatusKind kind)
@@ -679,6 +704,20 @@ namespace slopkit::ui::dialogs
             return;
         }
         table_view_->setCurrentIndex(model_->index(row, ProcessListModel::pid));
+    }
+
+    void ProcessListDialog::step_selection(int delta)
+    {
+        const int rows = model_->rowCount();
+        if (rows <= 0)
+        {
+            return; // Nothing to step through; Enter is a no-op here too.
+        }
+        const int current = table_view_->currentIndex().row();
+        const int next    = current < 0 ? (delta > 0 ? 0 : rows - 1) : ((current + delta) % rows + rows) % rows;
+        // setCurrentIndex scrolls the row into view and currentRowChanged runs the
+        // probe, the details and the button state.
+        table_view_->setCurrentIndex(model_->index(next, ProcessListModel::pid));
     }
 
     void ProcessListDialog::probe_selection()

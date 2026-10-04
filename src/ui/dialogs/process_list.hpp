@@ -99,6 +99,7 @@ namespace slopkit::ui::dialogs
 
     protected:
         void showEvent(QShowEvent* event) override;
+        bool eventFilter(QObject* watched, QEvent* event) override;
 
     private:
         void build_layout();
@@ -111,6 +112,10 @@ namespace slopkit::ui::dialogs
         void update_buttons();
         void update_detail();
         void restore_selection();
+
+        // Moves the highlighted row by `delta` (wrapping at both ends); the
+        // table's current-row signal drives the probe, the details and the buttons.
+        void step_selection(int delta);
 
         [[nodiscard]] const process::ProcessInfo* selected() const;
         [[nodiscard]] std::string                 chosen_plugin(const process::ProcessInfo& info) const;
