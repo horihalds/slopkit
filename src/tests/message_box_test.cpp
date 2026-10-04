@@ -460,4 +460,24 @@ namespace
         CHECK(small.minimumWidth() < needed);
     }
 
+    TEST_CASE("the message box keeps its natural width as a minimum", "[ui]")
+    {
+        ensure_application();
+
+        MessageBox box;
+        box.set_title(QStringLiteral("Delete Entry"));
+        box.set_text(QStringLiteral("Delete this entry?"));
+        box.set_buttons(MessageBoxButton::yes | MessageBoxButton::no);
+
+        // A short window title must not leave the box with a sliver-thin
+        // explicit minimum: the minimum follows the natural layout size, so a
+        // window stack that sizes to it still shows a full dialog.
+        CHECK(box.minimumWidth() >= box.sizeHint().width());
+
+        box.show();
+        QApplication::processEvents();
+        CHECK(box.width() >= box.minimumWidth());
+        box.close();
+    }
+
 } // namespace

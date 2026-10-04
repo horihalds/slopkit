@@ -51,8 +51,8 @@ namespace slopkit::ui::widgets
     // A themed, modal message box: an optional kind glyph beside a word-wrapped
     // main text and an optional muted informative line, over a right-aligned row
     // of standard buttons. Nothing about its position is hard-coded; the
-    // compositor places it and the layouts size it (the window is only kept at
-    // least as wide as its title).
+    // compositor places it and the layouts size it, guarded by a sensible
+    // minimum width so it never opens as a sliver.
     class MessageBox : public QDialog
     {
         Q_OBJECT
@@ -84,6 +84,7 @@ namespace slopkit::ui::widgets
     private:
         void rebuild_buttons();
         void update_icon();
+        void update_minimum_width();
 
         QLabel*      icon_label_ {};
         StatusLabel* text_label_ {};

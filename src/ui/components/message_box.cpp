@@ -159,6 +159,7 @@ namespace slopkit::ui::widgets
         update_icon();
         // The main text follows the kind's status colour.
         text_label_->set_status(status_for(icon_), text_label_->text());
+        update_minimum_width();
     }
 
     void MessageBox::set_buttons(MessageBoxButtons buttons)
@@ -170,27 +171,20 @@ namespace slopkit::ui::widgets
     void MessageBox::set_title(const QString& title)
     {
         setWindowTitle(title);
-
-        // The decoration font is owned by the window manager and this code must
-        // not assume a decoration size, so keep the box at least as wide as the
-        // title text itself; font metrics are logical and scale with the DPI.
-        if (!title.isEmpty())
-        {
-            QFont title_font = font();
-            title_font.setBold(true);
-            setMinimumWidth(std::max(minimumWidth(), QFontMetrics(title_font).horizontalAdvance(title)));
-        }
+        update_minimum_width();
     }
 
     void MessageBox::set_text(const QString& text)
     {
         text_label_->set_status(status_for(icon_), text);
+        update_minimum_width();
     }
 
     void MessageBox::set_informative_text(const QString& text)
     {
         informative_label_->setText(text);
         informative_label_->setVisible(!text.isEmpty());
+        update_minimum_width();
     }
 
     void MessageBox::set_default_button(MessageBoxButton which)
@@ -282,6 +276,25 @@ namespace slopkit::ui::widgets
                 default_widget_ = button;
             }
         }
+        update_minimum_width();
+    }
+
+    void MessageBox::update_minimum_width()
+    {
+        // Like QMessageBox, keep the box at least as wide as its natural layout
+        // so it never opens as a sliver; an explicit minimum smaller than the
+        // natural width is what a window stack may otherwise size the box to.
+        // The window title can be wider still, so cover that too. Both values
+        // are logical and come from the layouts and font metrics, so Qt handles
+        // scaling.
+        int minimum = sizeHint().width();
+        if (!windowTitle().isEmpty())
+        {
+            QFont title_font = font();
+            title_font.setBold(true);
+            minimum = std::max(minimum, QFontMetrics(title_font).horizontalAdvance(windowTitle()));
+        }
+        setMinimumWidth(minimum);
     }
 
     void MessageBox::update_icon()
