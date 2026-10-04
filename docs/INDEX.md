@@ -46,8 +46,8 @@
 - `src/app/instance.cpp` — `getuid()`-scoped abstract socket name, connect/write/ack over a bounded timeout and the over-long-line refusal, plain POSIX with no Qt so a launch can hand off before `QApplication` exists.
 - `src/app/instance_server.hpp` — the Qt Core `InstanceServer`: the abstract-socket listener, `is_listening()` and the `tableRequested` signal.
 - `src/app/instance_server.cpp` — binds the abstract socket, accepts with a `QSocketNotifier`, buffers a hand-off per connection, acks `ok`, refuses an over-long line and emits `tableRequested` on the UI thread.
-- `src/app/sandbox.hpp` — declares `sandbox_binary_path()`, which resolves `<exe_dir>/slopkit-sandbox`, and `launch_sandbox()`, which starts it detached and returns the new pid or a readable reason.
-- `src/app/sandbox.cpp` — resolves the sibling binary the way the plugin search path resolves its directory and spawns it through `QProcess::startDetached`.
+- `src/app/sandbox.hpp` — declares `sandbox_binary_path()`, which resolves `<exe_dir>/slopkit-sandbox`, and `launch_sandbox()`, which starts it as slopkit's own child in its own session and returns the new pid or a readable reason.
+- `src/app/sandbox.cpp` — resolves the sibling binary the way the plugin search path resolves its directory and spawns it through `posix_spawn` with `POSIX_SPAWN_SETSID`.
 - `src/plugin/plugin_api.h` — the C plugin ABI: version macros, host services, descriptors (including the module main-image flag), access-method flags and the vtable.
 - `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession` (including a caller-buffer `read_into`).
 - `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake, the per-plugin host services (with log attribution) and typed plugin calls.

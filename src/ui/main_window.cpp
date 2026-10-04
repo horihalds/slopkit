@@ -605,7 +605,21 @@ namespace slopkit::ui
                         log::info(log::category::ui,
                                   std::format("auto attached to pid {} via {}", pid, attached.info->plugin_id));
                         refresh_target_label();
-                        address_list_->report_status(std::format("Attached to {}.", pname), false);
+                        if (attached.info->read_error)
+                        {
+                            log::warning(log::category::ui,
+                                         std::format("auto attach to pid {} cannot read memory: {}",
+                                                     pid,
+                                                     process::describe(*attached.info->read_error)));
+                            address_list_->report_status(std::format("Attached to {}; memory not readable ({}).",
+                                                                     pname,
+                                                                     process::describe(*attached.info->read_error)),
+                                                         true);
+                        }
+                        else
+                        {
+                            address_list_->report_status(std::format("Attached to {}.", pname), false);
+                        }
                     });
                 if (!attach_submitted)
                 {

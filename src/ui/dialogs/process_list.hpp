@@ -142,6 +142,7 @@ namespace slopkit::ui::dialogs
         QLabel*               detail_access_ {};
         QLabel*               detail_modules_ {};
         QLabel*               detail_threads_ {};
+        QLabel*               detail_memory_ {};
         QLabel*               detail_inspecting_ {};
         QPushButton*          attach_button_ {};
         widgets::StatusLabel* attached_label_ {};
@@ -158,10 +159,14 @@ namespace slopkit::ui::dialogs
         bool               restoring_ {false};
 
         // Cached detail for the selected process.
-        int                   detail_pid_value_ {-1};
-        process::AccessMethod detail_methods_ {process::AccessMethod::none};
-        std::size_t           detail_module_count_ {0};
-        std::size_t           detail_thread_count_ {0};
+        int                                 detail_pid_value_ {-1};
+        process::AccessMethod               detail_methods_ {process::AccessMethod::none};
+        std::size_t                         detail_module_count_ {0};
+        std::size_t                         detail_thread_count_ {0};
+        std::optional<process::AccessError> detail_read_error_;
+        // True once a probe reached the memory-read check, so the verdict line is
+        // only shown when a verdict actually exists.
+        bool                                detail_read_checked_ {false};
 
         std::string selected_plugin_;
         std::string message_;

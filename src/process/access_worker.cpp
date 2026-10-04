@@ -1,5 +1,6 @@
 #include "process/access_worker.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -16,6 +17,48 @@
 
 namespace slopkit::process
 {
+
+    namespace
+    {
+        // Reads one byte from the target to learn whether its memory is actually
+        // reachable: an attach and the process metadata can succeed while every
+        // read is refused (e.g. Yama denies a target slopkit is not an ancestor
+        // of). Returns the reason on failure, or nullopt when the read succeeds
+        // or there is no address worth probing.
+        std::optional<AccessError> check_memory_access(Session& session, std::span<const ModuleInfo> modules)
+        {
+            std::uint64_t address = 0;
+
+            const ModuleInfo* main = main_module(modules);
+            if (main != nullptr && main->base != 0)
+            {
+                address = main->base;
+            }
+            else if (const auto regions = session.regions(); regions.has_value())
+            {
+                const auto readable = std::ranges::find_if(*regions,
+                                                           [](const RegionInfo& region)
+                                                           {
+                                                               return region.readable;
+                                                           });
+                if (readable != regions->end())
+                {
+                    address = readable->start;
+                }
+            }
+
+            if (address == 0)
+            {
+                return std::nullopt;
+            }
+
+            if (const auto read = session.read(address, 1); !read)
+            {
+                return read.error();
+            }
+            return std::nullopt;
+        }
+    } // namespace
 
     AccessWorker::AccessWorker(ProcessAccess& access) : access_(access)
     {
@@ -357,6 +400,16 @@ namespace slopkit::process
         if (auto modules = probe->modules())
         {
             result.modules = modules->size();
+
+            if (const auto read_error = check_memory_access(*probe, *modules))
+            {
+                result.read_error = read_error;
+                log::warning(log::category::process,
+                             std::format("probe of pid {} cannot read memory via {}: {}",
+                                         request.pid,
+                                         describe(result.method),
+                                         describe(*read_error)));
+            }
         }
         else
         {
@@ -403,9 +456,25 @@ namespace slopkit::process
             return result;
         }
 
-        result.info = AttachInfo {.pid       = request.pid,
-                                  .plugin_id = std::string(attached->plugin_id()),
-                                  .method    = attached->advertised_methods()};
+        AttachInfo info {.pid        = request.pid,
+                         .plugin_id  = std::string(attached->plugin_id()),
+                         .method     = attached->advertised_methods(),
+                         .read_error = std::nullopt};
+
+        if (const auto modules = attached->modules(); modules.has_value())
+        {
+            if (const auto read_error = check_memory_access(*attached, *modules))
+            {
+                info.read_error = read_error;
+                log::warning(log::category::process,
+                             std::format("attach to pid {} via {} cannot read memory: {}",
+                                         request.pid,
+                                         info.plugin_id,
+                                         describe(*read_error)));
+            }
+        }
+
+        result.info = std::move(info);
         session_    = std::move(*attached);
         attached_   = true;
         return result;

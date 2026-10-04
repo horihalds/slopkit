@@ -51,6 +51,9 @@ namespace
         std::size_t                               module_count = 0;
         std::size_t                               thread_count = 0;
         std::vector<slopkit::process::RegionInfo> region_list;
+        // When set, every read fails with this error, modelling an unreadable
+        // target whose attach and metadata calls still succeed.
+        std::optional<AccessError>                read_error;
 
         [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
         {
@@ -74,6 +77,10 @@ namespace
 
         std::expected<std::vector<std::byte>, AccessError> read(std::uint64_t address, std::size_t size) override
         {
+            if (read_error.has_value())
+            {
+                return std::unexpected(*read_error);
+            }
             if (address < kBase || address - kBase + size > memory.size())
             {
                 return std::unexpected(AccessError::not_found);
@@ -96,7 +103,18 @@ namespace
 
         std::expected<std::vector<slopkit::process::ModuleInfo>, AccessError> modules() override
         {
-            return std::vector<slopkit::process::ModuleInfo>(module_count);
+            std::vector<slopkit::process::ModuleInfo> result(module_count);
+            if (!result.empty())
+            {
+                // A file-backed main image at kBase, so the readability probe has a
+                // real address to read (a default-constructed module sits at 0).
+                auto& main   = result.front();
+                main.base    = kBase;
+                main.size    = memory.size();
+                main.kind    = slopkit::process::ModuleKind::elf;
+                main.is_main = true;
+            }
+            return result;
         }
 
         std::expected<std::vector<slopkit::process::ThreadInfo>, AccessError> threads() override
@@ -140,6 +158,10 @@ namespace
             return backend_;
         }
 
+        // Applied to each backend attach() creates, so a test can model a target
+        // whose metadata is readable but whose memory cannot be.
+        std::optional<AccessError> read_error;
+
         std::expected<std::vector<slopkit::process::ProcessInfo>, AccessError> list_processes() override
         {
             enter();
@@ -161,6 +183,7 @@ namespace
             auto owned          = std::make_unique<FakeBackend>();
             owned->module_count = 2;
             owned->thread_count = 3;
+            owned->read_error   = read_error;
             backend_            = owned.get();
             return slopkit::process::Session {std::move(owned)};
         }
@@ -479,6 +502,48 @@ TEST_CASE("probe jobs report the access method and module/thread counts", "[work
     CHECK(probe.method == AccessMethod::procfs_mem);
     CHECK(probe.modules == 2);
     CHECK(probe.threads == 3);
+    CHECK_FALSE(probe.read_error.has_value());
+}
+
+TEST_CASE("probe and attach report an unreadable target", "[worker]")
+{
+    GatedAccess access {false};
+    // Metadata and attach keep working; only the memory read is refused.
+    access.read_error = AccessError::permission_denied;
+    AccessWorker worker {access};
+
+    ProbeResult probe;
+    worker.submit_probe(worker.next_job_id(),
+                        7,
+                        "fake",
+                        [&](JobResult&& result)
+                        {
+                            probe = std::get<ProbeResult>(std::move(result));
+                        });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return probe.method != AccessMethod::none || probe.error.has_value();
+                 }));
+    CHECK_FALSE(probe.error.has_value());
+    CHECK(probe.read_error == AccessError::permission_denied);
+
+    AttachResult attached;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&& result)
+                             {
+                                 attached = std::get<AttachResult>(std::move(result));
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached.info.has_value() || attached.error.has_value();
+                 }));
+    REQUIRE_FALSE(attached.error.has_value());
+    REQUIRE(attached.info.has_value());
+    CHECK(attached.info->read_error == AccessError::permission_denied);
 }
 
 TEST_CASE("write and freeze jobs reach the target memory", "[worker]")

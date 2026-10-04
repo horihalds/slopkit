@@ -109,6 +109,13 @@ never attaches to the target. The technique categories:
   `/proc/<pid>/mem` pread/pwrite fallback when the syscall is unavailable or refused.
 - **No artifacts in the target** — slopkit does not inject code, load libraries into or
   leave handles behind in the target process.
+- **Kernel read permission** — with the Linux Yama LSM at its default `ptrace_scope=1`,
+  `process_vm_readv` / `/proc/<pid>/mem` are permitted only for a descendant of the
+  target. The practice target is started as slopkit's own child (in its own session, so
+  it still outlives slopkit) for exactly that reason; a target slopkit did not start
+  shows as `Memory: not readable` in the Process List details, and a table auto-attach
+  says so on the status line. Relaxing `kernel.yama.ptrace_scope` or granting
+  `CAP_SYS_PTRACE` is the user-side alternative.
 - **Per-plugin access strategies** — each plugin advertises the methods it can use, and
   the method actually used is reported per session, so the least detectable path can be
   preferred.

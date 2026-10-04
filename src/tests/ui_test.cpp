@@ -148,8 +148,11 @@ namespace
     class UiFakeBackend final : public slopkit::process::SessionBackend
     {
     public:
-        std::vector<slopkit::process::ModuleInfo> module_list;
-        std::vector<slopkit::process::RegionInfo> region_list;
+        std::vector<slopkit::process::ModuleInfo>    module_list;
+        std::vector<slopkit::process::RegionInfo>    region_list;
+        // When set, every read fails with this error, modelling a target whose
+        // metadata is readable but whose memory cannot be.
+        std::optional<slopkit::process::AccessError> read_error;
 
         [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
         {
@@ -173,6 +176,10 @@ namespace
 
         std::expected<std::vector<std::byte>, slopkit::process::AccessError> read(std::uint64_t, std::size_t) override
         {
+            if (read_error.has_value())
+            {
+                return std::unexpected(*read_error);
+            }
             return std::vector<std::byte> {};
         }
 
@@ -203,12 +210,15 @@ namespace
     class UiFakeAccess final : public slopkit::process::ProcessAccess
     {
     public:
-        std::vector<slopkit::process::ProcessInfo> processes;
-        std::vector<slopkit::process::ModuleInfo>  modules;
-        std::vector<slopkit::process::RegionInfo>  regions;
-        bool                                       attach_fails {false};
-        std::atomic<int>                           attach_calls {0};
-        std::atomic<int>                           list_calls {0};
+        std::vector<slopkit::process::ProcessInfo>   processes;
+        std::vector<slopkit::process::ModuleInfo>    modules;
+        std::vector<slopkit::process::RegionInfo>    regions;
+        bool                                         attach_fails {false};
+        // Applied to each backend attach() creates, so a test can model a target
+        // whose memory cannot be read.
+        std::optional<slopkit::process::AccessError> read_error;
+        std::atomic<int>                             attach_calls {0};
+        std::atomic<int>                             list_calls {0};
 
         std::expected<std::vector<slopkit::process::ProcessInfo>, slopkit::process::AccessError>
         list_processes() override
@@ -228,6 +238,7 @@ namespace
             auto backend         = std::make_unique<UiFakeBackend>();
             backend->module_list = modules;
             backend->region_list = regions;
+            backend->read_error  = read_error;
             return slopkit::process::Session {std::move(backend)};
         }
     };
@@ -3186,6 +3197,86 @@ TEST_CASE("a failed attach of a stepped row keeps the highlight and the picker",
     CHECK_FALSE(target.valid());
     CHECK(dialog.isVisible());
     CHECK(table->currentIndex().row() == 1);
+
+    dialog.close();
+}
+
+TEST_CASE("the process list details pane reports a readable target", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes = sample_processes();
+
+    slopkit::process::ModuleInfo main;
+    main.base      = 0x1000;
+    main.size      = 0x1000;
+    main.kind      = slopkit::process::ModuleKind::elf;
+    main.is_main   = true;
+    main.path      = "/usr/bin/alpha";
+    access.modules = {main};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* memory = dialog.findChild<QLabel*>(QStringLiteral("detail_memory"));
+    REQUIRE(memory != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return memory->isVisible() && memory->text() == QStringLiteral("Memory: readable");
+                    }));
+    CHECK(memory->text() == QStringLiteral("Memory: readable"));
+
+    dialog.close();
+}
+
+TEST_CASE("the process list details pane explains an unreadable target", "[ui]")
+{
+    application();
+
+    UiFakeAccess access;
+    access.processes  = sample_processes();
+    access.read_error = slopkit::process::AccessError::permission_denied;
+
+    slopkit::process::ModuleInfo main;
+    main.base      = 0x1000;
+    main.size      = 0x1000;
+    main.kind      = slopkit::process::ModuleKind::elf;
+    main.is_main   = true;
+    main.path      = "/usr/bin/alpha";
+    access.modules = {main};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::dialogs::ProcessListDialog dialog {worker, target};
+    dialog.show();
+
+    auto* memory = dialog.findChild<QLabel*>(QStringLiteral("detail_memory"));
+    REQUIRE(memory != nullptr);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return memory->isVisible()
+                            && memory->text() == QStringLiteral("Memory: not readable (permission denied)");
+                    }));
+
+    // The failure is also visible on the picker's Details message line.
+    bool warned = false;
+    for (auto* label : dialog.findChildren<slopkit::ui::widgets::StatusLabel*>())
+    {
+        if (label->text().contains(QStringLiteral("memory not readable")))
+        {
+            warned = true;
+        }
+    }
+    CHECK(warned);
 
     dialog.close();
 }

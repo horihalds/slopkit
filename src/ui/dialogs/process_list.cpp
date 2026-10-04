@@ -392,6 +392,11 @@ namespace slopkit::ui::dialogs
         detail_threads_->setFont(mono_font());
         detail_layout->addWidget(detail_threads_);
 
+        detail_memory_ = new QLabel(detail_body_);
+        detail_memory_->setObjectName("detail_memory");
+        detail_memory_->setWordWrap(true);
+        detail_layout->addWidget(detail_memory_);
+
         attach_button_   = new widgets::PrimaryButton(tr("Attach"), detail_body_);
         auto* attach_row = new QHBoxLayout();
         attach_row->addWidget(attach_button_);
@@ -729,6 +734,8 @@ namespace slopkit::ui::dialogs
             detail_methods_      = process::AccessMethod::none;
             detail_module_count_ = 0;
             detail_thread_count_ = 0;
+            detail_read_error_.reset();
+            detail_read_checked_ = false;
             return;
         }
         if (probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info->pid))
@@ -744,6 +751,8 @@ namespace slopkit::ui::dialogs
         detail_methods_      = process::AccessMethod::none;
         detail_module_count_ = 0;
         detail_thread_count_ = 0;
+        detail_read_error_.reset();
+        detail_read_checked_ = false;
         clear_message();
 
         const process::JobId job_id = worker_.next_job_id();
@@ -785,10 +794,19 @@ namespace slopkit::ui::dialogs
                     detail_methods_      = probe.method;
                     detail_module_count_ = probe.modules;
                     detail_thread_count_ = probe.threads;
+                    detail_read_error_   = probe.read_error;
+                    detail_read_checked_ = !probe.modules_error.has_value();
                     if (probe.modules_error)
                     {
                         set_message(std::string("modules unavailable: ")
                                         + std::string(process::describe(*probe.modules_error)),
+                                    widgets::StatusKind::warning);
+                    }
+                    else if (probe.read_error)
+                    {
+                        set_message(std::string("memory not readable (")
+                                        + std::string(process::describe(*probe.read_error))
+                                        + ") - the target must be started by slopkit to be readable",
                                     widgets::StatusKind::warning);
                     }
                 }
@@ -949,10 +967,18 @@ namespace slopkit::ui::dialogs
         detail_access_->setVisible(!inspecting);
         detail_modules_->setVisible(!inspecting);
         detail_threads_->setVisible(!inspecting);
+        detail_memory_->setVisible(!inspecting && detail_read_checked_);
 
         detail_access_->setText(tr("Access methods: %1").arg(to_qstring(process::describe(detail_methods_))));
         detail_modules_->setText(tr("Modules: %1").arg(static_cast<qulonglong>(detail_module_count_)));
         detail_threads_->setText(tr("Threads: %1").arg(static_cast<qulonglong>(detail_thread_count_)));
+        if (detail_read_checked_)
+        {
+            detail_memory_->setText(
+                detail_read_error_
+                    ? tr("Memory: not readable (%1)").arg(to_qstring(process::describe(*detail_read_error_)))
+                    : tr("Memory: readable"));
+        }
     }
 
     void ProcessListDialog::update_claimants(const process::ProcessInfo& info)

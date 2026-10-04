@@ -38,9 +38,10 @@ namespace slopkit::process
     // worker.
     struct AttachInfo
     {
-        ProcessId    pid {};
-        std::string  plugin_id;
-        AccessMethod method {AccessMethod::none};
+        ProcessId                  pid {};
+        std::string                plugin_id;
+        AccessMethod               method {AccessMethod::none};
+        std::optional<AccessError> read_error; // set when the target is not readable
     };
 
     struct ListResult
@@ -56,6 +57,7 @@ namespace slopkit::process
         std::size_t                threads {};
         std::optional<AccessError> error;         // attach failure
         std::optional<AccessError> modules_error; // modules() failure
+        std::optional<AccessError> read_error;    // memory read probe failure
     };
 
     struct AttachResult
