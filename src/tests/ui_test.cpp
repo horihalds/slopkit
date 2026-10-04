@@ -40,7 +40,6 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPalette>
 #include <QPixmap>
@@ -68,6 +67,7 @@
 #include "scan/source.hpp"
 #include "table/serializer.hpp"
 #include "ui/address_format.hpp"
+#include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/log.hpp"
@@ -1460,7 +1460,7 @@ TEST_CASE("the address list delete confirmation follows the address mode", "[ui]
                            {
                                for (QWidget* widget : QApplication::topLevelWidgets())
                                {
-                                   if (auto* box = qobject_cast<QMessageBox*>(widget);
+                                   if (auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
                                        box != nullptr && box->isVisible())
                                    {
                                        prompt = box->text();

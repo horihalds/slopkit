@@ -14,13 +14,13 @@
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QMenu>
-#include <QMessageBox>
 #include <QTableView>
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "table/serializer.hpp"
+#include "ui/components/message_box.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/table_file.hpp"
 
@@ -228,9 +228,7 @@ namespace slopkit::ui::panels
         const auto  address = model_->address_text(entry.address);
         const auto  label   = entry.description.empty() ? address : to_qstring(entry.description);
 
-        const auto answer = QMessageBox::question(
-            this, tr("Delete Entry"), tr("Delete %1?").arg(label), QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (answer != QMessageBox::Yes)
+        if (!widgets::confirm(this, tr("Delete Entry"), tr("Delete %1?").arg(label)))
         {
             return;
         }
