@@ -407,8 +407,11 @@ namespace slopkit::ui::dialogs
         std::vector<AccessRow> rows_;
     };
 
-    AccessWatchDialog::AccessWatchDialog(debug::Controller& controller, process::AccessWorker& worker, QWidget* parent)
-        : QDialog(parent), controller_(controller), worker_(worker)
+    AccessWatchDialog::AccessWatchDialog(debug::Controller&       controller,
+                                         process::AccessWorker&   worker,
+                                         process::AttachedTarget& target,
+                                         QWidget*                 parent)
+        : QDialog(parent), controller_(controller), worker_(worker), gate_(controller, target, *this, this)
     {
         setWindowTitle(tr("Access Watch"));
         setWindowFlag(Qt::Window, true);
@@ -416,6 +419,22 @@ namespace slopkit::ui::dialogs
         build_layout();
 
         connect(&controller_, &debug::Controller::watchChanged, this, &AccessWatchDialog::refresh);
+        // The gate's own lines (attaching, attached, cancelled, failed) land in
+        // the window's status area, and a give-up drops the pending watch.
+        connect(&gate_,
+                &DebugSessionGate::progress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    status_->set_status(error ? widgets::StatusKind::warning : widgets::StatusKind::info, text);
+                });
+        connect(&gate_,
+                &DebugSessionGate::abandoned,
+                this,
+                [this]
+                {
+                    pending_watch_.reset();
+                });
         refresh();
     }
 
@@ -584,6 +603,46 @@ namespace slopkit::ui::dialogs
         refresh();
     }
 
+    void AccessWatchDialog::arm_watch(std::uint64_t address, debug::Kind kind, std::size_t size)
+    {
+        pending_watch_ = PendingWatch {address, kind, size};
+        if (!gate_.session_live())
+        {
+            status_->set_status(widgets::StatusKind::info, tr("Waiting for a debug session…"));
+        }
+        const QString reason = kind == debug::Kind::hardware_read_write ? tr("find out what accesses this address")
+                                                                        : tr("find out what writes this address");
+        gate_.with_session(reason,
+                           [this]
+                           {
+                               arm_pending_watch();
+                           });
+    }
+
+    void AccessWatchDialog::arm_pending_watch()
+    {
+        if (!pending_watch_.has_value())
+        {
+            return;
+        }
+        const PendingWatch watch = *pending_watch_;
+        pending_watch_.reset();
+        show();
+        raise();
+        activateWindow();
+        start_watch(watch.address, watch.kind, watch.size);
+    }
+
+    DebugSessionGate& AccessWatchDialog::debug_gate() noexcept
+    {
+        return gate_;
+    }
+
+    bool AccessWatchDialog::watch_pending() const noexcept
+    {
+        return pending_watch_.has_value();
+    }
+
     void AccessWatchDialog::show_instruction_accesses(std::uint64_t                   instruction,
                                                       std::size_t                     instruction_length,
                                                       std::vector<ui::ResolvedAccess> accesses)
@@ -604,7 +663,7 @@ namespace slopkit::ui::dialogs
         else if (!resolved)
         {
             hint_->set_status(widgets::StatusKind::warning,
-                              tr("No register context yet — press Break (or hit a breakpoint) first."));
+                              tr("The operands could not be resolved from the register values at this stop."));
         }
         else
         {

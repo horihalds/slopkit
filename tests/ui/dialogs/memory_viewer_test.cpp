@@ -967,9 +967,21 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     CHECK(resolved[0].resolved);
     CHECK(resolved[0].address == code_base + 0x10);
 
-    // Without a stop there is no register context, so the operand stays
-    // unresolved rather than resolving to a wrong address.
-    slopkit::ui::dialogs::MemoryViewerDialog plain {worker, target, shared_debug_controller()};
+    // A running target whose register file cannot be read: the capture still
+    // runs, the target is put back running, the rows arrive unresolved and a
+    // warning is reported instead of a silent empty table.
+    slopkit::tests::FakeDebugBackend plain_backend;
+    plain_backend.register_file.clear();
+    plain_backend.block_continue = true;
+    slopkit::debug::Controller plain_controller {plain_backend};
+    plain_controller.start(42, "fake");
+    REQUIRE(pump_until(plain_controller,
+                       [&]
+                       {
+                           return plain_controller.state() == slopkit::debug::Controller::State::running;
+                       }));
+
+    slopkit::ui::dialogs::MemoryViewerDialog plain {worker, target, plain_controller};
     plain.set_address(0x1000);
     plain.show();
     for (std::size_t guard = 0; guard < 8; ++guard)
@@ -978,7 +990,15 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     }
     seed_listing_operand(access, plain);
 
+    int warnings = 0;
     resolved.clear();
+    QObject::connect(&plain,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::instructionAccessesProgress,
+                     &plain,
+                     [&warnings](const QString&, bool error)
+                     {
+                         warnings += error ? 1 : 0;
+                     });
     QObject::connect(&plain,
                      &slopkit::ui::dialogs::MemoryViewerDialog::instructionAccessesResolved,
                      &plain,
@@ -986,10 +1006,121 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
                      {
                          resolved = std::move(accesses);
                      });
+
     plain.instruction_accesses(0);
+    REQUIRE(pump_until(plain_controller,
+                       [&]
+                       {
+                           return !resolved.empty();
+                       }));
     REQUIRE(resolved.size() == 1);
     CHECK_FALSE(resolved[0].resolved);
+    CHECK(warnings == 1);
+    // The invisible capture read the registers once and left the target running.
+    CHECK(plain_backend.count("registers") == 1);
+    CHECK(plain_controller.state() == slopkit::debug::Controller::State::running);
+
+    // Every invocation captures again, so a repeated click reads the registers
+    // once more and resolves against current values.
+    resolved.clear();
+    plain.instruction_accesses(0);
+    REQUIRE(pump_until(plain_controller,
+                       [&]
+                       {
+                           return !resolved.empty();
+                       }));
+    CHECK_FALSE(resolved[0].resolved);
+    CHECK(plain_backend.count("registers") == 2);
 
     viewer.hide();
     plain.hide();
+}
+
+TEST_CASE("the memory viewer attaches the debugger on demand for the operands", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::tests::FakeDebugBackend backend;
+    backend.block_continue = true;
+    slopkit::debug::Controller controller {backend};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
+    viewer.set_address(0x1000);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    const std::uint64_t code_base = seed_listing_operand(access, viewer);
+
+    int prompts = 0;
+    viewer.debug_gate().set_attach_prompt(
+        [&prompts](const slopkit::process::AttachedTarget&, const QString& reason)
+        {
+            ++prompts;
+            CHECK(reason == QStringLiteral("find out what this instruction accesses"));
+            return true;
+        });
+
+    std::vector<slopkit::ui::ResolvedAccess> resolved;
+    QObject::connect(&viewer,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::instructionAccessesResolved,
+                     &viewer,
+                     [&](std::uint64_t address, std::size_t, std::vector<slopkit::ui::ResolvedAccess> accesses)
+                     {
+                         CHECK(address == code_base);
+                         resolved = std::move(accesses);
+                     });
+
+    CHECK(controller.state() == slopkit::debug::Controller::State::idle);
+    viewer.instruction_accesses(0);
+    CHECK(prompts == 1);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           QCoreApplication::processEvents();
+                           return !resolved.empty();
+                       }));
+    REQUIRE(resolved.size() == 1);
+    // The fake register file holds zeroes, so the operand resolves, and the
+    // session is left running.
+    CHECK(resolved[0].resolved);
+    CHECK(controller.state() == slopkit::debug::Controller::State::running);
+
+    // A declined prompt never starts a session and yields no rows.
+    slopkit::tests::FakeDebugBackend         denied_backend;
+    slopkit::debug::Controller               denied_controller {denied_backend};
+    slopkit::ui::dialogs::MemoryViewerDialog denied {worker, target, denied_controller};
+    denied.set_address(0x1000);
+    denied.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    seed_listing_operand(access, denied);
+    denied.debug_gate().set_attach_prompt(
+        [](const slopkit::process::AttachedTarget&, const QString&)
+        {
+            return false;
+        });
+    bool denied_resolved = false;
+    QObject::connect(&denied,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::instructionAccessesResolved,
+                     &denied,
+                     [&denied_resolved](std::uint64_t, std::size_t, std::vector<slopkit::ui::ResolvedAccess>)
+                     {
+                         denied_resolved = true;
+                     });
+    denied.instruction_accesses(0);
+    CHECK_FALSE(denied_resolved);
+    CHECK(denied_controller.state() == slopkit::debug::Controller::State::idle);
+    CHECK(denied_backend.count("attach") == 0);
+
+    viewer.hide();
+    denied.hide();
 }

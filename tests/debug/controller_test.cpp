@@ -528,3 +528,113 @@ TEST_CASE("controller refuses an access watch it cannot arm", "[debug][controlle
     CHECK(duplicate.error() == "a breakpoint already covers this address");
     CHECK(controller.watch().state() == slopkit::debug::WatchState::idle);
 }
+
+TEST_CASE("controller captures the registers of a running target invisibly", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.register_file = slopkit::tests::default_registers(0x7000);
+    Controller controller(backend);
+    backend.block_continue = true;
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    int registers_changed = 0;
+    int stopped_reports   = 0;
+    int state_changes     = 0;
+    QObject::connect(&controller,
+                     &Controller::registersChanged,
+                     &controller,
+                     [&registers_changed]
+                     {
+                         ++registers_changed;
+                     });
+    QObject::connect(&controller,
+                     &Controller::stopped,
+                     &controller,
+                     [&stopped_reports]
+                     {
+                         ++stopped_reports;
+                     });
+    QObject::connect(&controller,
+                     &Controller::stateChanged,
+                     &controller,
+                     [&state_changes]
+                     {
+                         ++state_changes;
+                     });
+
+    backend.calls.clear();
+    int captured = 0;
+    controller.capture_registers(
+        [&captured]
+        {
+            ++captured;
+        });
+
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return captured == 1;
+                       }));
+    CHECK(captured == 1);
+    CHECK(registers_changed == 1);
+    CHECK(stopped_reports == 0);
+    CHECK(state_changes == 0);
+    CHECK(controller.state() == Controller::State::running);
+    REQUIRE(controller.registers().size() == 18);
+    bool rip_visible = false;
+    for (const auto& value : controller.registers())
+    {
+        rip_visible = rip_visible || (value.name == "RIP" && value.value == 0x7000);
+    }
+    CHECK(rip_visible);
+    CHECK(backend.count("interrupt") == 1);
+    CHECK(backend.count("registers") == 1);
+    // The target was put back running after the capture.
+    CHECK(pump_until(controller,
+                     [&]
+                     {
+                         return backend.count("cont") >= 1;
+                     }));
+}
+
+TEST_CASE("controller captures immediately when the target is stopped or absent", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+
+    // No session: the callback runs right away, nothing reaches the backend.
+    int idle_captured = 0;
+    controller.capture_registers(
+        [&idle_captured]
+        {
+            ++idle_captured;
+        });
+    CHECK(idle_captured == 1);
+    CHECK(backend.count("interrupt") == 0);
+    CHECK(backend.count("registers") == 0);
+
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.registers().size() == 18;
+                       }));
+
+    backend.calls.clear();
+    int stopped_captured = 0;
+    controller.capture_registers(
+        [&stopped_captured]
+        {
+            ++stopped_captured;
+        });
+    CHECK(stopped_captured == 1);
+    CHECK(backend.count("interrupt") == 0);
+    CHECK(backend.count("registers") == 0);
+    CHECK(controller.state() == Controller::State::stopped);
+}

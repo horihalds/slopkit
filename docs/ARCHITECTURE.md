@@ -120,9 +120,20 @@ beside the normal access path rather than in it, so the read/write path stays
   cap), marks the `watchChanged()` signal dirty and resumes immediately, so the
   target keeps running. A new watch replaces the running one; `Stop` disarms it
   without dropping the recorded rows.
+- The session is not started only from the Debugger pane: the watch commands
+  (`Find out what writes/accesses this address` in the address list and the scan
+  results, and `Find out what addresses this instruction accesses` in the
+  listing) run through `ui::DebugSessionGate`, which asks the user (Yes/No, `No`
+  default), calls `Controller::start()` when no session exists and waits for
+  `running` before the command continues. The listing command then reads the
+  register file through `Controller::capture_registers()`: a one-shot invisible
+  stop built on the same machinery as the maintenance stop, which reads the
+  registers, emits only `registersChanged()` and resumes, without ever reporting
+  a stop or moving the listing position.
 - The Debugger pane, the Breakpoints window and the Access Watch window only
-  submit and render; they never touch a session. `ptrace` runs only inside an
-  explicitly started session, which the controller reports under the `debug` log
-  category at start and stop. The Access Watch window's instruction reads are the
-  one debugger-adjacent UI access that does not go through the debug worker: they
-  are ordinary memory reads batched on `process::AccessWorker`.
+  submit and render; they never touch a session. `ptrace` runs only inside a
+  session, which starts from `Start Debugging` or from a watch command after the
+  user confirms the attach prompt, and which the controller reports under the
+  `debug` log category at start and stop. The Access Watch window's instruction
+  reads are the one debugger-adjacent UI access that does not go through the debug
+  worker: they are ordinary memory reads batched on `process::AccessWorker`.

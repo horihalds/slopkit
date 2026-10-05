@@ -269,7 +269,8 @@ namespace slopkit::ui::panels
         if (target_attached_ && hit != nullptr)
         {
             QAction* writes = menu.addAction(tr("Find out what writes this address"));
-            writes->setToolTip(tr("Arm a hardware watch and record every instruction that writes this address."));
+            writes->setToolTip(tr("Record every instruction that writes this address. The debugger is attached "
+                                  "first (after a confirmation) when no session is running."));
             connect(writes,
                     &QAction::triggered,
                     this,
@@ -283,8 +284,8 @@ namespace slopkit::ui::panels
                     });
 
             QAction* accesses = menu.addAction(tr("Find out what accesses this address"));
-            accesses->setToolTip(
-                tr("Arm a hardware watch and record every instruction that reads or writes this address."));
+            accesses->setToolTip(tr("Record every instruction that reads or writes this address. The debugger is "
+                                    "attached first (after a confirmation) when no session is running."));
             connect(accesses,
                     &QAction::triggered,
                     this,

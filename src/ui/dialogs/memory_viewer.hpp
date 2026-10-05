@@ -15,6 +15,7 @@
 #include "ui/address_format.hpp"
 #include "ui/components/disassembly_document.hpp"
 #include "ui/components/memory_view_document.hpp"
+#include "ui/debug_session.hpp"
 #include "ui/live_values.hpp"
 
 #include <QByteArray>
@@ -68,8 +69,12 @@ namespace slopkit::ui::dialogs
 
         // Resolves a listing row's memory operands against the controller's
         // register context and emits instructionAccessesResolved; nothing in the
-        // target is touched.
+        // target is touched. Attaches the debug session on demand first, and
+        // captures the registers of the running target once.
         void instruction_accesses(std::size_t row);
+
+        // The on-demand attach gate behind the listing command; also the test seam.
+        [[nodiscard]] DebugSessionGate& debug_gate() noexcept;
 
         // Sets the module image spans used to render module-relative addresses.
         void set_modules(std::vector<process::ModuleInfo> modules);
@@ -92,6 +97,8 @@ namespace slopkit::ui::dialogs
         void instructionAccessesResolved(std::uint64_t                   instruction,
                                          std::size_t                     instruction_length,
                                          std::vector<ui::ResolvedAccess> accesses);
+        // The attach and capture steps of the listing command, for the status line.
+        void instructionAccessesProgress(const QString& text, bool error);
 
     protected:
         void showEvent(QShowEvent* event) override;
@@ -130,6 +137,11 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] bool                   pane_go_to(const QString& text, GoToTarget target);
         void                                 apply_pane_address(std::uint64_t address, GoToTarget target);
 
+        // The listing command's continuation: capture a live register snapshot
+        // when the target runs, then decode and resolve the remembered row.
+        void resolve_instruction_accesses(std::size_t row);
+        void finish_instruction_accesses(std::size_t row);
+
         // After a stop, jumps the listing to RIP and asks for a fresh live pass.
         void follow_stop();
 
@@ -139,6 +151,7 @@ namespace slopkit::ui::dialogs
         process::AccessWorker&          worker_;
         process::AttachedTarget&        target_;
         debug::Controller&              debug_;
+        DebugSessionGate                gate_;
         components::MemoryViewDocument  document_;
         components::MemoryView*         view_ {};
         components::DisassemblyDocument disassembly_document_;

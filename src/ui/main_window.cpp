@@ -376,7 +376,7 @@ namespace slopkit::ui
         // The Access Watch window is a view over the controller's one watch and
         // over the resolved listing operands; it also routes its own Follow
         // requests into the Memory Viewer.
-        access_watch_ = new dialogs::AccessWatchDialog(debug_, worker_, this);
+        access_watch_ = new dialogs::AccessWatchDialog(debug_, worker_, target_, this);
         connect(access_watch_,
                 &dialogs::AccessWatchDialog::followRequested,
                 this,
@@ -384,10 +384,34 @@ namespace slopkit::ui
                 {
                     on_memory_view_requested(address);
                 });
+        // The gate's attach lines (attaching, attached, cancelled, failed) land
+        // in the main status area, since no dialog is up while it asks.
+        connect(&access_watch_->debug_gate(),
+                &ui::DebugSessionGate::progress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
         connect(memory_view_.get(),
                 &dialogs::MemoryViewerDialog::instructionAccessesResolved,
                 this,
                 &MainWindow::show_instruction_accesses);
+        // The listing command's attach and capture also report into the status line.
+        connect(&memory_view_->debug_gate(),
+                &ui::DebugSessionGate::progress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::instructionAccessesProgress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
 
         // The dialog is a view over the shared controller; the window is the only
         // component that applies the persisted values to the live views.
@@ -512,8 +536,9 @@ namespace slopkit::ui
         {
             return;
         }
-        show_access_watch();
-        access_watch_->start_watch(address, kind, ui::watch_size(width));
+        // The window is shown by the dialog itself once the watch is armed, so a
+        // declined or failed attach never pops an empty window.
+        access_watch_->arm_watch(address, kind, ui::watch_size(width));
     }
 
     void MainWindow::show_instruction_accesses(std::uint64_t                   instruction,

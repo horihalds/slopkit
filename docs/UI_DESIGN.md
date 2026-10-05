@@ -135,6 +135,16 @@ the pane only submits work to the debug controller and renders what it reports.
 until the first deliberate stop. `Break` performs the ordinary stop, after which
 the pane behaves as it always has.
 
+The session can also be started from outside the pane: `Find out what writes this
+address` / `Find out what accesses this address` in the address list and the scan
+results, and `Find out what addresses this instruction accesses` in the listing,
+attach it themselves when none is running. Each such command asks first — a
+themed Yes/No prompt naming the target, warning that the process will see the
+tracer, and defaulting to `No` so `Enter` never starts `ptrace` — and reports the
+attach, its failure and a cancellation in the main status line. While the attach
+is in flight the requested watch is remembered and armed once the session runs; a
+declined or failed prompt arms nothing and opens no window.
+
 `View > Breakpoints` and the pane's `Breakpoints...` button open the same
 non-modal Breakpoints window (`Enabled`, `Kind`, `Size`, `Address`, `Hits`, with
 Add Breakpoint..., Remove and Clear All). Those controls work while the target
@@ -145,14 +155,19 @@ register, so the pane never leaves `Running...`.
 (`Watching <module+RVA> · writes · 4 bytes · N accesses`), a **Recorded accesses**
 table (instruction, code, thread, count) with `Follow in Memory Viewer`, `Stop`,
 `Clear` and `Close`, and an **Instruction accesses** table (address, operand,
-width, read/write) with `Watch writes` / `Watch accesses` and a hint line naming
-the register context the addresses were resolved from. The status line reports a
-failed arming (no free slot, an address already covered). Both the address list
-and the scan results offer `Find out what writes this address` and `Find out what
-accesses this address` after a separator in their row menus (disabled with
-`Attach to a target first.` while no target is attached), and the listing adds
-`Find out what addresses this instruction accesses` to its row menu for any row
-with a memory operand.
+width, read/write) with `Watch writes` / `Watch accesses` and a hint line. The
+status line reports a failed arming (no free slot, an address already covered).
+Both the address list and the scan results offer `Find out what writes this
+address` and `Find out what accesses this address` after a separator in their row
+menus (disabled with `Attach to a target first.` while no target is attached),
+and the listing adds `Find out what addresses this instruction accesses` to its
+row menu for any row with a memory operand. Those three commands attach the
+session on demand; the listing command additionally stops the running target
+once, invisibly, reads the register file, resolves the operands against it and
+puts the target back running, so the hint reads "Resolved from the registers at
+<instruction>" for that capture and warns only when the registers could not be
+read or an operand names a register the backend does not report — no command
+tells the user to press `Break` first any more.
 
 Deliberate deviations from the rules above, recorded here rather than taken
 silently:

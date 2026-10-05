@@ -31,8 +31,8 @@ namespace slopkit::ui::dialogs
                                            process::AttachedTarget& target,
                                            debug::Controller&       debug,
                                            QWidget*                 parent)
-        : QDialog(parent), worker_(worker), target_(target), debug_(debug), document_(worker, target, this),
-          disassembly_document_(worker, target, this)
+        : QDialog(parent), worker_(worker), target_(target), debug_(debug), gate_(debug, target, *this, this),
+          document_(worker, target, this), disassembly_document_(worker, target, this)
     {
         setWindowTitle(tr("Memory Viewer"));
         resize(1280, 960);
@@ -187,9 +187,44 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::instruction_accesses(std::size_t row)
     {
+        gate_.with_session(tr("find out what this instruction accesses"),
+                           [this, row]
+                           {
+                               resolve_instruction_accesses(row);
+                           });
+    }
+
+    DebugSessionGate& MemoryViewerDialog::debug_gate() noexcept
+    {
+        return gate_;
+    }
+
+    void MemoryViewerDialog::resolve_instruction_accesses(std::size_t row)
+    {
+        if (debug_.state() == debug::Controller::State::stopped)
+        {
+            // The register file of the last stop is already cached; read nothing.
+            finish_instruction_accesses(row);
+            return;
+        }
+        // One invisible stop: the target is put back running before the operands
+        // are painted, and nothing about the session changes.
+        debug_.capture_registers(
+            [this, row]
+            {
+                finish_instruction_accesses(row);
+            });
+    }
+
+    void MemoryViewerDialog::finish_instruction_accesses(std::size_t row)
+    {
         const components::DisassemblyDocument::Row decoded  = disassembly_document_.row(row);
         const std::span<const disasm::MemoryRef>   operands = disassembly_document_.row_memory(row);
-        emit                                       instructionAccessesResolved(
+        if (debug_.registers().empty())
+        {
+            emit instructionAccessesProgress(tr("Could not read the registers; the operands stay unresolved."), true);
+        }
+        emit instructionAccessesResolved(
             decoded.address,
             decoded.length,
             ui::resolve_accesses(operands, decoded.address, decoded.length, debug_.registers()));

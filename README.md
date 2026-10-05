@@ -23,6 +23,7 @@ open table or merge the file.
 | Practice target | A separate `slopkit-sandbox` process exposing values of every scan type; launch it from `Help > Launch Practice Target` and attach to practise the scanner. | Implemented |
 | Disassembler | Instruction decoding (Zydis) of live memory. | Implemented (Memory Viewer pane) |
 | Debugger | Opt-in instruction-level debugging of the attached target: break, resume, step, editable registers, a call stack, and software and hardware breakpoints with hit counters. | Implemented (Debugger pane plus the Breakpoints window) |
+| Access Watch | Record every instruction that writes or accesses a watched address, and resolve an instruction's memory operands from live registers. The "find out what writes/accesses" commands attach the debug session on demand after a confirmation, so the Memory Viewer does not have to be opened first. | Implemented (Access Watch window) |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
 
 ## Quick start

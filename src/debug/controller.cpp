@@ -250,7 +250,8 @@ namespace slopkit::debug
             return;
         }
         stop_requested_ = false;
-        const JobId id  = worker_.next_job_id();
+        drop_capture();
+        const JobId id = worker_.next_job_id();
         worker_.submit_detach(id,
                               [this, reason = std::move(reason)](JobResult&& result)
                               {
@@ -265,6 +266,7 @@ namespace slopkit::debug
         maintenance_stop_ = false;
         pending_slot_ops_.clear();
         pending_removals_.clear();
+        drop_capture();
         watch_       = AccessWatch {};
         watch_dirty_ = false;
         last_stop_   = StopEvent {};
@@ -298,7 +300,19 @@ namespace slopkit::debug
     void Controller::begin_run(std::uint32_t tid)
     {
         state_ = State::running;
-        emit        stateChanged();
+        emit stateChanged();
+        submit_resume(tid);
+        // A capture whose stop was consumed by a maintenance round-trip would
+        // otherwise never get its registers read, so the stop is asked for
+        // again now that the session runs.
+        if (capture_pending_)
+        {
+            interrupt();
+        }
+    }
+
+    void Controller::submit_resume(std::uint32_t tid)
+    {
         const JobId id = worker_.next_job_id();
         worker_.submit_continue(id,
                                 tid,
@@ -406,6 +420,14 @@ namespace slopkit::debug
             return;
         }
 
+        // A stop we asked for only to read the registers once: read them and
+        // resume, without ever reporting a stop or touching the listing.
+        if (!stop_requested_ && capture_pending_)
+        {
+            capture_registers_now();
+            return;
+        }
+
         // A watch hit: record it and keep collecting, so the process is never
         // left paused for the user. `record` always consumes the stop.
         if (!stop_requested_ && stop.reason == StopReason::breakpoint && stop.breakpoint_slot.has_value()
@@ -492,6 +514,73 @@ namespace slopkit::debug
         emit stateChanged();
         refresh();
         emit stopped();
+    }
+
+    void Controller::capture_registers(std::function<void()> on_captured)
+    {
+        // A stopped session already holds the register file, and no session at
+        // all has nothing to read: hand the caller back right away.
+        if (state_ != State::running)
+        {
+            if (on_captured)
+            {
+                on_captured();
+            }
+            return;
+        }
+        capture_         = std::move(on_captured);
+        capture_pending_ = true;
+        interrupt();
+    }
+
+    void Controller::capture_registers_now()
+    {
+        // The state flip is internal only: it is undone by the resume below and
+        // never reaches the UI, so the panes keep showing "Running...".
+        state_         = State::stopped;
+        const JobId id = worker_.next_job_id();
+        worker_.submit_registers(id,
+                                 active_tid(),
+                                 [this](JobResult&& result)
+                                 {
+                                     apply_capture_registers(std::move(result));
+                                 });
+    }
+
+    void Controller::apply_capture_registers(JobResult&& result)
+    {
+        if (const auto* registers = std::get_if<RegistersResult>(&result); registers != nullptr)
+        {
+            if (registers->error)
+            {
+                notify(MessageKind::warning,
+                       QStringLiteral("Cannot read the registers: %1").arg(failure_text(*registers->error)));
+            }
+            else
+            {
+                registers_ = registers->values;
+                emit registersChanged();
+            }
+        }
+
+        // The callback runs before the resume, so it sees the registers of the
+        // stop; the target is put back running whether or not the read worked.
+        std::function<void()> callback = std::move(capture_);
+        capture_                       = nullptr;
+        capture_pending_               = false;
+        if (callback)
+        {
+            callback();
+        }
+        // Back to running without a signal: the UI never saw the internal stop.
+        state_ = State::running;
+        submit_resume(active_tid());
+    }
+
+    void Controller::drop_capture()
+    {
+        capture_         = nullptr;
+        capture_pending_ = false;
     }
 
     void Controller::refresh()

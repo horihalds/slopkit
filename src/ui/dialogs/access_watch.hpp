@@ -2,11 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "debug/controller.hpp"
 #include "process/access_worker.hpp"
+#include "process/attachment.hpp"
 #include "ui/access_watch.hpp"
+#include "ui/debug_session.hpp"
 
 #include <QDialog>
 #include <QString>
@@ -32,11 +35,22 @@ namespace slopkit::ui::dialogs
         Q_OBJECT
 
     public:
-        AccessWatchDialog(debug::Controller& controller, process::AccessWorker& worker, QWidget* parent = nullptr);
+        AccessWatchDialog(debug::Controller&       controller,
+                          process::AccessWorker&   worker,
+                          process::AttachedTarget& target,
+                          QWidget*                 parent = nullptr);
 
         // Arms a watch through the controller, reporting a failure in the status
-        // line. The three context-menu commands funnel through here.
+        // line. The two Watch buttons funnel through here.
         void start_watch(std::uint64_t address, debug::Kind kind, std::size_t size);
+
+        // The context-menu entry point: attach the debug session on demand (after
+        // asking) and then arm the watch through start_watch(). The Access Watch
+        // window is only shown once the watch is actually armed.
+        void arm_watch(std::uint64_t address, debug::Kind kind, std::size_t size);
+
+        [[nodiscard]] DebugSessionGate& debug_gate() noexcept;
+        [[nodiscard]] bool              watch_pending() const noexcept;
 
         // Fills the `Instruction accesses` table from the listing command.
         void show_instruction_accesses(std::uint64_t                   instruction,
@@ -73,6 +87,16 @@ namespace slopkit::ui::dialogs
         class HitsModel;
         class InstructionModel;
 
+        // A watch the context-menu command asked for while the session was not up
+        // yet; armed the moment the session runs.
+        struct PendingWatch
+        {
+            std::uint64_t address {};
+            debug::Kind   kind {};
+            std::size_t   size {};
+        };
+
+        void                  arm_pending_watch();
         void                  build_layout();
         void                  refresh();
         void                  request_texts();
@@ -84,6 +108,7 @@ namespace slopkit::ui::dialogs
 
         debug::Controller&     controller_;
         process::AccessWorker& worker_;
+        DebugSessionGate       gate_;
 
         QLabel*               header_ {};
         widgets::StatusLabel* status_ {};
@@ -101,6 +126,8 @@ namespace slopkit::ui::dialogs
 
         std::uint64_t instruction_ {};
         std::size_t   instruction_length_ {};
+
+        std::optional<PendingWatch> pending_watch_;
     };
 
 } // namespace slopkit::ui::dialogs

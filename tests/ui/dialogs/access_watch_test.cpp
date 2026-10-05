@@ -49,7 +49,8 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
                            return controller.state() == Controller::State::running;
                        }));
 
-    AccessWatchDialog dialog {controller, worker};
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
     CHECK(dialog.header_text() == QStringLiteral("No watch running."));
 
     // Arming through the window's own seam starts a watch and clears the status.
@@ -136,7 +137,8 @@ TEST_CASE("the access watch window shows the resolved instruction operands", "[u
     slopkit::process::AccessWorker   worker {access};
     slopkit::tests::FakeDebugBackend backend;
     Controller                       controller {backend};
-    AccessWatchDialog                dialog {controller, worker};
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
 
     std::vector<ResolvedAccess> accesses;
     ResolvedAccess              resolved;
@@ -200,9 +202,116 @@ TEST_CASE("the access watch window reports why a watch could not be armed", "[ui
                            return armed == 4;
                        }));
 
-    AccessWatchDialog dialog {controller, worker};
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
     dialog.start_watch(0x9000, Kind::hardware_write, 4);
     CHECK(dialog.status_text() == QStringLiteral("no hardware slot is free"));
     CHECK(controller.watch().state() == WatchState::idle);
     CHECK(dialog.header_text() == QStringLiteral("No watch running."));
+}
+
+TEST_CASE("the access watch attaches the debugger on demand before arming", "[ui][access_watch]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::tests::FakeDebugBackend backend;
+    backend.block_continue = true;
+    Controller controller {backend};
+
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
+
+    int prompts = 0;
+    dialog.debug_gate().set_attach_prompt(
+        [&prompts](const slopkit::process::AttachedTarget&, const QString& reason)
+        {
+            ++prompts;
+            CHECK(reason == QStringLiteral("find out what writes this address"));
+            return true;
+        });
+
+    CHECK_FALSE(dialog.isVisible());
+    dialog.arm_watch(0x4000, Kind::hardware_write, 4);
+    CHECK(prompts == 1);
+    CHECK(dialog.watch_pending());
+    CHECK(controller.state() == Controller::State::starting);
+    CHECK_FALSE(dialog.isVisible()); // only shown once the watch is armed
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        controller.drain();
+                        const auto* entry = watch_entry(controller);
+                        return entry != nullptr && entry->armed;
+                    }));
+    CHECK(controller.watch().address() == 0x4000);
+    CHECK_FALSE(dialog.watch_pending());
+    CHECK(dialog.isVisible());
+    CHECK(dialog.header_text().startsWith(QStringLiteral("Watching 0x4000")));
+}
+
+TEST_CASE("a declined attach leaves the access watch unarmed", "[ui][access_watch]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::tests::FakeDebugBackend backend;
+    Controller                       controller {backend};
+
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
+    dialog.debug_gate().set_attach_prompt(
+        [](const slopkit::process::AttachedTarget&, const QString&)
+        {
+            return false;
+        });
+
+    dialog.arm_watch(0x4000, Kind::hardware_read_write, 4);
+    CHECK_FALSE(dialog.watch_pending());
+    CHECK_FALSE(dialog.isVisible());
+    CHECK(controller.state() == Controller::State::idle);
+    CHECK(controller.watch().state() == WatchState::idle);
+    CHECK(dialog.status_text().contains(QStringLiteral("Attach cancelled")));
+}
+
+TEST_CASE("a live session arms the access watch without prompting", "[ui][access_watch]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::tests::FakeDebugBackend backend;
+    backend.block_continue = true;
+    Controller controller {backend};
+    controller.start(42, "fake");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
+
+    int prompts = 0;
+    dialog.debug_gate().set_attach_prompt(
+        [&prompts](const slopkit::process::AttachedTarget&, const QString&)
+        {
+            ++prompts;
+            return true;
+        });
+
+    dialog.arm_watch(0x4100, Kind::hardware_write, 4);
+    CHECK(prompts == 0);
+    CHECK_FALSE(dialog.watch_pending());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = watch_entry(controller);
+                           return entry != nullptr && entry->armed;
+                       }));
+    CHECK(controller.watch().address() == 0x4100);
 }

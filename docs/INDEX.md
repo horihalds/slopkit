@@ -146,6 +146,8 @@ One line per project file; the path alone where the filename explains the file, 
 - `src/ui/components/message_box.cpp`
 - `src/ui/components/widgets.hpp`
 - `src/ui/components/widgets.cpp`
+- `src/ui/debug_session.hpp` — on-demand debug attach gate.
+- `src/ui/debug_session.cpp`
 - `src/ui/dialogs/access_watch.hpp`
 - `src/ui/dialogs/access_watch.cpp`
 - `src/ui/dialogs/add_address.hpp`
@@ -262,6 +264,7 @@ One line per project file; the path alone where the filename explains the file, 
 - `tests/ui/dialogs/settings_test.cpp`
 - `tests/ui/dialogs/table_conflict_test.cpp`
 - `tests/ui/dialogs/table_settings_test.cpp`
+- `tests/ui/debug_session_test.cpp`
 - `tests/ui/live_values_test.cpp` — live-update coordinator tests.
 - `tests/ui/main_window_test.cpp` — main-window shell tests.
 - `tests/ui/models/address_table_model_test.cpp`

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -94,6 +95,13 @@ namespace slopkit::debug
         void write_register(std::string_view name, std::uint64_t value);
         void refresh();
 
+        // Reads the register file of the running target once: the target is
+        // stopped just long enough for the read and put back exactly as it was,
+        // and nothing about the session (state, stop, listing position) changes.
+        // `on_captured` runs on the UI thread whether or not the read produced
+        // values. A stopped session or no session at all invokes it immediately.
+        void capture_registers(std::function<void()> on_captured);
+
         void        set_completion_hook(CompletionHook hook);
         std::size_t drain(std::size_t max_jobs = 32);
 
@@ -117,6 +125,10 @@ namespace slopkit::debug
         };
 
         void begin_run(std::uint32_t tid);
+        void submit_resume(std::uint32_t tid);
+        void capture_registers_now();
+        void apply_capture_registers(JobResult&& result);
+        void drop_capture();
         void begin_attach();
         void apply_attach(JobResult&& result);
         void apply_run_result(JobResult&& result);
@@ -156,6 +168,10 @@ namespace slopkit::debug
         std::vector<std::uint64_t> pending_removals_;
         AccessWatch                watch_;
         bool                       watch_dirty_ {false};
+        // A one-shot invisible register read: `capture_` runs once the stop it
+        // asked for has been consumed, and `capture_pending_` marks that stop.
+        std::function<void()>      capture_;
+        bool                       capture_pending_ {false};
     };
 
 } // namespace slopkit::debug
