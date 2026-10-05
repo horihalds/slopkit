@@ -28,6 +28,21 @@ namespace slopkit::ui::components
             const std::uint64_t room = scan::kMaxUserAddress - address + 1;
             return static_cast<std::size_t>(std::min(size, room));
         }
+
+        // Space-joined `XX` tokens for one line of a row's byte column.
+        QString joined_bytes(std::span<const std::byte> bytes)
+        {
+            std::string text;
+            for (std::size_t index = 0; index < bytes.size(); ++index)
+            {
+                if (index != 0)
+                {
+                    text += ' ';
+                }
+                text += std::format("{:02X}", std::to_integer<unsigned>(bytes[index]));
+            }
+            return to_qstring(text);
+        }
     } // namespace
 
     DisassemblyDocument::DisassemblyDocument(process::AccessWorker&, process::AttachedTarget& target, QObject* parent)
@@ -40,15 +55,18 @@ namespace slopkit::ui::components
         visible_rows_  = std::max<std::size_t>(1, visible_rows);
         first_address_ = std::min(first_address, scan::kMaxUserAddress);
 
-        // A move inside the window keeps the decoded stream; crossing into
-        // another window invalidates it and drops the pass in flight.
-        const std::uint64_t base = window_base();
-        if (!last_window_base_.has_value() || *last_window_base_ != base)
+        // Keep the live window while the cursor stays inside it; leaving it
+        // seats the cursor on a fresh, page-aligned window and drops the pass in
+        // flight. The previous rows stay painted until the new base's payload
+        // lands - the reset happens then, keyed on the base, so a byte-identical
+        // window is re-decoded too.
+        const std::uint64_t base = window_base_for(first_address_);
+        if (!window_anchored_ || base != window_base_)
         {
-            last_window_base_ = base;
+            window_base_     = base;
+            window_anchored_ = true;
             pending_.reset();
             requested_pid_ = 0;
-            reset_decode();
         }
     }
 
@@ -64,7 +82,17 @@ namespace slopkit::ui::components
 
     std::uint64_t DisassemblyDocument::window_base() const noexcept
     {
-        return window_base_for(first_address_);
+        return window_base_;
+    }
+
+    std::uint64_t DisassemblyDocument::rows_base() const noexcept
+    {
+        return decoded_base_.value_or(window_base_);
+    }
+
+    bool DisassemblyDocument::window_exhausted() const noexcept
+    {
+        return decode_exhausted_ && decoded_base_.has_value() && *decoded_base_ == window_base_;
     }
 
     std::uint64_t DisassemblyDocument::window_base_for(std::uint64_t address) const noexcept
@@ -186,10 +214,15 @@ namespace slopkit::ui::components
         bool dirty = false;
         if (reading->readable && !reading->bytes.empty())
         {
-            if (!readable_ || bytes_ != reading->bytes)
+            // Re-decode when this window's payload is new for its base. Keying
+            // on the base and not the bytes re-decodes a byte-identical window
+            // (all-NOP pages) as well.
+            const bool same_base = decoded_base_.has_value() && *decoded_base_ == pending_->base;
+            if (!same_base || bytes_ != reading->bytes)
             {
-                bytes_    = reading->bytes;
-                readable_ = true;
+                bytes_        = reading->bytes;
+                readable_     = true;
+                decoded_base_ = pending_->base;
                 instructions_.clear();
                 decoded_offset_   = 0;
                 decode_exhausted_ = false;
@@ -213,13 +246,16 @@ namespace slopkit::ui::components
 
     std::size_t DisassemblyDocument::ensure_rows(std::size_t minimum)
     {
-        if (!readable_ || decode_exhausted_ || instructions_.size() >= minimum)
+        // Only sweep the window whose payload has actually landed; while a step
+        // is in flight the previous window's rows stay painted untouched.
+        if (!readable_ || !decoded_base_.has_value() || *decoded_base_ != window_base_ || decode_exhausted_
+            || instructions_.size() >= minimum)
         {
             return instructions_.size();
         }
 
         const std::span<const std::byte> code(bytes_.data(), bytes_.size());
-        const std::uint64_t              base = window_base() + decoded_offset_;
+        const std::uint64_t              base = window_base_ + decoded_offset_;
         const std::size_t                want = minimum - instructions_.size();
         const auto block = disasm::decode_block(code.subspan(decoded_offset_), base, want, machine_mode_);
         if (block.empty())
@@ -257,6 +293,64 @@ namespace slopkit::ui::components
             width = std::max(width, instruction.length == 0 ? 2 : instruction.length * 3 - 1);
         }
         return width;
+    }
+
+    std::size_t DisassemblyDocument::byte_tokens(std::size_t index) const noexcept
+    {
+        if (index >= instructions_.size())
+        {
+            return 0;
+        }
+        if (!readable_)
+        {
+            return 1; // The single `??` token.
+        }
+
+        // How many of the instruction's bytes the decoded window holds; a byte
+        // that the window cannot cover renders as an empty row.
+        const disasm::Instruction& instruction = instructions_[index];
+        const std::uint64_t        base        = rows_base();
+        if (instruction.address < base)
+        {
+            return 0;
+        }
+        const std::size_t offset = static_cast<std::size_t>(instruction.address - base);
+        if (offset >= bytes_.size())
+        {
+            return 0;
+        }
+        return std::min<std::size_t>(instruction.length, bytes_.size() - offset);
+    }
+
+    std::size_t DisassemblyDocument::line_count(std::size_t index, std::size_t per_line) const noexcept
+    {
+        const std::size_t tokens = byte_tokens(index);
+        if (tokens == 0)
+        {
+            return index < instructions_.size() ? 1 : 0;
+        }
+        const std::size_t stride = std::max<std::size_t>(1, per_line);
+        return (tokens + stride - 1) / stride;
+    }
+
+    QString DisassemblyDocument::byte_line(std::size_t index, std::size_t line, std::size_t per_line) const
+    {
+        const std::size_t stride = std::max<std::size_t>(1, per_line);
+        const std::size_t first  = line * stride;
+        const std::size_t tokens = byte_tokens(index);
+        if (first >= tokens)
+        {
+            return {};
+        }
+        if (!readable_)
+        {
+            return QStringLiteral("??"); // `tokens` is 1, so `first` is 0.
+        }
+
+        const disasm::Instruction& instruction = instructions_[index];
+        const std::size_t          offset      = static_cast<std::size_t>(instruction.address - rows_base()) + first;
+        const std::size_t          count       = std::min(stride, tokens - first);
+        return joined_bytes(std::span<const std::byte>(bytes_.data() + offset, count));
     }
 
     DisassemblyDocument::Row DisassemblyDocument::row(std::size_t index) const
@@ -312,38 +406,20 @@ namespace slopkit::ui::components
         return index;
     }
 
-    void DisassemblyDocument::reset_decode()
-    {
-        bytes_.clear();
-        readable_ = false;
-        instructions_.clear();
-        decoded_offset_   = 0;
-        decode_exhausted_ = false;
-    }
-
     QString DisassemblyDocument::instruction_bytes(const disasm::Instruction& instruction) const
     {
-        if (instruction.address < window_base())
+        if (instruction.address < rows_base())
         {
             return {};
         }
-        const std::size_t offset = static_cast<std::size_t>(instruction.address - window_base());
+        const std::size_t offset = static_cast<std::size_t>(instruction.address - rows_base());
         if (offset >= bytes_.size())
         {
             return {};
         }
 
         const std::size_t length = std::min(instruction.length, bytes_.size() - offset);
-        std::string       text;
-        for (std::size_t index = 0; index < length; ++index)
-        {
-            if (index != 0)
-            {
-                text += ' ';
-            }
-            text += std::format("{:02X}", std::to_integer<unsigned>(bytes_[offset + index]));
-        }
-        return to_qstring(text);
+        return joined_bytes(std::span<const std::byte>(bytes_.data() + offset, length));
     }
 
 } // namespace slopkit::ui::components

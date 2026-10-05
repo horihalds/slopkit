@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <vector>
 
 #include "support/memory_view_helpers.hpp"
@@ -111,6 +112,129 @@ TEST_CASE("the disassembly document decodes rows from the window base", "[ui]")
 
     // The widest decoded instruction drives the byte column width.
     CHECK(fixture.document.bytes_width() == 8);
+}
+
+TEST_CASE("the disassembly document wraps a row's bytes into lines", "[ui]")
+{
+    DocFixture fixture;
+    // 15 bytes: redundant operand-size prefixes in front of `MOV RAX, imm64`.
+    fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+
+    REQUIRE(fixture.document.row_count() == 1);
+    const auto    row   = fixture.document.row(0);
+    const QString bytes = row.bytes;
+    REQUIRE(row.length == 15);
+    CHECK(bytes == QStringLiteral("66 66 66 66 66 48 B8 88 77 66 55 44 33 22 11"));
+
+    // One byte per line: every token gets its own line, none is split.
+    CHECK(fixture.document.line_count(0, 1) == 15);
+    CHECK(fixture.document.byte_line(0, 0, 1) == QStringLiteral("66"));
+    CHECK(fixture.document.byte_line(0, 14, 1) == QStringLiteral("11"));
+    CHECK(fixture.document.byte_line(0, 15, 1).isEmpty());
+
+    // Eight per line: a full first line and the remainder.
+    CHECK(fixture.document.line_count(0, 8) == 2);
+    CHECK(fixture.document.byte_line(0, 0, 8) == QStringLiteral("66 66 66 66 66 48 B8 88"));
+    CHECK(fixture.document.byte_line(0, 1, 8) == QStringLiteral("77 66 55 44 33 22 11"));
+
+    // Four per line: 4, 4, 4, 3 with no padding of the last line.
+    CHECK(fixture.document.line_count(0, 4) == 4);
+    CHECK(fixture.document.byte_line(0, 0, 4) == QStringLiteral("66 66 66 66"));
+    CHECK(fixture.document.byte_line(0, 3, 4) == QStringLiteral("33 22 11"));
+    CHECK(fixture.document.byte_line(0, 4, 4).isEmpty());
+
+    // The natural width fits the row on a single line.
+    CHECK(fixture.document.line_count(0, 15) == 1);
+    CHECK(fixture.document.byte_line(0, 0, 15) == bytes);
+
+    // `per_line == 0` behaves as one, so the column is never empty.
+    CHECK(fixture.document.line_count(0, 0) == 15);
+    CHECK(fixture.document.byte_line(0, 0, 0) == QStringLiteral("66"));
+
+    // Out-of-range rows and lines hand out nothing.
+    CHECK(fixture.document.line_count(1, 4) == 0);
+    CHECK(fixture.document.byte_line(1, 0, 4).isEmpty());
+}
+
+TEST_CASE("the disassembly document wraps a `??` and a `.byte` row on one line", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0xC3, 0x06});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    REQUIRE(fixture.document.row_count() == 2);
+    CHECK(fixture.document.row(1).text == QStringLiteral(".byte 0x06"));
+    CHECK(fixture.document.line_count(1, 1) == 1);
+    CHECK(fixture.document.line_count(1, 15) == 1);
+    CHECK(fixture.document.byte_line(1, 0, 1) == QStringLiteral("06"));
+    CHECK(fixture.document.byte_line(1, 1, 1).isEmpty());
+
+    // A refused window masks the rows as `??`, one line each again.
+    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
+    LiveReading                 failed;
+    failed.id       = DisassemblyDocument::kIdBase;
+    failed.readable = false;
+    fixture.document.apply_live_readings(std::vector<LiveReading> {failed});
+    REQUIRE(fixture.document.row_count() == 2);
+    CHECK(fixture.document.line_count(0, 1) == 1);
+    CHECK(fixture.document.line_count(0, 15) == 1);
+    CHECK(fixture.document.byte_line(0, 0, 1) == QStringLiteral("??"));
+    CHECK(fixture.document.byte_line(0, 1, 1).isEmpty());
+}
+
+TEST_CASE("the disassembly document steps its window by aligned pages", "[ui]")
+{
+    DocFixture fixture;
+    // Two adjacent windows of NOPs, so a full sweep consumes each 8 KiB page.
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+    fill(*fixture.access.memory,
+         kCode + DisassemblyDocument::kWindowSize,
+         DisassemblyDocument::kWindowSize,
+         std::byte {0x90});
+
+    // The live window is the cursor's 8 KiB page, a multiple of 4096.
+    const auto requests = fixture.document.next_live_request();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].address == kCode);
+    CHECK(requests[0].address % 4096 == 0);
+    CHECK(fixture.document.window_base() == kCode);
+
+    fixture.pass();
+    fixture.document.ensure_rows(std::numeric_limits<std::size_t>::max());
+    CHECK(fixture.document.row_count() == DisassemblyDocument::kWindowSize);
+    CHECK(fixture.document.window_exhausted());
+
+    const std::uint64_t next    = kCode + DisassemblyDocument::kWindowSize;
+    int                 changes = 0;
+    QObject::connect(&fixture.document,
+                     &DisassemblyDocument::rowsChanged,
+                     [&changes]
+                     {
+                         ++changes;
+                     });
+
+    // A whole-window step keeps every base a multiple of 4096.
+    fixture.document.set_view(next, 8);
+    CHECK(fixture.document.window_base() == next);
+    CHECK(fixture.document.window_base() % 4096 == 0);
+    CHECK(fixture.document.window_exhausted() == false); // the new payload is in flight
+
+    // A byte-identical (all-NOP) window is still re-decoded, keyed on the base.
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    CHECK(changes == 1);
+    CHECK(fixture.document.row(0).address == next);
+
+    // Stepping back up returns to the previous aligned base.
+    fixture.document.set_view(kCode, 8);
+    CHECK(fixture.document.window_base() == kCode);
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    CHECK(changes == 2);
+    CHECK(fixture.document.row(0).address == kCode);
 }
 
 TEST_CASE("the disassembly document invalidates the decode only when the bytes change", "[ui]")

@@ -142,10 +142,6 @@ TEST_CASE("the disassembly view scrolls by whole instructions and clamps", "[ui]
     QApplication::sendEvent(&view, &page_up);
     CHECK(view.first_address() == start);
 
-    // Scrolling up at the window start clamps instead of leaving the window.
-    QApplication::sendEvent(&view, &up);
-    CHECK(view.first_address() == kCode);
-
     // The wheel steps three instruction rows.
     const QPointF centre(view.viewport()->rect().center());
     QWheelEvent   wheel(centre,
@@ -158,6 +154,12 @@ TEST_CASE("the disassembly view scrolls by whole instructions and clamps", "[ui]
                         false);
     QApplication::sendEvent(view.viewport(), &wheel);
     CHECK(view.first_address() == kCode + 3);
+
+    // Scrolling up at the window start steps to the previous aligned window.
+    view.set_first_address(kCode);
+    REQUIRE(view.first_address() == kCode);
+    QApplication::sendEvent(&view, &up);
+    CHECK(view.first_address() == kCode - DisassemblyDocument::kWindowSize);
 
     view.hide();
 }
@@ -228,6 +230,125 @@ TEST_CASE("the disassembly view keeps its cursor across a resize", "[ui]")
     view.resize(500, 300);
     CHECK(view.first_address() == kCode + 8);
     CHECK(view.row_text(0) == QStringLiteral("NOP"));
+
+    view.hide();
+}
+
+TEST_CASE("the disassembly listing wraps the bytes column when the pane narrows", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    // 15 bytes: redundant operand-size prefixes in front of `MOV RAX, imm64`.
+    fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+
+    DisassemblyView view(fixture.document);
+    view.resize(1400, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    // A wide pane fits the whole instruction on one line, like before.
+    REQUIRE(view.bytes_per_line() >= 15);
+    CHECK(view.row_lines(0) == 1);
+
+    // The narrowest useful pane still shows every byte: one token per line.
+    view.resize(200, 600);
+    CHECK(view.bytes_per_line() == 1);
+    CHECK(view.row_lines(0) == 15);
+
+    // Widening gives the bytes column its room back and unwraps the row.
+    view.resize(1400, 600);
+    CHECK(view.row_lines(0) == 1);
+    CHECK(view.bytes_per_line() >= 15);
+
+    view.hide();
+}
+
+TEST_CASE("the wrapped listing keeps the cursor and pages by whole rows", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    // 15 bytes: redundant operand-size prefixes in front of `MOV RAX, imm64`.
+    fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+
+    DisassemblyView view(fixture.document);
+    view.resize(1400, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    REQUIRE(fixture.document.row(0).address == kCode);
+    const QString top = view.row_text(0);
+
+    // Narrowing wraps the bytes but keeps the top instruction and the anchor.
+    view.resize(200, 600);
+    CHECK(view.bytes_per_line() == 1);
+    CHECK(view.row_lines(0) == 15);
+    CHECK(view.first_address() == kCode);
+    CHECK(view.row_text(0) == top);
+    CHECK(fixture.document.window_base() == kCode);
+
+    // PageDown moves by exactly the post-wrap rows that fit.
+    const std::size_t page = view.visible_rows();
+    REQUIRE(page >= 1);
+    REQUIRE(page < fixture.document.row_count());
+    const std::uint64_t next = fixture.document.row(page).address;
+
+    QKeyEvent page_down(QEvent::KeyPress, Qt::Key_PageDown, Qt::NoModifier);
+    QApplication::sendEvent(&view, &page_down);
+    CHECK(view.first_address() == next);
+    CHECK(view.row_text(0) == fixture.document.row(page).text);
+
+    view.hide();
+}
+
+TEST_CASE("the wrapped listing walks past a window boundary", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+    fill(*fixture.access.memory,
+         kCode + DisassemblyDocument::kWindowSize,
+         DisassemblyDocument::kWindowSize,
+         std::byte {0x90});
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+    REQUIRE(view.first_address() == kCode);
+
+    // Walk to the window's own end, then one row further: the step lands on the
+    // next page-aligned window instead of dead-ending.
+    QKeyEvent end(QEvent::KeyPress, Qt::Key_End, Qt::NoModifier);
+    QApplication::sendEvent(&view, &end);
+    CHECK(view.first_address() == kCode + DisassemblyDocument::kWindowSize - 1);
+
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QApplication::sendEvent(&view, &down);
+    CHECK(view.first_address() == kCode + DisassemblyDocument::kWindowSize);
+
+    // The next live pass asks for the next aligned window.
+    const auto forward = fixture.document.next_live_request();
+    REQUIRE(forward.size() == 1);
+    CHECK(forward[0].address == kCode + DisassemblyDocument::kWindowSize);
+    CHECK(forward[0].address % 4096 == 0);
+
+    fixture.pass();
+    REQUIRE(view.first_address() == kCode + DisassemblyDocument::kWindowSize);
+    CHECK(view.row_text(0) == QStringLiteral("NOP"));
+
+    // Stepping back up seats the previous aligned base, then its last row.
+    QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    QApplication::sendEvent(&view, &up);
+    CHECK(view.first_address() == kCode);
+
+    const auto backward = fixture.document.next_live_request();
+    REQUIRE(backward.size() == 1);
+    CHECK(backward[0].address == kCode);
+    fixture.pass();
+    CHECK(view.first_address() == kCode + DisassemblyDocument::kWindowSize - 1);
 
     view.hide();
 }

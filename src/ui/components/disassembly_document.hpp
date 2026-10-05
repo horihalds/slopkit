@@ -22,8 +22,9 @@ namespace slopkit::ui::components
     // The live state behind the disassembly listing: one aligned code window and
     // a lazily grown cache of the instructions decoded from it. It owns no
     // widget, so the risky part is testable headlessly; DisassemblyView only
-    // paints it. The window is the scroll boundary: the cursor may move inside
-    // it, and a new address elsewhere asks for a new window.
+    // paints it. The window is the aligned sweep unit: the cursor may move
+    // inside it, and walking past the decoded rows steps the whole window by
+    // one aligned page, so the listing never dead-ends.
     class DisassemblyDocument : public QObject, public ui::LiveSurface
     {
         Q_OBJECT
@@ -40,6 +41,9 @@ namespace slopkit::ui::components
         [[nodiscard]] std::uint64_t first_address() const noexcept;
         [[nodiscard]] std::size_t   visible_rows() const noexcept;
         [[nodiscard]] std::uint64_t window_base() const noexcept; // aligned live-window start
+        // True once the cursor's window has been swept to its end (or stopped at
+        // a truncated tail), so only another window can yield further rows.
+        [[nodiscard]] bool          window_exhausted() const noexcept;
 
         // The live window is only requested while the view is on screen.
         void               set_visible(bool visible);
@@ -61,6 +65,15 @@ namespace slopkit::ui::components
         std::size_t               ensure_rows(std::size_t minimum);
         [[nodiscard]] std::size_t row_count() const noexcept;
         [[nodiscard]] std::size_t bytes_width() const noexcept; // widest byte text, in characters
+
+        // How many lines the row's byte text takes at `per_line` bytes per line;
+        // `per_line == 0` behaves as 1 and a row with no byte text still takes
+        // one line. A row index that is out of range takes no line.
+        [[nodiscard]] std::size_t line_count(std::size_t index, std::size_t per_line) const noexcept;
+        // The row's byte text on `line` at `per_line` bytes per line; empty when
+        // the row or the line index is out of range or the row has no bytes. A
+        // byte token is never split.
+        [[nodiscard]] QString     byte_line(std::size_t index, std::size_t line, std::size_t per_line) const;
 
         struct Row
         {
@@ -86,8 +99,12 @@ namespace slopkit::ui::components
         };
 
         [[nodiscard]] std::uint64_t window_base_for(std::uint64_t address) const noexcept;
+        // The base the currently decoded rows were swept from; the live window
+        // while a step is in flight still holds the previous window's rows.
+        [[nodiscard]] std::uint64_t rows_base() const noexcept;
         void                        reset_decode();
         [[nodiscard]] QString       instruction_bytes(const disasm::Instruction& instruction) const;
+        [[nodiscard]] std::size_t   byte_tokens(std::size_t index) const noexcept;
 
         process::AttachedTarget& target_;
 
@@ -101,9 +118,14 @@ namespace slopkit::ui::components
 
         // The window submitted in the pass in flight plus the pid it belonged
         // to; reset whenever the window moves, so a stale reading is dropped.
-        std::optional<std::uint64_t> last_window_base_;
         std::optional<PendingWindow> pending_;
         process::ProcessId           requested_pid_ {0};
+
+        // The aligned live window and the base its bytes/rows were swept from;
+        // a step keeps the old rows until the new base's payload lands.
+        std::uint64_t                window_base_ {0};
+        bool                         window_anchored_ {false};
+        std::optional<std::uint64_t> decoded_base_;
 
         // The decoded instruction stream, kept while the window's bytes are
         // unchanged so an idle pass never re-decodes.

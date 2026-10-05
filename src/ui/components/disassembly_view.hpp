@@ -35,10 +35,14 @@ namespace slopkit::ui::components
         [[nodiscard]] std::size_t   visible_rows() const noexcept;
 
         // Re-fits the rows to the current viewport; the context menu calls this.
-        void                  relayout();
+        void                      relayout();
         // The instruction text painted on the visible row `index` (0 = the top
         // row), for tests.
-        [[nodiscard]] QString row_text(std::size_t index) const;
+        [[nodiscard]] QString     row_text(std::size_t index) const;
+        // How many byte tokens the wrapped bytes column shows per line.
+        [[nodiscard]] std::size_t bytes_per_line() const noexcept;
+        // The wrapped line count of the visible row `index` (0 = the top row).
+        [[nodiscard]] std::size_t row_lines(std::size_t index) const;
 
         // Fills `menu` with `Go To...` and `Copy address`. Public so tests can
         // inspect it without opening a menu.
@@ -61,8 +65,14 @@ namespace slopkit::ui::components
         void hideEvent(QHideEvent* event) override;
 
     private:
-        // Re-derives the row height and column widths, then re-windows the rows.
+        // Re-derives the line height, column widths and the row fit, then
+        // re-windows the rows.
         void recompute_layout();
+        // Re-derives the address and wrapped bytes column widths.
+        void update_columns();
+        // Counts the rows that fit the viewport from first_row_ and updates the
+        // scrollbar page step.
+        void update_visible_rows();
         // Ensures the row containing first_address_ is decoded and points
         // first_row_ at it.
         void ensure_cursor_decoded();
@@ -76,6 +86,9 @@ namespace slopkit::ui::components
         void on_scroll_value(int value);
         // Moves the top row by whole instructions; positive scrolls down.
         void scroll_rows(long long delta);
+        // Steps the whole aligned window by one page (+1 down, -1 up) and seats
+        // the cursor on the new base, keeping the old rows until it lands.
+        void step_window(int direction);
 
         void copy_address();
 
@@ -84,7 +97,9 @@ namespace slopkit::ui::components
         std::uint64_t first_address_ {0};
         std::size_t   first_row_ {0};
         std::size_t   visible_rows_ {1};
-        int           row_height_ {1};
+        std::size_t   bytes_per_line_ {1};
+        bool          seat_last_row_ {false};
+        int           line_height_ {1};
         int           header_height_ {1};
         int           address_width_ {0};
         int           bytes_width_ {1};
