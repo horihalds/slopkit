@@ -105,7 +105,7 @@ TEST_CASE("the disassembly view paints the decoded rows", "[ui]")
 {
     application();
     ViewFixture fixture;
-    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3, 0x74, 0x15});
 
     DisassemblyView view(fixture.document);
     view.resize(800, 600);
@@ -118,6 +118,10 @@ TEST_CASE("the disassembly view paints the decoded rows", "[ui]")
     CHECK(view.row_text(1) == QStringLiteral("MOV RBP, RSP"));
     CHECK(view.row_text(2) == QStringLiteral("RET"));
     CHECK(fixture.document.row(1).bytes == QStringLiteral("48 89 E5"));
+
+    // A branch target is painted through the module map like the address column.
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+    CHECK(view.row_text(3) == QStringLiteral("JZ app+1C"));
 
     view.hide();
 }

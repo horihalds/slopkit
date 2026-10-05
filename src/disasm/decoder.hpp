@@ -19,14 +19,26 @@ namespace slopkit::disasm
         legacy_32,
     };
 
+    // One address an instruction's text prints - a branch/call target or a
+    // memory operand - as a slice of `Instruction::text` plus the address it
+    // names. The decoder stays Qt-free, so a listing renders the slice in
+    // whatever form it shows other addresses.
+    struct AddressRef
+    {
+        std::size_t   offset {};  // byte offset into Instruction::text (the text is ASCII)
+        std::size_t   length {};  // length of the address text inside that slice
+        std::uint64_t address {}; // what the printed text names
+    };
+
     // One decoded instruction. `valid` is false for a byte Zydis rejects, which
     // is rendered as a one-byte `.byte 0xNN` row so a listing never stalls.
     struct Instruction
     {
-        std::uint64_t address {};
-        std::size_t   length {};
-        std::string   text;
-        bool          valid {};
+        std::uint64_t           address {};
+        std::size_t             length {};
+        std::string             text;
+        bool                    valid {};
+        std::vector<AddressRef> addresses; // in the order the text prints them; empty for `.byte`
     };
 
     // Decodes the instruction at `address` from the front of `code`. Returns

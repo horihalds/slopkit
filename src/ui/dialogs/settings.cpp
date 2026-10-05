@@ -201,8 +201,8 @@ namespace slopkit::ui::dialogs
                     settings_.set_address_mode(id == 0 ? ui::AddressMode::module_relative : ui::AddressMode::absolute);
                 });
 
-        auto* note = new QLabel(tr("Applies live to the found results, the address list and the Memory Viewer; "
-                                   "the choice is remembered between runs."),
+        auto* note = new QLabel(tr("Applies live to the found results, the address list, the Memory Viewer and the "
+                                   "addresses inside the disassembly; the choice is remembered between runs."),
                                 page);
         note->setWordWrap(true);
         layout->addWidget(note);

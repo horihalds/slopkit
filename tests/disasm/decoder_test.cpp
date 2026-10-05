@@ -116,3 +116,111 @@ TEST_CASE("an empty buffer decodes to nothing", "[disasm]")
     CHECK_FALSE(slopkit::disasm::decode({}, 0x1000).has_value());
     CHECK(slopkit::disasm::decode_block({}, 0x1000, 10).empty());
 }
+
+TEST_CASE("a relative branch reports the address slice its text prints", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x74, 0x15}), 0x2000);
+    CHECK(instruction.text == "JZ 0x0000000000002017");
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].offset == 3);
+    CHECK(instruction.addresses[0].length == 18);
+    CHECK(instruction.addresses[0].address == 0x2017);
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length)
+          == "0x0000000000002017");
+}
+
+TEST_CASE("32-bit relative branches report their address slice", "[disasm]")
+{
+    const auto jmp = *slopkit::disasm::decode(bytes({0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(jmp.text == "JMP 0x0000000000001005");
+    REQUIRE(jmp.addresses.size() == 1);
+    CHECK(jmp.addresses[0].address == 0x1005);
+    CHECK(jmp.text.substr(jmp.addresses[0].offset, jmp.addresses[0].length) == "0x0000000000001005");
+
+    const auto call = *slopkit::disasm::decode(bytes({0xE8, 0x10, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(call.text == "CALL 0x0000000000001015");
+    REQUIRE(call.addresses.size() == 1);
+    CHECK(call.addresses[0].address == 0x1015);
+}
+
+TEST_CASE("a prefixed relative branch reports its address slice", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x67, 0xE3, 0x12}), 0x1000);
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].offset == 6);
+    CHECK(instruction.addresses[0].length == 10);
+    CHECK(instruction.addresses[0].address == 0x1015);
+}
+
+TEST_CASE("RIP-relative and indirect memory operands report their address slice", "[disasm]")
+{
+    const auto mov = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    CHECK(mov.text == "MOV RAX, [0x00000000000012FE]");
+    REQUIRE(mov.addresses.size() == 1);
+    CHECK(mov.addresses[0].address == 0x12FE);
+    CHECK(mov.text.substr(mov.addresses[0].offset, mov.addresses[0].length) == "0x00000000000012FE");
+
+    const auto call = *slopkit::disasm::decode(bytes({0xFF, 0x15, 0x0A, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(call.addresses.size() == 1);
+    CHECK(call.addresses[0].address == 0x1010);
+
+    const auto push = *slopkit::disasm::decode(bytes({0xFF, 0x35, 0x0A, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(push.addresses.size() == 1);
+    CHECK(push.addresses[0].address == 0x1010);
+
+    const auto lea = *slopkit::disasm::decode(bytes({0x48, 0x8D, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    REQUIRE(lea.addresses.size() == 1);
+    CHECK(lea.addresses[0].address == 0x12FE);
+}
+
+TEST_CASE("an absolute memory operand reports its address slice", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}), 0x1000);
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].address == 0x402000);
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length)
+          == "0x0000000000402000");
+}
+
+TEST_CASE("instructions without a printed address carry no slices", "[disasm]")
+{
+    CHECK(slopkit::disasm::decode(bytes({0x55}), 0x1000)->addresses.empty());             // PUSH RBP
+    CHECK(slopkit::disasm::decode(bytes({0x48, 0x89, 0xD8}), 0x1000)->addresses.empty()); // MOV RAX, RBX
+    CHECK(slopkit::disasm::decode(bytes({0xC3}), 0x1000)->addresses.empty());             // RET
+
+    // MOV RAX, 0x402000 - an immediate that looks like an address, but is a value.
+    CHECK(slopkit::disasm::decode(bytes({0x48, 0xB8, 0x00, 0x20, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), 0x1000)
+              ->addresses.empty());
+
+    const auto dot_byte = *slopkit::disasm::decode(bytes({0x06}), 0x1000);
+    CHECK_FALSE(dot_byte.valid);
+    CHECK(dot_byte.addresses.empty());
+
+    const auto truncated = *slopkit::disasm::decode(bytes({0x48, 0x89}), 0x1000);
+    CHECK_FALSE(truncated.valid);
+    CHECK(truncated.addresses.empty());
+}
+
+TEST_CASE("decode_block keeps every slice inside its own instruction", "[disasm]")
+{
+    const auto code         = bytes({0x74, 0x15, 0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0xC3});
+    const auto instructions = slopkit::disasm::decode_block(code, 0x2000, 10);
+
+    REQUIRE(instructions.size() == 3);
+    REQUIRE(instructions[0].addresses.size() == 1);
+    CHECK(instructions[0].addresses[0].address == 0x2017);
+
+    REQUIRE(instructions[1].addresses.size() == 1);
+    CHECK(instructions[1].address == 0x2002);
+    CHECK(instructions[1].addresses[0].address == 0x2002 + 7 + 0x2F7);
+
+    CHECK(instructions[2].addresses.empty());
+
+    for (const auto& instruction : instructions)
+    {
+        for (const auto& ref : instruction.addresses)
+        {
+            CHECK(ref.offset + ref.length <= instruction.text.size());
+        }
+    }
+}

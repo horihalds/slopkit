@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <ranges>
 #include <string>
 #include <utility>
 
@@ -417,7 +418,7 @@ namespace slopkit::ui::components
 
         result.readable = true;
         result.bytes    = instruction_bytes(instruction);
-        result.text     = to_qstring(instruction.text);
+        result.text     = instruction_text(instruction);
         return result;
     }
 
@@ -465,6 +466,26 @@ namespace slopkit::ui::components
 
         const std::size_t length = std::min(instruction.length, bytes_.size() - offset);
         return joined_bytes(std::span<const std::byte>(bytes_.data() + offset, length));
+    }
+
+    QString DisassemblyDocument::instruction_text(const disasm::Instruction& instruction) const
+    {
+        if (instruction.addresses.empty() || module_spans_.empty())
+        {
+            return to_qstring(instruction.text);
+        }
+
+        std::string text = instruction.text;
+        for (const disasm::AddressRef& ref : instruction.addresses | std::views::reverse)
+        {
+            if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, ref.address);
+                relative.has_value())
+            {
+                // Back to front, so an earlier slice's offset stays valid.
+                text.replace(ref.offset, ref.length, relative->toStdString());
+            }
+        }
+        return to_qstring(text);
     }
 
 } // namespace slopkit::ui::components

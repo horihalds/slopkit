@@ -122,6 +122,7 @@ namespace slopkit::ui::components
         [[nodiscard]] std::uint64_t rows_base() const noexcept;
         void                        reset_decode();
         [[nodiscard]] QString       instruction_bytes(const disasm::Instruction& instruction) const;
+        [[nodiscard]] QString       instruction_text(const disasm::Instruction& instruction) const;
         [[nodiscard]] std::size_t   byte_tokens(std::size_t index) const noexcept;
 
         process::AttachedTarget& target_;

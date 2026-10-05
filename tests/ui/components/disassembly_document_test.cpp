@@ -422,3 +422,77 @@ TEST_CASE("the disassembly document renders every copy form of a row", "[ui]")
     // Out-of-range rows hand out nothing.
     CHECK(document.copy_text(fixture.document.row_count(), CopyFormat::bytes).isEmpty());
 }
+
+TEST_CASE("the disassembly document renders a branch target through the module map", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15}); // JZ +0x15 -> kCode + 0x17
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+
+    // Without a module map the decoded padded text stays.
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0x0000000000002017"));
+
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+    const auto jump = fixture.document.row(0);
+    CHECK(jump.text == QStringLiteral("JZ app+17"));
+    CHECK(jump.length == 2);
+    CHECK(jump.bytes == QStringLiteral("74 15"));
+
+    // Absolute mode restores the decoded text, and switching back re-renders live.
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0x0000000000002017"));
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::module_relative);
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ app+17"));
+}
+
+TEST_CASE("the disassembly document renders a memory operand's address through the module map", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00}); // MOV RAX, [RIP+0x2F7]
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    // kCode + 7 + 0x2F7 = kCode + 0x2FE.
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [app+2FE]"));
+
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [0x00000000000022FE]"));
+}
+
+TEST_CASE("the disassembly document keeps an out-of-module address decoded", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}); // MOV RAX, [0x402000]
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [0x0000000000402000]"));
+}
+
+TEST_CASE("the disassembly document copies the rendered instruction text", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const DisassemblyDocument& document = fixture.document;
+    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0"));
+    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("0x2000"));
+    CHECK(document.copy_text(0, CopyFormat::bytes) == QStringLiteral("74 15"));
+    CHECK(document.copy_text(0, CopyFormat::instruction) == QStringLiteral("JZ app+17"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0: JZ app+17"));
+    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction) == QStringLiteral("app+0: 74 15  JZ app+17"));
+}

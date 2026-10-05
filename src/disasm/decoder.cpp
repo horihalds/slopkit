@@ -1,10 +1,14 @@
 #include "disasm/decoder.hpp"
 
 #include <format>
+#include <string_view>
+#include <utility>
 
 #include <Zydis/Decoder.h>
 #include <Zydis/Formatter.h>
+#include <Zydis/FormatterBuffer.h>
 #include <Zydis/Status.h>
+#include <Zydis/Utils.h>
 
 namespace slopkit::disasm
 {
@@ -71,30 +75,92 @@ namespace slopkit::disasm
             if (!ZYAN_SUCCESS(status))
             {
                 return {
-                    status, {address, 1, byte_text(code.front()), false},
+                    status, {address, 1, byte_text(code.front()), false, {}},
                      false
                 };
             }
 
-            char             buffer[256] {};
-            const ZyanStatus formatted = ZydisFormatterFormatInstruction(&formatter(),
-                                                                         &decoded,
-                                                                         operands,
-                                                                         decoded.operand_count_visible,
-                                                                         buffer,
-                                                                         sizeof(buffer),
-                                                                         address,
-                                                                         nullptr);
-            if (!ZYAN_SUCCESS(formatted))
+            char                      buffer[256] {};
+            ZydisFormatterTokenConst* token     = nullptr;
+            const ZyanStatus          tokenized = ZydisFormatterTokenizeInstruction(&formatter(),
+                                                                                    &decoded,
+                                                                                    operands,
+                                                                                    decoded.operand_count_visible,
+                                                                                    buffer,
+                                                                                    sizeof(buffer),
+                                                                                    address,
+                                                                                    &token,
+                                                                                    nullptr);
+            if (!ZYAN_SUCCESS(tokenized))
             {
+                // The token stream is the only source of slice offsets; if it is
+                // unavailable, fall back to the one-shot text with no slices.
+                const ZyanStatus formatted = ZydisFormatterFormatInstruction(&formatter(),
+                                                                             &decoded,
+                                                                             operands,
+                                                                             decoded.operand_count_visible,
+                                                                             buffer,
+                                                                             sizeof(buffer),
+                                                                             address,
+                                                                             nullptr);
+                if (!ZYAN_SUCCESS(formatted))
+                {
+                    return {
+                        formatted, {address, 1, byte_text(code.front()), false, {}},
+                         false
+                    };
+                }
+
                 return {
-                    formatted, {address, 1, byte_text(code.front()), false},
-                     false
+                    ZYAN_STATUS_SUCCESS, {address, decoded.length, buffer, true, {}},
+                     true
                 };
+            }
+
+            // Concatenating the token values reproduces the one-shot text, while
+            // each absolute-address token marks a slice and pairs with the next
+            // operand whose absolute address Zydis can calculate.
+            std::string             text;
+            std::vector<AddressRef> addresses;
+            std::size_t             operand = 0;
+
+            while (token != nullptr)
+            {
+                ZydisTokenType       type {};
+                ZyanConstCharPointer value = nullptr;
+                if (!ZYAN_SUCCESS(ZydisFormatterTokenGetValue(token, &type, &value)))
+                {
+                    break;
+                }
+
+                const std::string_view value_text = value != nullptr ? std::string_view(value) : std::string_view {};
+                const std::size_t      offset     = text.size();
+                text += value_text;
+
+                if (type == ZYDIS_TOKEN_ADDRESS_ABS)
+                {
+                    while (operand < decoded.operand_count_visible)
+                    {
+                        std::uint64_t    target = 0;
+                        const ZyanStatus calculated =
+                            ZydisCalcAbsoluteAddress(&decoded, &operands[operand], address, &target);
+                        ++operand;
+                        if (ZYAN_SUCCESS(calculated))
+                        {
+                            addresses.push_back({offset, value_text.size(), target});
+                            break;
+                        }
+                    }
+                }
+
+                if (!ZYAN_SUCCESS(ZydisFormatterTokenNext(&token)))
+                {
+                    break;
+                }
             }
 
             return {
-                ZYAN_STATUS_SUCCESS, {address, decoded.length, buffer, true},
+                ZYAN_STATUS_SUCCESS, {address, decoded.length, std::move(text), true, std::move(addresses)},
                  true
             };
         }
