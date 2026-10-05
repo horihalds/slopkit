@@ -313,7 +313,7 @@ namespace slopkit::ui
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
 
-        memory_view_ = new dialogs::MemoryViewerDialog(target_, this);
+        memory_view_ = new dialogs::MemoryViewerDialog(worker_, target_, this);
 
         // The one live cadence, driven by the window's tick; surfaces register
         // here so a single poll submits a single batched read.
