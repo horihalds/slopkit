@@ -6,10 +6,11 @@ supported as a fallback), and it is built around a single rule: every interactio
 with another process goes through a plugin.
 
 The project is young: the plugin-first process-access ABI and host, two bundled
-plugins and the three-zone scanner shell (scan, address list, memory browser)
-exist today, while the disassembler and debugger are still planned. Address
-tables are `.skt` files: double-clicking one opens slopkit with that table, and a
-running instance offers to cancel, overwrite the open table or merge the file.
+plugins and the three-zone scanner shell (scan, address list, memory browser),
+including the Memory Viewer's live disassembler, exist today, while the debugger
+is still planned. Address tables are `.skt` files: double-clicking one opens
+slopkit with that table, and a running instance offers to cancel, overwrite the
+open table or merge the file.
 
 ## Tools
 
@@ -18,10 +19,10 @@ running instance offers to cancel, overwrite the open table or merge the file.
 | Process list | Browse running processes, see which plugin claims each one, inspect it and attach/detach. | Implemented |
 | Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans, keeping the shown hits up to date with live memory. | Implemented |
 | Address list | Track found addresses, edit and freeze their values, watch them refresh live, and save or reopen the table. | Implemented |
-| Memory browser | Hex dump of live memory around a chosen address, refreshed automatically. | Implemented |
+| Memory browser | Hex dump of live memory around a chosen address, refreshed automatically, beside a live disassembly listing and a placeholder debugger stats pane. | Implemented |
 | Practice target | A separate `slopkit-sandbox` process exposing values of every scan type; launch it from `Help > Launch Practice Target` and attach to practise the scanner. | Implemented |
-| Disassembler | Instruction decoding (Zydis) of live memory. | Planned |
-| Debugger | Breakpoints, stepping and register inspection. | Planned |
+| Disassembler | Instruction decoding (Zydis) of live memory. | Implemented (Memory Viewer pane) |
+| Debugger | Breakpoints, stepping and register inspection. | Planned (register-pane placeholder in the Memory Viewer) |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
 
 ## Quick start

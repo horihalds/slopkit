@@ -1,6 +1,10 @@
 #include <catch2/catch.hpp>
 
+#include <cmath>
+
 #include "support/ui_helpers.hpp"
+#include "ui/components/disassembly_view.hpp"
+#include "ui/models/register_model.hpp"
 
 TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 {
@@ -149,9 +153,13 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
 
-    // The byte view is the whole dialog: no loading or status row remains.
+    // The window is three panes now: no loading row remains, but the listing and
+    // the placeholder register table sit above the byte view.
     CHECK(viewer.findChild<QLabel*>(QStringLiteral("loading_label")) == nullptr);
-    CHECK(viewer.findChildren<slopkit::ui::widgets::StatusLabel*>().isEmpty());
+    auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+    auto* register_table = viewer.findChild<QTableView*>(QStringLiteral("register_table"));
+    REQUIRE(register_table != nullptr);
 
     // The target serves reads at the requested block base only, so a helper
     // seeds every block of the window the view just asked for.
@@ -180,8 +188,11 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
         }
     }
     const auto requests = seed_window(std::byte {0xAB});
-    REQUIRE(requests.size() == 3);
+    // The byte view's three blocks come first, the listing's code window last.
+    REQUIRE(requests.size() == 4);
     const std::uint64_t extent = requests[1].size;
+    CHECK(requests[3].id == slopkit::ui::components::DisassemblyDocument::kIdBase);
+    CHECK(requests[3].size == slopkit::ui::components::DisassemblyDocument::kWindowSize);
 
     slopkit::ui::LiveValues live {worker, target, settings};
     live.add_surface(&viewer);
@@ -555,4 +566,184 @@ TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
                     }));
     CHECK(view->first_byte() == 0x100000);
     viewer.hide();
+}
+
+TEST_CASE("the memory viewer splits the window into the three panes", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+
+    // The vertical split puts the upper zone (50 units) above the hex view (40).
+    auto* split = viewer.findChild<QSplitter*>(QStringLiteral("viewer_split"));
+    REQUIRE(split != nullptr);
+    REQUIRE(split->count() == 2);
+    const double upper_share =
+        static_cast<double>(split->widget(0)->height()) / (split->widget(0)->height() + split->widget(1)->height());
+    CHECK(upper_share > 0.50);
+    CHECK(upper_share < 0.62);
+
+    // The upper zone splits 70/30 between the listing and the debugger stats.
+    auto* code_split = viewer.findChild<QSplitter*>(QStringLiteral("code_split"));
+    REQUIRE(code_split != nullptr);
+    REQUIRE(code_split->count() == 2);
+    const double left_share = static_cast<double>(code_split->widget(0)->width())
+                            / (code_split->widget(0)->width() + code_split->widget(1)->width());
+    CHECK(left_share > 0.63);
+    CHECK(left_share < 0.77);
+
+    viewer.hide();
+}
+
+TEST_CASE("the memory viewer seeds both cursors and then moves them independently", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+
+    // Opening the viewer at an address seeds both panes.
+    viewer.set_address(0x1234);
+    CHECK(view->first_byte() == 0x1234);
+    CHECK(listing->first_address() == 0x1234);
+
+    // The byte view's Go To leaves the listing where it is.
+    CHECK(viewer.go_to(QStringLiteral("0x2000")));
+    CHECK(view->first_byte() == 0x2000);
+    CHECK(listing->first_address() == 0x1234);
+
+    // The listing's own Go To leaves the byte view where it is.
+    CHECK(viewer.go_to_disassembly(QStringLiteral("0x3000")));
+    CHECK(listing->first_address() == 0x3000);
+    CHECK(view->first_byte() == 0x2000);
+}
+
+TEST_CASE("the memory viewer routes its single Ctrl+G to the focused pane", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+
+    // The byte view owns the window's only Ctrl+G.
+    REQUIRE(view->goto_action() != nullptr);
+    CHECK(view->goto_action()->shortcut() == QKeySequence(QStringLiteral("Ctrl+G")));
+    CHECK(listing->goto_action()->shortcut().isEmpty());
+
+    viewer.set_address(0x1000);
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    const auto answer_prompt = [](const QString& text)
+    {
+        QTimer::singleShot(0,
+                           [text]
+                           {
+                               for (QWidget* widget : QApplication::topLevelWidgets())
+                               {
+                                   auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                                   if (box != nullptr && box->isVisible())
+                                   {
+                                       box->line_edit()->setText(text);
+                                       box->accept();
+                                       return;
+                                   }
+                               }
+                           });
+    };
+    const auto trigger_ctrl_g = [&view]
+    {
+        QKeyEvent ctrl_g(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier);
+        QApplication::sendEvent(view, &ctrl_g);
+        QCoreApplication::processEvents();
+    };
+
+    // With the listing focused, the shared Ctrl+G moves the listing only.
+    viewer.activateWindow();
+    listing->setFocus();
+    QCoreApplication::processEvents();
+    REQUIRE(QApplication::focusWidget() == listing);
+    answer_prompt(QStringLiteral("0x2000"));
+    trigger_ctrl_g();
+    CHECK(listing->first_address() == 0x2000);
+    CHECK(view->first_byte() == 0x1000);
+
+    // With the byte view focused, it moves the byte view instead.
+    viewer.activateWindow(); // closing the prompt dropped the active window
+    view->setFocus();
+    QCoreApplication::processEvents();
+    REQUIRE(QApplication::focusWidget() == view);
+    answer_prompt(QStringLiteral("0x3000"));
+    trigger_ctrl_g();
+    CHECK(view->first_byte() == 0x3000);
+    CHECK(listing->first_address() == 0x2000);
+
+    viewer.hide();
+}
+
+TEST_CASE("the memory viewer shows a read-only register placeholder", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    table = viewer.findChild<QTableView*>(QStringLiteral("register_table"));
+    REQUIRE(table != nullptr);
+    auto* model = qobject_cast<slopkit::ui::models::RegisterModel*>(table->model());
+    REQUIRE(model != nullptr);
+
+    using slopkit::ui::models::RegisterModel;
+
+    const QString dash = QString(QChar(0x2014));
+    CHECK(model->rowCount() == 18);
+    CHECK(model->columnCount() == RegisterModel::column_count);
+    CHECK(model->data(model->index(0, RegisterModel::name), Qt::DisplayRole).toString() == QStringLiteral("RAX"));
+    CHECK(model->data(model->index(16, RegisterModel::name), Qt::DisplayRole).toString() == QStringLiteral("RIP"));
+    CHECK(model->data(model->index(17, RegisterModel::name), Qt::DisplayRole).toString() == QStringLiteral("RFLAGS"));
+    CHECK(model->data(model->index(0, RegisterModel::value), Qt::DisplayRole).toString() == dash);
+    CHECK(model->data(model->index(17, RegisterModel::value), Qt::DisplayRole).toString() == dash);
+
+    // Read-only: the debugger drives the values, not the user.
+    CHECK_FALSE(model->flags(model->index(0, RegisterModel::value)) & Qt::ItemIsEditable);
+    CHECK_FALSE(model->flags(model->index(0, RegisterModel::name)) & Qt::ItemIsEditable);
+
+    // The pane is titled and carries the muted note.
+    CHECK(panel_has_title(ancestor_panel(table), QStringLiteral("Debugger")));
+
+    // The set_values seam the debugger will fill.
+    const std::vector<slopkit::ui::models::RegisterValue> values {
+        {.name = "RAX", .value = QStringLiteral("0x1"), .read = true}
+    };
+    model->set_values(values);
+    CHECK(model->data(model->index(0, RegisterModel::value), Qt::DisplayRole).toString() == QStringLiteral("0x1"));
+    CHECK(model->data(model->index(1, RegisterModel::value), Qt::DisplayRole).toString() == dash);
 }
