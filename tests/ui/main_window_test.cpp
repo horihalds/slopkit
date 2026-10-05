@@ -12,7 +12,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
     slopkit::ui::SettingsController  settings {scratch_settings_file("shell.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     // The menu bar holds exactly File, View and Help; the Edit menu is gone.
     const QList<QAction*> menus = window.menuBar()->actions();
@@ -34,7 +34,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     // The View menu holds the log and settings entries; Help offers the practice
     // target ahead of About.
     CHECK(action_texts(menus[1]->menu()->actions())
-          == QList<QString> {QStringLiteral("Log"), QStringLiteral("Settings")});
+          == QList<QString> {QStringLiteral("Log"), QStringLiteral("Settings"), QStringLiteral("Breakpoints")});
     CHECK(action_texts(menus[2]->menu()->actions())
           == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
 
@@ -105,6 +105,16 @@ TEST_CASE("the main window shell is built", "[ui]")
     // Triggering the entry again raises the same window, not a second one.
     log_action->trigger();
     CHECK(window.findChildren<slopkit::ui::dialogs::LogDialog*>().size() == 1);
+
+    // View > Breakpoints opens the non-modal breakpoints window, once.
+    QAction* breakpoints_action = menus[1]->menu()->actions().at(2);
+    CHECK(breakpoints_action->text() == QStringLiteral("Breakpoints"));
+    breakpoints_action->trigger();
+    auto* breakpoints_dialog = window.findChild<slopkit::ui::dialogs::BreakpointsDialog*>();
+    REQUIRE(breakpoints_dialog != nullptr);
+    CHECK(breakpoints_dialog->isVisible());
+    breakpoints_action->trigger();
+    CHECK(window.findChildren<slopkit::ui::dialogs::BreakpointsDialog*>().size() == 1);
 
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
@@ -241,7 +251,7 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
     slopkit::ui::SettingsController  settings {scratch_settings_file("tab_order.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
     REQUIRE(scanner != nullptr);
@@ -331,7 +341,7 @@ TEST_CASE("re-activating the main window focuses the scanner value box and selec
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
     slopkit::ui::SettingsController  settings {scratch_settings_file("window_activate.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
     REQUIRE(scanner != nullptr);
@@ -357,7 +367,7 @@ TEST_CASE("the memory viewer is a detached top-level window", "[ui]")
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
     slopkit::ui::SettingsController  settings {scratch_settings_file("detached_viewer.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* viewer = window.memory_viewer();
     REQUIRE(viewer != nullptr);

@@ -600,6 +600,38 @@ namespace slopkit::plugin
         return threads;
     }
 
+    bool PluginSession::supports_debug() const noexcept
+    {
+        if (plugin_ == nullptr || handle_ == nullptr || plugin_->vtable_ == nullptr)
+        {
+            return false;
+        }
+        const auto* vtable = plugin_->vtable_;
+        return vtable->debug_attach != nullptr && vtable->debug_detach != nullptr && vtable->debug_continue != nullptr
+            && vtable->debug_step != nullptr && vtable->debug_interrupt != nullptr
+            && vtable->debug_get_registers != nullptr && vtable->debug_set_register != nullptr
+            && vtable->debug_set_software_breakpoint != nullptr && vtable->debug_set_hardware_breakpoint != nullptr
+            && vtable->debug_backtrace != nullptr;
+    }
+
+    const slopkit_plugin_vtable* PluginSession::vtable() const noexcept
+    {
+        return valid() ? plugin_->vtable_ : nullptr;
+    }
+
+    void* PluginSession::handle() const noexcept
+    {
+        return handle_;
+    }
+
+    void PluginSession::dealloc(void* memory) noexcept
+    {
+        if (plugin_ != nullptr)
+        {
+            plugin_->dealloc(memory);
+        }
+    }
+
     std::expected<std::vector<process::RegionInfo>, process::AccessError> PluginSession::regions()
     {
         if (!valid())

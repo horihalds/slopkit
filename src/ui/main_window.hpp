@@ -41,6 +41,16 @@ namespace slopkit::ui::widgets
     class StatusLabel;
 } // namespace slopkit::ui::widgets
 
+namespace slopkit::ui::dialogs
+{
+    class BreakpointsDialog;
+} // namespace slopkit::ui::dialogs
+
+namespace slopkit::debug
+{
+    class Controller;
+} // namespace slopkit::debug
+
 namespace slopkit::ui
 {
     class LiveValues;
@@ -58,6 +68,7 @@ namespace slopkit::ui
                    process::AttachedTarget& target,
                    plugin::PluginHost&      host,
                    SettingsController&      settings,
+                   debug::Controller&       debug,
                    const QString&           initial_table_path = QString(),
                    QWidget*                 parent             = nullptr);
         ~MainWindow() override;
@@ -110,6 +121,7 @@ namespace slopkit::ui
         void show_table_settings();
         void on_launch_sandbox_requested();
         void show_log();
+        void show_breakpoints();
         void show_settings();
         void show_about();
 
@@ -117,6 +129,7 @@ namespace slopkit::ui
         process::AttachedTarget& target_;
         plugin::PluginHost&      host_;
         SettingsController&      settings_;
+        debug::Controller&       debug_;
 
         // The table path passed on the command line; empty when none.
         QString initial_table_path_;
@@ -138,6 +151,7 @@ namespace slopkit::ui
         dialogs::TableSettingsDialog*                table_settings_ {};
         std::unique_ptr<dialogs::MemoryViewerDialog> memory_view_;
         dialogs::LogDialog*                          log_ {};
+        dialogs::BreakpointsDialog*                  breakpoints_ {};
         dialogs::SettingsDialog*                     settings_dialog_ {};
 
         QLabel*               process_label_ {};
@@ -151,6 +165,7 @@ namespace slopkit::ui
         QAction* save_table_as_action_ {};
         QAction* log_action_ {};
         QAction* settings_action_ {};
+        QAction* breakpoints_action_ {};
         QAction* launch_sandbox_action_ {};
         QAction* about_action_ {};
 

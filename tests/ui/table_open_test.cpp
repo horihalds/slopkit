@@ -50,7 +50,7 @@ TEST_CASE("a table load is remembered in the settings", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("remember_table.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -73,7 +73,7 @@ TEST_CASE("a log save is remembered in the settings", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("remember_log.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* log = window.findChild<slopkit::ui::dialogs::LogDialog*>();
     REQUIRE(log != nullptr);
@@ -112,7 +112,7 @@ TEST_CASE("the auto-load switch opens the remembered table at start-up", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {settings_path};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -155,7 +155,7 @@ TEST_CASE("a launch table path opens and skips the remembered auto-load", "[ui]"
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {settings_path};
-    slopkit::ui::MainWindow          window {worker, target, host, settings, launch_path};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller(), launch_path};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -177,7 +177,7 @@ TEST_CASE("opening into an empty table loads without prompting", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("open_empty.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -223,7 +223,7 @@ TEST_CASE("cancelling an open request keeps the table, path and settings", "[ui]
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("conflict_cancel.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -273,7 +273,7 @@ TEST_CASE("overwriting replaces the open table, path and settings", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("conflict_overwrite.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -317,7 +317,7 @@ TEST_CASE("merging an open request keeps the path and adds only new rows", "[ui]
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("conflict_merge.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -456,7 +456,7 @@ TEST_CASE("the auto-load switch off leaves the table empty", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {settings_path};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -485,7 +485,7 @@ TEST_CASE("a failed auto-load reports and keeps the remembered path", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {settings_path};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_status =
         window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));

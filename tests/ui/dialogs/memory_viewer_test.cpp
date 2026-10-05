@@ -70,7 +70,7 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target = fake_target();
     slopkit::ui::SettingsController  settings {scratch_settings_file("entry_row.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     attach_app_session(worker);
 
@@ -159,7 +159,7 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
 
     attach_app_session(worker);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
 
@@ -271,7 +271,7 @@ TEST_CASE("the memory viewer keeps the top address when its dialog is resized", 
 
     attach_app_session(worker);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
 
@@ -350,7 +350,7 @@ TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
     FakeAccess                     access;
     slopkit::process::AccessWorker worker {access};
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
 
@@ -389,7 +389,7 @@ TEST_CASE("the memory viewer opens Go To with Ctrl+G", "[ui]")
     FakeAccess                     access;
     slopkit::process::AccessWorker worker {access};
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     REQUIRE(view->goto_action() != nullptr);
@@ -458,7 +458,7 @@ TEST_CASE("the memory viewer go-to follows a pointer-chain expression", "[ui]")
     }
     (*access.memory)[0x100000] = std::move(bytes);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     viewer.set_modules({module_image("app", 0x100000, 0x1000)});
@@ -523,7 +523,7 @@ TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
                         records.push_back(record);
                                             }};
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     viewer.set_modules({module_image("app", 0x100000, 0x1000)});
@@ -587,7 +587,7 @@ TEST_CASE("the memory viewer splits the window into the three panes", "[ui]")
     slopkit::process::AttachedTarget target = fake_target();
     attach_app_session(worker);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
 
     // A fresh viewer opens at 1280x960 but can still shrink to its 720x480 minimum.
     CHECK(viewer.size() == QSize(1280, 960));
@@ -632,7 +632,7 @@ TEST_CASE("the memory viewer restores its size across a restart", "[ui]")
 
     {
         slopkit::ui::SettingsController settings {settings_path};
-        slopkit::ui::MainWindow         window {worker, target, host, settings};
+        slopkit::ui::MainWindow         window {worker, target, host, settings, shared_debug_controller()};
         auto*                           viewer = window.memory_viewer();
         REQUIRE(viewer != nullptr);
 
@@ -649,7 +649,7 @@ TEST_CASE("the memory viewer restores its size across a restart", "[ui]")
     {
         slopkit::ui::SettingsController settings {settings_path};
         REQUIRE_FALSE(settings.values().memory_view_geometry.isEmpty());
-        slopkit::ui::MainWindow window {worker, target, host, settings};
+        slopkit::ui::MainWindow window {worker, target, host, settings, shared_debug_controller()};
         auto*                   viewer = window.memory_viewer();
         REQUIRE(viewer != nullptr);
         // The stored blob reopens the window at the size it was closed with.
@@ -667,7 +667,7 @@ TEST_CASE("the memory viewer seeds both cursors and then moves them independentl
     slopkit::process::AttachedTarget target = fake_target();
     attach_app_session(worker);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
@@ -698,7 +698,7 @@ TEST_CASE("opening the memory viewer at an address clears both Back histories", 
     slopkit::process::AttachedTarget target = fake_target();
     attach_app_session(worker);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
@@ -727,7 +727,7 @@ TEST_CASE("the listing's Follow in Memory View moves only the byte view", "[ui]"
     slopkit::process::AttachedTarget target = fake_target();
     attach_app_session(worker);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
@@ -771,7 +771,7 @@ TEST_CASE("the memory viewer routes its single Ctrl+G to the focused pane", "[ui
     slopkit::process::AttachedTarget target = fake_target();
     attach_app_session(worker);
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
@@ -841,7 +841,7 @@ TEST_CASE("the memory viewer shows a read-only register placeholder", "[ui]")
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target = fake_target();
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    table = viewer.findChild<QTableView*>(QStringLiteral("register_table"));
     REQUIRE(table != nullptr);
     auto* model = qobject_cast<slopkit::ui::models::RegisterModel*>(table->model());

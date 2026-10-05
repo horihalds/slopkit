@@ -21,8 +21,10 @@
 #include "app/sandbox.hpp"
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "debug/controller.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
+#include "ui/dialogs/breakpoints.hpp"
 #include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
@@ -30,6 +32,7 @@
 #include "ui/dialogs/table_settings.hpp"
 #include "ui/live_values.hpp"
 #include "ui/panels/address_list_panel.hpp"
+#include "ui/panels/debugger_panel.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
 #include "ui/settings.hpp"
@@ -51,9 +54,10 @@ namespace slopkit::ui
                            process::AttachedTarget& target,
                            plugin::PluginHost&      host,
                            SettingsController&      settings,
+                           debug::Controller&       debug,
                            const QString&           initial_table_path,
                            QWidget*                 parent)
-        : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings),
+        : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings), debug_(debug),
           initial_table_path_(initial_table_path)
     {
         setWindowTitle(QStringLiteral("slopkit"));
@@ -177,6 +181,8 @@ namespace slopkit::ui
 
         settings_action_ = new QAction(tr("Settings"), this);
 
+        breakpoints_action_ = new QAction(tr("Breakpoints"), this);
+
         launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
 
         about_action_ = new QAction(tr("About slopkit"), this);
@@ -195,6 +201,7 @@ namespace slopkit::ui
         QMenu* view_menu = menuBar()->addMenu(tr("View"));
         view_menu->addAction(log_action_);
         view_menu->addAction(settings_action_);
+        view_menu->addAction(breakpoints_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
         help_menu->addAction(launch_sandbox_action_);
@@ -241,6 +248,7 @@ namespace slopkit::ui
                     {
                         add_address_->set_modules(modules);
                     }
+                    debug_.set_modules(modules);
                     memory_view_->set_modules(std::move(modules));
                 });
 
@@ -322,7 +330,7 @@ namespace slopkit::ui
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
 
-        memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_);
+        memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_);
 
         // The stored window geometry is restored before the window is ever
         // shown; a rejected blob simply leaves the dialog's default size.
@@ -350,7 +358,14 @@ namespace slopkit::ui
                 live_values_,
                 &LiveValues::request_now);
 
+        connect(memory_view_->debugger_panel(),
+                &panels::DebuggerPanel::breakpointsRequested,
+                this,
+                &MainWindow::show_breakpoints);
+
         log_ = new dialogs::LogDialog(this);
+
+        breakpoints_ = new dialogs::BreakpointsDialog(debug_, this);
 
         // The dialog is a view over the shared controller; the window is the only
         // component that applies the persisted values to the live views.
@@ -377,6 +392,7 @@ namespace slopkit::ui
                 {
                     found_list_->set_address_mode(mode);
                     address_list_->set_address_mode(mode);
+                    debug_.set_address_mode(mode);
                     memory_view_->set_address_mode(mode);
                 });
 
@@ -384,10 +400,12 @@ namespace slopkit::ui
         const ui::AddressMode persisted_mode = settings_.values().address_mode;
         found_list_->set_address_mode(persisted_mode);
         address_list_->set_address_mode(persisted_mode);
+        debug_.set_address_mode(persisted_mode);
         memory_view_->set_address_mode(persisted_mode);
 
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
         connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
+        connect(breakpoints_action_, &QAction::triggered, this, &MainWindow::show_breakpoints);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
 
@@ -440,6 +458,18 @@ namespace slopkit::ui
         log_->show();
         log_->raise();
         log_->activateWindow();
+    }
+
+    void MainWindow::show_breakpoints()
+    {
+        if (breakpoints_ == nullptr)
+        {
+            return;
+        }
+        breakpoints_->refresh();
+        breakpoints_->show();
+        breakpoints_->raise();
+        breakpoints_->activateWindow();
     }
 
     void MainWindow::show_settings()

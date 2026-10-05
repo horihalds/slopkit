@@ -144,6 +144,17 @@ extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable* slopkit_plugin_ent
         &list_threads,
         &list_regions,
         &access_methods,
+        // The fixture does not debug; the host must never call these.
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
     };
     return &vtable;
 }

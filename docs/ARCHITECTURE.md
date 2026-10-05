@@ -24,7 +24,7 @@ an out-of-process transport, with no UI change.
 
 | Plugin id | Claims | Precedence | Access methods |
 | --- | --- | --- | --- |
-| `linux-proc` | Any normal Linux process | 100 | `process_vm_*`, procfs |
+| `linux-proc` | Any normal Linux process | 100 | `process_vm_*`, procfs, ptrace (debugger only) |
 | `wine-proton` | Wine/Proton game processes | 10 | `process_vm_*`, procfs |
 
 Lower precedence wins, so `wine-proton` is the default target for a Wine process
@@ -73,6 +73,32 @@ host calls:
 - `read_memory` / `write_memory`
 - `list_modules` / `list_threads` / `list_regions`
 - `access_methods` — the access primitives the plugin can use
+- `debug_*` — the ABI 1.4 opt-in debugger operations (`debug_attach` /
+  `debug_detach` / `debug_continue` / `debug_step` / `debug_interrupt` /
+  `debug_get_registers` / `debug_set_register` / `debug_set_software_breakpoint` /
+  `debug_set_hardware_breakpoint` / `debug_backtrace`), left null by a plugin that
+  cannot debug
 
 `src/plugin/plugin_api.h` is the authoritative contract, and the bundled plugins
 under `src/plugins/` are the worked example.
+
+
+## The debugger
+
+The debugger is opt-in and is the only `ptrace` user in the project. It sits
+beside the normal access path rather than in it, so the read/write path stays
+`process_vm_*` / procfs exactly as `docs/ANTI_DETECTION.md` describes:
+
+- `platform::ptrace` is the only place that calls `ptrace`. Both bundled plugins
+  and the test binary link it through `slopkit_platform`.
+- `linux-proc` implements the ABI 1.4 `debug_*` operations over it; a plugin that
+  leaves those pointers null (for example `wine-proton`) simply cannot debug, and
+  the host reports `unsupported` instead of rejecting the plugin.
+- `debug::PluginBackend` wraps its own plugin session, `debug::Worker` owns every
+  call on one job thread — a tracee may only be ptraced by the thread that
+  attached it — and `debug::Controller` is the UI-facing session owner: the
+  breakpoint table, trap-to-breakpoint resolution, register/backtrace caching and
+  the signals the pane renders.
+- The Debugger pane and the Breakpoints window only submit and render; they never
+  touch a session. `ptrace` runs only inside an explicitly started session, which
+  the controller reports under the `debug` log category at start and stop.

@@ -12,7 +12,7 @@ TEST_CASE("loading a table auto attaches to its target process", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -50,7 +50,7 @@ TEST_CASE("an auto attach is skipped while a session is live", "[ui]")
     slopkit::process::AttachedTarget target = fake_target();
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_skip.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -87,7 +87,7 @@ TEST_CASE("a failed auto attach leaves the target detached", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_fail.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -117,7 +117,7 @@ TEST_CASE("a table can auto attach by executable path", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_path.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -145,7 +145,7 @@ TEST_CASE("a legacy name table keeps matching through the toggle", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_legacy.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -173,7 +173,7 @@ TEST_CASE("a path with the toggle off is not used for auto attach", "[ui]")
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_path_off.ini")};
-    slopkit::ui::MainWindow          window {worker, target, host, settings};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
@@ -201,7 +201,7 @@ TEST_CASE("auto attach needs the flag and a target name", "[ui]")
         slopkit::process::AttachedTarget target;
         slopkit::plugin::PluginHost      host;
         slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_off.ini")};
-        slopkit::ui::MainWindow          window {worker, target, host, settings};
+        slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
         auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
         REQUIRE(address_list != nullptr);
@@ -219,7 +219,7 @@ TEST_CASE("auto attach needs the flag and a target name", "[ui]")
         slopkit::process::AttachedTarget target;
         slopkit::plugin::PluginHost      host;
         slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_noname.ini")};
-        slopkit::ui::MainWindow          window {worker, target, host, settings};
+        slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
         auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
         REQUIRE(address_list != nullptr);

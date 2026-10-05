@@ -38,7 +38,7 @@ extern "C"
 #endif
 
 #define SLOPKIT_PLUGIN_ABI_VERSION_MAJOR 1
-#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 3
+#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 4
 #define SLOPKIT_PLUGIN_ABI_VERSION       ((SLOPKIT_PLUGIN_ABI_VERSION_MAJOR << 16) | SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
 
     /* Status codes carried in `slopkit_result::code`. */
@@ -76,6 +76,27 @@ extern "C"
         SLOPKIT_LOG_INFO  = 1,
         SLOPKIT_LOG_WARN  = 2,
         SLOPKIT_LOG_ERROR = 3,
+    };
+
+    /* Breakpoint kinds for the debug operations below. A software breakpoint
+       is a one-byte int3 written into the target; the hardware kinds use the
+       ordinary x86-64 debug slots DR0-DR3. */
+    enum slopkit_breakpoint_kind
+    {
+        SLOPKIT_BP_SOFTWARE      = 0,
+        SLOPKIT_BP_HW_EXECUTE    = 1,
+        SLOPKIT_BP_HW_WRITE      = 2,
+        SLOPKIT_BP_HW_READ_WRITE = 3,
+    };
+
+    /* Why a traced thread stopped, carried in slopkit_stop_info::reason. */
+    enum slopkit_stop_reason
+    {
+        SLOPKIT_STOP_BREAKPOINT  = 0,
+        SLOPKIT_STOP_SINGLE_STEP = 1,
+        SLOPKIT_STOP_INTERRUPT   = 2,
+        SLOPKIT_STOP_EXITED      = 3,
+        SLOPKIT_STOP_SIGNALED    = 4,
     };
 
     typedef struct slopkit_result
@@ -136,6 +157,34 @@ extern "C"
         const char* path;
     } slopkit_region_info;
 
+    /* One register of a stopped thread; `name` points at a plugin-owned
+       literal and stays valid for the process' lifetime. */
+    typedef struct slopkit_register_value
+    {
+        const char* name;
+        uint64_t    value;
+    } slopkit_register_value;
+
+    /* One stop event of a traced thread. `trap_address` is the int3 address of
+       a software trap or the watched address of a hardware breakpoint;
+       `breakpoint_slot` is the fired DR slot (0-3) or -1 when none fired. */
+    typedef struct slopkit_stop_info
+    {
+        int32_t  reason;
+        uint32_t tid;
+        uint64_t address;
+        uint64_t trap_address;
+        int32_t  breakpoint_slot;
+        int32_t  signal;
+    } slopkit_stop_info;
+
+    /* One raw stack frame of a stopped thread. All labelling stays in the host. */
+    typedef struct slopkit_frame_info
+    {
+        uint64_t pc;
+        uint64_t frame_pointer;
+    } slopkit_frame_info;
+
     typedef struct slopkit_plugin_info
     {
         const char* id;
@@ -174,6 +223,43 @@ extern "C"
         slopkit_result (*list_threads)(void* session, slopkit_thread_info** out, size_t* out_count);
         slopkit_result (*list_regions)(void* session, slopkit_region_info** out, size_t* out_count);
         uint32_t (*access_methods)(void);
+
+        /* --- debug operations (ABI 1.4), appended so a plugin built against
+           an older minor keeps loading with these left null. A plugin that
+           leaves them null simply cannot debug; the host reports
+           "unsupported" and never calls them. --- */
+
+        /* Seizes and stops every thread of the session's process and returns
+           the thread-group leader. Idempotent while a session is open. */
+        slopkit_result (*debug_attach)(void* session, uint32_t* out_tid);
+        /* Detaches every thread, restores the original instruction bytes and
+           clears the debug slots. Idempotent. */
+        slopkit_result (*debug_detach)(void* session);
+        /* Resumes the whole thread group and blocks until one thread stops.
+           With a non-zero `resume_address` the saved byte at that address is
+           restored, the current thread is single-stepped and the trap is
+           re-inserted, so a software breakpoint can be stepped over. */
+        slopkit_result (*debug_continue)(
+            void* session, uint64_t resume_address, size_t resume_step_size, slopkit_stop_info* out_stop);
+        /* Single-steps one thread and blocks until it stops. */
+        slopkit_result (*debug_step)(void* session, uint32_t tid, slopkit_stop_info* out_stop);
+        /* Asks a running thread to stop. It does not block: the in-flight
+           debug_continue observes the interrupt and reports it. */
+        slopkit_result (*debug_interrupt)(void* session, uint32_t tid);
+        /* The 18 x86-64 registers of a stopped thread, allocated with the host
+           allocator and released by the host. */
+        slopkit_result (*debug_get_registers)(
+            void* session, uint32_t tid, slopkit_register_value** out, size_t* out_count);
+        slopkit_result (*debug_set_register)(void* session, uint32_t tid, const char* name, uint64_t value);
+        /* Arms (`insert` non-zero) or disarms a software trap at a slot the
+           host allocates; the original byte is saved by the plugin. */
+        slopkit_result (*debug_set_software_breakpoint)(void* session, uint32_t slot, uint64_t address, int32_t insert);
+        /* Arms or disarms a hardware breakpoint in DR slot 0-3. `size` is 1, 2,
+           4 or 8; an execute breakpoint is always length 1. */
+        slopkit_result (*debug_set_hardware_breakpoint)(
+            void* session, uint32_t slot, int32_t kind, uint64_t address, size_t size, int32_t insert);
+        /* The raw stack frames of a stopped thread, top first. */
+        slopkit_result (*debug_backtrace)(void* session, uint32_t tid, slopkit_frame_info** out, size_t* out_count);
     } slopkit_plugin_vtable;
 
     /*

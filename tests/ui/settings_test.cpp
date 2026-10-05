@@ -275,7 +275,7 @@ TEST_CASE("the window applies the persisted settings at construction", "[ui]")
     CHECK_FALSE(settings.values().dark_theme);
     CHECK(settings.values().address_mode == slopkit::ui::AddressMode::absolute);
 
-    slopkit::ui::MainWindow window {worker, target, host, settings};
+    slopkit::ui::MainWindow window {worker, target, host, settings, shared_debug_controller()};
 
     attach_app_session(worker);
 

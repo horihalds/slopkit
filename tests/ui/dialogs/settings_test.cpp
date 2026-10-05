@@ -183,7 +183,7 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
         slopkit::process::AccessWorker   worker {access};
         slopkit::process::AttachedTarget target = fake_target();
         slopkit::ui::SettingsController  controller {scratch_settings_file("viewer_live.ini")};
-        slopkit::ui::MainWindow          window {worker, target, host, controller};
+        slopkit::ui::MainWindow          window {worker, target, host, controller, shared_debug_controller()};
 
         attach_app_session(worker);
 

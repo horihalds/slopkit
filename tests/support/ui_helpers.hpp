@@ -64,12 +64,14 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "debug/controller.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/plugin_access.hpp"
 #include "process/types.hpp"
 #include "scan/source.hpp"
+#include "support/fake_debug.hpp"
 #include "support/fake_process.hpp"
 #include "table/serializer.hpp"
 #include "ui/address_format.hpp"
@@ -79,6 +81,7 @@
 #include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
+#include "ui/dialogs/breakpoints.hpp"
 #include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
@@ -175,6 +178,16 @@ namespace
                         {
                             return attached;
                         }));
+    }
+
+    // The UI fixtures hand a debug controller to the Memory Viewer and the Main
+    // Window. The existing suites never start a session, so one shared
+    // controller per translation unit is enough; it is created on first use.
+    [[maybe_unused]] slopkit::debug::Controller& shared_debug_controller()
+    {
+        static slopkit::tests::FakeDebugBackend backend;
+        static slopkit::debug::Controller       controller {backend};
+        return controller;
     }
 
     // Writes a `.skt` table carrying only the given settings.

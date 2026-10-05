@@ -1,0 +1,130 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <QObject>
+#include <QString>
+
+#include "debug/backend.hpp"
+#include "debug/breakpoints.hpp"
+#include "debug/worker.hpp"
+#include "process/types.hpp"
+#include "ui/address_format.hpp"
+
+namespace slopkit::debug
+{
+
+    // Owns the debug session for the UI: the state machine, the session
+    // breakpoint table, the register/backtrace cache and the trap-to-breakpoint
+    // resolution. Every target access is submitted to the worker and applied by
+    // drain() on the UI thread.
+    class Controller : public QObject
+    {
+        Q_OBJECT
+
+    public:
+        enum class State
+        {
+            idle,
+            starting,
+            stopped,
+            running,
+        };
+
+        enum class MessageKind
+        {
+            info,
+            success,
+            warning,
+            error,
+        };
+
+        explicit Controller(DebugBackend& backend, QObject* parent = nullptr);
+        ~Controller() override;
+
+        Controller(const Controller&)            = delete;
+        Controller& operator=(const Controller&) = delete;
+
+        void                                 set_modules(std::vector<process::ModuleInfo> modules);
+        void                                 set_address_mode(ui::AddressMode mode) noexcept;
+        [[nodiscard]] ui::AddressMode        address_mode() const noexcept;
+        [[nodiscard]] const ui::ModuleSpans& modules() const noexcept;
+
+        [[nodiscard]] State                          state() const noexcept;
+        [[nodiscard]] const StopEvent&               last_stop() const noexcept;
+        [[nodiscard]] std::span<const Breakpoint>    breakpoints() const noexcept;
+        [[nodiscard]] BreakpointTable&               table() noexcept;
+        [[nodiscard]] const BreakpointTable&         table() const noexcept;
+        [[nodiscard]] std::span<const RegisterValue> registers() const noexcept;
+        [[nodiscard]] std::span<const Frame>         backtrace() const noexcept;
+        [[nodiscard]] process::ProcessId             target() const noexcept;
+        [[nodiscard]] bool                           has_target() const noexcept;
+        [[nodiscard]] QString                        state_text() const;
+
+        void start(process::ProcessId pid, std::string_view plugin_id);
+        void stop();
+        void resume();
+        void interrupt();
+        void step_into();
+        void step_over();
+
+        std::expected<std::uint64_t, std::string> add_breakpoint(std::string expression, Kind kind, std::size_t size);
+        void                                      remove_breakpoint(std::uint64_t id);
+        void                                      set_breakpoint_enabled(std::uint64_t id, bool enabled);
+        void                                      clear_breakpoints();
+
+        void write_register(std::string_view name, std::uint64_t value);
+        void refresh();
+
+        void        set_completion_hook(CompletionHook hook);
+        std::size_t drain(std::size_t max_jobs = 32);
+
+    signals:
+        void stateChanged();
+        void stopped();
+        void registersChanged();
+        void backtraceChanged();
+        void breakpointsChanged();
+        void message(slopkit::debug::Controller::MessageKind kind, const QString& text);
+
+    private:
+        void                        begin_attach();
+        void                        apply_attach(JobResult&& result);
+        void                        apply_run_result(JobResult&& result);
+        void                        end_session(QString reason);
+        void                        apply_detach(JobResult&& result, QString reason);
+        void                        apply_stop(StopEvent stop);
+        void                        apply_registers(JobResult&& result);
+        void                        apply_backtrace(JobResult&& result);
+        void                        arm(std::uint64_t id);
+        void                        disarm(std::uint64_t id);
+        void                        submit_arm(const Breakpoint& entry, bool insert, const QString& action);
+        void                        mark_armed(JobResult&& result, std::uint64_t id, const QString& action);
+        void                        notify(MessageKind kind, QString text);
+        [[nodiscard]] std::uint64_t rip() const noexcept;
+        [[nodiscard]] std::uint32_t active_tid() const noexcept;
+        [[nodiscard]] QString       failure_text(process::AccessError error) const;
+
+        DebugBackend&              backend_;
+        Worker                     worker_;
+        BreakpointTable            breakpoints_;
+        ui::ModuleSpans            modules_;
+        ui::AddressMode            address_mode_ {ui::AddressMode::module_relative};
+        State                      state_ {State::idle};
+        StopEvent                  last_stop_;
+        std::vector<RegisterValue> registers_;
+        std::vector<Frame>         backtrace_;
+        process::ProcessId         pid_ {};
+        std::string                plugin_id_;
+        std::uint32_t              leader_ {};
+        bool                       stop_requested_ {false};
+    };
+
+} // namespace slopkit::debug

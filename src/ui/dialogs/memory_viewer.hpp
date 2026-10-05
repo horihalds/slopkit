@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "debug/controller.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
@@ -28,10 +29,10 @@ namespace slopkit::ui::components
     class MemoryView;
 } // namespace slopkit::ui::components
 
-namespace slopkit::ui::models
+namespace slopkit::ui::panels
 {
-    class RegisterModel;
-} // namespace slopkit::ui::models
+    class DebuggerPanel;
+} // namespace slopkit::ui::panels
 
 namespace slopkit::ui::dialogs
 {
@@ -45,10 +46,17 @@ namespace slopkit::ui::dialogs
         Q_OBJECT
 
     public:
-        MemoryViewerDialog(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent = nullptr);
+        MemoryViewerDialog(process::AccessWorker&   worker,
+                           process::AttachedTarget& target,
+                           debug::Controller&       debug,
+                           QWidget*                 parent = nullptr);
 
         // Opens the viewer at `address`, seeding both panes' cursors.
         void set_address(std::uint64_t address);
+
+        // The Debugger pane, so the window can open the Breakpoints dialog from
+        // the pane's button.
+        [[nodiscard]] panels::DebuggerPanel* debugger_panel() const noexcept;
 
         // Jumps the byte view to an address written as absolute ("0x1040"), a
         // bare module name ("libc.so.6"), or module+RVA ("libc.so.6+1A2B");
@@ -111,16 +119,20 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] bool                   pane_go_to(const QString& text, GoToTarget target);
         void                                 apply_pane_address(std::uint64_t address, GoToTarget target);
 
+        // After a stop, jumps the listing to RIP and asks for a fresh live pass.
+        void follow_stop();
+
         // Asks the coordinator for an immediate pass.
         void request_page();
 
         process::AccessWorker&          worker_;
         process::AttachedTarget&        target_;
+        debug::Controller&              debug_;
         components::MemoryViewDocument  document_;
         components::MemoryView*         view_ {};
         components::DisassemblyDocument disassembly_document_;
         components::DisassemblyView*    disassembly_ {};
-        models::RegisterModel*          registers_ {};
+        panels::DebuggerPanel*          debugger_ {};
         QSplitter*                      split_ {};
         QSplitter*                      code_split_ {};
         bool                            ratios_applied_ {false};

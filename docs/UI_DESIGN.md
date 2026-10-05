@@ -119,3 +119,33 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 - Do not restyle or refactor existing UI that is unrelated to the task; apply these rules to new and modified code.
 - When a change affects appearance, verify it in both dark and light themes, at more than one window size, and at more than one scale factor.
 - If a rule here conflicts with what a task requires, follow the task and mention the conflict instead of silently deviating.
+
+
+## The debugger
+
+The Memory Viewer's right-hand pane is the Debugger: a state line, the run
+controls (`Start Debugging` / `Stop Debugging`, `Resume`, `Break`, `Step Into`,
+`Step Over`, `Breakpoints...`), the editable register table and the call stack of
+the stopped thread. Every control is enabled strictly by the session state, and
+the pane only submits work to the debug controller and renders what it reports.
+
+`View > Breakpoints` and the pane's `Breakpoints...` button open the same
+non-modal Breakpoints window (`Enabled`, `Kind`, `Size`, `Address`, `Hits`, with
+Add Breakpoint..., Remove and Clear All).
+
+Deliberate deviations from the rules above, recorded here rather than taken
+silently:
+
+1. `View` holds a third entry, `Breakpoints`, after `Log` and `Settings`.
+2. The Debugger pane carries its own state/error readout: a debugger has to show
+   `Not debugging` / `Stopped at <address> (breakpoint N)` / `Running...` and the
+   failing operation inline. The same records are written under the `debug` log
+   category, so the report-through-the-log rule still holds in substance.
+3. Section 9's "every target access goes through `process::AccessWorker`" becomes
+   "...through the access worker or the debug worker", because `ptrace` cannot
+   run on the shared access worker (a tracee may only be ptraced by the thread
+   that attached it).
+4. No new timer and no new accelerator is added: the pane reacts to the
+   controller's signals and to the existing completion notifier and tick drain,
+   and the run controls are the text-labelled buttons the component library
+   already provides.

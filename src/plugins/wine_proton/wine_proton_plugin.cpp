@@ -579,6 +579,19 @@ namespace
         plugin_list_threads,
         plugin_list_regions,
         plugin_access_methods,
+        // No debugger: every debug_* pointer stays null, so the host reports the
+        // debugger as unsupported for a Wine/Proton target instead of rejecting
+        // the plugin.
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
     };
 } // namespace
 

@@ -21,7 +21,7 @@ them for every task in this repository.
 ## UI & Design
 
 - Follow the guidelines in `docs/UI_DESIGN.md`
-- Never perform target access on the UI thread. UI code must not touch a `process::Session`, call a plugin or make a syscall; process listing, attach, probing, the desktop-entry index, memory reads/writes and the freeze pass all go through `process::AccessWorker` and are applied by its queued `drain()` on the UI thread.
+- Never perform target access on the UI thread. UI code must not touch a `process::Session`, call a plugin or make a syscall; process listing, attach, probing, the desktop-entry index, memory reads/writes and the freeze pass all go through `process::AccessWorker` and are applied by its queued `drain()` on the UI thread. Debug operations are the one exception in mechanism but not in rule: they go through the debug worker and its `drain()`, because `ptrace` cannot run on the shared access worker.
 
 ## Build & test
 

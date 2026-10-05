@@ -22,15 +22,16 @@
 #include "ui/components/input_box.hpp"
 #include "ui/components/memory_view.hpp"
 #include "ui/components/widgets.hpp"
-#include "ui/models/register_model.hpp"
+#include "ui/panels/debugger_panel.hpp"
 
 namespace slopkit::ui::dialogs
 {
 
     MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
+                                           debug::Controller&       debug,
                                            QWidget*                 parent)
-        : QDialog(parent), worker_(worker), target_(target), document_(worker, target, this),
+        : QDialog(parent), worker_(worker), target_(target), debug_(debug), document_(worker, target, this),
           disassembly_document_(worker, target, this)
     {
         setWindowTitle(tr("Memory Viewer"));
@@ -38,6 +39,11 @@ namespace slopkit::ui::dialogs
         setMinimumSize(720, 480);
 
         build_layout();
+
+        // Every stop moves the listing to the stopping instruction and asks for a
+        // fresh pass, so the bytes around RIP are current.
+        connect(&debug_, &debug::Controller::stopped, this, &MemoryViewerDialog::follow_stop);
+
         set_address(0);
     }
 
@@ -111,20 +117,8 @@ namespace slopkit::ui::dialogs
     QWidget* MemoryViewerDialog::build_stats_pane()
     {
         auto* panel = new widgets::Panel(tr("Debugger"), this);
-        panel->body()->addWidget(widgets::hint_text(tr("Register values arrive with the debugger."), panel));
-
-        registers_  = new models::RegisterModel(this);
-        auto* table = new QTableView(panel);
-        table->setObjectName(QStringLiteral("register_table"));
-        table->setModel(registers_);
-        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        table->setSelectionMode(QAbstractItemView::NoSelection);
-        table->setFocusPolicy(Qt::NoFocus);
-        table->setShowGrid(false);
-        table->verticalHeader()->setVisible(false);
-        table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-        table->horizontalHeader()->setStretchLastSection(true);
-        panel->body()->addWidget(table, 1);
+        debugger_   = new panels::DebuggerPanel(debug_, target_, panel);
+        panel->body()->addWidget(debugger_);
         return panel;
     }
 
@@ -343,12 +337,30 @@ namespace slopkit::ui::dialogs
     {
         document_.set_modules(modules);
         disassembly_document_.set_modules(std::move(modules));
+        debugger_->refresh();
     }
 
     void MemoryViewerDialog::set_address_mode(ui::AddressMode mode)
     {
         document_.set_address_mode(mode);
         disassembly_document_.set_address_mode(mode);
+        debugger_->refresh();
+    }
+
+    panels::DebuggerPanel* MemoryViewerDialog::debugger_panel() const noexcept
+    {
+        return debugger_;
+    }
+
+    void MemoryViewerDialog::follow_stop()
+    {
+        const debug::StopEvent& stop = debug_.last_stop();
+        if (stop.address == 0)
+        {
+            return;
+        }
+        disassembly_->navigate_to(stop.address);
+        emit liveRefreshRequested();
     }
 
     void MemoryViewerDialog::request_page()

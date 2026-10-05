@@ -5,6 +5,8 @@
 #include <QString>
 
 #include "app/instance_server.hpp"
+#include "debug/controller.hpp"
+#include "debug/plugin_backend.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -35,10 +37,17 @@ namespace slopkit::ui
         int run(int argc, char** argv, const QString& initial_table_path = QString());
 
     private:
-        plugin::PluginHost      host_;
-        process::PluginAccess   access_ {host_};
-        // Declared before the worker so it outlives the worker thread that calls
-        // its post().
+        plugin::PluginHost    host_;
+        process::PluginAccess access_ {host_};
+
+        // The debug session: a plugin backend over the same host and the
+        // controller that owns its worker. Declared before the window so the
+        // window and its panes are destroyed first.
+        debug::PluginBackend debug_backend_ {host_};
+        debug::Controller    debug_ {debug_backend_};
+
+        // Declared before the workers so it outlives the threads that call its
+        // post().
         CompletionNotifier      notifier_;
         process::AccessWorker   access_worker_ {access_};
         process::AttachedTarget target_;
