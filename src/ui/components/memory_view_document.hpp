@@ -66,7 +66,7 @@ namespace slopkit::ui::components
         MemoryViewDocument(process::AccessWorker& worker, process::AttachedTarget& target, QObject* parent = nullptr);
 
         // View geometry: the first visible byte, the auto-fitted row width and
-        // how many rows fit. `first_byte` is aligned down to a whole row; the
+        // how many rows fit. `first_byte` is kept exactly as requested; the
         // block window follows the visible block.
         void set_view(std::uint64_t first_byte, std::size_t bytes_per_row, std::size_t visible_rows);
         [[nodiscard]] std::uint64_t first_byte() const noexcept;

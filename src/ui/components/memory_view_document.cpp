@@ -60,8 +60,9 @@ namespace slopkit::ui::components
         bytes_per_row_ = std::max<std::size_t>(1, bytes_per_row);
         visible_rows_  = std::max<std::size_t>(1, visible_rows);
 
-        // Keep the top byte on a whole row and the window on a whole block.
-        first_byte_                      = align_down(first_byte, bytes_per_row_);
+        // Keep the requested top byte verbatim; only the block window stays
+        // aligned to the visible block.
+        first_byte_                      = first_byte;
         const std::uint64_t visible_base = visible_block_base();
         if (visible_base != last_window_base_)
         {

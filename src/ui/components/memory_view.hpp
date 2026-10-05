@@ -26,8 +26,11 @@ namespace slopkit::ui::components
     public:
         explicit MemoryView(MemoryViewDocument& document, QWidget* parent = nullptr);
 
+        // The top-left address; kept exactly where it is by every layout change.
         [[nodiscard]] std::uint64_t first_byte() const noexcept;
-        void                        set_first_byte(std::uint64_t address); // Go / open at
+        // Jumps the top address to exactly `address` (clamped to the user-space
+        // ceiling); Go To and the dialog's open-at address use this.
+        void                        set_first_byte(std::uint64_t address);
         // Parses `text` (absolute or module+RVA) and jumps there; false when the
         // text does not name an address.
         bool                        go_to(const QString& text);
@@ -83,15 +86,16 @@ namespace slopkit::ui::components
         [[nodiscard]] std::optional<Hit> hit_test(const QPoint& position) const;
 
         // Re-derives the row height, the address/cell/text widths, the bytes per
-        // row and the visible rows, then re-windows the document.
+        // row and the visible rows, then re-windows the document. The top
+        // address is preserved across the re-fit.
         void recompute_layout();
 
         void setup_scrollbar();
         void recenter_scrollbar();
         void on_scroll_value(int value);
-        // Moves the top address by whole rows; positive scrolls down.
+        // Moves the top address by whole rows; positive scrolls down. The
+        // anchor offset is preserved across the step.
         void scroll_rows(long long delta);
-        void align_first_byte();
 
         void close_editor();
         void commit_edit();

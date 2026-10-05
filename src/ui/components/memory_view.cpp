@@ -168,11 +168,6 @@ namespace slopkit::ui::components
         return QString::number(offset, 16).rightJustified(static_cast<qsizetype>(digits), QLatin1Char('0')).toUpper();
     }
 
-    void MemoryView::align_first_byte()
-    {
-        first_byte_ -= first_byte_ % bytes_per_row_;
-    }
-
     void MemoryView::recompute_layout()
     {
         const QFontMetrics metrics(mono_font());
@@ -222,10 +217,9 @@ namespace slopkit::ui::components
         const std::size_t new_bytes_per_row = std::max<std::size_t>(1, cells * format_bytes);
         if (!layout_ready_ || new_bytes_per_row != bytes_per_row_)
         {
-            // Keep the previously top-most byte on screen by re-aligning it down
-            // to the new row width.
+            // Keep the top address where it is and lay the new row grid out
+            // from it, so a re-fit never moves the view.
             bytes_per_row_ = new_bytes_per_row;
-            align_first_byte();
         }
         layout_ready_ = true;
 
@@ -290,7 +284,6 @@ namespace slopkit::ui::components
             // Saturate at the top of the user address space so the add cannot wrap.
             first_byte_ = scan::kMaxUserAddress - first_byte_ < step ? scan::kMaxUserAddress : first_byte_ + step;
         }
-        align_first_byte();
         close_editor();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
         viewport()->update();
@@ -298,8 +291,8 @@ namespace slopkit::ui::components
 
     void MemoryView::set_first_byte(std::uint64_t address)
     {
+        // The top address is kept exactly as requested, clamped to the ceiling.
         first_byte_ = std::min(address, scan::kMaxUserAddress);
-        align_first_byte();
         close_editor();
         recenter_scrollbar();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);

@@ -4859,10 +4859,10 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     REQUIRE(document != nullptr);
 
     memory_view->click();
-    // The main module's map is loaded, so the entry renders module-relative.
+    // The main module's map is loaded, so the entry renders module-relative and
+    // the view lands exactly on the entry address.
     CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
-    CHECK(view->first_byte() <= 0x1040);
-    CHECK(0x1040 < view->first_byte() + view->bytes_per_row());
+    CHECK(view->first_byte() == 0x1040);
 
     // The add button reaches the same non-modal dialog as the menu action.
     auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
@@ -5411,6 +5411,87 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
                     }));
 }
 
+TEST_CASE("the memory viewer keeps the top address when its dialog is resized", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {scratch_settings_file("viewer_resize.ini")};
+
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+
+    // The target serves reads at the requested block base only, so a helper
+    // seeds every block of the window the view just asked for.
+    const auto seed_window = [&](std::byte value)
+    {
+        for (const slopkit::ui::LiveRequest& request : viewer.next_live_request())
+        {
+            (*access.memory)[request.address] = std::vector<std::byte>(request.size, value);
+        }
+    };
+
+    // An address that is not a multiple of the fitted row width.
+    viewer.set_address(0x1010);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        const std::size_t before = view->visible_rows();
+        QCoreApplication::processEvents();
+        if (view->visible_rows() == before)
+        {
+            break;
+        }
+    }
+
+    slopkit::ui::LiveValues live {worker, target, settings};
+    live.add_surface(&viewer);
+    QObject::connect(&viewer,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::liveRefreshRequested,
+                     &live,
+                     &slopkit::ui::LiveValues::request_now);
+
+    seed_window(std::byte {0xEF});
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return view->cell_text(0x1010) == QStringLiteral("EF");
+                    }));
+
+    const std::uint64_t anchor     = view->first_byte();
+    const int           wide_width = view->width();
+    REQUIRE(anchor == 0x1010);
+
+    // A narrower dialog re-fits the row width but leaves the anchor alone.
+    viewer.resize(viewer.width() - 200, viewer.height());
+    QCoreApplication::processEvents();
+    REQUIRE(view->width() < wide_width);
+    CHECK(view->first_byte() == anchor);
+
+    // A wider one does too, and the cell seeded before the resize still renders
+    // its bytes after the next pass.
+    viewer.resize(viewer.width() + 400, viewer.height());
+    QCoreApplication::processEvents();
+    REQUIRE(view->width() > wide_width);
+    CHECK(view->first_byte() == anchor);
+
+    seed_window(std::byte {0xEF});
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return view->cell_text(anchor) == QStringLiteral("EF");
+                    }));
+
+    viewer.hide();
+}
+
 TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
 {
     application();
@@ -5426,18 +5507,15 @@ TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
 
     viewer.set_modules({module_image("app", 0x1000, 0x1000)});
 
-    // A module+RVA (case-insensitively) jumps to the resolved address.
+    // A module+RVA (case-insensitively) jumps to exactly the resolved address.
     CHECK(viewer.go_to(QStringLiteral("APP+40")));
-    CHECK(view->first_byte() <= 0x1040);
-    CHECK(0x1040 < view->first_byte() + view->bytes_per_row());
+    CHECK(view->first_byte() == 0x1040);
     CHECK(viewer.go_to(QStringLiteral("app+40")));
-    CHECK(view->first_byte() <= 0x1040);
-    CHECK(0x1040 < view->first_byte() + view->bytes_per_row());
+    CHECK(view->first_byte() == 0x1040);
 
-    // A plain absolute address works too.
+    // A plain absolute address works too, with no rounding to the row grid.
     CHECK(viewer.go_to(QStringLiteral("0x2000")));
-    CHECK(view->first_byte() <= 0x2000);
-    CHECK(0x2000 < view->first_byte() + view->bytes_per_row());
+    CHECK(view->first_byte() == 0x2000);
 
     // An unparsable value leaves the page where it was.
     const std::uint64_t before = view->first_byte();

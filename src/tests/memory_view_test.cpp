@@ -539,29 +539,71 @@ TEST_CASE("the memory view auto-fits its rows to the widget", "[memory_view]")
     view.hide();
 }
 
-TEST_CASE("a resize and a format change keep the previously top-most byte on screen", "[memory_view]")
+TEST_CASE("a resize, format, encoding or text-column change keeps the top address exactly", "[memory_view]")
 {
     slopkit_test_application();
     Fixture    fixture;
     MemoryView view(fixture.document);
+    view.show();
+
+    // A one-byte row width parks the anchor on an address that no wider row
+    // width divides, so every re-fit below would move it without the fix.
+    view.resize(60, 600);
+    REQUIRE(view.bytes_per_row() == 1);
+    view.set_first_byte(0x1807);
+    REQUIRE(view.first_byte() == 0x1807);
+
+    // A wider widget re-fits the row width and leaves the anchor alone.
     view.resize(800, 600);
-    view.set_first_byte(kBase);
-    const std::uint64_t before = view.first_byte();
-    REQUIRE(before <= kBase);
+    REQUIRE(view.bytes_per_row() > 1);
+    CHECK(view.first_byte() == 0x1807);
 
+    // A narrower widget does too.
     view.resize(360, 600);
-    const std::uint64_t after = view.first_byte();
-    CHECK(after <= before);
-    CHECK(before < after + view.bytes_per_row());
+    REQUIRE(view.bytes_per_row() > 1);
+    CHECK(view.first_byte() == 0x1807);
 
-    const std::uint64_t anchor = view.first_byte();
+    // A value-format change re-fits the width the same way.
+    view.resize(800, 600);
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
     view.relayout();
     CHECK(view.bytes_per_row() % 4 == 0);
-    CHECK(view.first_byte() <= anchor);
-    CHECK(anchor < view.first_byte() + view.bytes_per_row());
+    CHECK(view.first_byte() == 0x1807);
+
+    // An encoding change does too.
+    fixture.document.set_encoding(TextEncoding::utf8);
+    view.relayout();
+    CHECK(view.first_byte() == 0x1807);
+
+    // Hiding the text column gives its space back without moving the anchor.
+    view.set_text_column_visible(false);
+    CHECK_FALSE(view.text_column_visible());
+    CHECK(view.first_byte() == 0x1807);
 
     view.hide();
+}
+
+TEST_CASE("the memory view document keeps an unaligned top address and still windows it", "[memory_view]")
+{
+    Fixture fixture;
+    fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0x5A});
+
+    const std::uint64_t anchor = kBase + 8; // Not a multiple of the row width.
+    fixture.document.set_view(anchor, kRowBytes, kRows);
+    CHECK(fixture.document.first_byte() == anchor);
+
+    // The three slots are contiguous and their union still covers the visible
+    // range, so every painted cell falls inside a requested block.
+    const std::vector<slopkit::ui::LiveRequest> requests = fixture.document.next_live_request();
+    REQUIRE(requests.size() == 3);
+    CHECK(requests[1].address == requests[0].address + requests[0].size);
+    CHECK(requests[2].address == requests[1].address + requests[1].size);
+    CHECK(requests[0].address <= anchor);
+    CHECK(requests[2].address + requests[2].size >= anchor + kExtent);
+
+    fixture.pass();
+    CHECK(fixture.document.cell(anchor).readable);
+    CHECK(fixture.document.cell(anchor).text == QStringLiteral("5A"));
 }
 
 TEST_CASE("the memory view scrolls by whole rows and clamps at zero", "[memory_view]")
@@ -570,9 +612,14 @@ TEST_CASE("the memory view scrolls by whole rows and clamps at zero", "[memory_v
     Fixture    fixture;
     MemoryView view(fixture.document);
     view.resize(800, 600);
-    view.set_first_byte(0x100000);
+
+    // Go To and row scrolling keep the anchor offset instead of snapping it to
+    // the row grid.
+    view.set_first_byte(0x1808);
+    CHECK(view.first_byte() == 0x1808);
     const std::size_t   bpr   = view.bytes_per_row();
     const std::uint64_t start = view.first_byte();
+    REQUIRE(bpr > 1);
 
     QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
     QApplication::sendEvent(&view, &down);
@@ -586,12 +633,16 @@ TEST_CASE("the memory view scrolls by whole rows and clamps at zero", "[memory_v
     QApplication::sendEvent(&view, &page_down);
     CHECK(view.first_byte() == start + view.visible_rows() * bpr);
 
+    QKeyEvent page_up(QEvent::KeyPress, Qt::Key_PageUp, Qt::NoModifier);
+    QApplication::sendEvent(&view, &page_up);
+    CHECK(view.first_byte() == start);
+
     // Scrolling up at the start of the address space clamps at zero.
     view.set_first_byte(0);
     QApplication::sendEvent(&view, &up);
     CHECK(view.first_byte() == 0);
 
-    // The wheel scrolls three rows per notch.
+    // The wheel scrolls three rows per notch, offset and all.
     view.set_first_byte(start);
     const QPointF centre(view.viewport()->rect().center());
     QWheelEvent   wheel_down(centre,
@@ -604,6 +655,11 @@ TEST_CASE("the memory view scrolls by whole rows and clamps at zero", "[memory_v
                              false);
     QApplication::sendEvent(view.viewport(), &wheel_down);
     CHECK(view.first_byte() == start + 3 * bpr);
+
+    // Scrolling down saturates at the user-space ceiling.
+    view.set_first_byte(slopkit::scan::kMaxUserAddress - 8);
+    QApplication::sendEvent(&view, &down);
+    CHECK(view.first_byte() == slopkit::scan::kMaxUserAddress);
 
     view.hide();
 }
