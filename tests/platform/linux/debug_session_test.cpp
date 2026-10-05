@@ -9,6 +9,7 @@
 #include <optional>
 #include <thread>
 
+#include <sched.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -112,12 +113,40 @@ namespace
         return buffer[0];
     }
 
+    // A stack for the second thread; clone() is used instead of std::thread
+    // because the child is forked from a process whose allocator may be locked.
+    alignas(16) std::array<char, 128 * 1024> g_thread_stack {};
+
+    extern "C" int thread_loop(void*)
+    {
+        for (;;)
+        {
+            debug_target();
+        }
+        return 0;
+    }
+
     // Waits until the child has advanced past `above`, proving it is running.
     bool await_tick(MemAccess& memory, std::uint32_t above)
     {
         for (int waited = 0; waited < 2000; waited += 5)
         {
             if (const auto value = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)); value && *value > above)
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    }
+
+    // Waits until the target reports `want` threads in procfs, so that a session
+    // attaching right after sees them all.
+    bool await_threads(ProcessId pid, std::size_t want)
+    {
+        for (int waited = 0; waited < 2000; waited += 5)
+        {
+            if (slopkit::platform::read_threads(pid).size() >= want)
             {
                 return true;
             }
@@ -339,6 +368,111 @@ TEST_CASE("debug session reports its own interrupt", "[debug_session]")
 
     REQUIRE(stop.has_value());
     CHECK(stop->reason == StopReason::interrupt);
+    CHECK(detached);
+}
+
+TEST_CASE("debug session arms a hardware watch after its own interrupt", "[debug_session]")
+{
+    // The controller stops a running target with its own SIGSTOP to install a
+    // data breakpoint. The stop resume() reports is the maintenance stop, and
+    // the arm must land on the stopped tracee right after it.
+    ChildProcess child(
+        []
+        {
+            for (;;)
+            {
+                debug_target();
+            }
+        });
+
+    MemAccess    memory(child.pid());
+    DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
+
+    const auto watched = reinterpret_cast<std::uint64_t>(&g_tick);
+
+    std::promise<bool>                                        attached;
+    std::expected<void, AccessError>                          armed {std::unexpected(AccessError::internal)};
+    std::expected<slopkit::platform::StopStatus, AccessError> stop {std::unexpected(AccessError::internal)};
+    bool                                                      detached = false;
+    std::thread                                               runner(
+        [&session, &stop, &attached, &armed, &detached, watched]
+        {
+            const auto leader = session.attach();
+            attached.set_value(leader.has_value());
+            if (!leader)
+            {
+                return;
+            }
+            stop     = session.resume(0);
+            armed    = session.arm_hardware(0, 3, watched, 4, true);
+            detached = session.detach().has_value();
+        });
+    REQUIRE(attached.get_future().get());
+
+    const auto tick = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)).value_or(0);
+    REQUIRE(await_tick(memory, tick));
+    REQUIRE(session.interrupt(child.pid()).has_value());
+    runner.join();
+
+    REQUIRE(stop.has_value());
+    CHECK(stop->reason == StopReason::interrupt);
+    INFO("arm error: " << static_cast<int>(armed.error()));
+    CHECK(armed.has_value());
+    CHECK(detached);
+}
+
+TEST_CASE("debug session arms a hardware watch on a threaded target", "[debug_session]")
+{
+    // A threaded target: the maintenance SIGSTOP group-stops every thread, but
+    // only the first stop is reaped before the arm runs.
+    ChildProcess child(
+        []
+        {
+            ::clone(thread_loop,
+                    g_thread_stack.data() + g_thread_stack.size(),
+                    CLONE_THREAD | CLONE_VM | CLONE_SIGHAND | CLONE_FS | CLONE_FILES,
+                    nullptr);
+            for (;;)
+            {
+                debug_target();
+            }
+        });
+
+    MemAccess    memory(child.pid());
+    DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
+    // Both threads have to exist before attaching, or the session seizes one.
+    REQUIRE(await_threads(child.pid(), 2));
+
+    const auto watched = reinterpret_cast<std::uint64_t>(&g_tick);
+
+    std::promise<bool>                                        attached;
+    std::expected<void, AccessError>                          armed {std::unexpected(AccessError::internal)};
+    std::expected<slopkit::platform::StopStatus, AccessError> stop {std::unexpected(AccessError::internal)};
+    bool                                                      detached = false;
+    std::thread                                               runner(
+        [&session, &stop, &attached, &armed, &detached, watched]
+        {
+            const auto leader = session.attach();
+            attached.set_value(leader.has_value());
+            if (!leader)
+            {
+                return;
+            }
+            stop     = session.resume(0);
+            armed    = session.arm_hardware(0, 3, watched, 4, true);
+            detached = session.detach().has_value();
+        });
+    REQUIRE(attached.get_future().get());
+
+    const auto tick = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)).value_or(0);
+    REQUIRE(await_tick(memory, tick));
+    REQUIRE(session.interrupt(child.pid()).has_value());
+    runner.join();
+
+    REQUIRE(stop.has_value());
+    CHECK(stop->reason == StopReason::interrupt);
+    INFO("arm error: " << static_cast<int>(armed.error()));
+    CHECK(armed.has_value());
     CHECK(detached);
 }
 

@@ -182,6 +182,9 @@ namespace slopkit::platform
         std::expected<void, process::AccessError> result {};
         for (const auto tid : tids)
         {
+            // A thread that is still running can be neither cleared nor detached,
+            // and leaving one seized would keep its debug registers programmed.
+            (void)ensure_stopped(tid);
             (void)platform::clear_debug_registers(tid);
             const auto detached = platform::detach(tid);
             if (!detached && result.has_value())
@@ -562,6 +565,45 @@ namespace slopkit::platform
         return read && read->bytes == byte.size() && byte[0] == std::byte {0xCC};
     }
 
+    std::expected<void, process::AccessError> DebugSession::ensure_stopped(process::ProcessId tid)
+    {
+        // The debug registers are reached through PEEKUSER/POKEUSER, which the
+        // kernel only forwards to a thread sitting in a ptrace stop. A SIGSTOP
+        // group stop reports a single thread and leaves its siblings merely
+        // job-control stopped, and a thread that never reported a stop is still
+        // running; both refuse every ptrace request. Asking such a thread to stop
+        // and reaping that stop is what leaves it reachable.
+        if (const auto readable = platform::get_debug_register(tid, 7); readable)
+        {
+            return {};
+        }
+
+        if (const auto asked = platform::interrupt(tid); !asked)
+        {
+            return std::unexpected(asked.error());
+        }
+
+        const std::array<process::ProcessId, 1> one {tid};
+        for (;;)
+        {
+            const auto stop = platform::wait(one);
+            if (!stop)
+            {
+                return std::unexpected(stop.error());
+            }
+            if (stop->reason != StopReason::signal_stop)
+            {
+                return {};
+            }
+            // The thread stopped to hand over its own signal, not to answer the
+            // interrupt: deliver the signal and wait for the stop we asked for.
+            if (const auto resumed = platform::cont(tid, stop->signal); !resumed)
+            {
+                return std::unexpected(resumed.error());
+            }
+        }
+    }
+
     std::expected<void, process::AccessError> DebugSession::apply_hardware()
     {
         std::vector<process::ProcessId>              tids;
@@ -574,6 +616,10 @@ namespace slopkit::platform
 
         for (const auto tid : tids)
         {
+            if (const auto stopped = ensure_stopped(tid); !stopped)
+            {
+                return std::unexpected(stopped.error());
+            }
             // A slot's perf attributes are derived from the DR7 value present at
             // the moment its address is written, and the kernel refuses to
             // modify an enabled breakpoint. So: disable through DR7, rewrite

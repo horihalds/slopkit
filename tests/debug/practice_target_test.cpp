@@ -1,9 +1,13 @@
 #include <catch2/catch.hpp>
 
+#include <array>
 #include <cstdint>
+#include <filesystem>
 #include <format>
 #include <string>
+#include <thread>
 
+#include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/types.h>
@@ -35,6 +39,33 @@ namespace
         *g_counter = *g_counter + 1;
     }
 
+    // A spare stack and body for a second thread, created with clone() because
+    // the child is forked from a process whose allocator may be locked.
+    alignas(16) std::array<char, 256 * 1024> g_thread_stack {};
+
+    extern "C" int debug_target_thread(void*)
+    {
+        for (;;)
+        {
+            debug_target();
+        }
+        return 0;
+    }
+
+    // How many threads the target has right now, straight from procfs.
+    std::size_t thread_count(pid_t pid)
+    {
+        std::error_code                     error;
+        std::size_t                         count = 0;
+        std::filesystem::directory_iterator entries {std::format("/proc/{}/task", pid), error};
+        for (const auto& entry : entries)
+        {
+            (void)entry;
+            ++count;
+        }
+        return count;
+    }
+
     // A forked child looping over a known function. It shares the counter mapping
     // with the parent, so the watched address is the same on both sides and the
     // parent can see the counter advance; it is a child of the test process, which
@@ -42,7 +73,7 @@ namespace
     class DebugChild
     {
     public:
-        DebugChild()
+        explicit DebugChild(bool with_thread = false)
         {
             mapping_ = ::mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
             if (mapping_ != MAP_FAILED)
@@ -54,6 +85,13 @@ namespace
             const pid_t pid = ::fork();
             if (pid == 0)
             {
+                if (with_thread)
+                {
+                    (void)::clone(debug_target_thread,
+                                  g_thread_stack.data() + g_thread_stack.size(),
+                                  CLONE_THREAD | CLONE_VM | CLONE_SIGHAND | CLONE_FS | CLONE_FILES,
+                                  nullptr);
+                }
                 for (;;)
                 {
                     debug_target();
@@ -102,6 +140,170 @@ namespace
         return std::format("0x{:X}", address);
     }
 } // namespace
+
+TEST_CASE("an access watch arms on a running target", "[debug][practice]")
+{
+    DebugChild child;
+    REQUIRE(child.pid() != 0);
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    PluginBackend backend(host);
+    Controller    controller(backend);
+
+    QString last_error;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&last_error](Controller::MessageKind kind, const QString& text)
+                     {
+                         if (kind == Controller::MessageKind::warning || kind == Controller::MessageKind::error)
+                         {
+                             last_error = text;
+                         }
+                     });
+
+    controller.start(child.pid(), "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    const std::uint32_t before = *g_counter;
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return *g_counter != before;
+                       }));
+
+    // The access-watch flow: start watching a live value while the target keeps
+    // running, so the controller has to stop it, arm the slot and run it again.
+    const auto started = controller.watch_address(child.counter_address(), Kind::hardware_write, 4);
+    REQUIRE(started.has_value());
+
+    // Wait until the arm lands, however it lands: armed, or given up on.
+    const bool settled = pump_until(
+        controller,
+        [&]
+        {
+            const auto* slot = controller.table().find(controller.watch().breakpoint_id());
+            return (slot != nullptr && slot->armed)
+                || controller.watch().state() == slopkit::debug::WatchState::stopped;
+        },
+        500);
+    INFO("settled=" << settled << " error=" << last_error.toStdString()
+                    << " state=" << static_cast<int>(controller.state())
+                    << " watch=" << static_cast<int>(controller.watch().state()));
+    const auto* armed_slot = controller.table().find(controller.watch().breakpoint_id());
+    REQUIRE(armed_slot != nullptr);
+    CHECK(armed_slot->armed);
+    CHECK(controller.watch().state() == slopkit::debug::WatchState::watching);
+
+    // A watch hit is consumed by the controller, so the target must keep running
+    // while the hits arrive.
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.watch().hit_count() >= 1;
+                       }));
+    INFO("error=" << last_error.toStdString() << " state=" << static_cast<int>(controller.state())
+                  << " watch=" << static_cast<int>(controller.watch().state()));
+    CHECK(controller.state() == Controller::State::running);
+    REQUIRE_FALSE(controller.watch().hits().empty());
+    CHECK(controller.watch().hits().front().instruction != 0);
+    CHECK(controller.watch().hits().front().tid == child.pid());
+
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+}
+
+TEST_CASE("an access watch arms on a running threaded target", "[debug][practice]")
+{
+    DebugChild child(true);
+    REQUIRE(child.pid() != 0);
+    // The second thread must exist before attaching, so the session sees both.
+    REQUIRE(slopkit::tests::wait_until(
+        [&]
+        {
+            return thread_count(child.pid()) >= 2;
+        }));
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    PluginBackend backend(host);
+    Controller    controller(backend);
+
+    QString last_error;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&last_error](Controller::MessageKind kind, const QString& text)
+                     {
+                         if (kind == Controller::MessageKind::warning || kind == Controller::MessageKind::error)
+                         {
+                             last_error = text;
+                         }
+                     });
+
+    controller.start(child.pid(), "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    const std::uint32_t before = *g_counter;
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return *g_counter != before;
+                       }));
+
+    const auto started = controller.watch_address(child.counter_address(), Kind::hardware_write, 4);
+    REQUIRE(started.has_value());
+
+    // Wait until the arm lands, however it lands: armed, or given up on.
+    const bool settled = pump_until(
+        controller,
+        [&]
+        {
+            const auto* slot = controller.table().find(controller.watch().breakpoint_id());
+            return (slot != nullptr && slot->armed)
+                || controller.watch().state() == slopkit::debug::WatchState::stopped;
+        },
+        500);
+    INFO("settled=" << settled << " error=" << last_error.toStdString()
+                    << " state=" << static_cast<int>(controller.state())
+                    << " watch=" << static_cast<int>(controller.watch().state()));
+    REQUIRE(controller.watch().state() == slopkit::debug::WatchState::watching);
+    const auto* armed_slot = controller.table().find(controller.watch().breakpoint_id());
+    REQUIRE(armed_slot != nullptr);
+    CHECK(armed_slot->armed);
+
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.watch().hit_count() >= 1;
+                       }));
+    INFO("error=" << last_error.toStdString() << " state=" << static_cast<int>(controller.state())
+                  << " watch=" << static_cast<int>(controller.watch().state()));
+    CHECK(controller.state() == Controller::State::running);
+    CHECK(controller.watch().hit_count() >= 1);
+
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+}
 
 TEST_CASE("a real debug session runs against a spawned target", "[debug][practice]")
 {

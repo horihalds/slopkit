@@ -101,6 +101,9 @@ namespace slopkit::platform
     private:
         // Programs DR0-DR3/DR7 on every seized thread from the slot table.
         [[nodiscard]] std::expected<void, process::AccessError> apply_hardware();
+        // Leaves `tid` in a ptrace stop, so the debug registers, the registers
+        // and DETACH reach it.
+        [[nodiscard]] std::expected<void, process::AccessError> ensure_stopped(process::ProcessId tid);
 
         mutable std::mutex                           mutex_;
         std::vector<process::ProcessId>              tids_;
