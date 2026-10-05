@@ -11,6 +11,7 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
+#include "ui/access_watch.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/disassembly_document.hpp"
 #include "ui/components/memory_view_document.hpp"
@@ -65,6 +66,11 @@ namespace slopkit::ui::dialogs
         // The same for the disassembly listing's own cursor.
         bool go_to_disassembly(const QString& text);
 
+        // Resolves a listing row's memory operands against the controller's
+        // register context and emits instructionAccessesResolved; nothing in the
+        // target is touched.
+        void instruction_accesses(std::size_t row);
+
         // Sets the module image spans used to render module-relative addresses.
         void set_modules(std::vector<process::ModuleInfo> modules);
         // Chooses how static addresses are shown in both panes' address columns.
@@ -81,6 +87,11 @@ namespace slopkit::ui::dialogs
         // The window's saved geometry (QWidget::saveGeometry), emitted whenever
         // it is hidden so MainWindow can persist it for the next run.
         void geometryChanged(QByteArray geometry);
+
+        // The resolved operands of a listing row, for the Access Watch window.
+        void instructionAccessesResolved(std::uint64_t                   instruction,
+                                         std::size_t                     instruction_length,
+                                         std::vector<ui::ResolvedAccess> accesses);
 
     protected:
         void showEvent(QShowEvent* event) override;

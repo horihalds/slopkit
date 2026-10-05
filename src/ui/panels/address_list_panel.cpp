@@ -20,6 +20,7 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "scan/types.hpp"
 #include "table/serializer.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/models/address_table_model.hpp"
@@ -455,52 +456,123 @@ namespace slopkit::ui::panels
         }
         table_.set_selected(index.row());
 
+        QMenu menu(this);
+        populate_row_menu(menu, row);
+        menu.exec(table_view_->viewport()->mapToGlobal(position));
+    }
+
+    void AddressListPanel::populate_row_menu(QMenu& menu, std::size_t row)
+    {
+        if (!table_.valid_index(row))
+        {
+            return;
+        }
         auto& entry = table_.entries()[row];
 
-        QMenu menu(this);
         menu.setToolTipsVisible(true);
 
         QAction* change_value = menu.addAction(tr("Change value"));
-        QAction* freeze       = menu.addAction(tr("Freeze"));
+        connect(change_value,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    if (table_.valid_index(row))
+                    {
+                        table_view_->edit(model_->index(static_cast<int>(row), models::AddressTableModel::value));
+                    }
+                });
+
+        QAction* freeze = menu.addAction(tr("Freeze"));
         freeze->setCheckable(true);
         freeze->setChecked(entry.active);
+        connect(freeze,
+                &QAction::triggered,
+                this,
+                [this, row](bool checked)
+                {
+                    if (!table_.valid_index(row))
+                    {
+                        return;
+                    }
+                    auto& frozen  = table_.entries()[row];
+                    frozen.active = checked;
+                    set_status(frozen.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
+                });
+
         QAction* show_hex = menu.addAction(tr("Show as hex"));
         show_hex->setCheckable(true);
         show_hex->setChecked(entry.hex);
+        connect(show_hex,
+                &QAction::triggered,
+                this,
+                [this, row](bool checked)
+                {
+                    if (!table_.valid_index(row))
+                    {
+                        return;
+                    }
+                    table_.entries()[row].hex = checked;
+                    set_status(tr("Display format updated."), false);
+                });
+
         QAction* browse = menu.addAction(tr("Browse this memory region"));
+        connect(browse,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    if (table_.valid_index(row))
+                    {
+                        emit browseRequested(table_.entries()[row].address);
+                    }
+                });
 
         menu.addSeparator();
-        disabled_action(
-            menu, tr("Find out what writes to this address"), tr("Disabled: needs hardware watchpoints or ptrace"));
+        // The watch entries arm a hardware slot, so they need a target.
+        const std::size_t width =
+            entry.bytes.empty() ? scan::value_size(entry.type) : static_cast<std::size_t>(entry.bytes.size());
+        if (target_.valid())
+        {
+            QAction* writes = menu.addAction(tr("Find out what writes this address"));
+            writes->setToolTip(tr("Arm a hardware watch and record every instruction that writes this address."));
+            connect(writes,
+                    &QAction::triggered,
+                    this,
+                    [this, row, width]
+                    {
+                        if (table_.valid_index(row))
+                        {
+                            emit accessWatchRequested(
+                                table_.entries()[row].address, width, debug::Kind::hardware_write);
+                        }
+                    });
+
+            QAction* accesses = menu.addAction(tr("Find out what accesses this address"));
+            accesses->setToolTip(
+                tr("Arm a hardware watch and record every instruction that reads or writes this address."));
+            connect(accesses,
+                    &QAction::triggered,
+                    this,
+                    [this, row, width]
+                    {
+                        if (table_.valid_index(row))
+                        {
+                            emit accessWatchRequested(
+                                table_.entries()[row].address, width, debug::Kind::hardware_read_write);
+                        }
+                    });
+        }
+        else
+        {
+            disabled_action(menu, tr("Find out what writes this address"), tr("Attach to a target first."));
+            disabled_action(menu, tr("Find out what accesses this address"), tr("Attach to a target first."));
+        }
         disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
 
         menu.addSeparator();
         QAction* remove = menu.addAction(tr("Delete"));
-
-        QAction* chosen = menu.exec(table_view_->viewport()->mapToGlobal(position));
-
-        if (chosen == change_value)
-        {
-            table_view_->edit(model_->index(index.row(), models::AddressTableModel::value));
-        }
-        else if (chosen == freeze)
-        {
-            entry.active = freeze->isChecked();
-            set_status(entry.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
-        }
-        else if (chosen == show_hex)
-        {
-            entry.hex = show_hex->isChecked();
-            set_status(tr("Display format updated."), false);
-        }
-        else if (chosen == browse)
-        {
-            emit browseRequested(entry.address);
-        }
-        else if (chosen == remove)
-        {
-            delete_selected();
-        }
+        connect(remove, &QAction::triggered, this, &AddressListPanel::delete_selected);
     }
 
 } // namespace slopkit::ui::panels

@@ -431,6 +431,15 @@ namespace slopkit::ui::components
         return instructions_[index].addresses;
     }
 
+    std::span<const disasm::MemoryRef> DisassemblyDocument::row_memory(std::size_t index) const
+    {
+        if (index >= instructions_.size() || !readable_)
+        {
+            return {};
+        }
+        return instructions_[index].memory;
+    }
+
     std::optional<std::size_t> DisassemblyDocument::row_at(std::uint64_t address) const
     {
         if (instructions_.empty() || address < instructions_.front().address)

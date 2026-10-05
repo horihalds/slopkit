@@ -535,3 +535,43 @@ TEST_CASE("showing and hiding the disassembly view toggles the document visibili
     CHECK_FALSE(fixture.document.visible());
     CHECK(fixture.document.next_live_request().empty());
 }
+
+TEST_CASE("the disassembly view offers the instruction accesses command", "[ui]")
+{
+    application();
+    ViewFixture     fixture;
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    // MOV EAX, [RBX+0x10], then a NOP with no memory operand.
+    fixture.put(kCode, {0x8B, 0x43, 0x10, 0x90});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    QMenu menu;
+    view.populate_menu(menu, 0);
+    QAction* accesses = action(menu, QStringLiteral("Find out what addresses this instruction accesses"));
+    REQUIRE(accesses != nullptr);
+    CHECK(accesses->isEnabled());
+
+    std::size_t requested = 99;
+    QObject::connect(&view,
+                     &DisassemblyView::instructionAccessesRequested,
+                     &view,
+                     [&requested](std::size_t row)
+                     {
+                         requested = row;
+                     });
+    accesses->trigger();
+    CHECK(requested == 0);
+
+    // A row that touches no memory disables the entry.
+    QMenu plain;
+    view.populate_menu(plain, 1);
+    QAction* plain_accesses = action(plain, QStringLiteral("Find out what addresses this instruction accesses"));
+    REQUIRE(plain_accesses != nullptr);
+    CHECK_FALSE(plain_accesses->isEnabled());
+
+    view.hide();
+}

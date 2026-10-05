@@ -3,6 +3,7 @@
 #include <span>
 #include <vector>
 
+#include "debug/breakpoints.hpp"
 #include "process/types.hpp"
 #include "scan/engine.hpp"
 #include "table/address_table.hpp"
@@ -68,6 +69,9 @@ namespace slopkit::ui::panels
         // (or its base when the plugin reports none).
         void memoryViewRequested();
 
+        // A request to arm an access watch on a scan hit, from the row menu.
+        void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
+
     private:
         void add_to_table(int row);
         void copy_row(int row, models::CopyFormat format);
@@ -86,6 +90,8 @@ namespace slopkit::ui::panels
         scan::ScanSnapshot last_snapshot_;
         scan::ScanConfig   last_config_;
         bool               has_last_ {false};
+        // Whether a target is attached, so the watch entries can arm a slot.
+        bool               target_attached_ {false};
     };
 
 } // namespace slopkit::ui::panels

@@ -141,7 +141,14 @@ namespace slopkit::debug
 
     std::size_t Controller::drain(std::size_t max_jobs)
     {
-        return worker_.drain(max_jobs);
+        const std::size_t drained = worker_.drain(max_jobs);
+        // A hit burst flushes once per drain, never once per hit.
+        if (watch_dirty_)
+        {
+            watch_dirty_ = false;
+            emit watchChanged();
+        }
+        return drained;
     }
 
     void Controller::start(process::ProcessId pid, std::string_view plugin_id)
@@ -205,11 +212,12 @@ namespace slopkit::debug
         last_stop_        = StopEvent {};
         last_stop_.tid    = leader_;
         last_stop_.reason = StopReason::interrupt;
-        state_            = State::stopped;
-        emit stateChanged();
         notify(MessageKind::success, QStringLiteral("Debug session open for pid %1.").arg(pid_));
         slopkit::log::info(slopkit::log::category::debug, std::format("debug session started for pid {}", pid_));
-        refresh();
+        // The synthetic stop only gives active_tid()/interrupt() a thread to
+        // name; the session itself begins running, so no refresh() and no
+        // stopped() signal is emitted and the panes never flash.
+        begin_run(leader_);
     }
 
     void Controller::stop()
@@ -252,9 +260,14 @@ namespace slopkit::debug
 
     void Controller::apply_detach(JobResult&& result, QString reason)
     {
-        state_          = State::idle;
-        stop_requested_ = false;
-        last_stop_      = StopEvent {};
+        state_            = State::idle;
+        stop_requested_   = false;
+        maintenance_stop_ = false;
+        pending_slot_ops_.clear();
+        pending_removals_.clear();
+        watch_       = AccessWatch {};
+        watch_dirty_ = false;
+        last_stop_   = StopEvent {};
         registers_.clear();
         backtrace_.clear();
         breakpoints_.clear();
@@ -279,11 +292,16 @@ namespace slopkit::debug
         {
             return;
         }
+        begin_run(active_tid());
+    }
+
+    void Controller::begin_run(std::uint32_t tid)
+    {
         state_ = State::running;
         emit        stateChanged();
         const JobId id = worker_.next_job_id();
         worker_.submit_continue(id,
-                                active_tid(),
+                                tid,
                                 0,
                                 0,
                                 [this](JobResult&& result)
@@ -379,6 +397,30 @@ namespace slopkit::debug
 
     void Controller::apply_stop(StopEvent stop)
     {
+        // A stop we asked for only to install or remove a debug register: apply
+        // the queued ops and keep the session running without ever reporting a
+        // stop. The Stop Debugging request stays first, so it still wins.
+        if (!stop_requested_ && (maintenance_stop_ || !pending_slot_ops_.empty()))
+        {
+            apply_pending_slot_ops();
+            return;
+        }
+
+        // A watch hit: record it and keep collecting, so the process is never
+        // left paused for the user. `record` always consumes the stop.
+        if (!stop_requested_ && stop.reason == StopReason::breakpoint && stop.breakpoint_slot.has_value()
+            && watch_.state() == WatchState::watching)
+        {
+            const Breakpoint* entry = breakpoints_.hardware_in_slot(*stop.breakpoint_slot);
+            if (entry != nullptr && entry->id == watch_.breakpoint_id())
+            {
+                watch_.record(stop.tid, stop.address);
+                watch_dirty_ = true;
+                begin_run(stop.tid);
+                return;
+            }
+        }
+
         last_stop_ = stop;
 
         if (stop_requested_)
@@ -543,12 +585,43 @@ namespace slopkit::debug
         {
             arm(*id);
         }
+        else if (state_ == State::running)
+        {
+            request_slot_op(*id, true);
+        }
         return *id;
     }
 
     void Controller::remove_breakpoint(std::uint64_t id)
     {
-        if (const Breakpoint* entry = breakpoints_.find(id); entry != nullptr && entry->armed)
+        Breakpoint* entry = breakpoints_.find(id);
+        if (entry == nullptr)
+        {
+            return;
+        }
+        if (entry->hidden && watch_.breakpoint_id() == id)
+        {
+            watch_.stop();
+            watch_dirty_ = true;
+        }
+        if (state_ == State::running)
+        {
+            // The entry must outlive the queued disarm, so it is erased once the
+            // maintenance round-trip drains instead of here.
+            entry->enabled = false;
+            if (entry->armed)
+            {
+                pending_removals_.push_back(id);
+                request_slot_op(id, false);
+            }
+            else
+            {
+                breakpoints_.remove(id);
+            }
+            emit breakpointsChanged();
+            return;
+        }
+        if (entry->armed)
         {
             disarm(id);
         }
@@ -566,22 +639,48 @@ namespace slopkit::debug
         entry->enabled = enabled;
         emit breakpointsChanged();
 
-        if (state_ != State::stopped)
+        if (state_ == State::stopped)
         {
-            return;
+            if (enabled)
+            {
+                arm(id);
+            }
+            else
+            {
+                disarm(id);
+            }
         }
-        if (enabled)
+        else if (state_ == State::running && entry->armed != enabled)
         {
-            arm(id);
-        }
-        else
-        {
-            disarm(id);
+            request_slot_op(id, enabled);
         }
     }
 
     void Controller::clear_breakpoints()
     {
+        if (watch_.state() == WatchState::watching)
+        {
+            watch_.stop();
+            watch_dirty_ = true;
+        }
+        if (state_ == State::running)
+        {
+            const std::vector<Breakpoint> entries(breakpoints_.entries().begin(), breakpoints_.entries().end());
+            for (const Breakpoint& entry : entries)
+            {
+                if (entry.armed)
+                {
+                    pending_removals_.push_back(entry.id);
+                    request_slot_op(entry.id, false);
+                }
+                else
+                {
+                    breakpoints_.remove(entry.id);
+                }
+            }
+            emit breakpointsChanged();
+            return;
+        }
         for (const Breakpoint& entry : breakpoints_.entries())
         {
             if (entry.armed)
@@ -591,6 +690,98 @@ namespace slopkit::debug
         }
         breakpoints_.clear();
         emit breakpointsChanged();
+    }
+
+    const AccessWatch& Controller::watch() const noexcept
+    {
+        return watch_;
+    }
+
+    std::expected<void, std::string> Controller::watch_address(std::uint64_t address, Kind kind, std::size_t size)
+    {
+        if (state_ != State::stopped && state_ != State::running)
+        {
+            return std::unexpected(std::string {"Attach to a target first."});
+        }
+
+        // One watch at a time: a new one replaces the running one, rows included.
+        if (watch_.state() == WatchState::watching)
+        {
+            slopkit::log::info(slopkit::log::category::debug,
+                               std::format("replacing the access watch with 0x{:X}", address));
+            stop_watch();
+        }
+
+        // A data breakpoint can only watch 1, 2, 4 or 8 bytes.
+        const std::size_t bytes = size == 1 || size == 2 || size == 4 || size == 8 ? size : 4;
+        auto              id    = breakpoints_.add(std::format("0x{:X}", address), address, kind, bytes);
+        if (!id)
+        {
+            return std::unexpected(id.error());
+        }
+        if (Breakpoint* entry = breakpoints_.find(*id); entry != nullptr)
+        {
+            entry->hidden = true;
+        }
+        watch_.start(address, kind, bytes, *id);
+        watch_dirty_ = true;
+        emit watchChanged();
+        emit breakpointsChanged();
+        slopkit::log::info(slopkit::log::category::debug,
+                           std::format("watching 0x{:X} for {} bytes of {} accesses",
+                                       address,
+                                       bytes,
+                                       kind == Kind::hardware_read_write ? "read/write" : "write"));
+
+        if (state_ == State::stopped)
+        {
+            arm(*id);
+        }
+        else
+        {
+            request_slot_op(*id, true);
+        }
+        return {};
+    }
+
+    void Controller::stop_watch()
+    {
+        if (watch_.state() == WatchState::idle)
+        {
+            return;
+        }
+        const std::uint64_t id = watch_.breakpoint_id();
+        watch_.stop();
+        watch_dirty_ = true;
+
+        if (state_ == State::running)
+        {
+            if (const Breakpoint* entry = breakpoints_.find(id); entry != nullptr && entry->armed)
+            {
+                pending_removals_.push_back(id);
+                request_slot_op(id, false);
+            }
+            else
+            {
+                breakpoints_.remove(id);
+            }
+        }
+        else
+        {
+            if (const Breakpoint* entry = breakpoints_.find(id); entry != nullptr && entry->armed)
+            {
+                disarm(id);
+            }
+            breakpoints_.remove(id);
+        }
+        emit breakpointsChanged();
+        emit watchChanged();
+    }
+
+    void Controller::clear_watch_hits()
+    {
+        watch_.clear_hits();
+        emit watchChanged();
     }
 
     void Controller::arm(std::uint64_t id)
@@ -626,9 +817,9 @@ namespace slopkit::debug
                                                entry.address,
                                                entry.size,
                                                insert,
-                                               [this, entry_id, action](JobResult&& result)
+                                               [this, entry_id, insert, action](JobResult&& result)
                                                {
-                                                   mark_armed(std::move(result), entry_id, action);
+                                                   mark_armed(std::move(result), entry_id, insert, action);
                                                });
         }
         else
@@ -637,14 +828,14 @@ namespace slopkit::debug
                                                entry.slot,
                                                entry.address,
                                                insert,
-                                               [this, entry_id, action](JobResult&& result)
+                                               [this, entry_id, insert, action](JobResult&& result)
                                                {
-                                                   mark_armed(std::move(result), entry_id, action);
+                                                   mark_armed(std::move(result), entry_id, insert, action);
                                                });
         }
     }
 
-    void Controller::mark_armed(JobResult&& result, std::uint64_t id, const QString& action)
+    void Controller::mark_armed(JobResult&& result, std::uint64_t id, bool insert, const QString& action)
     {
         const auto* armed = std::get_if<VoidResult>(&result);
         if (armed == nullptr)
@@ -654,13 +845,84 @@ namespace slopkit::debug
         Breakpoint* entry = breakpoints_.find(id);
         if (entry != nullptr)
         {
-            entry->armed = armed->error == std::nullopt;
+            entry->armed = insert && !armed->error;
         }
         if (armed->error)
         {
             notify(MessageKind::warning, QStringLiteral("%1: %2").arg(action).arg(failure_text(*armed->error)));
         }
+        // Only the current watch's slot feeds the watch; a stale completion for a
+        // replaced or removed entry is ignored.
+        if (entry != nullptr && entry->hidden && watch_.breakpoint_id() == id)
+        {
+            watch_.mark_armed(entry->armed);
+            watch_dirty_ = true;
+        }
         emit breakpointsChanged();
+
+        // A maintenance round-trip chains the next queued op, and resumes only
+        // once the whole queue is applied.
+        if (maintenance_stop_)
+        {
+            apply_pending_slot_ops();
+        }
+    }
+
+    void Controller::request_slot_op(std::uint64_t id, bool insert)
+    {
+        if (state_ != State::running)
+        {
+            return;
+        }
+        slopkit::log::debug(slopkit::log::category::debug,
+                            std::format("deferring {} of breakpoint {} until the target stops for maintenance",
+                                        insert ? "arm" : "disarm",
+                                        id));
+        pending_slot_ops_.push_back(PendingSlotOp {id, insert});
+        if (!maintenance_stop_)
+        {
+            maintenance_stop_ = true;
+            interrupt();
+        }
+    }
+
+    void Controller::apply_pending_slot_ops()
+    {
+        if (!pending_slot_ops_.empty())
+        {
+            const PendingSlotOp op = pending_slot_ops_.front();
+            pending_slot_ops_.erase(pending_slot_ops_.begin());
+
+            if (const Breakpoint* entry = breakpoints_.find(op.id); entry != nullptr)
+            {
+                submit_arm(*entry,
+                           op.insert,
+                           QStringLiteral("Cannot %1 breakpoint %2").arg(op.insert ? "arm" : "disarm").arg(op.id));
+            }
+            else
+            {
+                apply_pending_slot_ops();
+            }
+            return;
+        }
+
+        // The queue is drained: drop the entries whose disarm landed, then resume
+        // if this was a maintenance round-trip.
+        if (!pending_removals_.empty())
+        {
+            for (const std::uint64_t id : pending_removals_)
+            {
+                breakpoints_.remove(id);
+            }
+            pending_removals_.clear();
+            emit breakpointsChanged();
+        }
+
+        if (maintenance_stop_)
+        {
+            maintenance_stop_ = false;
+            begin_run(active_tid());
+        }
     }
 
     void Controller::write_register(std::string_view name, std::uint64_t value)

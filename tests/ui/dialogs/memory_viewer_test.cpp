@@ -873,3 +873,123 @@ TEST_CASE("the memory viewer shows a read-only register placeholder", "[ui]")
     CHECK(model->data(model->index(0, RegisterModel::value), Qt::DisplayRole).toString() == QStringLiteral("0x1"));
     CHECK(model->data(model->index(1, RegisterModel::value), Qt::DisplayRole).toString() == dash);
 }
+
+namespace
+{
+    using slopkit::tests::pump_until;
+
+    // Puts `MOV EAX, [RBX+0x10]` at the front of the listing's code window and
+    // applies one live pass, so row 0 is that instruction.
+    std::uint64_t seed_listing_operand(FakeAccess& access, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    {
+        const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+        std::vector<slopkit::ui::LiveReading>       readings;
+        std::uint64_t                               code_base = 0;
+        readings.reserve(requests.size());
+        for (const slopkit::ui::LiveRequest& request : requests)
+        {
+            std::vector<std::byte> bytes(request.size, std::byte {0x90});
+            if (request.id == slopkit::ui::components::DisassemblyDocument::kIdBase)
+            {
+                bytes[0]  = std::byte {0x8B};
+                bytes[1]  = std::byte {0x43};
+                bytes[2]  = std::byte {0x10};
+                code_base = request.address;
+            }
+            (*access.memory)[request.address] = bytes;
+            readings.push_back(slopkit::ui::LiveReading {request.id, true, std::move(bytes)});
+        }
+        viewer.apply_live_readings(readings);
+        return code_base;
+    }
+} // namespace
+
+TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    // A stopped session leaves the controller's register cache populated.
+    slopkit::tests::FakeDebugBackend backend;
+    slopkit::debug::Controller       controller {backend};
+    controller.start(42, "fake");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == slopkit::debug::Controller::State::stopped
+                               && controller.registers().size() == 18;
+                       }));
+    REQUIRE(controller.registers().size() == 18);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
+    viewer.set_address(0x1000);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    const std::uint64_t code_base = seed_listing_operand(access, viewer);
+    // Applying the readings only invalidates the document; the view decodes the
+    // rows when it paints, so pump the event loop once more.
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+
+    std::uint64_t                            instruction = 0;
+    std::size_t                              length      = 0;
+    std::vector<slopkit::ui::ResolvedAccess> resolved;
+    QObject::connect(&viewer,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::instructionAccessesResolved,
+                     &viewer,
+                     [&](std::uint64_t address, std::size_t size, std::vector<slopkit::ui::ResolvedAccess> accesses)
+                     {
+                         instruction = address;
+                         length      = size;
+                         resolved    = std::move(accesses);
+                     });
+
+    viewer.instruction_accesses(0);
+    // The listing decodes from its page-aligned window base, so row 0 is that
+    // base; the operand resolves against the controller's cached registers.
+    CHECK(instruction == code_base);
+    CHECK(length == 3);
+    REQUIRE(resolved.size() == 1);
+    CHECK(resolved[0].operand == QStringLiteral("[RBX+0x10]"));
+    CHECK(resolved[0].width == 4);
+    CHECK_FALSE(resolved[0].writes);
+    // The fake register file holds zeroes, so the operand resolves to the
+    // instruction's own address plus the displacement.
+    CHECK(resolved[0].resolved);
+    CHECK(resolved[0].address == code_base + 0x10);
+
+    // Without a stop there is no register context, so the operand stays
+    // unresolved rather than resolving to a wrong address.
+    slopkit::ui::dialogs::MemoryViewerDialog plain {worker, target, shared_debug_controller()};
+    plain.set_address(0x1000);
+    plain.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    seed_listing_operand(access, plain);
+
+    resolved.clear();
+    QObject::connect(&plain,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::instructionAccessesResolved,
+                     &plain,
+                     [&](std::uint64_t, std::size_t, std::vector<slopkit::ui::ResolvedAccess> accesses)
+                     {
+                         resolved = std::move(accesses);
+                     });
+    plain.instruction_accesses(0);
+    REQUIRE(resolved.size() == 1);
+    CHECK_FALSE(resolved[0].resolved);
+
+    viewer.hide();
+    plain.hide();
+}

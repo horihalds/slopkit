@@ -103,8 +103,26 @@ beside the normal access path rather than in it, so the read/write path stays
 - `debug::PluginBackend` wraps its own plugin session, `debug::Worker` owns every
   call on one job thread — a tracee may only be ptraced by the thread that
   attached it — and `debug::Controller` is the UI-facing session owner: the
-  breakpoint table, trap-to-breakpoint resolution, register/backtrace caching and
-  the signals the pane renders.
-- The Debugger pane and the Breakpoints window only submit and render; they never
-  touch a session. `ptrace` runs only inside an explicitly started session, which
-  the controller reports under the `debug` log category at start and stop.
+  breakpoint table, trap-to-breakpoint resolution, register/backtrace caching, the
+  access watch and the signals the panes render.
+- Starting a session attaches and leaves the target **running**; only a
+  breakpoint hit, a watch hit or `Break` stops it. Because a debug register can
+  only be written while its thread is in a ptrace stop, the controller arms and
+  disarms breakpoints through an invisible *maintenance stop*: it queues the
+  requested arm/disarm, interrupts the group, applies the whole queue while it is
+  stopped and continues. The stop is never reported — no `Stopped at` line, no
+  `stateChanged` — and a burst of ops costs one stop.
+- The **access watch** is one hidden hardware data breakpoint in the same
+  `BreakpointTable` (its `hidden` flag keeps it out of the Breakpoints window
+  while the slot accounting stays in one place). The controller consumes its
+  stops inside `apply_stop()`: it records the hit against the accessing
+  instruction (`debug::AccessWatch`, coalesced per instruction with a 1024-row
+  cap), marks the `watchChanged()` signal dirty and resumes immediately, so the
+  target keeps running. A new watch replaces the running one; `Stop` disarms it
+  without dropping the recorded rows.
+- The Debugger pane, the Breakpoints window and the Access Watch window only
+  submit and render; they never touch a session. `ptrace` runs only inside an
+  explicitly started session, which the controller reports under the `debug` log
+  category at start and stop. The Access Watch window's instruction reads are the
+  one debugger-adjacent UI access that does not go through the debug worker: they
+  are ordinary memory reads batched on `process::AccessWorker`.

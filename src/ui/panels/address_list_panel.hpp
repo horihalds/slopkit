@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "debug/breakpoints.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
@@ -18,6 +19,7 @@
 #include <QWidget>
 
 class QPoint;
+class QMenu;
 class QTableView;
 
 namespace slopkit::ui::models
@@ -100,6 +102,11 @@ namespace slopkit::ui::panels
         [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
         void apply_live_readings(std::span<const ui::LiveReading> readings) override;
 
+        // Adds the per-row entries for `row` to `menu`, wiring each to its
+        // action; split out of show_context_menu so a test can inspect it
+        // without running the modal menu.
+        void populate_row_menu(QMenu& menu, std::size_t row);
+
     signals:
         // A request to show an address, fed by the context menu.
         void browseRequested(quint64 address);
@@ -114,6 +121,9 @@ namespace slopkit::ui::panels
         // A status line outcome for the window's status area; emitted only when
         // the text or its kind actually changes.
         void statusChanged(const QString& message, bool is_error);
+
+        // A request to arm an access watch on an address, from the row menu.
+        void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
 
     private:
         void show_context_menu(const QPoint& position);

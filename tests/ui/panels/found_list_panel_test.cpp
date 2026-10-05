@@ -232,7 +232,10 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     panel.populate_row_menu(menu, 0);
 
     CHECK(action_texts(menu.actions())
-          == QList<QString> {QStringLiteral("Add to address table"), QStringLiteral("Copy")});
+          == QList<QString> {QStringLiteral("Add to address table"),
+                             QStringLiteral("Copy"),
+                             QStringLiteral("Find out what writes this address"),
+                             QStringLiteral("Find out what accesses this address")});
 
     QMenu* copy = nullptr;
     for (QAction* action : menu.actions())
@@ -248,9 +251,101 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
                              QStringLiteral("Address (absolute)"),
                              QStringLiteral("Address + value")});
 
+    // Without a target the watch entries stay visible but explain themselves.
+    QAction* watch_writes   = nullptr;
+    QAction* watch_accesses = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Find out what writes this address"))
+        {
+            watch_writes = action;
+        }
+        if (action->text() == QStringLiteral("Find out what accesses this address"))
+        {
+            watch_accesses = action;
+        }
+    }
+    REQUIRE(watch_writes != nullptr);
+    REQUIRE(watch_accesses != nullptr);
+    CHECK_FALSE(watch_writes->isEnabled());
+    CHECK_FALSE(watch_accesses->isEnabled());
+    CHECK(watch_writes->toolTip() == QStringLiteral("Attach to a target first."));
+
     // Triggering the entries with no hit behind them is a no-op, not a crash.
     menu.actions().front()->trigger();
     copy->actions().front()->trigger();
+}
+
+TEST_CASE("the found list row menu arms an access watch on a hit", "[ui]")
+{
+    application();
+
+    std::vector<std::byte> bytes(8, std::byte {0});
+    const std::uint32_t    value = 10;
+    std::memcpy(bytes.data(), &value, sizeof(value));
+
+    slopkit::scan::ScanEngine engine;
+    slopkit::scan::ScanConfig config;
+    config.value = std::int64_t {10};
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(engine.has_results());
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    panel.refresh();
+    panel.set_target_attached(true);
+
+    std::uint64_t        requested_address = 0;
+    std::size_t          requested_width   = 0;
+    slopkit::debug::Kind requested_kind    = slopkit::debug::Kind::software;
+    int                  requests          = 0;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::accessWatchRequested,
+                     &panel,
+                     [&](std::uint64_t address, std::size_t width, slopkit::debug::Kind kind)
+                     {
+                         requested_address = address;
+                         requested_width   = width;
+                         requested_kind    = kind;
+                         ++requests;
+                     });
+
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+
+    QAction* watch_writes   = nullptr;
+    QAction* watch_accesses = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Find out what writes this address"))
+        {
+            watch_writes = action;
+        }
+        if (action->text() == QStringLiteral("Find out what accesses this address"))
+        {
+            watch_accesses = action;
+        }
+    }
+    REQUIRE(watch_writes != nullptr);
+    REQUIRE(watch_accesses != nullptr);
+    CHECK(watch_writes->isEnabled());
+    CHECK(watch_accesses->isEnabled());
+
+    // Write fires the writes kind, accesses the read/write one; both carry the
+    // hit's address and the scan's value width.
+    watch_writes->trigger();
+    REQUIRE(requests == 1);
+    CHECK(requested_address == 0x1000);
+    CHECK(requested_width == 4);
+    CHECK(requested_kind == slopkit::debug::Kind::hardware_write);
+
+    watch_accesses->trigger();
+    REQUIRE(requests == 2);
+    CHECK(requested_kind == slopkit::debug::Kind::hardware_read_write);
 }
 
 TEST_CASE("the found list shows the static-first top of the whole result set", "[ui]")

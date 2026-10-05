@@ -36,7 +36,16 @@ namespace slopkit::ui::models
     {
         beginResetModel();
         const auto entries = controller_.breakpoints();
-        rows_.assign(entries.begin(), entries.end());
+        // A hidden entry (the access watch) owns a slot but is not a user
+        // breakpoint, so it stays out of this window.
+        rows_.clear();
+        for (const slopkit::debug::Breakpoint& entry : entries)
+        {
+            if (!entry.hidden)
+            {
+                rows_.push_back(entry);
+            }
+        }
         endResetModel();
     }
 

@@ -50,3 +50,29 @@ TEST_CASE("breakpoint model mirrors the controller table", "[ui][models][breakpo
     CHECK(model.headerData(BreakpointModel::enabled, Qt::Horizontal, Qt::DisplayRole).toString()
           == QStringLiteral("Enabled"));
 }
+
+TEST_CASE("breakpoint model hides the access watch entry", "[ui][models][breakpoint]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(42, "fake");
+    REQUIRE(slopkit::tests::pump_until(controller,
+                                       [&]
+                                       {
+                                           return controller.state() == Controller::State::stopped;
+                                       }));
+
+    const auto user = controller.add_breakpoint("0x1000", Kind::software, 1);
+    REQUIRE(user.has_value());
+    REQUIRE(controller.watch_address(0x4000, Kind::hardware_write, 4).has_value());
+
+    // The watch's hidden slot is not a row here, and Clear All still removes it.
+    BreakpointModel model(controller);
+    REQUIRE(model.rowCount() == 1);
+    CHECK(model.id_at(0) == *user);
+
+    controller.clear_breakpoints();
+    model.refresh();
+    CHECK(model.rowCount() == 0);
+    CHECK(controller.breakpoints().empty());
+}

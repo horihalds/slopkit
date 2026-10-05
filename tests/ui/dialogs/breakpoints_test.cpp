@@ -77,3 +77,29 @@ TEST_CASE("breakpoints window mirrors an external change", "[ui][dialogs][breakp
     controller.clear_breakpoints();
     CHECK(dialog.model()->rowCount() == 0);
 }
+
+TEST_CASE("breakpoints window keeps the access watch out", "[ui][dialogs][breakpoints]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(42, "fake");
+    REQUIRE(slopkit::tests::pump_until(controller,
+                                       [&]
+                                       {
+                                           return controller.state() == Controller::State::stopped;
+                                       }));
+
+    BreakpointsDialog dialog(controller);
+    REQUIRE(controller.add_breakpoint("0x1000", Kind::software, 1).has_value());
+    CHECK(dialog.model()->rowCount() == 1);
+
+    // The watch's hidden entry owns a slot but is not listed here.
+    REQUIRE(controller.watch_address(0x4000, Kind::hardware_write, 4).has_value());
+    CHECK(dialog.model()->rowCount() == 1);
+
+    // Clear All is still everything, hidden entry included.
+    dialog.clear_button()->click();
+    CHECK(dialog.model()->rowCount() == 0);
+    CHECK(controller.breakpoints().empty());
+}

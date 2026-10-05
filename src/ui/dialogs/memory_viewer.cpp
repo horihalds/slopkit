@@ -111,6 +111,10 @@ namespace slopkit::ui::dialogs
                 {
                     view_->navigate_to(address);
                 });
+        connect(disassembly_,
+                &components::DisassemblyView::instructionAccessesRequested,
+                this,
+                &MemoryViewerDialog::instruction_accesses);
         return panel;
     }
 
@@ -179,6 +183,16 @@ namespace slopkit::ui::dialogs
     bool MemoryViewerDialog::go_to_disassembly(const QString& text)
     {
         return disassembly_->go_to(text);
+    }
+
+    void MemoryViewerDialog::instruction_accesses(std::size_t row)
+    {
+        const components::DisassemblyDocument::Row decoded  = disassembly_document_.row(row);
+        const std::span<const disasm::MemoryRef>   operands = disassembly_document_.row_memory(row);
+        emit                                       instructionAccessesResolved(
+            decoded.address,
+            decoded.length,
+            ui::resolve_accesses(operands, decoded.address, decoded.length, debug_.registers()));
     }
 
     MemoryViewerDialog::GoToTarget MemoryViewerDialog::go_to_target() const

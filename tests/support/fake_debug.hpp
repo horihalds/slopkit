@@ -130,6 +130,10 @@ namespace slopkit::tests
                                  {
                                      return continue_released.load();
                                  });
+                // Consume the release, so the next continue blocks again: a real
+                // continue stops on every stop, and the maintenance round-trip
+                // relies on the resume blocking until the next stop.
+                continue_released = false;
             }
             return next_stop();
         }

@@ -1,5 +1,6 @@
 #include "disasm/decoder.hpp"
 
+#include <cctype>
 #include <format>
 #include <string_view>
 #include <utility>
@@ -56,6 +57,78 @@ namespace slopkit::disasm
             return std::format(".byte 0x{:02X}", static_cast<unsigned>(value));
         }
 
+        // Zydis reports register names lower-case; the listing and the debugger
+        // both print them upper-case, so normalise here.
+        [[nodiscard]] std::string register_name(ZydisRegister reg)
+        {
+            if (reg == ZYDIS_REGISTER_NONE)
+            {
+                return {};
+            }
+
+            const char* name = ZydisRegisterGetString(reg);
+            if (name == nullptr)
+            {
+                return {};
+            }
+
+            std::string result(name);
+            for (char& character : result)
+            {
+                character = static_cast<char>(std::toupper(static_cast<unsigned char>(character)));
+            }
+            return result;
+        }
+
+        // Every explicit memory operand of a decoded instruction, skipping the
+        // address-generation forms (`lea`) that touch no memory. `text` is the
+        // already-formatted instruction text the operand slices point into.
+        [[nodiscard]] std::vector<MemoryRef> collect_memory(const ZydisDecodedInstruction& decoded,
+                                                            const ZydisDecodedOperand*     operands,
+                                                            std::string_view               text,
+                                                            std::uint64_t                  address)
+        {
+            std::vector<MemoryRef> refs;
+            std::size_t            search_from = 0;
+
+            for (ZyanU8 i = 0; i < decoded.operand_count_visible; ++i)
+            {
+                const ZydisDecodedOperand& operand = operands[i];
+                if (operand.type != ZYDIS_OPERAND_TYPE_MEMORY || operand.mem.type == ZYDIS_MEMOP_TYPE_AGEN)
+                {
+                    continue;
+                }
+
+                MemoryRef ref;
+                ref.base         = register_name(operand.mem.base);
+                ref.index        = register_name(operand.mem.index);
+                ref.scale        = ref.index.empty() ? 1 : operand.mem.scale;
+                ref.displacement = operand.mem.disp.value;
+                ref.width        = static_cast<std::uint8_t>(operand.size / 8);
+                ref.rip_relative = operand.mem.base == ZYDIS_REGISTER_RIP || operand.mem.base == ZYDIS_REGISTER_EIP;
+                ref.writes       = (operand.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) != 0;
+
+                // The slice the operand occupies in the printed text, so a caller
+                // can show or copy the operand exactly as the listing prints it.
+                char operand_buffer[128] {};
+                if (ZYAN_SUCCESS(ZydisFormatterFormatOperand(
+                        &formatter(), &decoded, &operand, operand_buffer, sizeof(operand_buffer), address, nullptr)))
+                {
+                    const std::string_view operand_text(operand_buffer);
+                    if (const std::size_t found = text.find(operand_text, search_from); found != std::string_view::npos)
+                    {
+                        ref.offset  = found;
+                        ref.length  = operand_text.size();
+                        search_from = found + ref.length;
+                    }
+                }
+
+                refs.push_back(std::move(ref));
+            }
+
+            return refs;
+        }
+
         // A decode attempt that keeps the raw Zydis status so a block sweep can
         // tell a truncated tail (stop) from an undefined opcode (`.byte` row).
         struct Attempt
@@ -75,7 +148,7 @@ namespace slopkit::disasm
             if (!ZYAN_SUCCESS(status))
             {
                 return {
-                    status, {address, 1, byte_text(code.front()), false, {}},
+                    status, {address, 1, byte_text(code.front()), false, {}, {}},
                      false
                 };
             }
@@ -106,13 +179,13 @@ namespace slopkit::disasm
                 if (!ZYAN_SUCCESS(formatted))
                 {
                     return {
-                        formatted, {address, 1, byte_text(code.front()), false, {}},
+                        formatted, {address, 1, byte_text(code.front()), false, {}, {}},
                          false
                     };
                 }
 
                 return {
-                    ZYAN_STATUS_SUCCESS, {address, decoded.length, buffer, true, {}},
+                    ZYAN_STATUS_SUCCESS, {address, decoded.length, buffer, true, {}, {}},
                      true
                 };
             }
@@ -159,9 +232,14 @@ namespace slopkit::disasm
                 }
             }
 
+            // Written before the text is moved into the record, so the operand
+            // slices still point into the string.
+            std::vector<MemoryRef> memory = collect_memory(decoded, operands, text, address);
+
             return {
-                ZYAN_STATUS_SUCCESS, {address, decoded.length, std::move(text), true, std::move(addresses)},
-                 true
+                ZYAN_STATUS_SUCCESS,
+                {address, decoded.length, std::move(text), true, std::move(addresses), std::move(memory)},
+                true
             };
         }
     } // namespace

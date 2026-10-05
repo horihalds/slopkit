@@ -16,6 +16,7 @@
 #include <QTableView>
 #include <QVBoxLayout>
 
+#include "scan/types.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/models/found_results_model.hpp"
@@ -25,6 +26,15 @@ namespace slopkit::ui::panels
 
     namespace
     {
+        // A menu entry that stays visible but explains why it is unavailable.
+        QAction* disabled_action(QMenu& menu, const QString& text, const QString& reason)
+        {
+            QAction* action = menu.addAction(text);
+            action->setEnabled(false);
+            action->setToolTip(reason);
+            return action;
+        }
+
         // Compares the two snapshots' display data. A finished scan shares its
         // whole result set with the engine, so its handle doubles as the change
         // signal; anything else (an idle or failed snapshot) is compared through
@@ -124,6 +134,7 @@ namespace slopkit::ui::panels
 
     void FoundListPanel::set_target_attached(bool attached)
     {
+        target_attached_ = attached;
         memory_view_button_->setEnabled(attached);
     }
 
@@ -249,6 +260,48 @@ namespace slopkit::ui::panels
                 {
                     copy_row(row, models::CopyFormat::address_and_value);
                 });
+
+        menu.addSeparator();
+        // Arming a watch needs a target; the entries stay visible and explain
+        // themselves otherwise.
+        const std::size_t    width = scan::value_size(engine_.config().value_type);
+        const scan::ScanHit* hit   = model_->hit_at(row);
+        if (target_attached_ && hit != nullptr)
+        {
+            QAction* writes = menu.addAction(tr("Find out what writes this address"));
+            writes->setToolTip(tr("Arm a hardware watch and record every instruction that writes this address."));
+            connect(writes,
+                    &QAction::triggered,
+                    this,
+                    [this, row, width]
+                    {
+                        const scan::ScanHit* selected = model_->hit_at(row);
+                        if (selected != nullptr)
+                        {
+                            emit accessWatchRequested(selected->address, width, debug::Kind::hardware_write);
+                        }
+                    });
+
+            QAction* accesses = menu.addAction(tr("Find out what accesses this address"));
+            accesses->setToolTip(
+                tr("Arm a hardware watch and record every instruction that reads or writes this address."));
+            connect(accesses,
+                    &QAction::triggered,
+                    this,
+                    [this, row, width]
+                    {
+                        const scan::ScanHit* selected = model_->hit_at(row);
+                        if (selected != nullptr)
+                        {
+                            emit accessWatchRequested(selected->address, width, debug::Kind::hardware_read_write);
+                        }
+                    });
+        }
+        else
+        {
+            disabled_action(menu, tr("Find out what writes this address"), tr("Attach to a target first."));
+            disabled_action(menu, tr("Find out what accesses this address"), tr("Attach to a target first."));
+        }
     }
 
     void FoundListPanel::copy_row(int row, models::CopyFormat format)

@@ -111,6 +111,13 @@ namespace slopkit::ui::components
         // window moves.
         [[nodiscard]] std::span<const disasm::AddressRef> row_addresses(std::size_t index) const;
 
+        // The memory operands row `index` accesses (register-relative, absolute
+        // and rip-relative), as the decoder reports them; empty for an
+        // out-of-range or unreadable row, a `.byte` row and a `lea`. The span
+        // points into the decoded instruction stream, so it is valid only until
+        // the window moves.
+        [[nodiscard]] std::span<const disasm::MemoryRef> row_memory(std::size_t index) const;
+
     signals:
         void rowsChanged(); // new bytes, a new window or a longer decode
 

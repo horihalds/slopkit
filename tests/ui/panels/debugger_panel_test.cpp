@@ -63,16 +63,31 @@ TEST_CASE("debugger pane gates the controls on the session state", "[ui][panels]
     pane.breakpoints_button()->click();
     CHECK(requests == 1);
 
-    // Starting the session through the controller flips the pane to stopped.
+    // Starting the session attaches and leaves the target running: the run
+    // controls flip to the running set and the register view stays read-only.
+    backend.block_continue = true;
     controller.start(target.pid, target.plugin_id);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    CHECK_FALSE(pane.start_button()->isEnabled());
+    CHECK(pane.stop_button()->isEnabled());
+    CHECK_FALSE(pane.resume_button()->isEnabled());
+    CHECK_FALSE(pane.step_into_button()->isEnabled());
+    CHECK_FALSE(pane.step_over_button()->isEnabled());
+    CHECK(pane.break_button()->isEnabled());
+    CHECK_FALSE(pane.register_model()->editable());
+
+    // Break stops the target deliberately and re-enables the step controls.
+    controller.interrupt();
     REQUIRE(pump_until(controller,
                        [&]
                        {
                            return controller.state() == Controller::State::stopped;
                        }));
-
-    CHECK_FALSE(pane.start_button()->isEnabled());
-    CHECK(pane.stop_button()->isEnabled());
     CHECK(pane.resume_button()->isEnabled());
     CHECK(pane.step_into_button()->isEnabled());
     CHECK(pane.step_over_button()->isEnabled());
@@ -80,7 +95,7 @@ TEST_CASE("debugger pane gates the controls on the session state", "[ui][panels]
     CHECK(pane.register_model()->editable());
 
     // Resume blocks in the fake until Break releases it; the pane follows.
-    backend.block_continue = true;
+    backend.continue_released = false;
     controller.resume();
     CHECK_FALSE(pane.resume_button()->isEnabled());
     CHECK(pane.break_button()->isEnabled());

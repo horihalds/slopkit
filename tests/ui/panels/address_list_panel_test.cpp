@@ -321,3 +321,83 @@ TEST_CASE("the address list delete confirmation follows the address mode", "[ui]
     panel.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
 }
+
+TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
+{
+    application();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    QAction*   watch_writes       = nullptr;
+    QAction*   watch_accesses     = nullptr;
+    const auto find_watch_actions = [&](QMenu& menu)
+    {
+        watch_writes   = nullptr;
+        watch_accesses = nullptr;
+        for (QAction* action : menu.actions())
+        {
+            if (action->text() == QStringLiteral("Find out what writes this address"))
+            {
+                watch_writes = action;
+            }
+            if (action->text() == QStringLiteral("Find out what accesses this address"))
+            {
+                watch_accesses = action;
+            }
+        }
+    };
+
+    // Without a target the entries are present but disabled.
+    slopkit::process::AttachedTarget      none;
+    slopkit::ui::panels::AddressListPanel detached_panel {table, worker, none};
+    QMenu                                 detached_menu;
+    detached_panel.populate_row_menu(detached_menu, 0);
+    find_watch_actions(detached_menu);
+    REQUIRE(watch_writes != nullptr);
+    REQUIRE(watch_accesses != nullptr);
+    CHECK_FALSE(watch_writes->isEnabled());
+    CHECK_FALSE(watch_accesses->isEnabled());
+    CHECK(watch_writes->toolTip() == QStringLiteral("Attach to a target first."));
+
+    // With a target attached they emit the entry's address and width, with the
+    // writes or the read/write kind.
+    slopkit::process::AttachedTarget      target = fake_target();
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    std::uint64_t        requested_address = 0;
+    std::size_t          requested_width   = 0;
+    slopkit::debug::Kind requested_kind    = slopkit::debug::Kind::software;
+    int                  requests          = 0;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::accessWatchRequested,
+                     &panel,
+                     [&](std::uint64_t address, std::size_t width, slopkit::debug::Kind kind)
+                     {
+                         requested_address = address;
+                         requested_width   = width;
+                         requested_kind    = kind;
+                         ++requests;
+                     });
+
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+    find_watch_actions(menu);
+    REQUIRE(watch_writes != nullptr);
+    REQUIRE(watch_accesses != nullptr);
+    CHECK(watch_writes->isEnabled());
+    CHECK(watch_accesses->isEnabled());
+
+    watch_writes->trigger();
+    REQUIRE(requests == 1);
+    CHECK(requested_address == 0x1040);
+    CHECK(requested_width == 4);
+    CHECK(requested_kind == slopkit::debug::Kind::hardware_write);
+
+    watch_accesses->trigger();
+    REQUIRE(requests == 2);
+    CHECK(requested_kind == slopkit::debug::Kind::hardware_read_write);
+}

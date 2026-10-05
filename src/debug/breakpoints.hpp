@@ -40,6 +40,9 @@ namespace slopkit::debug
         bool          armed {false};
         std::uint32_t slot {};
         std::uint64_t hits {};
+        // A hidden entry owns a slot but is not a user breakpoint, so the
+        // Breakpoints window leaves it out. The access watch uses this.
+        bool          hidden {false};
     };
 
     // The session-only breakpoint list: slot allocation, duplicate refusal and

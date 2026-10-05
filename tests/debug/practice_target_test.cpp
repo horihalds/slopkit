@@ -5,6 +5,7 @@
 #include <string>
 
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -25,21 +26,31 @@ using slopkit::tests::pump_until;
 
 namespace
 {
-    volatile std::uint32_t g_tick = 0;
+    // Set before the fork and shared with the child, so the test can watch the
+    // target's own counter advance while a session is running.
+    volatile std::uint32_t* g_counter = nullptr;
 
     __attribute__((noinline)) void debug_target()
     {
-        g_tick = g_tick + 1;
+        *g_counter = *g_counter + 1;
     }
 
-    // A forked child looping over a known function. It inherits the parent's
-    // address space, so the watched address is the same on both sides and it is
-    // a child of the test process, which Yama's ptrace_scope=1 allows.
+    // A forked child looping over a known function. It shares the counter mapping
+    // with the parent, so the watched address is the same on both sides and the
+    // parent can see the counter advance; it is a child of the test process, which
+    // Yama's ptrace_scope=1 allows.
     class DebugChild
     {
     public:
         DebugChild()
         {
+            mapping_ = ::mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+            if (mapping_ != MAP_FAILED)
+            {
+                g_counter  = static_cast<volatile std::uint32_t*>(mapping_);
+                *g_counter = 0;
+            }
+
             const pid_t pid = ::fork();
             if (pid == 0)
             {
@@ -62,6 +73,10 @@ namespace
                 ::kill(pid_, SIGKILL);
                 ::waitpid(pid_, nullptr, 0);
             }
+            if (mapping_ != MAP_FAILED)
+            {
+                ::munmap(mapping_, 4096);
+            }
         }
 
         DebugChild(const DebugChild&)            = delete;
@@ -72,7 +87,13 @@ namespace
             return static_cast<std::uint32_t>(pid_);
         }
 
+        [[nodiscard]] std::uintptr_t counter_address() const
+        {
+            return reinterpret_cast<std::uintptr_t>(g_counter);
+        }
+
     private:
+        void* mapping_ {MAP_FAILED};
         pid_t pid_ {-1};
     };
 
@@ -86,6 +107,7 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
 {
     DebugChild child;
     REQUIRE(child.pid() != 0);
+    REQUIRE(g_counter != nullptr);
 
     slopkit::plugin::PluginHost host;
     host.discover({SLOPKIT_PLUGIN_DIR});
@@ -106,11 +128,48 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
                          }
                      });
 
+    bool stopped_emitted = false;
+    QObject::connect(&controller,
+                     &Controller::stopped,
+                     &controller,
+                     [&stopped_emitted]
+                     {
+                         stopped_emitted = true;
+                     });
+
     // Start Debugging with no attached target is refused.
     controller.start(0, "linux-proc");
     CHECK(controller.state() == Controller::State::idle);
 
+    // Attaching leaves the target running: no stop is reported and the register
+    // and call-stack panes stay empty until the first deliberate stop.
     controller.start(child.pid(), "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+    CHECK(controller.registers().empty());
+    CHECK(controller.backtrace().empty());
+    CHECK_FALSE(stopped_emitted);
+
+    // The target is genuinely running: its own counter advances while the
+    // session is open.
+    const std::uint32_t before = *g_counter;
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return *g_counter != before;
+                       }));
+    CHECK(controller.state() == Controller::State::running);
+    CHECK_FALSE(stopped_emitted);
+
+    // A second start while a session is open is refused.
+    controller.start(child.pid(), "linux-proc");
+    CHECK(controller.state() == Controller::State::running);
+
+    // Break stops the target deliberately.
+    controller.interrupt();
     REQUIRE(pump_until(controller,
                        [&]
                        {
@@ -118,17 +177,12 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
                                && controller.registers().size() == 18;
                        }));
 
-    // A second start while a session is open is refused.
-    controller.start(child.pid(), "linux-proc");
-    CHECK(controller.state() == Controller::State::stopped);
-
     // The call stack has at least the stopped frame.
     REQUIRE_FALSE(controller.backtrace().empty());
     CHECK(controller.backtrace().front().pc != 0);
 
     // A write watchpoint on the animated value stops the target and names its slot.
-    const auto watch =
-        controller.add_breakpoint(hex(reinterpret_cast<std::uintptr_t>(&g_tick)), Kind::hardware_write, 4);
+    const auto watch = controller.add_breakpoint(hex(child.counter_address()), Kind::hardware_write, 4);
     REQUIRE(watch.has_value());
     REQUIRE(pump_until(controller,
                        [&]
@@ -153,7 +207,7 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     REQUIRE(controller.last_stop().reason == StopReason::breakpoint);
     REQUIRE(controller.last_stop().breakpoint_slot.has_value());
     CHECK(*controller.last_stop().breakpoint_slot == 0);
-    CHECK(controller.last_stop().trap_address == reinterpret_cast<std::uintptr_t>(&g_tick));
+    CHECK(controller.last_stop().trap_address == child.counter_address());
     CHECK(controller.table().find(*watch)->hits >= 1);
 
     // Put the watchpoint away again.

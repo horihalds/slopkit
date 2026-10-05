@@ -1,13 +1,18 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
+#include "debug/breakpoints.hpp"
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "table/address_table.hpp"
+#include "ui/access_watch.hpp"
 #include "ui/dialogs/table_conflict.hpp"
 
 #include <QLabel>
@@ -22,6 +27,7 @@ class QEvent;
 namespace slopkit::ui::dialogs
 {
     class AddAddressDialog;
+    class AccessWatchDialog;
     class LogDialog;
     class MemoryViewerDialog;
     class ProcessListDialog;
@@ -122,8 +128,16 @@ namespace slopkit::ui
         void on_launch_sandbox_requested();
         void show_log();
         void show_breakpoints();
+        void show_access_watch();
         void show_settings();
         void show_about();
+
+        // The three context-menu/resolved commands funnel into the Access Watch
+        // window: arm a watch, or show the resolved operands of a listing row.
+        void start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind);
+        void show_instruction_accesses(std::uint64_t                   instruction,
+                                       std::size_t                     instruction_length,
+                                       std::vector<ui::ResolvedAccess> accesses);
 
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
@@ -152,6 +166,7 @@ namespace slopkit::ui
         std::unique_ptr<dialogs::MemoryViewerDialog> memory_view_;
         dialogs::LogDialog*                          log_ {};
         dialogs::BreakpointsDialog*                  breakpoints_ {};
+        dialogs::AccessWatchDialog*                  access_watch_ {};
         dialogs::SettingsDialog*                     settings_dialog_ {};
 
         QLabel*               process_label_ {};
@@ -166,6 +181,7 @@ namespace slopkit::ui
         QAction* log_action_ {};
         QAction* settings_action_ {};
         QAction* breakpoints_action_ {};
+        QAction* access_watch_action_ {};
         QAction* launch_sandbox_action_ {};
         QAction* about_action_ {};
 

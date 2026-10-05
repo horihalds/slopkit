@@ -224,3 +224,73 @@ TEST_CASE("decode_block keeps every slice inside its own instruction", "[disasm]
         }
     }
 }
+
+TEST_CASE("a register-relative store describes the memory it writes", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x89, 0x43, 0x08}), 0x1000);
+    CHECK(instruction.text == "MOV [RBX+0x08], EAX");
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.base == "RBX");
+    CHECK(ref.index.empty());
+    CHECK(ref.scale == 1);
+    CHECK(ref.displacement == 8);
+    CHECK(ref.width == 4);
+    CHECK_FALSE(ref.rip_relative);
+    CHECK(ref.writes);
+    CHECK(instruction.text.substr(ref.offset, ref.length) == "[RBX+0x08]");
+}
+
+TEST_CASE("a scaled index operand reports base, index, scale and displacement", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x44, 0x8B, 0x10}), 0x1000);
+    CHECK(instruction.text == "MOV RAX, [RBX+RCX*4+0x10]");
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.base == "RBX");
+    CHECK(ref.index == "RCX");
+    CHECK(ref.scale == 4);
+    CHECK(ref.displacement == 16);
+    CHECK(ref.width == 8);
+    CHECK_FALSE(ref.writes);
+    CHECK(instruction.text.substr(ref.offset, ref.length) == "[RBX+RCX*4+0x10]");
+}
+
+TEST_CASE("a rip-relative load is flagged and keeps its displacement", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0x34, 0x12, 0x00, 0x00}), 0x1000);
+    CHECK(instruction.text == "MOV RAX, [0x000000000000223B]");
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.rip_relative);
+    CHECK(ref.base == "RIP");
+    CHECK(ref.index.empty());
+    CHECK(ref.displacement == 0x1234);
+    CHECK(ref.width == 8);
+    CHECK_FALSE(ref.writes);
+}
+
+TEST_CASE("an absolute memory operand has no base or index", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}), 0x1000);
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.base.empty());
+    CHECK(ref.index.empty());
+    CHECK_FALSE(ref.rip_relative);
+    CHECK(ref.displacement == 0x402000);
+    CHECK(ref.width == 8);
+}
+
+TEST_CASE("lea and .byte rows carry no memory operand", "[disasm]")
+{
+    const auto lea = *slopkit::disasm::decode(bytes({0x48, 0x8D, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    CHECK(lea.memory.empty());
+
+    const auto dot_byte = *slopkit::disasm::decode(bytes({0x06}), 0x1000);
+    CHECK(dot_byte.memory.empty());
+}

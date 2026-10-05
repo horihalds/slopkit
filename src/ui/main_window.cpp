@@ -23,6 +23,7 @@
 #include "core/log_categories.hpp"
 #include "debug/controller.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/dialogs/access_watch.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/breakpoints.hpp"
 #include "ui/dialogs/log.hpp"
@@ -183,6 +184,8 @@ namespace slopkit::ui
 
         breakpoints_action_ = new QAction(tr("Breakpoints"), this);
 
+        access_watch_action_ = new QAction(tr("Access Watch"), this);
+
         launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
 
         about_action_ = new QAction(tr("About slopkit"), this);
@@ -202,6 +205,7 @@ namespace slopkit::ui
         view_menu->addAction(log_action_);
         view_menu->addAction(settings_action_);
         view_menu->addAction(breakpoints_action_);
+        view_menu->addAction(access_watch_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
         help_menu->addAction(launch_sandbox_action_);
@@ -234,6 +238,7 @@ namespace slopkit::ui
                 {
                     on_memory_view_requested(scanner_->main_module_address());
                 });
+        connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
         connect(scanner_, &panels::ScannerPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(scanner_, &panels::ScannerPanel::tableSettingsRequested, this, &MainWindow::show_table_settings);
         connect(scanner_,
@@ -254,6 +259,7 @@ namespace slopkit::ui
 
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
+        connect(address_list_, &panels::AddressListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
         connect(address_list_, &panels::AddressListPanel::tableLoaded, this, &MainWindow::on_table_loaded);
         connect(address_list_,
                 &panels::AddressListPanel::statusChanged,
@@ -367,6 +373,22 @@ namespace slopkit::ui
 
         breakpoints_ = new dialogs::BreakpointsDialog(debug_, this);
 
+        // The Access Watch window is a view over the controller's one watch and
+        // over the resolved listing operands; it also routes its own Follow
+        // requests into the Memory Viewer.
+        access_watch_ = new dialogs::AccessWatchDialog(debug_, worker_, this);
+        connect(access_watch_,
+                &dialogs::AccessWatchDialog::followRequested,
+                this,
+                [this](std::uint64_t address)
+                {
+                    on_memory_view_requested(address);
+                });
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::instructionAccessesResolved,
+                this,
+                &MainWindow::show_instruction_accesses);
+
         // The dialog is a view over the shared controller; the window is the only
         // component that applies the persisted values to the live views.
         settings_dialog_ = new dialogs::SettingsDialog(host_, scanner_->engine(), settings_, this);
@@ -406,6 +428,7 @@ namespace slopkit::ui
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
         connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
         connect(breakpoints_action_, &QAction::triggered, this, &MainWindow::show_breakpoints);
+        connect(access_watch_action_, &QAction::triggered, this, &MainWindow::show_access_watch);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
 
@@ -470,6 +493,39 @@ namespace slopkit::ui
         breakpoints_->show();
         breakpoints_->raise();
         breakpoints_->activateWindow();
+    }
+
+    void MainWindow::show_access_watch()
+    {
+        if (access_watch_ == nullptr)
+        {
+            return;
+        }
+        access_watch_->show();
+        access_watch_->raise();
+        access_watch_->activateWindow();
+    }
+
+    void MainWindow::start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind)
+    {
+        if (access_watch_ == nullptr)
+        {
+            return;
+        }
+        show_access_watch();
+        access_watch_->start_watch(address, kind, ui::watch_size(width));
+    }
+
+    void MainWindow::show_instruction_accesses(std::uint64_t                   instruction,
+                                               std::size_t                     instruction_length,
+                                               std::vector<ui::ResolvedAccess> accesses)
+    {
+        if (access_watch_ == nullptr)
+        {
+            return;
+        }
+        show_access_watch();
+        access_watch_->show_instruction_accesses(instruction, instruction_length, std::move(accesses));
     }
 
     void MainWindow::show_settings()

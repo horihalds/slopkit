@@ -12,6 +12,7 @@
 #include <QObject>
 #include <QString>
 
+#include "debug/access_watch.hpp"
 #include "debug/backend.hpp"
 #include "debug/breakpoints.hpp"
 #include "debug/worker.hpp"
@@ -68,6 +69,8 @@ namespace slopkit::debug
         [[nodiscard]] bool                           has_target() const noexcept;
         [[nodiscard]] QString                        state_text() const;
 
+        // Attaches and leaves the target running: only a breakpoint hit, a watch
+        // hit or interrupt() stops it.
         void start(process::ProcessId pid, std::string_view plugin_id);
         void stop();
         void resume();
@@ -79,6 +82,14 @@ namespace slopkit::debug
         void                                      remove_breakpoint(std::uint64_t id);
         void                                      set_breakpoint_enabled(std::uint64_t id, bool enabled);
         void                                      clear_breakpoints();
+
+        // Starts (or replaces, when one is already running) the address watch: a
+        // hidden read/write hardware breakpoint on `address` that the controller
+        // keeps consuming, and the target is left running for the next hit.
+        std::expected<void, std::string> watch_address(std::uint64_t address, Kind kind, std::size_t size);
+        void                             stop_watch();
+        void                             clear_watch_hits();
+        [[nodiscard]] const AccessWatch& watch() const noexcept;
 
         void write_register(std::string_view name, std::uint64_t value);
         void refresh();
@@ -93,21 +104,34 @@ namespace slopkit::debug
         void backtraceChanged();
         void breakpointsChanged();
         void message(slopkit::debug::Controller::MessageKind kind, const QString& text);
+        // Emitted once per drain() when hits arrived, never once per hit.
+        void watchChanged();
 
     private:
-        void                        begin_attach();
-        void                        apply_attach(JobResult&& result);
-        void                        apply_run_result(JobResult&& result);
-        void                        end_session(QString reason);
-        void                        apply_detach(JobResult&& result, QString reason);
-        void                        apply_stop(StopEvent stop);
-        void                        apply_registers(JobResult&& result);
-        void                        apply_backtrace(JobResult&& result);
-        void                        arm(std::uint64_t id);
-        void                        disarm(std::uint64_t id);
-        void                        submit_arm(const Breakpoint& entry, bool insert, const QString& action);
-        void                        mark_armed(JobResult&& result, std::uint64_t id, const QString& action);
-        void                        notify(MessageKind kind, QString text);
+        // One arm/disarm waiting for the invisible maintenance stop that makes a
+        // debug register writable while the target runs.
+        struct PendingSlotOp
+        {
+            std::uint64_t id {};
+            bool          insert {};
+        };
+
+        void begin_run(std::uint32_t tid);
+        void begin_attach();
+        void apply_attach(JobResult&& result);
+        void apply_run_result(JobResult&& result);
+        void end_session(QString reason);
+        void apply_detach(JobResult&& result, QString reason);
+        void apply_stop(StopEvent stop);
+        void apply_registers(JobResult&& result);
+        void apply_backtrace(JobResult&& result);
+        void arm(std::uint64_t id);
+        void disarm(std::uint64_t id);
+        void submit_arm(const Breakpoint& entry, bool insert, const QString& action);
+        void mark_armed(JobResult&& result, std::uint64_t id, bool insert, const QString& action);
+        void request_slot_op(std::uint64_t id, bool insert);
+        void apply_pending_slot_ops();
+        void notify(MessageKind kind, QString text);
         [[nodiscard]] std::uint64_t rip() const noexcept;
         [[nodiscard]] std::uint32_t active_tid() const noexcept;
         [[nodiscard]] QString       failure_text(process::AccessError error) const;
@@ -125,6 +149,13 @@ namespace slopkit::debug
         std::string                plugin_id_;
         std::uint32_t              leader_ {};
         bool                       stop_requested_ {false};
+        // A maintenance stop is one the controller asked for purely to install or
+        // remove a debug register; it is never reported to the UI.
+        bool                       maintenance_stop_ {false};
+        std::vector<PendingSlotOp> pending_slot_ops_;
+        std::vector<std::uint64_t> pending_removals_;
+        AccessWatch                watch_;
+        bool                       watch_dirty_ {false};
     };
 
 } // namespace slopkit::debug

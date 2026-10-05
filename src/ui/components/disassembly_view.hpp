@@ -68,6 +68,8 @@ namespace slopkit::ui::components
         void gotoRequested();                                    // the user picked "Go To..." from the pane's menu
         void navigated();                                        // the top row moved (Follow / Back / Go To)
         void followInMemoryViewRequested(std::uint64_t address); // "Follow in Memory View"
+        // "Find out what addresses this instruction accesses" on the decoded row.
+        void instructionAccessesRequested(std::size_t row);
 
     protected:
         void resizeEvent(QResizeEvent* event) override;

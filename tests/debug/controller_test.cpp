@@ -1,7 +1,9 @@
 #include <catch2/catch.hpp>
 
 #include <cstdint>
+#include <format>
 #include <variant>
+#include <vector>
 
 #include "debug/controller.hpp"
 #include "support/fake_debug.hpp"
@@ -126,7 +128,8 @@ TEST_CASE("controller resolves a software trap and rewinds RIP", "[debug][contro
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return !backend.software_calls.empty();
+                           const auto* entry = controller.table().find(*id);
+                           return !backend.software_calls.empty() && entry != nullptr && entry->armed;
                        }));
     CHECK(std::get<0>(backend.software_calls.front()) == 0);
     CHECK(std::get<1>(backend.software_calls.front()) == 0x1000);
@@ -230,7 +233,8 @@ TEST_CASE("controller arms a hardware breakpoint in a DR slot", "[debug][control
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return !backend.hardware_calls.empty();
+                           const auto* entry = controller.table().find(*id);
+                           return !backend.hardware_calls.empty() && entry != nullptr && entry->armed;
                        }));
     CHECK(std::get<0>(backend.hardware_calls.front()) == 0);
     CHECK(std::get<1>(backend.hardware_calls.front()) == slopkit::debug::HardwareKind::write);
@@ -243,7 +247,7 @@ TEST_CASE("controller arms a hardware breakpoint in a DR slot", "[debug][control
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return !backend.hardware_calls.empty();
+                           return !backend.hardware_calls.empty() && controller.table().empty();
                        }));
     CHECK_FALSE(std::get<4>(backend.hardware_calls.front()));
     CHECK(controller.table().empty());
@@ -294,4 +298,233 @@ TEST_CASE("controller gates register writes on the stopped state", "[debug][cont
     REQUIRE(!backend.register_writes.empty());
     CHECK(std::get<1>(backend.register_writes.front()) == "RAX");
     CHECK(std::get<2>(backend.register_writes.front()) == 0x42);
+}
+
+TEST_CASE("controller arms breakpoints while the target runs through one invisible stop", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    backend.block_continue = true;
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    std::vector<Controller::State> states;
+    QObject::connect(&controller,
+                     &Controller::stateChanged,
+                     &controller,
+                     [&states, &controller]
+                     {
+                         states.push_back(controller.state());
+                     });
+    backend.calls.clear();
+
+    const auto first  = controller.add_breakpoint("0x2000", Kind::hardware_write, 4);
+    const auto second = controller.add_breakpoint("0x3000", Kind::hardware_write, 4);
+    REQUIRE(first.has_value());
+    REQUIRE(second.has_value());
+
+    // Both ops ride a single maintenance stop, and the target never looks stopped.
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().find(*first)->armed && controller.table().find(*second)->armed;
+                       }));
+    CHECK(backend.count("interrupt") == 1);
+    CHECK(backend.hardware_calls.size() == 2);
+    CHECK(controller.state() == Controller::State::running);
+    for (const Controller::State state : states)
+    {
+        CHECK(state != Controller::State::stopped);
+    }
+}
+
+TEST_CASE("controller disarms a breakpoint while the target runs", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    backend.block_continue = true;
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    const auto id = controller.add_breakpoint("0x2000", Kind::hardware_write, 4);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().find(*id)->armed;
+                       }));
+
+    backend.calls.clear();
+    backend.hardware_calls.clear();
+    controller.remove_breakpoint(*id);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().find(*id) == nullptr;
+                       }));
+
+    CHECK(controller.state() == Controller::State::running);
+    CHECK(backend.count("interrupt") == 1);
+    REQUIRE(backend.hardware_calls.size() == 1);
+    CHECK_FALSE(std::get<4>(backend.hardware_calls.front()));
+}
+
+namespace
+{
+    const slopkit::debug::Breakpoint* hidden_entry(const Controller& controller)
+    {
+        for (const slopkit::debug::Breakpoint& entry : controller.breakpoints())
+        {
+            if (entry.hidden)
+            {
+                return &entry;
+            }
+        }
+        return nullptr;
+    }
+} // namespace
+
+TEST_CASE("controller collects access watch hits while the target runs", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    backend.block_continue = true;
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    // The watch arms through the maintenance stop and leaves the target running.
+    REQUIRE(controller.watch_address(0x4000, Kind::hardware_write, 4).has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = hidden_entry(controller);
+                           return entry != nullptr && entry->armed;
+                       }));
+    CHECK(controller.watch().state() == slopkit::debug::WatchState::watching);
+    CHECK(controller.watch().address() == 0x4000);
+    CHECK(controller.watch().kind() == Kind::hardware_write);
+    CHECK(controller.watch().size() == 4);
+    CHECK(controller.state() == Controller::State::running);
+    const std::uint32_t slot = hidden_entry(controller)->slot;
+
+    // Two stops on the watched slot coalesce into one row with a count, and the
+    // target is resumed after each without ever looking stopped.
+    backend.stop_replies.push_back(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
+    backend.stop_replies.push_back(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.watch().hit_count() == 1;
+                       }));
+    CHECK(controller.state() == Controller::State::running);
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.watch().hit_count() == 2;
+                       }));
+
+    CHECK(controller.state() == Controller::State::running);
+    REQUIRE(controller.watch().hits().size() == 1);
+    CHECK(controller.watch().hits().front().instruction == 0x5005);
+    CHECK(controller.watch().hits().front().tid == 4242);
+    CHECK(controller.watch().hits().front().count == 2);
+
+    // Clear empties the rows but keeps collecting.
+    controller.clear_watch_hits();
+    CHECK(controller.watch().hits().empty());
+    CHECK(controller.watch().hit_count() == 0);
+    CHECK(controller.watch().state() == slopkit::debug::WatchState::watching);
+
+    // A new watch replaces the running one and drops the rows.
+    REQUIRE(controller.watch_address(0x6000, Kind::hardware_read_write, 8).has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = hidden_entry(controller);
+                           return entry != nullptr && entry->address == 0x6000 && entry->armed;
+                       }));
+    CHECK(controller.watch().address() == 0x6000);
+    CHECK(controller.watch().size() == 8);
+    CHECK(controller.watch().hits().empty());
+    CHECK(controller.state() == Controller::State::running);
+
+    // Stop disarms the slot and leaves the target running with the rows kept.
+    controller.stop_watch();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return hidden_entry(controller) == nullptr;
+                       }));
+    CHECK(controller.watch().state() == slopkit::debug::WatchState::stopped);
+    CHECK(controller.state() == Controller::State::running);
+}
+
+TEST_CASE("controller refuses an access watch it cannot arm", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    // All four debug slots taken: the watch cannot be armed.
+    for (int index = 0; index < 4; ++index)
+    {
+        const auto id =
+            controller.add_breakpoint(std::format("0x{:X}", 0x1000 + index * 0x100), Kind::hardware_execute, 1);
+        REQUIRE(id.has_value());
+    }
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           std::size_t armed = 0;
+                           for (const slopkit::debug::Breakpoint& entry : controller.breakpoints())
+                           {
+                               armed += entry.armed ? 1 : 0;
+                           }
+                           return armed == 4;
+                       }));
+
+    const auto no_slot = controller.watch_address(0x9000, Kind::hardware_write, 4);
+    REQUIRE_FALSE(no_slot.has_value());
+    CHECK(no_slot.error() == "no hardware slot is free");
+    CHECK(controller.watch().state() == slopkit::debug::WatchState::idle);
+
+    // An address a hardware breakpoint already covers is refused too.
+    controller.clear_breakpoints();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.breakpoints().empty();
+                       }));
+    const auto covered = controller.add_breakpoint("0x4000", Kind::hardware_write, 4);
+    REQUIRE(covered.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().find(*covered)->armed;
+                       }));
+
+    const auto duplicate = controller.watch_address(0x4000, Kind::hardware_write, 4);
+    REQUIRE_FALSE(duplicate.has_value());
+    CHECK(duplicate.error() == "a breakpoint already covers this address");
+    CHECK(controller.watch().state() == slopkit::debug::WatchState::idle);
 }

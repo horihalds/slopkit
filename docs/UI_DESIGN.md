@@ -88,16 +88,16 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 ## 8. Window and Layout
 
 - The main window is a `QMainWindow` with a menu bar, a single full-width scan-progress bar above the central split zones, and a status bar; the window must be resizable and carry a sensible minimum size.
-- The menu bar holds exactly `File`, `View` and `Help`. `File` holds the process/table commands, `View` holds `Log` then `Settings`, and `Help` holds `Launch Practice Target` then `About slopkit`; there is no `Edit` menu, and `Undo Scan` / `Add Address Manually...` are scanner-panel buttons only.
+- The menu bar holds exactly `File`, `View` and `Help`. `File` holds the process/table commands, `View` holds `Log`, `Settings`, `Breakpoints` and `Access Watch`, and `Help` holds `Launch Practice Target` then `About slopkit`; there is no `Edit` menu, and `Undo Scan` / `Add Address Manually...` are scanner-panel buttons only.
 - The file commands are reachable from the menus and carry window-scoped shortcuts: `Ctrl+T` picks the process, `Ctrl+O` opens an address table and `Ctrl+S` saves it; they fire only while the main window is focused.
 - The Memory Viewer binds `Ctrl+G` (window-scoped) to its `Go To...` command, so it opens the same prompt from anywhere in the dialog while it is focused; the prompt targets the pane the keyboard focus is in - the disassembly listing when the focus is inside it, otherwise the byte view - so one command serves both panes. It adds no shortcut to and shadows none of the main window's. Its panes also add `Follow`, `Follow in Memory View` and a per-pane `Back` to their context menus (section 4).
 - Layouts must adapt to window size: use layouts and `QSplitter` stretch factors rather than fixed sizes. The scan zone is pinned to the scanner panel's content height (the vertical splitter gives it no stretch) and the address list absorbs every remaining pixel, which keeps the hits table's bottom edge level with the `Memory Scan Options` panel; the scan zone splits 50/50 between the found list and the scanner. The Memory Viewer is itself a three-pane split: a vertical `QSplitter` keeps the byte view in the lower pane (30 of the 100 units) below a 70-unit upper zone that a horizontal `QSplitter` divides 70/30 between the disassembly listing and the debugger stats pane; the ratio is seeded once on the first show and held by the stretch factors on every resize, and every handle is non-collapsible so no pane can vanish.
 - The status bar carries the attached-process label in its left slot and the address list's status line in its permanent right slot; the scan progress is a single `QProgressBar` spanning the top of the window above the split zones (a deliberate change from the old status-bar progress bar). This deliberately replaces the earlier rule that the status bar showed only the attached-process label; the process list and other dialogs never duplicate either.
-- The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Log`, `Settings`) are `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window. The Memory Viewer alone is built with no parent widget, so no window-manager transient hint keeps it stacked above the main window; every other dialog stays a transient child.
+- The dialogs (`Process List`, `Add Address`, `Memory Viewer`, `Log`, `Breakpoints`, `Access Watch`, `Settings`) are `QDialog` top-level windows with their own decorations and taskbar/Alt-Tab entry, can move to another monitor, and are owned by the main window. The Memory Viewer alone is built with no parent widget, so no window-manager transient hint keeps it stacked above the main window; every other dialog stays a transient child.
 - The `Process List` picker is **application-modal**: while it is open the main window accepts no keyboard or mouse input, so a half-chosen target cannot be interacted with behind it. This deliberately overrides the non-modal rule below for this dialog only.
 - The `Process List` picker is also a **fixed-size** chooser: it locks its 600x440 default size and offers no minimize or maximize affordance, so it reads as a small picker rather than a resizable window. This deliberately overrides the compositor-owned dialog size rule below. A Wayland compositor may still draw a minimize affordance for a toplevel; the locked size makes maximize a no-op there regardless.
 - In the `Process List` picker the filter box owns the keyboard: `Up`/`Down` step the highlighted target through the current filtered/sorted view, cycling at both ends, and `Enter` attaches the highlighted row — so a target can be picked without leaving the filter box. Only unmodified `Up`/`Down` are consumed; every other key and modifier combination stays with the line edit.
-- The other dialogs (`Add Address`, `Memory Viewer`, `Log`, `Settings`) stay **non-modal**: the main window keeps taking input while they are open.
+- The other dialogs (`Add Address`, `Memory Viewer`, `Log`, `Breakpoints`, `Access Watch`, `Settings`) stay **non-modal**: the main window keeps taking input while they are open.
 - Treat a dialog's position and size as compositor-owned: never save, restore or compute them; nothing is persisted between runs. The Memory Viewer is the single deliberate exception: its size (and its position where the platform honours it) is saved in the settings store whenever it is hidden and restored when it is created again, so the investigation layout survives a restart.
 - Do not draw custom title bars for dialogs (see section 7). The window-manager close button has the same effect as an in-dialog close button, and the dialog can be re-opened at any time.
 - Keep the app idle-quiet: updates are event-driven and the only periodic timer is the low-frequency scan-progress/freeze tick, which also drives the live value pass (`ui::LiveValues::poll()`). The pass submits nothing while live update is off, while no target is attached, while there is nothing displayed or while a pass is still in flight, so an idle window stays silent. The same tick re-resolves the address list's stored expressions on a slower internal cadence (about once a second, and immediately when an expression or the module map changes), still as one batched job and still nothing while no target is attached or a resolve is in flight, so no second timer is ever created.
@@ -129,14 +129,36 @@ controls (`Start Debugging` / `Stop Debugging`, `Resume`, `Break`, `Step Into`,
 the stopped thread. Every control is enabled strictly by the session state, and
 the pane only submits work to the debug controller and renders what it reports.
 
+`Start Debugging` attaches and leaves the target **running**: the pane reads
+`Running...`, `Step Into` / `Step Over` / `Resume` are disabled, `Break` and
+`Stop Debugging` are enabled, and the register and call-stack tables stay empty
+until the first deliberate stop. `Break` performs the ordinary stop, after which
+the pane behaves as it always has.
+
 `View > Breakpoints` and the pane's `Breakpoints...` button open the same
 non-modal Breakpoints window (`Enabled`, `Kind`, `Size`, `Address`, `Hits`, with
-Add Breakpoint..., Remove and Clear All).
+Add Breakpoint..., Remove and Clear All). Those controls work while the target
+runs: the controller briefly and invisibly stops the group to write the debug
+register, so the pane never leaves `Running...`.
+
+`View > Access Watch` opens the non-modal Access Watch window: a header line
+(`Watching <module+RVA> · writes · 4 bytes · N accesses`), a **Recorded accesses**
+table (instruction, code, thread, count) with `Follow in Memory Viewer`, `Stop`,
+`Clear` and `Close`, and an **Instruction accesses** table (address, operand,
+width, read/write) with `Watch writes` / `Watch accesses` and a hint line naming
+the register context the addresses were resolved from. The status line reports a
+failed arming (no free slot, an address already covered). Both the address list
+and the scan results offer `Find out what writes this address` and `Find out what
+accesses this address` after a separator in their row menus (disabled with
+`Attach to a target first.` while no target is attached), and the listing adds
+`Find out what addresses this instruction accesses` to its row menu for any row
+with a memory operand.
 
 Deliberate deviations from the rules above, recorded here rather than taken
 silently:
 
-1. `View` holds a third entry, `Breakpoints`, after `Log` and `Settings`.
+1. `View` holds a third entry, `Breakpoints` (and a fourth, `Access Watch`),
+   after `Log` and `Settings`.
 2. The Debugger pane carries its own state/error readout: a debugger has to show
    `Not debugging` / `Stopped at <address> (breakpoint N)` / `Running...` and the
    failing operation inline. The same records are written under the `debug` log
@@ -144,8 +166,13 @@ silently:
 3. Section 9's "every target access goes through `process::AccessWorker`" becomes
    "...through the access worker or the debug worker", because `ptrace` cannot
    run on the shared access worker (a tracee may only be ptraced by the thread
-   that attached it).
-4. No new timer and no new accelerator is added: the pane reacts to the
-   controller's signals and to the existing completion notifier and tick drain,
-   and the run controls are the text-labelled buttons the component library
-   already provides.
+   that attached it). The Access Watch window's instruction reads stay on the
+   access worker.
+4. No new timer and no new accelerator is added: the pane and the Access Watch
+   window react to the controller's signals and to the existing completion
+   notifier and tick drain, and the run controls are the text-labelled buttons
+   the component library already provides.
+5. The Access Watch window is a normal non-modal companion dialog owned by the
+   main window: `View > Access Watch` is the way back to it after closing it, the
+   watch itself keeps running while the window is hidden, and its hits are
+   coalesced into one row per instruction so a tight loop cannot flood the table.

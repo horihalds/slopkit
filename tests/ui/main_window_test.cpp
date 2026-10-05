@@ -31,10 +31,13 @@ TEST_CASE("the main window shell is built", "[ui]")
     // The toolbar is gone; the file commands live only in the menus now.
     CHECK(window.findChild<QToolBar*>(QStringLiteral("main_toolbar")) == nullptr);
 
-    // The View menu holds the log and settings entries; Help offers the practice
-    // target ahead of About.
+    // The View menu holds the log, settings and the two companion windows; Help
+    // offers the practice target ahead of About.
     CHECK(action_texts(menus[1]->menu()->actions())
-          == QList<QString> {QStringLiteral("Log"), QStringLiteral("Settings"), QStringLiteral("Breakpoints")});
+          == QList<QString> {QStringLiteral("Log"),
+                             QStringLiteral("Settings"),
+                             QStringLiteral("Breakpoints"),
+                             QStringLiteral("Access Watch")});
     CHECK(action_texts(menus[2]->menu()->actions())
           == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
 
@@ -115,6 +118,16 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(breakpoints_dialog->isVisible());
     breakpoints_action->trigger();
     CHECK(window.findChildren<slopkit::ui::dialogs::BreakpointsDialog*>().size() == 1);
+
+    // View > Access Watch opens the non-modal watch window, once.
+    QAction* access_watch_action = menus[1]->menu()->actions().at(3);
+    CHECK(access_watch_action->text() == QStringLiteral("Access Watch"));
+    access_watch_action->trigger();
+    auto* access_watch_dialog = window.findChild<slopkit::ui::dialogs::AccessWatchDialog*>();
+    REQUIRE(access_watch_dialog != nullptr);
+    CHECK(access_watch_dialog->isVisible());
+    access_watch_action->trigger();
+    CHECK(window.findChildren<slopkit::ui::dialogs::AccessWatchDialog*>().size() == 1);
 
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 

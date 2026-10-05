@@ -80,6 +80,7 @@
 #include "ui/components/memory_view_document.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/dialogs/access_watch.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/breakpoints.hpp"
 #include "ui/dialogs/log.hpp"

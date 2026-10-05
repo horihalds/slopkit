@@ -490,6 +490,19 @@ namespace slopkit::ui::components
         add_copy(tr("Address + bytes"), CopyFormat::address_and_bytes);
         add_copy(tr("Address + instruction"), CopyFormat::address_and_instruction);
         add_copy(tr("Address + bytes + instruction"), CopyFormat::address_bytes_instruction);
+
+        // Resolving the operands needs the register context of the last stop, so
+        // it is offered whether or not one has happened.
+        menu.addSeparator();
+        QAction* accesses = menu.addAction(tr("Find out what addresses this instruction accesses"));
+        accesses->setEnabled(!document_.row_memory(row).empty());
+        connect(accesses,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    emit instructionAccessesRequested(row);
+                });
     }
 
     void DisassemblyView::resizeEvent(QResizeEvent* event)
