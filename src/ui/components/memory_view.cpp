@@ -318,8 +318,47 @@ namespace slopkit::ui::components
         {
             return false;
         }
-        set_first_byte(*parsed);
+        navigate_to(*parsed);
         return true;
+    }
+
+    void MemoryView::navigate_to(std::uint64_t address)
+    {
+        const std::uint64_t target = std::min(address, scan::kMaxUserAddress);
+        if (target == first_byte_)
+        {
+            return;
+        }
+        history_.push_back(first_byte_);
+        if (history_.size() > kHistoryLimit)
+        {
+            history_.erase(history_.begin());
+        }
+        set_first_byte(address);
+        emit navigated();
+    }
+
+    bool MemoryView::back()
+    {
+        if (history_.empty())
+        {
+            return false;
+        }
+        const std::uint64_t previous = history_.back();
+        history_.pop_back();
+        set_first_byte(previous);
+        emit navigated();
+        return true;
+    }
+
+    bool MemoryView::can_go_back() const noexcept
+    {
+        return !history_.empty();
+    }
+
+    void MemoryView::clear_history() noexcept
+    {
+        history_.clear();
     }
 
     void MemoryView::set_text_column_visible(bool visible)
@@ -542,6 +581,19 @@ namespace slopkit::ui::components
     void MemoryView::populate_options_menu(QMenu& menu)
     {
         menu.addAction(goto_action_);
+
+        // Always present so the capability is discoverable, disabled while the
+        // history is empty.
+        QAction* back_action = menu.addAction(tr("Back"));
+        back_action->setEnabled(can_go_back());
+        connect(back_action,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    back();
+                });
+
         menu.addSeparator();
 
         // One exclusive group spans every value format, so exactly one is checked.

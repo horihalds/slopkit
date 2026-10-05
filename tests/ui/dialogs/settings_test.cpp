@@ -195,7 +195,7 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
                             return scanner->main_module_address() != 0;
                         }));
 
-        auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
+        auto* viewer = window.memory_viewer();
         REQUIRE(viewer != nullptr);
         auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
         REQUIRE(document != nullptr);

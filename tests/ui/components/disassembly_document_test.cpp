@@ -496,3 +496,32 @@ TEST_CASE("the disassembly document copies the rendered instruction text", "[ui]
     CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0: JZ app+17"));
     CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction) == QStringLiteral("app+0: 74 15  JZ app+17"));
 }
+
+TEST_CASE("the disassembly document exposes a row's referenced addresses", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15, 0x06, 0xC3}); // JZ +0x15, .byte 0x06, RET
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    // The branch row references its target; a `.byte` or operand-less row
+    // references nothing.
+    const auto jump = fixture.document.row_addresses(0);
+    REQUIRE(jump.size() == 1);
+    CHECK(jump.front().address == kCode + 0x17);
+    CHECK(fixture.document.row_addresses(1).empty()); // .byte 0x06
+    CHECK(fixture.document.row_addresses(2).empty()); // RET
+
+    // An out-of-range row hands out an empty span.
+    CHECK(fixture.document.row_addresses(fixture.document.row_count()).empty());
+
+    // A refused window masks every row, which then references nothing either.
+    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
+    LiveReading                 failed;
+    failed.id       = DisassemblyDocument::kIdBase;
+    failed.readable = false;
+    fixture.document.apply_live_readings(std::vector<LiveReading> {failed});
+    CHECK(fixture.document.row_addresses(0).empty());
+}

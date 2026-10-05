@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "ui/components/disassembly_document.hpp"
 
@@ -28,11 +29,21 @@ namespace slopkit::ui::components
         // The address of the top row; the pane's own cursor.
         [[nodiscard]] std::uint64_t first_address() const noexcept;
         // Jumps the top row to the instruction containing `address` (clamped to
-        // the user-space ceiling); Go To and the dialog's open-at address use this.
+        // the user-space ceiling) without touching the history; the dialog's
+        // open-at address and internal re-fits use this.
         void                        set_first_address(std::uint64_t address);
         // Parses `text` (absolute, module+RVA or a bare module name) and jumps
         // there; false when the text does not name an address.
         bool                        go_to(const QString& text);
+        // Jumps the top row to `address` and remembers where it left, so
+        // `back()` can return there; records nothing when `address` is already
+        // the top. Follow and Go To use this.
+        void                        navigate_to(std::uint64_t address);
+        // Returns to the top address remembered last; false when there is none.
+        bool                        back();
+        [[nodiscard]] bool          can_go_back() const noexcept;
+        // Forgets the history; the dialog's open-at address starts a new one.
+        void                        clear_history() noexcept;
         [[nodiscard]] std::size_t   visible_rows() const noexcept;
 
         // Re-fits the rows to the current viewport; the context menu calls this.
@@ -54,7 +65,9 @@ namespace slopkit::ui::components
         [[nodiscard]] QAction* goto_action() const noexcept;
 
     signals:
-        void gotoRequested(); // the user picked "Go To..." from the pane's menu
+        void gotoRequested();                                    // the user picked "Go To..." from the pane's menu
+        void navigated();                                        // the top row moved (Follow / Back / Go To)
+        void followInMemoryViewRequested(std::uint64_t address); // "Follow in Memory View"
 
     protected:
         void resizeEvent(QResizeEvent* event) override;
@@ -66,6 +79,9 @@ namespace slopkit::ui::components
         void hideEvent(QHideEvent* event) override;
 
     private:
+        // How many previous top addresses a pane remembers for Back.
+        static constexpr std::size_t kHistoryLimit = 64;
+
         // Re-derives the line height, column widths and the row fit, then
         // re-windows the rows.
         void recompute_layout();
@@ -98,15 +114,17 @@ namespace slopkit::ui::components
 
         DisassemblyDocument& document_;
 
-        std::uint64_t first_address_ {0};
-        std::size_t   first_row_ {0};
-        std::size_t   visible_rows_ {1};
-        std::size_t   bytes_per_line_ {1};
-        bool          seat_last_row_ {false};
-        int           line_height_ {1};
-        int           header_height_ {1};
-        int           address_width_ {0};
-        int           bytes_width_ {1};
+        std::uint64_t              first_address_ {0};
+        // The top addresses visited through navigate_to(), oldest first.
+        std::vector<std::uint64_t> history_;
+        std::size_t                first_row_ {0};
+        std::size_t                visible_rows_ {1};
+        std::size_t                bytes_per_line_ {1};
+        bool                       seat_last_row_ {false};
+        int                        line_height_ {1};
+        int                        header_height_ {1};
+        int                        address_width_ {0};
+        int                        bytes_width_ {1};
 
         QAction* goto_action_ {};
     };

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "ui/components/memory_view_document.hpp"
 
@@ -35,6 +36,15 @@ namespace slopkit::ui::components
         // Parses `text` (absolute, module+RVA or a bare module name) and jumps
         // there; false when the text does not name an address.
         bool                        go_to(const QString& text);
+        // Jumps the top address to `address` and remembers where it left, so
+        // `back()` can return there; records nothing when `address` is already
+        // the top. Used by Follow / Follow in Memory View and Go To.
+        void                        navigate_to(std::uint64_t address);
+        // Returns to the top address remembered last; false when there is none.
+        bool                        back();
+        [[nodiscard]] bool          can_go_back() const noexcept;
+        // Forgets the history; the dialog's open-at address starts a new one.
+        void                        clear_history() noexcept;
         void                        set_text_column_visible(bool visible);
         [[nodiscard]] bool          text_column_visible() const noexcept;
         [[nodiscard]] std::size_t   bytes_per_row() const noexcept;
@@ -69,6 +79,7 @@ namespace slopkit::ui::components
     signals:
         void gotoRequested(); // the user picked "Go To..." from the options menu
         void bytesEdited();   // a write was submitted
+        void navigated();     // the top address moved (Follow / Back / Go To)
 
     protected:
         void resizeEvent(QResizeEvent* event) override;
@@ -82,6 +93,9 @@ namespace slopkit::ui::components
         bool eventFilter(QObject* watched, QEvent* event) override;
 
     private:
+        // How many previous top addresses a pane remembers for Back.
+        static constexpr std::size_t kHistoryLimit = 64;
+
         struct Hit
         {
             std::uint64_t address {};
@@ -109,16 +123,18 @@ namespace slopkit::ui::components
 
         MemoryViewDocument& document_;
 
-        std::uint64_t first_byte_ {0};
-        std::size_t   bytes_per_row_ {16};
-        std::size_t   visible_rows_ {1};
-        int           row_height_ {1};
-        int           header_height_ {1};
-        int           address_width_ {0};
-        int           cell_width_ {1};
-        int           text_width_ {0};
-        bool          text_column_visible_ {true};
-        bool          layout_ready_ {false};
+        std::uint64_t              first_byte_ {0};
+        // The top addresses visited through navigate_to(), oldest first.
+        std::vector<std::uint64_t> history_;
+        std::size_t                bytes_per_row_ {16};
+        std::size_t                visible_rows_ {1};
+        int                        row_height_ {1};
+        int                        header_height_ {1};
+        int                        address_width_ {0};
+        int                        cell_width_ {1};
+        int                        text_width_ {0};
+        bool                       text_column_visible_ {true};
+        bool                       layout_ready_ {false};
 
         QAction*      goto_action_ {};
         QLineEdit*    editor_ {};

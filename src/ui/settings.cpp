@@ -22,6 +22,7 @@ namespace slopkit::ui
         constexpr auto kLastDirectoryKey = "files/last_directory";
         constexpr auto kLiveEnabledKey   = "liveUpdateEnabled";
         constexpr auto kLiveIntervalKey  = "liveUpdateIntervalMs";
+        constexpr auto kViewGeometryKey  = "windows/memory_view_geometry";
         constexpr auto kModuleRelative   = "module_relative";
         constexpr auto kAbsolute         = "absolute";
 
@@ -69,6 +70,15 @@ namespace slopkit::ui
                 return AddressMode::absolute;
             }
             return std::nullopt;
+        }
+
+        std::optional<QByteArray> parse_geometry(const QVariant& value)
+        {
+            if (value.metaType().id() != QMetaType::QByteArray)
+            {
+                return std::nullopt;
+            }
+            return value.toByteArray();
         }
     } // namespace
 
@@ -161,6 +171,16 @@ namespace slopkit::ui
         emit liveUpdateIntervalChanged(clamped);
     }
 
+    void SettingsController::set_memory_view_geometry(const QByteArray& geometry)
+    {
+        if (values_.memory_view_geometry == geometry)
+        {
+            return;
+        }
+        values_.memory_view_geometry = geometry;
+        store();
+    }
+
     void SettingsController::load()
     {
         const auto file_path = store_->fileName().toStdString();
@@ -237,19 +257,32 @@ namespace slopkit::ui
                          std::format("settings file {}: malformed {} value", file_path, kLiveIntervalKey));
         }
 
+        const auto geometry_key = QString::fromLatin1(kViewGeometryKey);
+        if (const auto geometry = parse_geometry(store_->value(geometry_key)); geometry.has_value())
+        {
+            values_.memory_view_geometry = *geometry;
+        }
+        else if (store_->contains(geometry_key))
+        {
+            log::warning(log::category::app,
+                         std::format("settings file {}: malformed {} value", file_path, kViewGeometryKey));
+        }
+
         values_.last_table_path = store_->value(QString::fromLatin1(kLastTableKey)).toString();
         values_.last_directory  = store_->value(QString::fromLatin1(kLastDirectoryKey)).toString();
 
         log::debug(log::category::app,
                    std::format("settings loaded: dark_theme={}, address_mode={}, auto_load_last={}, "
-                               "last_table={}, last_directory={}, live_update={}, live_interval_ms={}",
+                               "last_table={}, last_directory={}, live_update={}, live_interval_ms={}, "
+                               "memory_view_geometry_bytes={}",
                                values_.dark_theme,
                                values_.address_mode == AddressMode::absolute ? "absolute" : "module_relative",
                                values_.auto_load_last_table,
                                values_.last_table_path.toStdString(),
                                values_.last_directory.toStdString(),
                                values_.live_update_enabled,
-                               values_.live_update_interval_ms));
+                               values_.live_update_interval_ms,
+                               values_.memory_view_geometry.size()));
     }
 
     void SettingsController::store()
@@ -265,6 +298,7 @@ namespace slopkit::ui
         store_->setValue(QString::fromLatin1(kLastDirectoryKey), values_.last_directory);
         store_->setValue(QString::fromLatin1(kLiveEnabledKey), values_.live_update_enabled);
         store_->setValue(QString::fromLatin1(kLiveIntervalKey), values_.live_update_interval_ms);
+        store_->setValue(QString::fromLatin1(kViewGeometryKey), values_.memory_view_geometry);
         store_->sync();
     }
 

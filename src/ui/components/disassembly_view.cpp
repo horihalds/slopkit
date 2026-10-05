@@ -354,8 +354,47 @@ namespace slopkit::ui::components
         {
             return false;
         }
-        set_first_address(*parsed);
+        navigate_to(*parsed);
         return true;
+    }
+
+    void DisassemblyView::navigate_to(std::uint64_t address)
+    {
+        const std::uint64_t target = std::min(address, scan::kMaxUserAddress);
+        if (target == first_address_)
+        {
+            return;
+        }
+        history_.push_back(first_address_);
+        if (history_.size() > kHistoryLimit)
+        {
+            history_.erase(history_.begin());
+        }
+        set_first_address(address);
+        emit navigated();
+    }
+
+    bool DisassemblyView::back()
+    {
+        if (history_.empty())
+        {
+            return false;
+        }
+        const std::uint64_t previous = history_.back();
+        history_.pop_back();
+        set_first_address(previous);
+        emit navigated();
+        return true;
+    }
+
+    bool DisassemblyView::can_go_back() const noexcept
+    {
+        return !history_.empty();
+    }
+
+    void DisassemblyView::clear_history() noexcept
+    {
+        history_.clear();
     }
 
     std::size_t DisassemblyView::row_at_position(const QPoint& position) const
@@ -396,6 +435,42 @@ namespace slopkit::ui::components
     void DisassemblyView::populate_menu(QMenu& menu, std::size_t row)
     {
         menu.addAction(goto_action_);
+
+        // A row whose instruction references an address can be followed: to the
+        // listing's own cursor, or to the byte view. The address is captured by
+        // value - the span only lives until the window moves.
+        if (const auto references = document_.row_addresses(row); !references.empty())
+        {
+            const std::uint64_t target = references.front().address;
+            connect(menu.addAction(tr("Follow")),
+                    &QAction::triggered,
+                    this,
+                    [this, target]
+                    {
+                        navigate_to(target);
+                    });
+            connect(menu.addAction(tr("Follow in Memory View")),
+                    &QAction::triggered,
+                    this,
+                    [this, target]
+                    {
+                        emit followInMemoryViewRequested(target);
+                    });
+        }
+
+        // Always present so Back is discoverable, disabled while the history is
+        // empty.
+        QAction* back_action = menu.addAction(tr("Back"));
+        back_action->setEnabled(can_go_back());
+        connect(back_action,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    back();
+                });
+
+        menu.addSeparator();
 
         QMenu*     copy     = menu.addMenu(tr("Copy"));
         const auto add_copy = [this, copy, row](const QString& label, CopyFormat format)

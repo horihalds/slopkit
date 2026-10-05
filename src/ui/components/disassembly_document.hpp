@@ -102,8 +102,14 @@ namespace slopkit::ui::components
             bool          readable {};
         };
 
-        [[nodiscard]] Row                        row(std::size_t index) const;
-        [[nodiscard]] std::optional<std::size_t> row_at(std::uint64_t address) const;
+        [[nodiscard]] Row                                 row(std::size_t index) const;
+        [[nodiscard]] std::optional<std::size_t>          row_at(std::uint64_t address) const;
+        // The addresses row `index` references (branch/call targets and memory
+        // operands, in printed order); empty for an out-of-range or unreadable
+        // row and for a `.byte` row, which references nothing. The span points
+        // into the decoded instruction stream, so it is valid only until the
+        // window moves.
+        [[nodiscard]] std::span<const disasm::AddressRef> row_addresses(std::size_t index) const;
 
     signals:
         void rowsChanged(); // new bytes, a new window or a longer decode

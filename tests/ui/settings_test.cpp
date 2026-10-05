@@ -4,6 +4,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <QObject>
 #include <QString>
@@ -129,6 +130,47 @@ TEST_CASE("The live-update values survive a manual INI", "[settings]")
     REQUIRE(controller.values().live_update_interval_ms == 1000);
 }
 
+TEST_CASE("The memory view geometry survives a round-trip through the INI file", "[settings]")
+{
+    const QString    path = scratch_file("geometry.ini");
+    const QByteArray blob = QByteArray::fromHex("00010203040506070809");
+    {
+        SettingsController controller(path);
+        REQUIRE(controller.values().memory_view_geometry.isEmpty());
+        controller.set_memory_view_geometry(blob);
+        REQUIRE(controller.values().memory_view_geometry == blob);
+    }
+
+    SettingsController reloaded(path);
+    REQUIRE(reloaded.values().memory_view_geometry == blob);
+}
+
+TEST_CASE("A malformed memory view geometry falls back to the default", "[settings]")
+{
+    const QString path = scratch_file("geometry_junk.ini");
+    write_text(path, "[windows]\nmemory_view_geometry=not-a-blob\n");
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    SettingsController controller(path);
+    CHECK(controller.values().memory_view_geometry.isEmpty());
+
+    bool warned = false;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.level == slopkit::log::Level::warning
+            && record.message.find("malformed windows/memory_view_geometry value") != std::string::npos)
+        {
+            warned = true;
+        }
+    }
+    CHECK(warned);
+}
+
 TEST_CASE("Settings signals fire once per real change", "[settings]")
 {
     SettingsController controller(scratch_file("signals.ini"));
@@ -247,8 +289,9 @@ TEST_CASE("the window applies the persisted settings at construction", "[ui]")
 
     // The viewer opens in the persisted absolute mode even though the module map
     // resolved.
-    auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
+    auto* viewer = window.memory_viewer();
     REQUIRE(viewer != nullptr);
+    CHECK(viewer->parentWidget() == nullptr);
     auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
     REQUIRE(document != nullptr);
     viewer->set_address(0x1040);

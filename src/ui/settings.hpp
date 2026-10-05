@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include <QByteArray>
 #include <QObject>
 #include <QSettings>
 #include <QString>
@@ -28,6 +29,9 @@ namespace slopkit::ui
         bool        live_update_enabled {true};
         // The live refresh cadence in milliseconds, clamped to [50, 5000].
         int         live_update_interval_ms {250};
+        // The detached Memory Viewer's saved window geometry
+        // (QWidget::saveGeometry); empty until the window has been hidden once.
+        QByteArray  memory_view_geometry;
 
         bool operator==(const Settings&) const = default;
     };
@@ -53,6 +57,7 @@ namespace slopkit::ui
         void set_last_directory(const QString& directory);
         void set_live_update_enabled(bool enabled);
         void set_live_update_interval_ms(int interval_ms);
+        void set_memory_view_geometry(const QByteArray& geometry);
 
     signals:
         void darkThemeChanged(bool dark);

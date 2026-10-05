@@ -347,3 +347,24 @@ TEST_CASE("re-activating the main window focuses the scanner value box and selec
     CHECK(window.focusWidget() == value);
     CHECK(value->selectedText() == QStringLiteral("4242"));
 }
+
+TEST_CASE("the memory viewer is a detached top-level window", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("detached_viewer.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings};
+
+    auto* viewer = window.memory_viewer();
+    REQUIRE(viewer != nullptr);
+    // No parent widget and not a child of the window: the compositor is free to
+    // stack it normally instead of keeping it above the main window.
+    CHECK(viewer->parentWidget() == nullptr);
+    CHECK(viewer->isWindow());
+    CHECK_FALSE(window.isAncestorOf(viewer));
+    CHECK(window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>() == nullptr);
+}

@@ -314,6 +314,62 @@ TEST_CASE("the memory view options menu switches the display", "[ui]")
     view.hide();
 }
 
+TEST_CASE("the memory view Back returns to the previous top address", "[ui]")
+{
+    application();
+    Fixture    fixture;
+    MemoryView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+
+    const auto action = [](QMenu* parent, const QString& text) -> QAction*
+    {
+        for (QAction* candidate : parent->actions())
+        {
+            if (candidate->text() == text)
+            {
+                return candidate;
+            }
+        }
+        return nullptr;
+    };
+
+    // A fresh view has nothing to undo: Back is present but disabled.
+    QMenu fresh;
+    view.populate_options_menu(fresh);
+    QAction* fresh_back = action(&fresh, QStringLiteral("Back"));
+    REQUIRE(fresh_back != nullptr);
+    CHECK_FALSE(fresh_back->isEnabled());
+    CHECK_FALSE(view.can_go_back());
+    CHECK_FALSE(view.back());
+
+    const std::uint64_t anchor = view.first_byte();
+    view.navigate_to(0x1800);
+    CHECK(view.first_byte() == 0x1800);
+    REQUIRE(view.can_go_back());
+
+    QMenu after;
+    view.populate_options_menu(after);
+    QAction* back = action(&after, QStringLiteral("Back"));
+    REQUIRE(back != nullptr);
+    CHECK(back->isEnabled());
+
+    CHECK(view.back());
+    CHECK(view.first_byte() == anchor);
+    CHECK_FALSE(view.can_go_back());
+    CHECK_FALSE(view.back());
+
+    // Scrolling (set_first_byte) is not navigation and never records.
+    view.set_first_byte(0x1900);
+    CHECK_FALSE(view.can_go_back());
+
+    // Re-navigating to the address already at the top records nothing.
+    view.navigate_to(0x1900);
+    CHECK_FALSE(view.can_go_back());
+
+    view.hide();
+}
+
 TEST_CASE("the memory view header labels each column with its offset", "[ui]")
 {
     application();

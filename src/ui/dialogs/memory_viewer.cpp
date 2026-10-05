@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QShowEvent>
 #include <QSplitter>
 #include <QTableView>
@@ -76,6 +77,8 @@ namespace slopkit::ui::dialogs
                 {
                     prompt_go_to();
                 });
+        // A navigation the pane performed on its own (Follow / Back) re-reads it.
+        connect(view_, &components::MemoryView::navigated, this, &MemoryViewerDialog::request_page);
     }
 
     QWidget* MemoryViewerDialog::build_code_pane()
@@ -91,6 +94,16 @@ namespace slopkit::ui::dialogs
                 [this]
                 {
                     prompt_go_to(GoToTarget::disassembly);
+                });
+        connect(disassembly_, &components::DisassemblyView::navigated, this, &MemoryViewerDialog::request_page);
+        // "Follow in Memory View" inspects the referenced address in the byte
+        // view; the listing's own cursor stays put.
+        connect(disassembly_,
+                &components::DisassemblyView::followInMemoryViewRequested,
+                this,
+                [this](std::uint64_t address)
+                {
+                    view_->navigate_to(address);
                 });
         return panel;
     }
@@ -145,8 +158,17 @@ namespace slopkit::ui::dialogs
         request_page();
     }
 
+    void MemoryViewerDialog::hideEvent(QHideEvent* event)
+    {
+        QDialog::hideEvent(event);
+        emit geometryChanged(saveGeometry());
+    }
+
     void MemoryViewerDialog::set_address(std::uint64_t address)
     {
+        // A new open-at address starts a clean navigation session.
+        view_->clear_history();
+        disassembly_->clear_history();
         view_->set_first_byte(address);
         disassembly_->set_first_address(address);
         if (isVisible())
@@ -157,28 +179,12 @@ namespace slopkit::ui::dialogs
 
     bool MemoryViewerDialog::go_to(const QString& text)
     {
-        if (!view_->go_to(text))
-        {
-            return false;
-        }
-        if (isVisible())
-        {
-            request_page();
-        }
-        return true;
+        return view_->go_to(text);
     }
 
     bool MemoryViewerDialog::go_to_disassembly(const QString& text)
     {
-        if (!disassembly_->go_to(text))
-        {
-            return false;
-        }
-        if (isVisible())
-        {
-            request_page();
-        }
-        return true;
+        return disassembly_->go_to(text);
     }
 
     MemoryViewerDialog::GoToTarget MemoryViewerDialog::go_to_target() const
@@ -214,17 +220,14 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::apply_pane_address(std::uint64_t address, GoToTarget target)
     {
+        // A pointer-chain jump is an explicit navigation, so it is undoable.
         if (target == GoToTarget::disassembly)
         {
-            disassembly_->set_first_address(address);
+            disassembly_->navigate_to(address);
         }
         else
         {
-            view_->set_first_byte(address);
-        }
-        if (isVisible())
-        {
-            request_page();
+            view_->navigate_to(address);
         }
     }
 

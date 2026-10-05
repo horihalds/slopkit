@@ -423,6 +423,103 @@ TEST_CASE("the disassembly view menu offers Go To and a Copy submenu", "[ui]")
     view.hide();
 }
 
+TEST_CASE("the disassembly view Back returns to the previous top address", "[ui]")
+{
+    application();
+    ViewFixture     fixture;
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    // A fresh view has nothing to undo: Back is present but disabled.
+    QMenu fresh;
+    view.populate_menu(fresh, 0);
+    QAction* fresh_back = action(fresh, QStringLiteral("Back"));
+    REQUIRE(fresh_back != nullptr);
+    CHECK_FALSE(fresh_back->isEnabled());
+    CHECK_FALSE(view.can_go_back());
+    CHECK_FALSE(view.back());
+
+    view.navigate_to(kCode + 0x400);
+    REQUIRE(view.can_go_back());
+    CHECK(view.first_address() == kCode + 0x400);
+
+    QMenu after;
+    view.populate_menu(after, 0);
+    QAction* back = action(after, QStringLiteral("Back"));
+    REQUIRE(back != nullptr);
+    CHECK(back->isEnabled());
+    back->trigger();
+    CHECK(view.first_address() == kCode);
+    CHECK_FALSE(view.can_go_back());
+
+    // Scrolling (set_first_address) is not navigation and never records.
+    view.set_first_address(kCode + 0x100);
+    CHECK_FALSE(view.can_go_back());
+
+    view.hide();
+}
+
+TEST_CASE("the disassembly view follows an instruction's referenced address", "[ui]")
+{
+    application();
+    ViewFixture     fixture;
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    // CALL rel32 (target kCode+5), then a `.byte 0x06`.
+    fixture.put(kCode, {0xE8, 0x00, 0x00, 0x00, 0x00, 0x06});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    // The call row offers both follows; a row with no reference offers neither
+    // but still a Back.
+    QMenu referenced;
+    view.populate_menu(referenced, 0);
+    QAction* follow        = action(referenced, QStringLiteral("Follow"));
+    QAction* follow_memory = action(referenced, QStringLiteral("Follow in Memory View"));
+    REQUIRE(follow != nullptr);
+    REQUIRE(follow_memory != nullptr);
+    QAction* back = action(referenced, QStringLiteral("Back"));
+    REQUIRE(back != nullptr);
+    CHECK_FALSE(back->isEnabled());
+
+    QMenu plain;
+    view.populate_menu(plain, 1);
+    CHECK(action(plain, QStringLiteral("Follow")) == nullptr);
+    CHECK(action(plain, QStringLiteral("Follow in Memory View")) == nullptr);
+    CHECK(action(plain, QStringLiteral("Back")) != nullptr);
+
+    // "Follow in Memory View" only announces the address; the listing stays put.
+    std::uint64_t requested = 0;
+    QObject::connect(&view,
+                     &DisassemblyView::followInMemoryViewRequested,
+                     &view,
+                     [&requested](std::uint64_t address)
+                     {
+                         requested = address;
+                     });
+    follow_memory->trigger();
+    CHECK(requested == kCode + 5);
+    CHECK(view.first_address() == kCode);
+    CHECK_FALSE(view.can_go_back());
+
+    // "Follow" moves the listing onto the target and enables Back.
+    follow->trigger();
+    CHECK(view.first_address() == kCode + 5);
+    REQUIRE(view.can_go_back());
+
+    // Following the address already at the top records nothing.
+    view.clear_history();
+    view.navigate_to(view.first_address());
+    CHECK_FALSE(view.can_go_back());
+
+    view.hide();
+}
+
 TEST_CASE("showing and hiding the disassembly view toggles the document visibility", "[ui]")
 {
     application();

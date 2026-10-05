@@ -124,6 +124,11 @@ namespace slopkit::ui
         table_conflict_prompt_ = std::move(prompt);
     }
 
+    dialogs::MemoryViewerDialog* MainWindow::memory_viewer() const noexcept
+    {
+        return memory_view_.get();
+    }
+
     void MainWindow::on_open_table_requested()
     {
         const std::optional<QString> path = address_list_->choose_table_path();
@@ -317,16 +322,33 @@ namespace slopkit::ui
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
 
-        memory_view_ = new dialogs::MemoryViewerDialog(worker_, target_, this);
+        memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_);
+
+        // The stored window geometry is restored before the window is ever
+        // shown; a rejected blob simply leaves the dialog's default size.
+        const QByteArray& saved_geometry = settings_.values().memory_view_geometry;
+        if (!saved_geometry.isEmpty() && !memory_view_->restoreGeometry(saved_geometry))
+        {
+            log::warning(log::category::ui, "memory viewer geometry could not be restored; using the default size");
+        }
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::geometryChanged,
+                this,
+                [this](const QByteArray& geometry)
+                {
+                    settings_.set_memory_view_geometry(geometry);
+                });
 
         // The one live cadence, driven by the window's tick; surfaces register
         // here so a single poll submits a single batched read.
         live_values_ = new LiveValues(worker_, target_, settings_, this);
         live_values_->add_surface(found_list_);
         live_values_->add_surface(address_list_);
-        live_values_->add_surface(memory_view_);
-        connect(
-            memory_view_, &dialogs::MemoryViewerDialog::liveRefreshRequested, live_values_, &LiveValues::request_now);
+        live_values_->add_surface(memory_view_.get());
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::liveRefreshRequested,
+                live_values_,
+                &LiveValues::request_now);
 
         log_ = new dialogs::LogDialog(this);
 

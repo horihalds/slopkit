@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "plugin/plugin_host.hpp"
@@ -75,6 +76,11 @@ namespace slopkit::ui
         // dialog.
         void set_table_conflict_prompt(TableConflictPrompt prompt);
 
+        // The detached Memory Viewer, or nullptr before build_dialogs(); it is a
+        // top-level window with no parent widget, so the compositor stacks it
+        // like any other window instead of keeping it above this one.
+        [[nodiscard]] dialogs::MemoryViewerDialog* memory_viewer() const noexcept;
+
     protected:
         // Focuses the scanner's value box whenever the window becomes active
         // again, so alt-tabbing back leaves the keyboard ready for a new value.
@@ -127,12 +133,12 @@ namespace slopkit::ui
         panels::FoundListPanel*   found_list_ {};
         panels::AddressListPanel* address_list_ {};
 
-        dialogs::ProcessListDialog*   process_list_ {};
-        dialogs::AddAddressDialog*    add_address_ {};
-        dialogs::TableSettingsDialog* table_settings_ {};
-        dialogs::MemoryViewerDialog*  memory_view_ {};
-        dialogs::LogDialog*           log_ {};
-        dialogs::SettingsDialog*      settings_dialog_ {};
+        dialogs::ProcessListDialog*                  process_list_ {};
+        dialogs::AddAddressDialog*                   add_address_ {};
+        dialogs::TableSettingsDialog*                table_settings_ {};
+        std::unique_ptr<dialogs::MemoryViewerDialog> memory_view_;
+        dialogs::LogDialog*                          log_ {};
+        dialogs::SettingsDialog*                     settings_dialog_ {};
 
         QLabel*               process_label_ {};
         widgets::StatusLabel* address_status_ {};

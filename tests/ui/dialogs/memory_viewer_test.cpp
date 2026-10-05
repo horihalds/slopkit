@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include <QWindow>
+
 #include "support/ui_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
 #include "ui/models/register_model.hpp"
@@ -110,14 +112,22 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     CHECK(add_address_pos.x() < table_settings_pos.x());
     CHECK(window.width() - table_settings->mapTo(&window, table_settings->rect().topRight()).x() <= 24);
 
-    auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
+    auto* viewer = window.memory_viewer();
     REQUIRE(viewer != nullptr);
+    // The viewer is a detached top-level window: no parent widget, so no WM
+    // transient hint keeps it stacked above the main window.
+    CHECK(viewer->parentWidget() == nullptr);
+    CHECK(viewer->isWindow());
+    CHECK_FALSE(window.isAncestorOf(viewer));
     auto* view = viewer->findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
     auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
     REQUIRE(document != nullptr);
 
     memory_view->click();
+    REQUIRE(viewer->isVisible());
+    REQUIRE(viewer->windowHandle() != nullptr);
+    CHECK(viewer->windowHandle()->transientParent() == nullptr);
     // The main module's map is loaded, so the entry renders module-relative and
     // the view lands exactly on the entry address.
     CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
@@ -610,6 +620,44 @@ TEST_CASE("the memory viewer splits the window into the three panes", "[ui]")
     viewer.hide();
 }
 
+TEST_CASE("the memory viewer restores its size across a restart", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::plugin::PluginHost      host;
+    const QString                    settings_path = scratch_settings_file("viewer_geometry.ini");
+
+    {
+        slopkit::ui::SettingsController settings {settings_path};
+        slopkit::ui::MainWindow         window {worker, target, host, settings};
+        auto*                           viewer = window.memory_viewer();
+        REQUIRE(viewer != nullptr);
+
+        viewer->resize(740, 500);
+        viewer->show();
+        QCoreApplication::processEvents();
+        REQUIRE(viewer->size() == QSize(740, 500));
+        viewer->hide();
+        QCoreApplication::processEvents();
+
+        REQUIRE_FALSE(settings.values().memory_view_geometry.isEmpty());
+    }
+
+    {
+        slopkit::ui::SettingsController settings {settings_path};
+        REQUIRE_FALSE(settings.values().memory_view_geometry.isEmpty());
+        slopkit::ui::MainWindow window {worker, target, host, settings};
+        auto*                   viewer = window.memory_viewer();
+        REQUIRE(viewer != nullptr);
+        // The stored blob reopens the window at the size it was closed with.
+        CHECK(viewer->size() == QSize(740, 500));
+        CHECK(viewer->minimumSize() == QSize(720, 480));
+    }
+}
+
 TEST_CASE("the memory viewer seeds both cursors and then moves them independently", "[ui]")
 {
     application();
@@ -639,6 +687,79 @@ TEST_CASE("the memory viewer seeds both cursors and then moves them independentl
     CHECK(viewer.go_to_disassembly(QStringLiteral("0x3000")));
     CHECK(listing->first_address() == 0x3000);
     CHECK(view->first_byte() == 0x2000);
+}
+
+TEST_CASE("opening the memory viewer at an address clears both Back histories", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+
+    viewer.set_address(0x1000);
+    view->navigate_to(0x2000);
+    listing->navigate_to(0x3000);
+    REQUIRE(view->can_go_back());
+    REQUIRE(listing->can_go_back());
+
+    // A fresh open-at address starts a clean navigation session in both panes.
+    viewer.set_address(0x4000);
+    CHECK_FALSE(view->can_go_back());
+    CHECK_FALSE(listing->can_go_back());
+    CHECK(view->first_byte() == 0x4000);
+    CHECK(listing->first_address() == 0x4000);
+}
+
+TEST_CASE("the listing's Follow in Memory View moves only the byte view", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+
+    viewer.set_address(0x1000);
+    view->set_first_byte(0x2000);
+    REQUIRE(listing->first_address() == 0x1000);
+
+    // "Follow in Memory View" sends the referenced address to the byte view and
+    // leaves the listing where it is.
+    emit listing->followInMemoryViewRequested(0x5000);
+    CHECK(view->first_byte() == 0x5000);
+    CHECK(listing->first_address() == 0x1000);
+    REQUIRE(view->can_go_back());
+
+    // The byte view's own Back returns it.
+    QMenu    menu;
+    QAction* back = nullptr;
+    view->populate_options_menu(menu);
+    for (QAction* candidate : menu.actions())
+    {
+        if (candidate->text() == QStringLiteral("Back"))
+        {
+            back = candidate;
+        }
+    }
+    REQUIRE(back != nullptr);
+    REQUIRE(back->isEnabled());
+    back->trigger();
+    CHECK(view->first_byte() == 0x2000);
+    CHECK_FALSE(view->can_go_back());
 }
 
 TEST_CASE("the memory viewer routes its single Ctrl+G to the focused pane", "[ui]")
