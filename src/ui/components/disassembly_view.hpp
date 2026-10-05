@@ -12,6 +12,7 @@
 
 class QAction;
 class QMenu;
+class QMouseEvent;
 
 namespace slopkit::ui::components
 {
@@ -72,7 +73,9 @@ namespace slopkit::ui::components
         void instructionAccessesRequested(std::size_t row);
         // "NOP Instruction" on the decoded row.
         void nopRequested(std::size_t row);
-        // "Restore Original Instruction" on a row the session NOPed.
+        // "Edit Instruction..." on the decoded row, or a double-click on it.
+        void editRequested(std::size_t row);
+        // "Restore Original Instruction" on a row the session replaced.
         void restoreRequested(std::size_t row);
 
     protected:
@@ -80,6 +83,7 @@ namespace slopkit::ui::components
         void paintEvent(QPaintEvent* event) override;
         void wheelEvent(QWheelEvent* event) override;
         void keyPressEvent(QKeyEvent* event) override;
+        void mouseDoubleClickEvent(QMouseEvent* event) override;
         void contextMenuEvent(QContextMenuEvent* event) override;
         void showEvent(QShowEvent* event) override;
         void hideEvent(QHideEvent* event) override;

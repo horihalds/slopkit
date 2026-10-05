@@ -2,8 +2,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "disasm/decoder.hpp"
@@ -122,11 +125,11 @@ namespace slopkit::ui::components
         // the window moves.
         [[nodiscard]] std::span<const disasm::MemoryRef> row_memory(std::size_t index) const;
 
-        // The applied NOP patch covering the decoded row `index` (a click anywhere in
+        // The applied code patch covering the decoded row `index` (a click anywhere in
         // the replaced instruction reaches it); null when the row is not inside one.
         [[nodiscard]] const CodePatch* patch_at(std::size_t index) const;
-        // The paint annotation for row `index`: "NOPed: MOV RBP, RSP" on the patch's own
-        // first row, empty everywhere else.
+        // The paint annotation for row `index`: "NOPed: MOV RBP, RSP" or "Edited: MOV
+        // RBP, RSP" on the patch's own first row, empty everywhere else.
         [[nodiscard]] QString          row_annotation(std::size_t index) const;
 
         // Replaces the whole instruction on row `index` with NOP bytes and records what
@@ -135,6 +138,19 @@ namespace slopkit::ui::components
         bool nop_instruction(std::size_t index);
         // Writes the original bytes of the patch covering `address` back and forgets it.
         bool restore_instruction(std::uint64_t address);
+
+        // The assembler text the edit box for row `index` starts from - the instruction
+        // as the listing prints it, so addresses are absolute; nothing when the row is
+        // not an editable decoded instruction (see `editable`).
+        [[nodiscard]] std::optional<QString> edit_source(std::size_t index) const;
+        // Validates assembler `text` for row `index`: empty when it encodes to an
+        // instruction that fits the row, otherwise why it does not.
+        [[nodiscard]] std::string            edit_error(std::size_t index, std::string_view text) const;
+        // Assembles `text` for row `index`, pads any shortfall with NOP bytes and
+        // records what the row held so it can be restored. False when there is no
+        // target, the row is not editable, the text does not assemble or it is longer
+        // than the original.
+        bool                                 edit_instruction(std::size_t index, std::string_view text);
 
     signals:
         void rowsChanged(); // new bytes, a new window or a longer decode
@@ -147,14 +163,21 @@ namespace slopkit::ui::components
             std::uint64_t size {};
         };
 
-        [[nodiscard]] std::uint64_t              window_base_for(std::uint64_t address) const noexcept;
+        [[nodiscard]] std::uint64_t window_base_for(std::uint64_t address) const noexcept;
         // The base the currently decoded rows were swept from; the live window
         // while a step is in flight still holds the previous window's rows.
-        [[nodiscard]] std::uint64_t              rows_base() const noexcept;
-        void                                     reset_decode();
-        [[nodiscard]] QString                    instruction_bytes(const disasm::Instruction& instruction) const;
-        [[nodiscard]] QString                    instruction_text(const disasm::Instruction& instruction) const;
-        [[nodiscard]] std::size_t                byte_tokens(std::size_t index) const noexcept;
+        [[nodiscard]] std::uint64_t rows_base() const noexcept;
+        void                        reset_decode();
+        [[nodiscard]] QString       instruction_bytes(const disasm::Instruction& instruction) const;
+        [[nodiscard]] QString       instruction_text(const disasm::Instruction& instruction) const;
+        [[nodiscard]] std::size_t   byte_tokens(std::size_t index) const noexcept;
+        // The row is a decoded instruction whose whole length is cached and that no
+        // patch already covers, so it can be replaced.
+        [[nodiscard]] bool          editable(std::size_t index) const;
+        // The bytes `text` assembles to for row `index`, using the instruction's memory
+        // operands as the rip-relative template; the error when it does not assemble.
+        [[nodiscard]] std::expected<std::vector<std::byte>, std::string> replacement_for(std::size_t      index,
+                                                                                         std::string_view text) const;
         // The cached window bytes of `size` bytes at `address`, empty when they are not
         // all cached (a window boundary).
         [[nodiscard]] std::span<const std::byte> cached_bytes(std::uint64_t address, std::size_t size) const;

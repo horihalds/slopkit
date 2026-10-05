@@ -139,6 +139,40 @@ namespace slopkit::ui::dialogs
                         request_page();
                     }
                 });
+        // Editing assembles the text first (the box validates every keystroke)
+        // and refuses anything longer than the instruction it replaces.
+        connect(disassembly_,
+                &components::DisassemblyView::editRequested,
+                this,
+                [this](std::size_t row)
+                {
+                    const auto source = disassembly_document_.edit_source(row);
+                    if (!source.has_value())
+                    {
+                        return;
+                    }
+
+                    widgets::InputBoxOptions options;
+                    options.title       = tr("Edit Instruction");
+                    options.label       = tr("Assembler (addresses are absolute):");
+                    options.initial     = *source;
+                    options.placeholder = QStringLiteral("MOV RBP, RSP");
+                    options.monospace   = true;
+                    options.validate    = [this, row](const QString& text)
+                    {
+                        return QString::fromStdString(disassembly_document_.edit_error(row, text.toStdString()));
+                    };
+
+                    const auto accepted = widgets::get_text(options, this);
+                    if (!accepted || accepted->isEmpty())
+                    {
+                        return;
+                    }
+                    if (disassembly_document_.edit_instruction(row, accepted->toStdString()))
+                    {
+                        request_page();
+                    }
+                });
         return panel;
     }
 

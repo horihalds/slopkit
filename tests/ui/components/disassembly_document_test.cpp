@@ -697,3 +697,138 @@ TEST_CASE("the disassembly document refuses a NOP it cannot apply", "[ui]")
     CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x90});
     CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0xC3}); // the refused row is untouched
 }
+
+TEST_CASE("the disassembly document edits an instruction and records the original", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3}); // PUSH RBP; MOV RBP, RSP; RET
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    // The box starts from the instruction the listing prints.
+    const auto source = fixture.document.edit_source(1);
+    REQUIRE(source.has_value());
+    CHECK(*source == QStringLiteral("MOV RBP, RSP"));
+    CHECK(fixture.document.edit_error(1, "XOR EAX, EAX").empty());
+
+    // A shorter instruction is padded with NOPs out to the original length.
+    CHECK(fixture.document.edit_instruction(1, "XOR EAX, EAX"));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x31});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0xC0});
+    CHECK(fixture.access.memory->bytes.at(kCode + 3) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+    CHECK(fixture.access.memory->bytes.at(kCode + 4) == std::byte {0xC3});
+
+    REQUIRE(fixture.patches.size() == 1);
+    fixture.document.ensure_rows(4);
+    const CodePatch* patch = fixture.document.patch_at(1);
+    REQUIRE(patch != nullptr);
+    CHECK(patch->begin == kCode + 1);
+    CHECK(patch->nop == false);
+    CHECK(patch->length == 3);
+    CHECK(patch->original_text == QStringLiteral("MOV RBP, RSP"));
+    CHECK(fixture.document.row_annotation(1) == QStringLiteral("Edited: MOV RBP, RSP"));
+    CHECK(logged(records, "disassembly edit: 2 byte(s) at 0x2001 replace a 3 byte instruction"));
+
+    CHECK(fixture.document.row(1).text == QStringLiteral("XOR EAX, EAX"));
+    CHECK(fixture.document.row(2).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(3).text == QStringLiteral("RET"));
+
+    // A patched row is no longer editable until it is restored.
+    CHECK_FALSE(fixture.document.edit_source(1).has_value());
+    CHECK_FALSE(fixture.document.edit_source(2).has_value()); // the NOP pad
+
+    // Restore writes the original instruction back.
+    CHECK(fixture.document.restore_instruction(kCode + 1));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x48});
+    CHECK(fixture.document.patch_at(1) == nullptr);
+}
+
+TEST_CASE("the disassembly document refuses an edit that does not fit", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0xC3}); // PUSH RBP; RET
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    CHECK_FALSE(fixture.document.edit_error(0, "MOV RAX, 0x1122334455667788").empty());
+    CHECK_FALSE(fixture.document.edit_instruction(0, "MOV RAX, 0x1122334455667788"));
+    CHECK(logged(records, "disassembly edit refused"));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+
+    // Text that does not assemble is refused before any write.
+    records.clear();
+    CHECK_FALSE(fixture.document.edit_error(0, "FROBNICATE").empty());
+    CHECK_FALSE(fixture.document.edit_instruction(0, "FROBNICATE"));
+    CHECK(fixture.patches.empty());
+}
+
+TEST_CASE("a `.byte` row is not editable", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x06, 0xC3}); // .byte 0x06; RET
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    CHECK_FALSE(fixture.document.edit_source(0).has_value());
+    CHECK_FALSE(fixture.document.edit_error(0, "RET").empty());
+    CHECK_FALSE(fixture.document.edit_instruction(0, "RET"));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x06});
+}
+
+TEST_CASE("re-accepting the unchanged source is not an edit", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x89, 0xE5, 0xC3}); // MOV RBP, RSP; RET
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto source = fixture.document.edit_source(0);
+    REQUIRE(source.has_value());
+    CHECK(fixture.document.edit_error(0, source->toStdString()).empty());
+    CHECK(fixture.document.edit_instruction(0, source->toStdString()));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x48});
+}
+
+TEST_CASE("the disassembly document edits a rip-relative instruction in place", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0xC3}); // MOV RAX, [RIP+0x2F7]; RET
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    // The listing prints the absolute target; re-accepting it keeps the short
+    // rip-relative form, so nothing is written.
+    const auto source = fixture.document.edit_source(0);
+    REQUIRE(source.has_value());
+    CHECK(*source == QStringLiteral("MOV RAX, [0x00000000000022FE]"));
+    CHECK(fixture.document.edit_error(0, source->toStdString()).empty());
+    CHECK(fixture.document.edit_instruction(0, source->toStdString()));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode + 5) == std::byte {0x00});
+}

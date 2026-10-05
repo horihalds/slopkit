@@ -11,6 +11,7 @@
 #include <QClipboard>
 #include <QKeyEvent>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QWheelEvent>
 
 #include "support/memory_view_helpers.hpp"
@@ -656,6 +657,58 @@ TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
     CHECK(view.row_text(1) == QStringLiteral("NOP"));
     CHECK(view.row_text(2) == QStringLiteral("NOP"));
     CHECK(view.row_text(3) == QStringLiteral("NOP"));
+
+    view.hide();
+}
+
+TEST_CASE("the disassembly view offers Edit Instruction and a double-click opens it", "[ui]")
+{
+    application();
+    ViewFixture     fixture;
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0x06}); // PUSH RBP; MOV RBP, RSP; .byte 0x06
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    // A decoded row offers the edit entry; a `.byte` row shows it disabled.
+    QMenu decoded;
+    view.populate_menu(decoded, 1);
+    QAction* edit = action(decoded, QStringLiteral("Edit Instruction..."));
+    REQUIRE(edit != nullptr);
+    CHECK(edit->isEnabled());
+    CHECK(edit->toolTip() == QStringLiteral("Rewrite this instruction with assembler text."));
+
+    std::size_t requested = 99;
+    QObject::connect(&view,
+                     &DisassemblyView::editRequested,
+                     &view,
+                     [&requested](std::size_t row)
+                     {
+                         requested = row;
+                     });
+    edit->trigger();
+    CHECK(requested == 1);
+
+    QMenu byte_row;
+    view.populate_menu(byte_row, 2);
+    QAction* disabled = action(byte_row, QStringLiteral("Edit Instruction..."));
+    REQUIRE(disabled != nullptr);
+    CHECK_FALSE(disabled->isEnabled());
+
+    // Double-clicking empty space below the rows acts on the first row.
+    requested = 99;
+    const QPoint blank(10, 5000);
+    QMouseEvent  double_click(QEvent::MouseButtonDblClick,
+                              QPointF(blank),
+                              QPointF(view.viewport()->mapToGlobal(blank)),
+                              Qt::LeftButton,
+                              Qt::LeftButton,
+                              Qt::NoModifier);
+    QApplication::sendEvent(view.viewport(), &double_click);
+    CHECK(requested == 0);
 
     view.hide();
 }

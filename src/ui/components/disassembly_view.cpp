@@ -16,6 +16,7 @@
 #include <QHideEvent>
 #include <QKeyEvent>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
 #include <QScrollBar>
@@ -504,6 +505,18 @@ namespace slopkit::ui::components
                     {
                         emit nopRequested(row);
                     });
+
+            QAction* edit = menu.addAction(tr("Edit Instruction..."));
+            edit->setEnabled(decodable);
+            edit->setToolTip(decodable ? tr("Rewrite this instruction with assembler text.")
+                                       : tr("Only a decoded instruction can be edited."));
+            connect(edit,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        emit editRequested(row);
+                    });
         }
 
         menu.addSeparator();
@@ -672,6 +685,21 @@ namespace slopkit::ui::components
             return;
         }
         event->accept();
+    }
+
+    void DisassemblyView::mouseDoubleClickEvent(QMouseEvent* event)
+    {
+        if (event->button() == Qt::LeftButton)
+        {
+            const std::size_t row = row_at_position(event->position().toPoint());
+            if (row < document_.row_count() && document_.patch_at(row) == nullptr && !is_muted(document_.row(row)))
+            {
+                emit editRequested(row);
+                event->accept();
+                return;
+            }
+        }
+        QAbstractScrollArea::mouseDoubleClickEvent(event);
     }
 
     void DisassemblyView::contextMenuEvent(QContextMenuEvent* event)

@@ -16,6 +16,20 @@ namespace slopkit::ui::components
         patch.length         = length;
         patch.original_bytes = std::move(original);
         patch.original_text  = std::move(original_text);
+        patch.nop            = true;
+        return patches_.insert_or_assign(begin, std::move(patch)).first->second;
+    }
+
+    const CodePatch& CodePatchTable::apply_edit(std::uint64_t          begin,
+                                                std::size_t            length,
+                                                std::vector<std::byte> original,
+                                                QString                original_text)
+    {
+        CodePatch patch;
+        patch.begin          = begin;
+        patch.length         = length;
+        patch.original_bytes = std::move(original);
+        patch.original_text  = std::move(original_text);
         return patches_.insert_or_assign(begin, std::move(patch)).first->second;
     }
 

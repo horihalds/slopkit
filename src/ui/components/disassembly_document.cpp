@@ -9,6 +9,7 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "disasm/assembler.hpp"
 #include "scan/types.hpp"
 
 namespace slopkit::ui::components
@@ -496,7 +497,7 @@ namespace slopkit::ui::components
         {
             return {};
         }
-        return QStringLiteral("NOPed: ") + patch->original_text;
+        return (patch->nop ? QStringLiteral("NOPed: ") : QStringLiteral("Edited: ")) + patch->original_text;
     }
 
     bool DisassemblyDocument::nop_instruction(std::size_t index)
@@ -627,6 +628,161 @@ namespace slopkit::ui::components
             return false;
         }
         return true;
+    }
+
+    std::optional<QString> DisassemblyDocument::edit_source(std::size_t index) const
+    {
+        if (!editable(index))
+        {
+            return std::nullopt;
+        }
+        return to_qstring(instructions_[index].text);
+    }
+
+    std::string DisassemblyDocument::edit_error(std::size_t index, std::string_view text) const
+    {
+        if (!editable(index))
+        {
+            return "this instruction can no longer be edited";
+        }
+        const auto replacement = replacement_for(index, text);
+        if (!replacement)
+        {
+            return replacement.error();
+        }
+        const std::size_t length = instructions_[index].length;
+        if (replacement->size() > length)
+        {
+            return std::format(
+                "{} bytes does not fit the original {} byte(s); use fewer bytes", replacement->size(), length);
+        }
+        return {};
+    }
+
+    bool DisassemblyDocument::edit_instruction(std::size_t index, std::string_view text)
+    {
+        if (!target_.valid())
+        {
+            log::warning(log::category::ui, "disassembly edit refused: no target attached");
+            return false;
+        }
+        if (patch_write_.has_value())
+        {
+            log::warning(log::category::ui, "disassembly edit refused: a code patch write is already in flight");
+            return false;
+        }
+        if (!editable(index))
+        {
+            log::warning(log::category::ui, "disassembly edit refused: the row is not an editable decoded instruction");
+            return false;
+        }
+
+        const Row  value       = row(index);
+        const auto replacement = replacement_for(index, text);
+        if (!replacement)
+        {
+            log::warning(log::category::ui, std::format("disassembly edit refused: {}", replacement.error()));
+            return false;
+        }
+        if (replacement->size() > value.length)
+        {
+            log::warning(log::category::ui,
+                         std::format("disassembly edit refused: {} bytes does not fit the original {} byte(s)",
+                                     replacement->size(),
+                                     value.length));
+            return false;
+        }
+
+        const std::span<const std::byte> originals = cached_bytes(value.address, value.length);
+        if (originals.size() != value.length)
+        {
+            log::warning(log::category::ui, "disassembly edit refused: the instruction is not fully cached");
+            return false;
+        }
+
+        // Re-assembling the original text reproduces it, so accepting the box
+        // unchanged is not an edit and records no patch.
+        if (replacement->size() == originals.size()
+            && std::equal(replacement->begin(), replacement->end(), originals.begin()))
+        {
+            return true;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        patch_write_                = job_id;
+
+        std::vector<std::byte> original  = std::vector<std::byte>(originals.begin(), originals.end());
+        const std::size_t      assembled = replacement->size();
+        std::vector<std::byte> written   = *replacement;
+        written.resize(value.length, std::byte {0x90});
+        std::vector<std::byte> submitted_bytes = written;
+        const bool             submitted       = worker_.submit_write(
+            job_id,
+            value.address,
+            value.address,
+            std::move(written),
+            [this,
+             job_id,
+             address = value.address,
+             length  = value.length,
+             assembled,
+             original        = std::move(original),
+             text            = value.text,
+             submitted_bytes = std::move(submitted_bytes)](process::JobResult&& result)
+            {
+                if (patch_write_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                patch_write_.reset();
+
+                const auto& write = std::get<process::WriteResult>(result);
+                if (write.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("disassembly edit failed: {}", process::describe(*write.error)));
+                    return;
+                }
+
+                patches_.apply_edit(address, length, std::move(original), text);
+                note_written(address, submitted_bytes);
+                log::info(log::category::ui,
+                          std::format("disassembly edit: {} byte(s) at {:#x} replace a {} byte instruction",
+                                      assembled,
+                                      address,
+                                      length));
+            });
+        if (!submitted)
+        {
+            patch_write_.reset();
+            log::warning(log::category::ui, "disassembly edit refused: the access worker is not accepting jobs");
+            return false;
+        }
+        return true;
+    }
+
+    bool DisassemblyDocument::editable(std::size_t index) const
+    {
+        if (!readable_ || index >= instructions_.size())
+        {
+            return false;
+        }
+        const disasm::Instruction& instruction = instructions_[index];
+        if (!instruction.valid || patches_.covering(instruction.address) != nullptr)
+        {
+            return false;
+        }
+        return cached_bytes(instruction.address, instruction.length).size() == instruction.length;
+    }
+
+    std::expected<std::vector<std::byte>, std::string> DisassemblyDocument::replacement_for(std::size_t      index,
+                                                                                            std::string_view text) const
+    {
+        const disasm::Instruction& instruction = instructions_[index];
+        return disasm::assemble(text,
+                                disasm::AssembleContext {.address = instruction.address,
+                                                         .mode    = machine_mode_,
+                                                         .memory  = instruction.memory});
     }
 
     std::optional<std::size_t> DisassemblyDocument::row_at(std::uint64_t address) const

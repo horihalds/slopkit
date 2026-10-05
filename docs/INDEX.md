@@ -64,6 +64,8 @@ One line per project file; the path alone where the filename explains the file, 
 - `src/debug/step_over.cpp`
 - `src/debug/worker.hpp` — debug worker.
 - `src/debug/worker.cpp`
+- `src/disasm/assembler.hpp` — assembles the listing's edit text into bytes.
+- `src/disasm/assembler.cpp`
 - `src/disasm/decoder.hpp` — Zydis wrapper.
 - `src/disasm/decoder.cpp`
 - `src/expr/expression.hpp` — target-expression parsing.
@@ -130,7 +132,7 @@ One line per project file; the path alone where the filename explains the file, 
 - `src/ui/app.cpp`
 - `src/ui/completion_notifier.hpp` — background completion bridge.
 - `src/ui/completion_notifier.cpp`
-- `src/ui/components/code_patch.hpp` — NOP patch store for the listing.
+- `src/ui/components/code_patch.hpp` — NOP/edit patch store for the listing.
 - `src/ui/components/code_patch.cpp`
 - `src/ui/components/disassembly_document.hpp` — disassembly pane state.
 - `src/ui/components/disassembly_document.cpp`
@@ -211,6 +213,7 @@ One line per project file; the path alone where the filename explains the file, 
 - `tests/debug/practice_target_test.cpp` — real-session debug tests.
 - `tests/debug/step_over_test.cpp`
 - `tests/debug/worker_test.cpp`
+- `tests/disasm/assembler_test.cpp`
 - `tests/disasm/decoder_test.cpp`
 - `tests/expr/expression_test.cpp`
 - `tests/fixtures/bad_abi_plugin.cpp` — fixture: rejects a bad ABI.
