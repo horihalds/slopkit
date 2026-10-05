@@ -26,127 +26,29 @@
 #include "process/access_worker.hpp"
 #include "process/types.hpp"
 #include "scan/types.hpp"
+#include "support/fake_process.hpp"
 #include "table/address_table.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/add_address.hpp"
 
 namespace
 {
-    // A QApplication may only exist once per process; Catch2 normally runs each
-    // case in its own process, but the binary accepts several.
+    using slopkit::test::application;
+    using slopkit::test::FakeAccess;
+    using slopkit::test::FakeBackend;
+    using slopkit::test::FakeMemory;
+    using slopkit::test::module_image;
+    using slopkit::test::pump_ui;
+
+    // The shared QApplication already exists; kept for the cases' readability.
     void ensure_application()
     {
-        if (QCoreApplication::instance() != nullptr)
-        {
-            return;
-        }
-        static int          argc      = 1;
-        static char         program[] = "slopkit_tests";
-        static char*        argv[]    = {program, nullptr};
-        static QApplication instance(argc, argv);
+        static_cast<void>(application());
     }
 
     using slopkit::scan::ValueType;
     using slopkit::table::AddressTable;
     using slopkit::ui::dialogs::AddAddressDialog;
-
-    // Address-keyed bytes the fake target serves.
-    using FakeMemory = std::map<std::uint64_t, std::vector<std::byte>>;
-
-    class FakeBackend final : public slopkit::process::SessionBackend
-    {
-    public:
-        std::shared_ptr<FakeMemory> memory = std::make_shared<FakeMemory>();
-
-        [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
-        {
-            return 42;
-        }
-
-        [[nodiscard]] std::string_view plugin_id() const noexcept override
-        {
-            return "fake";
-        }
-
-        [[nodiscard]] slopkit::process::AccessMethod advertised_methods() const noexcept override
-        {
-            return slopkit::process::AccessMethod::procfs_mem;
-        }
-
-        [[nodiscard]] slopkit::process::AccessMethod last_method() const noexcept override
-        {
-            return slopkit::process::AccessMethod::procfs_mem;
-        }
-
-        std::expected<std::vector<std::byte>, slopkit::process::AccessError> read(std::uint64_t address,
-                                                                                  std::size_t   size) override
-        {
-            std::vector<std::byte> bytes(size, std::byte {0});
-            if (const auto entry = memory->find(address); entry != memory->end())
-            {
-                bytes = entry->second;
-                bytes.resize(size);
-            }
-            return bytes;
-        }
-
-        std::expected<std::size_t, slopkit::process::AccessError> write(std::uint64_t,
-                                                                        std::span<const std::byte>) override
-        {
-            return std::size_t {};
-        }
-
-        std::expected<std::vector<slopkit::process::ModuleInfo>, slopkit::process::AccessError> modules() override
-        {
-            return std::vector<slopkit::process::ModuleInfo> {};
-        }
-
-        std::expected<std::vector<slopkit::process::ThreadInfo>, slopkit::process::AccessError> threads() override
-        {
-            return std::vector<slopkit::process::ThreadInfo> {};
-        }
-
-        std::expected<std::vector<slopkit::process::RegionInfo>, slopkit::process::AccessError> regions() override
-        {
-            return std::vector<slopkit::process::RegionInfo> {};
-        }
-    };
-
-    class FakeAccess final : public slopkit::process::ProcessAccess
-    {
-    public:
-        std::shared_ptr<FakeMemory> memory = std::make_shared<FakeMemory>();
-
-        std::expected<std::vector<slopkit::process::ProcessInfo>, slopkit::process::AccessError>
-        list_processes() override
-        {
-            return std::vector<slopkit::process::ProcessInfo> {};
-        }
-
-        std::expected<slopkit::process::Session, slopkit::process::AccessError> attach(slopkit::process::ProcessId,
-                                                                                       std::string_view) override
-        {
-            auto backend    = std::make_unique<FakeBackend>();
-            backend->memory = memory;
-            return slopkit::process::Session {std::move(backend)};
-        }
-    };
-
-    bool pump(slopkit::process::AccessWorker& worker, const std::function<bool()>& done)
-    {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (std::chrono::steady_clock::now() < deadline)
-        {
-            worker.drain();
-            QApplication::processEvents();
-            if (done())
-            {
-                return true;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-        return done();
-    }
 
     void attach_session(slopkit::process::AccessWorker& worker)
     {
@@ -158,21 +60,11 @@ namespace
                                  {
                                      attached = true;
                                  });
-        REQUIRE(pump(worker,
-                     [&]
-                     {
-                         return attached;
-                     }));
-    }
-
-    slopkit::process::ModuleInfo module_image(std::string name, std::uint64_t base, std::uint64_t size)
-    {
-        slopkit::process::ModuleInfo module;
-        module.kind = slopkit::process::ModuleKind::elf;
-        module.name = std::move(name);
-        module.base = base;
-        module.size = size;
-        return module;
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return attached;
+                        }));
     }
 
     void store_pointer(FakeMemory& memory, std::uint64_t address, std::uint64_t value)
@@ -339,11 +231,11 @@ TEST_CASE("a pointer-chain expression resolves through the worker before the ent
     CHECK_FALSE(add->isEnabled());
     CHECK(table.size() == 0);
 
-    REQUIRE(pump(worker,
-                 [&]
-                 {
-                     return table.size() == 1;
-                 }));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table.size() == 1;
+                    }));
     CHECK(table.entries().front().expression == "app+0+8");
     CHECK(table.entries().front().address == 0x200008);
     CHECK(add->isEnabled());

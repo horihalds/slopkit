@@ -224,29 +224,6 @@ TEST_CASE("The rolling file sink rotates past its cap", "[log]")
     std::filesystem::remove_all(directory, error);
 }
 
-TEST_CASE("The shared category constants are stable lower-case names", "[log]")
-{
-    using namespace slopkit::log::category;
-
-    static_assert(app == std::string_view {"app"});
-    static_assert(plugin == std::string_view {"plugin"});
-    static_assert(process == std::string_view {"process"});
-    static_assert(memory == std::string_view {"memory"});
-    static_assert(scan == std::string_view {"scan"});
-    static_assert(table == std::string_view {"table"});
-    static_assert(ui == std::string_view {"ui"});
-
-    for (const std::string_view name : {app, plugin, process, memory, scan, table, ui})
-    {
-        REQUIRE_FALSE(name.empty());
-        for (const char character : name)
-        {
-            REQUIRE(character >= 'a');
-            REQUIRE(character <= 'z');
-        }
-    }
-}
-
 TEST_CASE("The info level hides debug-only detail", "[log]")
 {
     LoggerState state;

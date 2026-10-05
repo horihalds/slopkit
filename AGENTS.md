@@ -43,11 +43,11 @@ them for every task in this repository.
   and hicolor icons.
 
 - When a completed plan changes anything that ships in the installed build —
-  `src/**` other than `src/tests/**`, `CMakeLists.txt`, `cmake/**`, `assets/**`
-  or `data/**` — run `./install.sh` so the owner can try the installed build.
-  Plans that only touch `src/tests/**`, `README.md`, `AGENTS.md`, `docs/**`,
-  formatting or comments skip it. If `./install.sh` fails, report the failing
-  command and its output and still finish the plan.
+  `src/**`, `CMakeLists.txt`, `cmake/**`, `assets/**` or `data/**` — run
+  `./install.sh` so the owner can try the installed build. Plans that only touch
+  `tests/**`, `README.md`, `AGENTS.md`, `docs/**`, formatting or comments skip it.
+  If `./install.sh` fails, report the failing command and its output and still
+  finish the plan.
   
 - Run the tests (Catch2 suites, wired into CTest):
 
@@ -55,10 +55,11 @@ them for every task in this repository.
   ctest --test-dir build --output-on-failure
   ```
 
-- One CTest test, `clang-format-check`, verifies that every `src/**/*.hpp` and
-  `src/**/*.cpp` file is formatted with `clang-format` (targeting the installed
-  23.x rules in `.clang-format`). It is registered only when `clang-format` is on
-  the `PATH`, so a missing formatter skips the check instead of failing the build.
+- One CTest test, `clang-format-check`, verifies that every `src/**/*.hpp`,
+  `src/**/*.cpp`, `tests/**/*.hpp` and `tests/**/*.cpp` file is formatted with
+  `clang-format` (targeting the installed 23.x rules in `.clang-format`). It is
+  registered only when `clang-format` is on the `PATH`, so a missing formatter
+  skips the check instead of failing the build.
 
 ## Dependencies
 
@@ -90,7 +91,8 @@ them for every task in this repository.
 - Put all source files under `./src`.
 - Place each `.hpp` and `.cpp` file next to each other.
 - Use sub-folders under `./src` to group modules.
-- Put tests under `./src/tests`; CMake picks them up automatically.
+- Put tests under `./tests`, mirroring the `./src` module tree; CMake picks
+  them up automatically.
 
 ## Project index
 

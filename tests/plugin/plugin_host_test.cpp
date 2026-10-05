@@ -114,11 +114,25 @@ TEST_CASE("A plugin built against an older ABI minor is rejected", "[plugin]")
 
 TEST_CASE("A missing plugin directory is not fatal", "[plugin]")
 {
-    slopkit::plugin::PluginHost host;
-    host.discover({"/nonexistent/slopkit/plugins"});
+    SECTION("discovering a missing directory yields nothing and no diagnostics")
+    {
+        slopkit::plugin::PluginHost host;
+        host.discover({"/nonexistent/slopkit/plugins"});
 
-    REQUIRE(host.plugins().empty());
-    REQUIRE(host.diagnostics().empty());
+        REQUIRE(host.plugins().empty());
+        REQUIRE(host.diagnostics().empty());
+    }
+
+    SECTION("discovering an installed directory that does not exist is silent")
+    {
+        const auto directories = slopkit::plugin::PluginHost::default_search_directories("/nonexistent/slopkit/bin");
+
+        slopkit::plugin::PluginHost host;
+        host.discover(directories);
+
+        REQUIRE(host.plugins().empty());
+        REQUIRE(host.diagnostics().empty());
+    }
 }
 
 TEST_CASE("SLOPKIT_PLUGIN_PATH is split on colons", "[plugin]")
@@ -144,17 +158,6 @@ TEST_CASE("Default plugin search directories cover the build tree and the instal
     REQUIRE(directories[1] == installed);
     REQUIRE(installed.filename() == "plugins");
     REQUIRE(installed.parent_path().filename() == "slopkit");
-}
-
-TEST_CASE("A missing installed plugin directory is silent", "[plugin]")
-{
-    const auto directories = slopkit::plugin::PluginHost::default_search_directories("/nonexistent/slopkit/bin");
-
-    slopkit::plugin::PluginHost host;
-    host.discover(directories);
-
-    REQUIRE(host.plugins().empty());
-    REQUIRE(host.diagnostics().empty());
 }
 
 TEST_CASE("SLOPKIT_PLUGIN_PATH entries follow the default directories", "[plugin]")

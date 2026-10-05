@@ -109,29 +109,32 @@ TEST_CASE("address entries are added, selected and removed", "[table]")
 
 TEST_CASE("encode_value encodes the parsed bytes", "[table]")
 {
-    AddressTable table;
-    table.add(make_entry(kBase, ValueType::int32, {}));
+    SECTION("encodes the parsed bytes")
+    {
+        AddressTable table;
+        table.add(make_entry(kBase, ValueType::int32, {}));
 
-    const auto encoded = table.encode_value(0, "1234");
-    REQUIRE(encoded.has_value());
-    REQUIRE(encoded->size() == 4);
-    table.apply_write(table.entries()[0].id, *encoded);
-    CHECK(table.display_value(0) == "1234");
+        const auto encoded = table.encode_value(0, "1234");
+        REQUIRE(encoded.has_value());
+        REQUIRE(encoded->size() == 4);
+        table.apply_write(table.entries()[0].id, *encoded);
+        CHECK(table.display_value(0) == "1234");
 
-    table.entries()[0].hex = true;
-    const auto hexed       = table.encode_value(0, "0x2A");
-    REQUIRE(hexed.has_value());
-    table.apply_write(table.entries()[0].id, *hexed);
-    CHECK(table.display_value(0) == "0x0000002A");
-}
+        table.entries()[0].hex = true;
+        const auto hexed       = table.encode_value(0, "0x2A");
+        REQUIRE(hexed.has_value());
+        table.apply_write(table.entries()[0].id, *hexed);
+        CHECK(table.display_value(0) == "0x0000002A");
+    }
 
-TEST_CASE("encode_value rejects malformed input and unknown indices", "[table]")
-{
-    AddressTable table;
-    table.add(make_entry(kBase, ValueType::int32, {}));
+    SECTION("rejects malformed input and unknown indices")
+    {
+        AddressTable table;
+        table.add(make_entry(kBase, ValueType::int32, {}));
 
-    CHECK_FALSE(table.encode_value(0, "not a number").has_value());
-    CHECK_FALSE(table.encode_value(9, "1").has_value());
+        CHECK_FALSE(table.encode_value(0, "not a number").has_value());
+        CHECK_FALSE(table.encode_value(9, "1").has_value());
+    }
 }
 
 TEST_CASE("apply_write updates only the matching entry", "[table]")
@@ -259,60 +262,64 @@ TEST_CASE("an expression with quotes and spaces round-trips", "[table]")
 
 TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")
 {
-    AddressTable table;
-    auto         existing = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
-    existing.description  = "health";
-    existing.active       = true;
-    table.add(existing);
-    table.settings().target_process = "current";
-    table.set_selected(0);
-    const std::uint64_t existing_id = table.entries()[0].id;
+    SECTION("appends with fresh ids and skips exact duplicates")
+    {
+        AddressTable table;
+        auto         existing = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        existing.description  = "health";
+        existing.active       = true;
+        table.add(existing);
+        table.settings().target_process = "current";
+        table.set_selected(0);
+        const std::uint64_t existing_id = table.entries()[0].id;
 
-    auto duplicate  = existing; // same address, type and description
-    duplicate.bytes = {std::byte {9}, std::byte {9}, std::byte {9}, std::byte {9}}; // different bytes count as present
+        auto duplicate  = existing; // same address, type and description
+        duplicate.bytes = {
+            std::byte {9}, std::byte {9}, std::byte {9}, std::byte {9}}; // different bytes count as present
 
-    auto new_address        = make_entry(kBase + 4, ValueType::int32, {2, 0, 0, 0});
-    new_address.description = "mana";
+        auto new_address        = make_entry(kBase + 4, ValueType::int32, {2, 0, 0, 0});
+        new_address.description = "mana";
 
-    auto new_type        = make_entry(kBase, ValueType::float64, {});
-    new_type.description = "health";
+        auto new_type        = make_entry(kBase, ValueType::float64, {});
+        new_type.description = "health";
 
-    auto new_text        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
-    new_text.description = "stamina";
+        auto new_text        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        new_text.description = "stamina";
 
-    const std::vector<AddressEntry> incoming {duplicate, new_address, new_type, new_text};
-    const auto                      summary = table.merge(incoming);
+        const std::vector<AddressEntry> incoming {duplicate, new_address, new_type, new_text};
+        const auto                      summary = table.merge(incoming);
 
-    CHECK(summary.added == 3);
-    CHECK(summary.skipped == 1);
-    REQUIRE(table.size() == 4);
-    CHECK(table.entries()[0].id == existing_id);
-    CHECK(table.entries()[0].bytes == existing.bytes); // the existing row wins
-    CHECK(table.entries()[0].active);
-    CHECK(table.entries()[1].description == "mana");
-    CHECK(table.entries()[2].type == ValueType::float64);
-    CHECK(table.entries()[3].description == "stamina");
-    CHECK(table.entries()[1].id != existing_id);
-    CHECK(table.selected() == 0); // selection untouched
-    CHECK(table.settings().target_process == "current");
-}
+        CHECK(summary.added == 3);
+        CHECK(summary.skipped == 1);
+        REQUIRE(table.size() == 4);
+        CHECK(table.entries()[0].id == existing_id);
+        CHECK(table.entries()[0].bytes == existing.bytes); // the existing row wins
+        CHECK(table.entries()[0].active);
+        CHECK(table.entries()[1].description == "mana");
+        CHECK(table.entries()[2].type == ValueType::float64);
+        CHECK(table.entries()[3].description == "stamina");
+        CHECK(table.entries()[1].id != existing_id);
+        CHECK(table.selected() == 0); // selection untouched
+        CHECK(table.settings().target_process == "current");
+    }
 
-TEST_CASE("merge adds an incoming duplicate only once and is idempotent", "[table]")
-{
-    AddressTable table;
-    auto         row = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
-    row.description  = "health";
+    SECTION("adds an incoming duplicate only once and is idempotent")
+    {
+        AddressTable table;
+        auto         row = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        row.description  = "health";
 
-    const std::vector<AddressEntry> incoming {row, row};
-    const auto                      first = table.merge(incoming);
-    CHECK(first.added == 1);
-    CHECK(first.skipped == 1);
-    REQUIRE(table.size() == 1);
+        const std::vector<AddressEntry> incoming {row, row};
+        const auto                      first = table.merge(incoming);
+        CHECK(first.added == 1);
+        CHECK(first.skipped == 1);
+        REQUIRE(table.size() == 1);
 
-    const auto second = table.merge(incoming);
-    CHECK(second.added == 0);
-    CHECK(second.skipped == 2);
-    REQUIRE(table.size() == 1);
+        const auto second = table.merge(incoming);
+        CHECK(second.added == 0);
+        CHECK(second.skipped == 2);
+        REQUIRE(table.size() == 1);
+    }
 }
 
 TEST_CASE("the serializer rejects malformed files", "[table]")
@@ -349,66 +356,69 @@ TEST_CASE("the serializer rejects malformed files", "[table]")
 
 TEST_CASE("entry mutations are recorded on the table category", "[table][log]")
 {
-    LevelGuard level;
-    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
-
-    std::vector<slopkit::log::Record> records;
-    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
-                                            {
-                        records.push_back(record);
-                                            }};
-
-    AddressTable table;
-    table.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
-    table.remove(0);
-
-    bool saw_add    = false;
-    bool saw_remove = false;
-    for (const auto& record : records)
+    SECTION("entry mutations are recorded on the table category")
     {
-        if (std::string_view {record.category} != slopkit::log::category::table
-            || record.level != slopkit::log::Level::info)
+        LevelGuard level;
+        slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+        std::vector<slopkit::log::Record> records;
+        SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                                {
+                            records.push_back(record);
+                                                }};
+
+        AddressTable table;
+        table.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
+        table.remove(0);
+
+        bool saw_add    = false;
+        bool saw_remove = false;
+        for (const auto& record : records)
         {
-            continue;
+            if (std::string_view {record.category} != slopkit::log::category::table
+                || record.level != slopkit::log::Level::info)
+            {
+                continue;
+            }
+            saw_add    = saw_add || record.message.starts_with("entry added: ");
+            saw_remove = saw_remove || record.message.starts_with("entry removed");
         }
-        saw_add    = saw_add || record.message.starts_with("entry added: ");
-        saw_remove = saw_remove || record.message.starts_with("entry removed");
-    }
-    CHECK(saw_add);
-    CHECK(saw_remove);
-}
-
-TEST_CASE("a malformed table file is recorded with its line number", "[table][log]")
-{
-    LevelGuard level;
-    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::warning);
-
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed_log.skt";
-    std::filesystem::remove(path);
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "nonsense line\n";
+        CHECK(saw_add);
+        CHECK(saw_remove);
     }
 
-    std::vector<slopkit::log::Record> records;
-    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
-                                            {
-                        records.push_back(record);
-                                            }};
-
-    AddressTable table;
-    CHECK_FALSE(slopkit::table::load(path, table).has_value());
-    std::filesystem::remove(path);
-
-    bool saw_warning = false;
-    for (const auto& record : records)
+    SECTION("a malformed table file is recorded with its line number")
     {
-        if (record.level == slopkit::log::Level::warning && record.category == "table"
-            && record.message.find("line 2") != std::string::npos)
+        LevelGuard level;
+        slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::warning);
+
+        const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed_log.skt";
+        std::filesystem::remove(path);
         {
-            saw_warning = true;
+            std::ofstream file(path);
+            file << "slopkit-table 1\n";
+            file << "nonsense line\n";
         }
+
+        std::vector<slopkit::log::Record> records;
+        SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                                {
+                            records.push_back(record);
+                                                }};
+
+        AddressTable table;
+        CHECK_FALSE(slopkit::table::load(path, table).has_value());
+        std::filesystem::remove(path);
+
+        bool saw_warning = false;
+        for (const auto& record : records)
+        {
+            if (record.level == slopkit::log::Level::warning && record.category == "table"
+                && record.message.find("line 2") != std::string::npos)
+            {
+                saw_warning = true;
+            }
+        }
+        CHECK(saw_warning);
     }
-    CHECK(saw_warning);
 }

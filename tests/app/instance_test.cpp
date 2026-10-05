@@ -58,7 +58,7 @@ namespace
         return done();
     }
 
-    TEST_CASE("a hand-off reaches a listening instance and is acknowledged", "[ui]")
+    TEST_CASE("a hand-off reaches a listening instance and is acknowledged", "[app]")
     {
         ensure_application();
 
@@ -95,7 +95,7 @@ namespace
         CHECK(received == path);
     }
 
-    TEST_CASE("a hand-off with nobody listening fails immediately", "[ui]")
+    TEST_CASE("a hand-off with nobody listening fails immediately", "[app]")
     {
         ensure_application();
 
@@ -104,7 +104,7 @@ namespace
         CHECK(std::chrono::steady_clock::now() - start < std::chrono::milliseconds {500});
     }
 
-    TEST_CASE("a second server on the same name cannot listen", "[ui]")
+    TEST_CASE("a second server on the same name cannot listen", "[app]")
     {
         ensure_application();
 
@@ -116,7 +116,7 @@ namespace
         CHECK_FALSE(second.is_listening());
     }
 
-    TEST_CASE("an over-long path is refused without a hand-off", "[ui]")
+    TEST_CASE("an over-long path is refused without a hand-off", "[app]")
     {
         ensure_application();
 
@@ -140,7 +140,7 @@ namespace
         CHECK(got == 0);
     }
 
-    TEST_CASE("the instance socket name is uid-scoped", "[ui]")
+    TEST_CASE("the instance socket name is uid-scoped", "[app]")
     {
         const std::string name = slopkit::app::instance_socket_name();
         REQUIRE(name.size() > 1);

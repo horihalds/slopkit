@@ -314,18 +314,74 @@ namespace
     {
         ensure_application();
 
-        const auto answer = [](const QString& label)
+        SECTION("confirm confirms only on Yes")
+        {
+            const auto answer = [](const QString& label)
+            {
+                on_box(
+                    [label](MessageBox& box)
+                    {
+                        click(box, label);
+                    });
+                return slopkit::ui::widgets::confirm(nullptr, QStringLiteral("Confirm"), QStringLiteral("Sure?"));
+            };
+
+            CHECK(answer(QStringLiteral("Yes")));
+            CHECK_FALSE(answer(QStringLiteral("No")));
+        }
+
+        SECTION("ok_cancel confirms only on OK")
+        {
+            const auto answer = [](const QString& label)
+            {
+                on_box(
+                    [label](MessageBox& box)
+                    {
+                        click(box, label);
+                    });
+                return slopkit::ui::widgets::ok_cancel(nullptr, QStringLiteral("Proceed"), QStringLiteral("Go on?"));
+            };
+
+            CHECK(answer(QStringLiteral("OK")));
+            CHECK_FALSE(answer(QStringLiteral("Cancel")));
+        }
+
+        SECTION("the notice helpers show a single OK button")
+        {
+            const auto info =
+                show_notice(slopkit::ui::widgets::information, QStringLiteral("Info"), QStringLiteral("Info text."));
+            CHECK(info.buttons == 1);
+            CHECK(info.title == QStringLiteral("Info"));
+            CHECK(info.text == QStringLiteral("Info text."));
+
+            const auto warn =
+                show_notice(slopkit::ui::widgets::warning, QStringLiteral("Warning"), QStringLiteral("Warn text."));
+            CHECK(warn.buttons == 1);
+            CHECK(warn.title == QStringLiteral("Warning"));
+            CHECK(warn.text == QStringLiteral("Warn text."));
+
+            const auto err =
+                show_notice(slopkit::ui::widgets::error, QStringLiteral("Error"), QStringLiteral("Error text."));
+            CHECK(err.buttons == 1);
+            CHECK(err.title == QStringLiteral("Error"));
+            CHECK(err.text == QStringLiteral("Error text."));
+        }
+
+        SECTION("the message_box helper returns the typed result")
         {
             on_box(
-                [label](MessageBox& box)
+                [](MessageBox& box)
                 {
-                    click(box, label);
+                    click(box, QStringLiteral("Cancel"));
                 });
-            return slopkit::ui::widgets::confirm(nullptr, QStringLiteral("Confirm"), QStringLiteral("Sure?"));
-        };
-
-        CHECK(answer(QStringLiteral("Yes")));
-        CHECK_FALSE(answer(QStringLiteral("No")));
+            const auto result = slopkit::ui::widgets::message_box(nullptr,
+                                                                  MessageBoxIcon::warning,
+                                                                  QStringLiteral("Warning"),
+                                                                  QStringLiteral("Careful."),
+                                                                  MessageBoxButton::ok | MessageBoxButton::cancel,
+                                                                  MessageBoxButton::ok);
+            CHECK(result == MessageBoxResult::cancel);
+        }
     }
 
     TEST_CASE("confirm uses a question box defaulting to No and treats dismissal as no", "[ui]")
@@ -345,65 +401,6 @@ namespace
         CHECK_FALSE(slopkit::ui::widgets::confirm(nullptr, QStringLiteral("Confirm"), QStringLiteral("Sure?")));
         CHECK(seen_icon == MessageBoxIcon::question);
         CHECK(seen_default == MessageBoxButton::no);
-    }
-
-    TEST_CASE("ok_cancel confirms only on OK", "[ui]")
-    {
-        ensure_application();
-
-        const auto answer = [](const QString& label)
-        {
-            on_box(
-                [label](MessageBox& box)
-                {
-                    click(box, label);
-                });
-            return slopkit::ui::widgets::ok_cancel(nullptr, QStringLiteral("Proceed"), QStringLiteral("Go on?"));
-        };
-
-        CHECK(answer(QStringLiteral("OK")));
-        CHECK_FALSE(answer(QStringLiteral("Cancel")));
-    }
-
-    TEST_CASE("the notice helpers show a single OK button", "[ui]")
-    {
-        ensure_application();
-
-        const auto info =
-            show_notice(slopkit::ui::widgets::information, QStringLiteral("Info"), QStringLiteral("Info text."));
-        CHECK(info.buttons == 1);
-        CHECK(info.title == QStringLiteral("Info"));
-        CHECK(info.text == QStringLiteral("Info text."));
-
-        const auto warn =
-            show_notice(slopkit::ui::widgets::warning, QStringLiteral("Warning"), QStringLiteral("Warn text."));
-        CHECK(warn.buttons == 1);
-        CHECK(warn.title == QStringLiteral("Warning"));
-        CHECK(warn.text == QStringLiteral("Warn text."));
-
-        const auto err =
-            show_notice(slopkit::ui::widgets::error, QStringLiteral("Error"), QStringLiteral("Error text."));
-        CHECK(err.buttons == 1);
-        CHECK(err.title == QStringLiteral("Error"));
-        CHECK(err.text == QStringLiteral("Error text."));
-    }
-
-    TEST_CASE("the message_box helper returns the typed result", "[ui]")
-    {
-        ensure_application();
-
-        on_box(
-            [](MessageBox& box)
-            {
-                click(box, QStringLiteral("Cancel"));
-            });
-        const auto result = slopkit::ui::widgets::message_box(nullptr,
-                                                              MessageBoxIcon::warning,
-                                                              QStringLiteral("Warning"),
-                                                              QStringLiteral("Careful."),
-                                                              MessageBoxButton::ok | MessageBoxButton::cancel,
-                                                              MessageBoxButton::ok);
-        CHECK(result == MessageBoxResult::cancel);
     }
 
     TEST_CASE("the message box hides the application display name while it runs", "[ui]")

@@ -208,6 +208,7 @@ configure time (see the dependency list above).
 - `src/table/` — the address-table model and its line-oriented file format.
 - `src/ui/` — the Qt 6 Widgets shell: main window, theme/palette, fonts, panels, dialogs and table models.
 - `src/sandbox/` — the `slopkit-sandbox` practice target: its value store, window and entry point.
+- `tests/` — the Catch2 suite, mirroring the `src/` module tree; CMake picks it up automatically.
 - `docs/` — project documentation, including `docs/INDEX.md` and `docs/UI_DESIGN.md`.
 - `assets/` — embedded assets such as the UI font and its license.
 - `reference/` — read-only reference material; never modified.

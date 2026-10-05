@@ -154,7 +154,6 @@ target_link_libraries(slopkit_ui_common
 # `slopkit_plugin_entry`, so linking two of them into one binary would collide.
 # Platform code is shared with the plugins through the slopkit_platform target.
 file(GLOB_RECURSE SLOPKIT_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
-list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/tests/.*")
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/plugins/.*")
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/platform/.*")
 # The sandbox is its own executable, never part of the app binary.
@@ -259,15 +258,15 @@ function(add_slopkit_test_plugin target)
     target_link_libraries(${target} PRIVATE slopkit_native)
 endfunction()
 
-add_slopkit_test_plugin(slopkit_test_bad_abi ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/bad_abi_plugin.cpp)
-add_slopkit_test_plugin(slopkit_test_no_entry ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/no_entry_plugin.cpp)
-add_slopkit_test_plugin(slopkit_test_missing_regions ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/missing_regions_plugin.cpp)
-add_slopkit_test_plugin(slopkit_test_old_abi_minor ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/old_abi_minor_plugin.cpp)
+add_slopkit_test_plugin(slopkit_test_bad_abi ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/bad_abi_plugin.cpp)
+add_slopkit_test_plugin(slopkit_test_no_entry ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/no_entry_plugin.cpp)
+add_slopkit_test_plugin(slopkit_test_missing_regions ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/missing_regions_plugin.cpp)
+add_slopkit_test_plugin(slopkit_test_old_abi_minor ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/old_abi_minor_plugin.cpp)
 
 # The logging fixture is a valid plugin, so it lives in its own directory: the
 # loader tests above require the broken-plugin directory to yield no plugins.
 set(SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR ${CMAKE_BINARY_DIR}/logging_test_plugins)
-add_slopkit_test_plugin(slopkit_test_logging ${CMAKE_CURRENT_SOURCE_DIR}/src/tests/fixtures/logging_plugin.cpp)
+add_slopkit_test_plugin(slopkit_test_logging ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/logging_plugin.cpp)
 set_target_properties(slopkit_test_logging PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR}
     RUNTIME_OUTPUT_DIRECTORY ${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR})
@@ -278,7 +277,9 @@ find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
 if(CLANG_FORMAT_EXECUTABLE)
     file(GLOB_RECURSE SLOPKIT_FORMAT_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_SOURCE_DIR}/src/*.hpp
-        ${CMAKE_SOURCE_DIR}/src/*.cpp)
+        ${CMAKE_SOURCE_DIR}/src/*.cpp
+        ${CMAKE_SOURCE_DIR}/tests/*.hpp
+        ${CMAKE_SOURCE_DIR}/tests/*.cpp)
     add_test(NAME clang-format-check
         COMMAND ${CLANG_FORMAT_EXECUTABLE} --dry-run --Werror ${SLOPKIT_FORMAT_SOURCES}
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -298,13 +299,16 @@ set(SLOPKIT_TEST_SANDBOX_SOURCES
     ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_values.cpp
     ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_window.cpp)
 
-file(GLOB SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/tests/*.cpp)
+# Every test source is picked up, but never the fixture plugin sources: each of
+# them defines `slopkit_plugin_entry`, so they are built as their own libraries.
+file(GLOB_RECURSE SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
+list(FILTER SLOPKIT_TEST_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/tests/fixtures/.*")
 add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES} ${SLOPKIT_TEST_SANDBOX_SOURCES})
 # The tests load the bundled plugins the same way the app does, so they need the
 # same exported symbols for the platform library's diagnostics.
 set_target_properties(slopkit_tests PROPERTIES ENABLE_EXPORTS ON)
 add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor slopkit_test_logging)
-target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tests)
 target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"

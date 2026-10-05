@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QString>
 
+#include "support/ui_helpers.hpp"
 #include "ui/settings.hpp"
 
 namespace
@@ -202,4 +203,64 @@ TEST_CASE("Settings signals fire once per real change", "[settings]")
     REQUIRE(auto_load_changes == 2);
     controller.set_live_update_enabled(true);
     REQUIRE(live_changes == 2);
+}
+
+TEST_CASE("the window applies the persisted settings at construction", "[ui]")
+{
+    application();
+
+    const QString path = scratch_settings_file("persisted.ini");
+    {
+        std::ofstream file(path.toStdString(), std::ios::binary | std::ios::trunc);
+        file << "[appearance]\ndark_theme=false\n[addresses]\ndisplay_mode=absolute\n";
+    }
+
+    FakeAccess access;
+
+    slopkit::process::ModuleInfo image;
+    image.base     = 0x1000;
+    image.size     = 0x800;
+    image.entry    = 0x1040;
+    image.kind     = slopkit::process::ModuleKind::elf;
+    image.name     = "low";
+    image.path     = "/opt/low";
+    access.modules = {image};
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {path};
+    CHECK_FALSE(settings.values().dark_theme);
+    CHECK(settings.values().address_mode == slopkit::ui::AddressMode::absolute);
+
+    slopkit::ui::MainWindow window {worker, target, host, settings};
+
+    attach_app_session(worker);
+
+    auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
+    REQUIRE(scanner != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [scanner]
+                    {
+                        return scanner->main_module_address() != 0;
+                    }));
+
+    // The viewer opens in the persisted absolute mode even though the module map
+    // resolved.
+    auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
+    REQUIRE(viewer != nullptr);
+    auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
+    REQUIRE(document != nullptr);
+    viewer->set_address(0x1040);
+    CHECK(document->display_text(0x1040) == QStringLiteral("0x1040"));
+
+    // The Settings dialog reflects both persisted values without user input.
+    auto* dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
+    REQUIRE(dialog != nullptr);
+    auto* light = radio_labelled(*dialog, QStringLiteral("Light"));
+    REQUIRE(light != nullptr);
+    CHECK(light->isChecked());
+    auto* absolute = radio_labelled(*dialog, QStringLiteral("Absolute address"));
+    REQUIRE(absolute != nullptr);
+    CHECK(absolute->isChecked());
 }
