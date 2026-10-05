@@ -21,6 +21,7 @@
 #include <QWheelEvent>
 
 #include "scan/types.hpp"
+#include "ui/address_format.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
 
@@ -47,13 +48,13 @@ namespace slopkit::ui::components
             switch (format.type)
             {
             case scan::ValueType::byte:
-                return format.hex ? QStringLiteral("0x00") : QStringLiteral("-128");
+                return format.hex ? QStringLiteral("00") : QStringLiteral("-128");
             case scan::ValueType::int16:
-                return format.hex ? QStringLiteral("0x0000") : QStringLiteral("-32768");
+                return format.hex ? QStringLiteral("0000") : QStringLiteral("-32768");
             case scan::ValueType::int32:
-                return format.hex ? QStringLiteral("0x00000000") : QStringLiteral("-2147483648");
+                return format.hex ? QStringLiteral("00000000") : QStringLiteral("-2147483648");
             case scan::ValueType::int64:
-                return format.hex ? QStringLiteral("0x0000000000000000") : QStringLiteral("-9223372036854775808");
+                return format.hex ? QStringLiteral("0000000000000000") : QStringLiteral("-9223372036854775808");
             case scan::ValueType::float32:
                 return QStringLiteral("-1.23457e+38");
             case scan::ValueType::float64:
@@ -61,7 +62,7 @@ namespace slopkit::ui::components
             default:
                 break;
             }
-            return QStringLiteral("0x00");
+            return QStringLiteral("00");
         }
     } // namespace
 
@@ -140,7 +141,7 @@ namespace slopkit::ui::components
         }
 
         return QRect(kMargin + address_width_ + kGapAfterAddress + static_cast<int>(column) * cell_width_,
-                     kMargin + static_cast<int>(row) * row_height_,
+                     kMargin + header_height_ + static_cast<int>(row) * row_height_,
                      cell_width_,
                      row_height_);
     }
@@ -148,6 +149,23 @@ namespace slopkit::ui::components
     QString MemoryView::cell_text(std::uint64_t address) const
     {
         return document_.cell(address).text;
+    }
+
+    QString MemoryView::column_offset_text(std::size_t column) const
+    {
+        const std::size_t format_bytes = std::max<std::size_t>(1, document_.format().size());
+        const std::size_t offset       = column * format_bytes;
+        const std::size_t span         = bytes_per_row_ >= format_bytes ? bytes_per_row_ - format_bytes : 0;
+
+        // Room for the largest offset on the row, but at least two digits.
+        std::size_t digits = 1;
+        for (std::size_t value = span; value >= 16; value /= 16)
+        {
+            ++digits;
+        }
+        digits = std::max<std::size_t>(2, digits);
+
+        return QString::number(offset, 16).rightJustified(static_cast<qsizetype>(digits), QLatin1Char('0')).toUpper();
     }
 
     void MemoryView::align_first_byte()
@@ -158,10 +176,13 @@ namespace slopkit::ui::components
     void MemoryView::recompute_layout()
     {
         const QFontMetrics metrics(mono_font());
-        row_height_ = std::max(1, metrics.height() + 4);
+        row_height_    = std::max(1, metrics.height() + 4);
+        header_height_ = row_height_;
 
-        visible_rows_ = std::max<std::size_t>(
-            1, static_cast<std::size_t>(std::max(0, viewport()->height())) / static_cast<std::size_t>(row_height_));
+        visible_rows_ =
+            std::max<std::size_t>(1,
+                                  static_cast<std::size_t>(std::max(0, viewport()->height() - header_height_))
+                                      / static_cast<std::size_t>(row_height_));
 
         // The address column follows the widest address on screen, but never
         // narrower than the 16-digit absolute form so it does not jitter.
@@ -272,7 +293,6 @@ namespace slopkit::ui::components
         align_first_byte();
         close_editor();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
-        emit firstByteChanged(first_byte_);
         viewport()->update();
     }
 
@@ -283,8 +303,18 @@ namespace slopkit::ui::components
         close_editor();
         recenter_scrollbar();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
-        emit firstByteChanged(first_byte_);
         viewport()->update();
+    }
+
+    bool MemoryView::go_to(const QString& text)
+    {
+        const auto parsed = ui::parse_address_text(text.toStdString(), document_.module_spans());
+        if (!parsed.has_value())
+        {
+            return false;
+        }
+        set_first_byte(*parsed);
+        return true;
     }
 
     void MemoryView::set_text_column_visible(bool visible)
@@ -322,11 +352,11 @@ namespace slopkit::ui::components
 
     std::optional<MemoryView::Hit> MemoryView::hit_test(const QPoint& position) const
     {
-        if (row_height_ <= 0 || bytes_per_row_ == 0 || cell_width_ <= 0)
+        if (row_height_ <= 0 || bytes_per_row_ == 0 || cell_width_ <= 0 || position.y() < kMargin + header_height_)
         {
             return std::nullopt;
         }
-        const int row = (position.y() - kMargin) / row_height_;
+        const int row = (position.y() - kMargin - header_height_) / row_height_;
         if (row < 0 || static_cast<std::size_t>(row) >= visible_rows_)
         {
             return std::nullopt;
@@ -345,8 +375,10 @@ namespace slopkit::ui::components
         Hit hit;
         hit.column  = static_cast<int>(column);
         hit.address = first_byte_ + static_cast<std::uint64_t>(row) * bytes_per_row_ + column * size;
-        hit.rect    = QRect(
-            cells_left + static_cast<int>(column) * cell_width_, kMargin + row * row_height_, cell_width_, row_height_);
+        hit.rect    = QRect(cells_left + static_cast<int>(column) * cell_width_,
+                            kMargin + header_height_ + row * row_height_,
+                            cell_width_,
+                            row_height_);
         return hit;
     }
 
@@ -359,10 +391,21 @@ namespace slopkit::ui::components
         const Theme& theme = active_theme();
         painter.fillRect(viewport()->rect(), theme.surface);
 
-        const std::size_t size  = std::max<std::size_t>(1, document_.format().size());
-        const std::size_t cells = bytes_per_row_ / size;
+        const std::size_t size       = std::max<std::size_t>(1, document_.format().size());
+        const std::size_t cells      = bytes_per_row_ / size;
+        const int         cells_left = kMargin + address_width_ + kGapAfterAddress;
 
-        int y = kMargin;
+        // The column header: the hex offset of each value within the row.
+        painter.setPen(theme.text_muted);
+        for (std::size_t column = 0; column < cells; ++column)
+        {
+            painter.drawText(
+                QRect(cells_left + static_cast<int>(column) * cell_width_, kMargin, cell_width_, header_height_),
+                Qt::AlignLeft | Qt::AlignVCenter,
+                column_offset_text(column));
+        }
+
+        int y = kMargin + header_height_;
         for (std::size_t row = 0; row < visible_rows_; ++row)
         {
             const std::uint64_t row_address = first_byte_ + static_cast<std::uint64_t>(row) * bytes_per_row_;
@@ -372,7 +415,7 @@ namespace slopkit::ui::components
                              Qt::AlignLeft | Qt::AlignVCenter,
                              document_.address_text(row_address));
 
-            int x = kMargin + address_width_ + kGapAfterAddress;
+            int x = cells_left;
             for (std::size_t column = 0; column < cells; ++column)
             {
                 const std::uint64_t            address = row_address + column * size;
@@ -491,6 +534,10 @@ namespace slopkit::ui::components
 
     void MemoryView::populate_options_menu(QMenu& menu)
     {
+        QAction* go_to = menu.addAction(tr("Go To..."));
+        connect(go_to, &QAction::triggered, this, &MemoryView::gotoRequested);
+        menu.addSeparator();
+
         // One exclusive group spans every value format, so exactly one is checked.
         auto* format_group = new QActionGroup(&menu);
         format_group->setExclusive(true);

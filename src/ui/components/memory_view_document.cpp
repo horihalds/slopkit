@@ -352,6 +352,11 @@ namespace slopkit::ui::components
         {
             result.text = to_qstring(scan::format_value(
                 format_.type, std::span<const std::byte>(block->bytes.data() + start, size), format_.hex));
+            // Hex values read without the `0x` prefix, so a row stays narrow.
+            if (format_.hex && result.text.startsWith(QStringLiteral("0x")))
+            {
+                result.text.remove(0, 2);
+            }
         }
         return result;
     }

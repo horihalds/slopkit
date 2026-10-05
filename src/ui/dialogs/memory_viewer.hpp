@@ -15,8 +15,6 @@
 #include <QString>
 
 class QLabel;
-class QLineEdit;
-class QPushButton;
 
 namespace slopkit::ui::widgets
 {
@@ -32,9 +30,9 @@ namespace slopkit::ui::dialogs
 {
 
     // A hex-editor style live view of the attached target's memory: the
-    // ui::components::MemoryView behind a small address/status toolbar. Reads and
-    // writes run on the access worker and the viewer renders its cached blocks,
-    // never touching a session.
+    // ui::components::MemoryView filling the window behind a small status line.
+    // Reads and writes run on the access worker and the viewer renders its
+    // cached blocks, never touching a session.
     class MemoryViewerDialog : public QDialog, public ui::LiveSurface
     {
         Q_OBJECT
@@ -45,9 +43,13 @@ namespace slopkit::ui::dialogs
         // Opens the viewer at `address`.
         void set_address(std::uint64_t address);
 
+        // Jumps to an address written as absolute ("0x1040") or module+RVA
+        // ("libc.so.6+1A2B"); false when the text does not name an address.
+        bool go_to(const QString& text);
+
         // Sets the module image spans used to render module-relative addresses.
         void set_modules(std::vector<process::ModuleInfo> modules);
-        // Chooses how static addresses are shown in the address box and rows.
+        // Chooses how static addresses are shown in the address column and Go To.
         void set_address_mode(ui::AddressMode mode);
 
         // LiveSurface: the visible window while the dialog is shown and a target
@@ -56,27 +58,23 @@ namespace slopkit::ui::dialogs
         void apply_live_readings(std::span<const ui::LiveReading> readings) override;
 
     signals:
-        // Asks the window's live coordinator for an immediate pass (Refresh/Go).
+        // Asks the window's live coordinator for an immediate pass (Go To / show).
         void liveRefreshRequested();
 
     protected:
         void showEvent(QShowEvent* event) override;
 
     private:
-        void                  build_layout();
-        void                  go_to_address();
-        // The address-box text for `address`: module-relative when applicable, else "0x…".
-        [[nodiscard]] QString display_text(std::uint64_t address) const;
+        void build_layout();
+        // Asks for an address text and jumps to it; a bad value is only logged.
+        void prompt_go_to();
         // Asks the coordinator for an immediate pass and shows the loading state.
-        void                  request_page();
-        void                  update_state();
+        void request_page();
+        void update_state();
 
         process::AttachedTarget&       target_;
         components::MemoryViewDocument document_;
         components::MemoryView*        view_ {};
-        QLineEdit*                     address_edit_ {};
-        QPushButton*                   go_button_ {};
-        QPushButton*                   refresh_button_ {};
         QLabel*                        loading_label_ {};
         widgets::StatusLabel*          status_ {};
 

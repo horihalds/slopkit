@@ -280,7 +280,7 @@ TEST_CASE("scrolling inside a block keeps the request set and reuses the cache",
     // overlapping blocks, so the newly visible bytes are already readable.
     fixture.document.set_view(kBase + kExtent, kRowBytes, kRows);
     CHECK(fixture.document.cell(kBase + kExtent + 5).readable);
-    CHECK(fixture.document.cell(kBase + kExtent + 5).text == QStringLiteral("0x11"));
+    CHECK(fixture.document.cell(kBase + kExtent + 5).text == QStringLiteral("11"));
     // The block that fell out of the window is gone.
     fixture.document.set_view(kBase - kExtent, kRowBytes, kRows);
     CHECK_FALSE(fixture.document.cell(kBase - kExtent).readable);
@@ -301,7 +301,7 @@ TEST_CASE("the memory view document marks only bytes that differ from the last r
 
     fixture.pass();
     CHECK(repaints == 1);
-    CHECK(fixture.document.cell(kBase).text == QStringLiteral("0x11"));
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("11"));
     CHECK_FALSE(fixture.document.cell(kBase).changed); // The first reading is never changed.
 
     // An idle reading never repaints.
@@ -369,18 +369,18 @@ TEST_CASE("the memory view document renders each value format", "[memory_view]")
     fixture.pass();
 
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = true});
-    CHECK(fixture.document.cell(kBase).text == QStringLiteral("0x41"));
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("41"));
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = false});
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("65"));
 
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int16, .hex = true});
-    CHECK(fixture.document.cell(kBase).text == QStringLiteral("0x0041"));
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("0041"));
 
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = false});
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("65"));
 
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int64, .hex = true});
-    CHECK(fixture.document.cell(kBase).text == QStringLiteral("0x0000000000000041"));
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("0000000000000041"));
 
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::float32, .hex = false});
     CHECK(fixture.document.cell(kBase + 16).text == QStringLiteral("1"));
@@ -466,7 +466,7 @@ TEST_CASE("the memory view document writes through the access worker", "[memory_
     // The next identical reading does not flash the written byte as changed.
     fixture.pass();
     CHECK_FALSE(fixture.document.cell(kBase).changed);
-    CHECK(fixture.document.cell(kBase).text == QStringLiteral("0xEF"));
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("EF"));
 
     // A malformed value is rejected without touching memory.
     CHECK_FALSE(fixture.document.write_value(kBase, QStringLiteral("not a number")));
@@ -639,7 +639,7 @@ TEST_CASE("the memory view edits a cell inline", "[memory_view]")
     double_click_at(cell->center());
     REQUIRE(view.editor() != nullptr);
     CHECK(view.editor()->isVisible());
-    CHECK(view.editor()->text() == QStringLiteral("0x11"));
+    CHECK(view.editor()->text() == QStringLiteral("11"));
     CHECK(view.editor()->geometry() == *cell);
 
     view.editor()->setText(QStringLiteral("0xEF"));
@@ -727,6 +727,20 @@ TEST_CASE("the memory view options menu switches the display", "[memory_view]")
     CHECK(show_text->isCheckable());
     CHECK(show_text->isChecked());
 
+    // The top entry asks the dialog to prompt for an address.
+    QAction* go_to = action(&menu, QStringLiteral("Go To..."));
+    REQUIRE(go_to != nullptr);
+    bool asked = false;
+    QObject::connect(&view,
+                     &MemoryView::gotoRequested,
+                     &view,
+                     [&asked]
+                     {
+                         asked = true;
+                     });
+    go_to->trigger();
+    CHECK(asked);
+
     // Choosing 4 Bytes (hex) re-lays out and keeps the top byte on screen.
     const std::uint64_t anchor = view.first_byte();
     action(submenu(format_menu, QStringLiteral("4 Bytes")), QStringLiteral("Hex"))->trigger();
@@ -743,6 +757,31 @@ TEST_CASE("the memory view options menu switches the display", "[memory_view]")
     show_text->trigger();
     CHECK_FALSE(view.text_column_visible());
     CHECK(view.bytes_per_row() >= with_text);
+
+    view.hide();
+}
+
+TEST_CASE("the memory view header labels each column with its offset", "[memory_view]")
+{
+    slopkit_test_application();
+    Fixture    fixture;
+    MemoryView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+
+    // A byte view: two hex digits per column, no `0x` prefix.
+    REQUIRE(view.bytes_per_row() >= 4);
+    CHECK(view.column_offset_text(0) == QStringLiteral("00"));
+    CHECK(view.column_offset_text(1) == QStringLiteral("01"));
+    CHECK(view.column_offset_text(view.bytes_per_row() - 1).size() == 2);
+
+    // A 4-byte view steps by four.
+    fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
+    view.relayout();
+    REQUIRE(view.bytes_per_row() >= 8);
+    CHECK(view.column_offset_text(0) == QStringLiteral("00"));
+    CHECK(view.column_offset_text(1) == QStringLiteral("04"));
+    CHECK(view.column_offset_text(2) == QStringLiteral("08"));
 
     view.hide();
 }

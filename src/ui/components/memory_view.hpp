@@ -28,6 +28,9 @@ namespace slopkit::ui::components
 
         [[nodiscard]] std::uint64_t first_byte() const noexcept;
         void                        set_first_byte(std::uint64_t address); // Go / open at
+        // Parses `text` (absolute or module+RVA) and jumps there; false when the
+        // text does not name an address.
+        bool                        go_to(const QString& text);
         void                        set_text_column_visible(bool visible);
         [[nodiscard]] bool          text_column_visible() const noexcept;
         [[nodiscard]] std::size_t   bytes_per_row() const noexcept;
@@ -41,6 +44,8 @@ namespace slopkit::ui::components
         [[nodiscard]] std::optional<QRect> cell_rect(std::uint64_t address) const;
         // The value text the cell at `address` renders (empty when unreadable).
         [[nodiscard]] QString              cell_text(std::uint64_t address) const;
+        // The hex offset text painted in the column header for `column` (no `0x`).
+        [[nodiscard]] QString              column_offset_text(std::size_t column) const;
 
         // Fills `menu` with the value formats, the text encodings and the
         // text-column toggle, checked against the document's state, and wires
@@ -52,8 +57,8 @@ namespace slopkit::ui::components
         [[nodiscard]] QLineEdit* editor() const noexcept;
 
     signals:
-        void firstByteChanged(std::uint64_t address); // the address box follows
-        void bytesEdited();                           // a write was submitted
+        void gotoRequested(); // the user picked "Go To..." from the options menu
+        void bytesEdited();   // a write was submitted
 
     protected:
         void resizeEvent(QResizeEvent* event) override;
@@ -97,6 +102,7 @@ namespace slopkit::ui::components
         std::size_t   bytes_per_row_ {16};
         std::size_t   visible_rows_ {1};
         int           row_height_ {1};
+        int           header_height_ {1};
         int           address_width_ {0};
         int           cell_width_ {1};
         int           text_width_ {0};

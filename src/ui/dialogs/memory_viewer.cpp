@@ -1,21 +1,18 @@
 #include "ui/dialogs/memory_viewer.hpp"
 
 #include <cstdint>
-#include <format>
 #include <utility>
 #include <vector>
 
-#include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
-#include <QPushButton>
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "ui/components/memory_view.hpp"
 #include "ui/components/widgets.hpp"
-#include "ui/fonts.hpp"
 
 namespace slopkit::ui::dialogs
 {
@@ -34,61 +31,29 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::build_layout()
     {
+        // The byte view fills the window; only the loading and status lines share
+        // the space below it.
         auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(10, 10, 10, 10);
-        layout->setSpacing(8);
-
-        auto* controls = new QHBoxLayout();
-        address_edit_  = new QLineEdit(this);
-        address_edit_->setObjectName(QStringLiteral("address_edit"));
-        address_edit_->setFont(mono_font());
-        address_edit_->setPlaceholderText(tr("address or module+RVA"));
-        address_edit_->setToolTip(tr("Absolute address (0x1040) or module-relative (libc.so.6+1A2B)"));
-        address_edit_->setMaximumWidth(240);
-        controls->addWidget(address_edit_);
-
-        go_button_      = widgets::secondary_button(tr("Go"), this);
-        refresh_button_ = widgets::secondary_button(tr("Refresh"), this);
-        controls->addWidget(go_button_);
-        controls->addWidget(refresh_button_);
-        controls->addStretch(1);
-        layout->addLayout(controls);
-
-        auto* header_row = new QHBoxLayout();
-        header_row->addWidget(widgets::section_header(tr("Hex dump"), this));
-        loading_label_ = new QLabel(tr("Loading..."), this);
-        loading_label_->setObjectName(QStringLiteral("loading_label"));
-        header_row->addWidget(loading_label_);
-        header_row->addStretch(1);
-        layout->addLayout(header_row);
+        layout->setContentsMargins(6, 6, 6, 6);
+        layout->setSpacing(4);
 
         view_ = new components::MemoryView(document_, this);
         layout->addWidget(view_, 1);
 
+        // The loading and status rows keep a constant height: hiding or clearing
+        // them would resize the byte view, re-align the live window and drop the
+        // pass in flight.
+        loading_label_ = new QLabel(tr("Loading..."), this);
+        loading_label_->setObjectName(QStringLiteral("loading_label"));
+        loading_label_->setMinimumHeight(loading_label_->fontMetrics().height());
+        layout->addWidget(loading_label_);
+
         status_ = new widgets::StatusLabel(this);
+        status_->setMinimumHeight(status_->fontMetrics().height());
         layout->addWidget(status_);
 
-        connect(go_button_, &QPushButton::clicked, this, &MemoryViewerDialog::go_to_address);
-        connect(address_edit_, &QLineEdit::returnPressed, this, &MemoryViewerDialog::go_to_address);
-        connect(refresh_button_,
-                &QPushButton::clicked,
-                this,
-                [this]
-                {
-                    request_page();
-                });
-
-        // The address box follows free scrolling unless the user is typing.
-        connect(view_,
-                &components::MemoryView::firstByteChanged,
-                this,
-                [this](std::uint64_t address)
-                {
-                    if (!address_edit_->hasFocus())
-                    {
-                        address_edit_->setText(display_text(address));
-                    }
-                });
+        // "Go To..." in the right-click menu asks for an address here.
+        connect(view_, &components::MemoryView::gotoRequested, this, &MemoryViewerDialog::prompt_go_to);
 
         // A write result or rejection goes to the status line.
         connect(&document_,
@@ -113,7 +78,6 @@ namespace slopkit::ui::dialogs
     void MemoryViewerDialog::set_address(std::uint64_t address)
     {
         view_->set_first_byte(address);
-        address_edit_->setText(display_text(view_->first_byte()));
 
         // The cached window no longer matches the top byte.
         page_loaded_ = false;
@@ -124,35 +88,48 @@ namespace slopkit::ui::dialogs
         }
     }
 
+    bool MemoryViewerDialog::go_to(const QString& text)
+    {
+        if (!view_->go_to(text))
+        {
+            return false;
+        }
+        page_loaded_ = false;
+        update_state();
+        if (isVisible())
+        {
+            request_page();
+        }
+        return true;
+    }
+
+    void MemoryViewerDialog::prompt_go_to()
+    {
+        bool          ok   = false;
+        const QString text = QInputDialog::getText(this,
+                                                   tr("Go To"),
+                                                   tr("Address or module+RVA:"),
+                                                   QLineEdit::Normal,
+                                                   document_.display_text(view_->first_byte()),
+                                                   &ok);
+        if (!ok || text.isEmpty())
+        {
+            return;
+        }
+        if (!go_to(text))
+        {
+            log::warning(log::category::ui, "memory viewer got an unparseable address");
+        }
+    }
+
     void MemoryViewerDialog::set_modules(std::vector<process::ModuleInfo> modules)
     {
         document_.set_modules(std::move(modules));
-        address_edit_->setText(display_text(view_->first_byte()));
     }
 
     void MemoryViewerDialog::set_address_mode(ui::AddressMode mode)
     {
         document_.set_address_mode(mode);
-        address_edit_->setText(display_text(view_->first_byte()));
-    }
-
-    QString MemoryViewerDialog::display_text(std::uint64_t address) const
-    {
-        return document_.display_text(address);
-    }
-
-    void MemoryViewerDialog::go_to_address()
-    {
-        const auto parsed = ui::parse_address_text(address_edit_->text().toStdString(), document_.module_spans());
-        if (parsed.has_value())
-        {
-            log::debug(log::category::ui, std::format("memory viewer go to 0x{:X}", *parsed));
-            set_address(*parsed);
-        }
-        else
-        {
-            log::warning(log::category::ui, "memory viewer got an unparseable address");
-        }
     }
 
     void MemoryViewerDialog::request_page()
@@ -182,9 +159,7 @@ namespace slopkit::ui::dialogs
     void MemoryViewerDialog::update_state()
     {
         const bool loading = target_.valid() && (manual_request_ || !page_loaded_);
-        loading_label_->setVisible(loading);
-        refresh_button_->setEnabled(target_.valid());
-        go_button_->setEnabled(target_.valid());
+        loading_label_->setText(loading ? tr("Loading...") : QString());
 
         if (!target_.valid())
         {

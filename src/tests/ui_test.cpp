@@ -4853,12 +4853,16 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
 
     auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
     REQUIRE(viewer != nullptr);
-    auto* address_edit = viewer->findChild<QLineEdit*>(QStringLiteral("address_edit"));
-    REQUIRE(address_edit != nullptr);
+    auto* view = viewer->findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
+    REQUIRE(document != nullptr);
 
     memory_view->click();
-    // The main module's map is loaded, so the box shows module+RVA by default.
-    CHECK(address_edit->text() == QStringLiteral("low+40"));
+    // The main module's map is loaded, so the entry renders module-relative.
+    CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
+    CHECK(view->first_byte() <= 0x1040);
+    CHECK(0x1040 < view->first_byte() + view->bytes_per_row());
 
     // The add button reaches the same non-modal dialog as the menu action.
     auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
@@ -5339,9 +5343,20 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
         return requests;
     };
 
-    // Showing the dialog asks for the window; seed it, then run the pass.
+    // Showing the dialog asks for the window; its layout may still grow the view
+    // once, so pump the event loop until the geometry is stable before seeding the
+    // blocks the live pass will actually request.
     viewer.set_address(0x1000);
     viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        const std::size_t before = view->visible_rows();
+        QCoreApplication::processEvents();
+        if (view->visible_rows() == before)
+        {
+            break;
+        }
+    }
     const auto requests = seed_window(std::byte {0xAB});
     REQUIRE(requests.size() == 3);
     const std::uint64_t extent = requests[1].size;
@@ -5357,9 +5372,11 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return view->cell_text(0x1000) == QStringLiteral("0xAB");
+                        return view->cell_text(0x1000) == QStringLiteral("AB");
                     }));
-    CHECK_FALSE(loading->isVisible());
+    // The indicator keeps its row but is empty while no pass is in flight.
+    CHECK(loading->isVisible());
+    CHECK(loading->text().isEmpty());
 
     // A changed byte follows on the next pass.
     const std::uint64_t middle                = requests[1].address;
@@ -5368,7 +5385,7 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return view->cell_text(0x1000) == QStringLiteral("0xCD");
+                        return view->cell_text(0x1000) == QStringLiteral("CD");
                     }));
 
     // A completion whose window moved on while the pass was in flight is dropped.
@@ -5390,11 +5407,11 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return view->cell_text(next_base) == QStringLiteral("0xCD");
+                        return view->cell_text(next_base) == QStringLiteral("CD");
                     }));
 }
 
-TEST_CASE("the memory viewer box accepts module-relative addresses", "[ui]")
+TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
 {
     application();
 
@@ -5404,31 +5421,28 @@ TEST_CASE("the memory viewer box accepts module-relative addresses", "[ui]")
     slopkit::process::AccessWorker worker {access};
 
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
-    auto* address_edit = viewer.findChild<QLineEdit*>(QStringLiteral("address_edit"));
-    REQUIRE(address_edit != nullptr);
-    auto* go = button_labelled(viewer, QStringLiteral("Go"));
-    REQUIRE(go != nullptr);
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
 
     viewer.set_modules({module_image("app", 0x1000, 0x1000)});
 
-    // set_address writes the display text into the box.
-    viewer.set_address(0x1040);
-    CHECK(address_edit->text() == QStringLiteral("app+40"));
+    // A module+RVA (case-insensitively) jumps to the resolved address.
+    CHECK(viewer.go_to(QStringLiteral("APP+40")));
+    CHECK(view->first_byte() <= 0x1040);
+    CHECK(0x1040 < view->first_byte() + view->bytes_per_row());
+    CHECK(viewer.go_to(QStringLiteral("app+40")));
+    CHECK(view->first_byte() <= 0x1040);
+    CHECK(0x1040 < view->first_byte() + view->bytes_per_row());
 
-    // An address outside every module keeps today's text.
-    viewer.set_address(0x5000000);
-    CHECK(address_edit->text() == QStringLiteral("0x5000000"));
+    // A plain absolute address works too.
+    CHECK(viewer.go_to(QStringLiteral("0x2000")));
+    CHECK(view->first_byte() <= 0x2000);
+    CHECK(0x2000 < view->first_byte() + view->bytes_per_row());
 
-    // Pasting a module+RVA (case-insensitively) and pressing Go navigates.
-    viewer.set_address(0x1000);
-    address_edit->setText(QStringLiteral("APP+40"));
-    go->click();
-    CHECK(address_edit->text() == QStringLiteral("app+40"));
-
-    // An unparsable value leaves the page where it was: the box keeps the raw input.
-    address_edit->setText(QStringLiteral("missing+40"));
-    go->click();
-    CHECK(address_edit->text() == QStringLiteral("missing+40"));
+    // An unparsable value leaves the page where it was.
+    const std::uint64_t before = view->first_byte();
+    CHECK_FALSE(viewer.go_to(QStringLiteral("missing+40")));
+    CHECK(view->first_byte() == before);
 }
 
 TEST_CASE("the settings dialog offers the address display choice", "[ui]")
@@ -5626,11 +5640,11 @@ TEST_CASE("the Addresses setting switches the viewer live", "[ui]")
 
     auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
     REQUIRE(viewer != nullptr);
-    auto* address_edit = viewer->findChild<QLineEdit*>(QStringLiteral("address_edit"));
-    REQUIRE(address_edit != nullptr);
+    auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
+    REQUIRE(document != nullptr);
 
     viewer->set_address(0x1040);
-    CHECK(address_edit->text() == QStringLiteral("low+40"));
+    CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
 
     auto* settings = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
     REQUIRE(settings != nullptr);
@@ -5642,10 +5656,10 @@ TEST_CASE("the Addresses setting switches the viewer live", "[ui]")
 
     // Clicking the setting re-renders the viewer immediately, with no reload.
     absolute->click();
-    CHECK(address_edit->text() == QStringLiteral("0x1040"));
+    CHECK(document->display_text(0x1040) == QStringLiteral("0x1040"));
 
     module_relative->click();
-    CHECK(address_edit->text() == QStringLiteral("low+40"));
+    CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
 }
 
 TEST_CASE("the window applies the persisted settings at construction", "[ui]")
@@ -5692,10 +5706,10 @@ TEST_CASE("the window applies the persisted settings at construction", "[ui]")
     // resolved.
     auto* viewer = window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>();
     REQUIRE(viewer != nullptr);
-    auto* address_edit = viewer->findChild<QLineEdit*>(QStringLiteral("address_edit"));
-    REQUIRE(address_edit != nullptr);
+    auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
+    REQUIRE(document != nullptr);
     viewer->set_address(0x1040);
-    CHECK(address_edit->text() == QStringLiteral("0x1040"));
+    CHECK(document->display_text(0x1040) == QStringLiteral("0x1040"));
 
     // The Settings dialog reflects both persisted values without user input.
     auto* dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
