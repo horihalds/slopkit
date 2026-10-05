@@ -86,7 +86,7 @@ namespace slopkit::ui::dialogs
         void     build_layout();
         QWidget* build_code_pane();
         QWidget* build_stats_pane();
-        // Seeds the vertical 50/40 split once, on the first show.
+        // Seeds the vertical 70/30 split once, on the first show.
         void     apply_ratios();
 
         // Asks for an address expression and jumps the focused pane to it.

@@ -29,7 +29,11 @@ namespace slopkit::ui::components
     {
         constexpr int kMargin      = 4;
         constexpr int kCellPadding = 10;
-        constexpr int kColumnGap   = 10;
+
+        // The gap between the address, bytes and instruction columns: one shared
+        // value, so both boundaries tighten together and the header stays aligned
+        // with the rows painted below it.
+        constexpr int kColumnGap = 6;
 
         // The instruction column never shrinks below this many monospace glyphs;
         // the bytes column gives up its width first and wraps instead.

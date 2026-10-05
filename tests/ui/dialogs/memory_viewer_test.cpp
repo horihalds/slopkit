@@ -578,20 +578,25 @@ TEST_CASE("the memory viewer splits the window into the three panes", "[ui]")
     attach_app_session(worker);
 
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+
+    // A fresh viewer opens at 1280x960 but can still shrink to its 720x480 minimum.
+    CHECK(viewer.size() == QSize(1280, 960));
+    CHECK(viewer.minimumSize() == QSize(720, 480));
+
     viewer.show();
     for (std::size_t guard = 0; guard < 8; ++guard)
     {
         QCoreApplication::processEvents();
     }
 
-    // The vertical split puts the upper zone (50 units) above the hex view (40).
+    // The vertical split puts the upper zone (70 units) above the hex view (30).
     auto* split = viewer.findChild<QSplitter*>(QStringLiteral("viewer_split"));
     REQUIRE(split != nullptr);
     REQUIRE(split->count() == 2);
     const double upper_share =
         static_cast<double>(split->widget(0)->height()) / (split->widget(0)->height() + split->widget(1)->height());
-    CHECK(upper_share > 0.50);
-    CHECK(upper_share < 0.62);
+    CHECK(upper_share > 0.63);
+    CHECK(upper_share < 0.77);
 
     // The upper zone splits 70/30 between the listing and the debugger stats.
     auto* code_split = viewer.findChild<QSplitter*>(QStringLiteral("code_split"));

@@ -33,7 +33,7 @@ namespace slopkit::ui::dialogs
           disassembly_document_(worker, target, this)
     {
         setWindowTitle(tr("Memory Viewer"));
-        resize(1100, 720);
+        resize(1280, 960);
         setMinimumSize(720, 480);
 
         build_layout();
@@ -62,8 +62,8 @@ namespace slopkit::ui::dialogs
 
         split_->addWidget(code_split_);
         split_->addWidget(view_);
-        split_->setStretchFactor(0, 50);
-        split_->setStretchFactor(1, 40);
+        split_->setStretchFactor(0, 70); // upper zone
+        split_->setStretchFactor(1, 30); // hex byte view
 
         layout->addWidget(split_, 1);
 
@@ -128,9 +128,9 @@ namespace slopkit::ui::dialogs
         }
         ratios_applied_ = true;
 
-        // 50 : 40 reads as "50 of 90 units above, 40 below"; the stretch
+        // 70 : 30 reads as "70 of 100 units above, 30 below"; the stretch
         // factors keep the ratio on every later resize.
-        const int upper = std::max(1, total * 50 / 90);
+        const int upper = std::max(1, total * 70 / 100);
         split_->setSizes({upper, total - upper});
     }
 
