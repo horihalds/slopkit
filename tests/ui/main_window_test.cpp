@@ -390,4 +390,43 @@ TEST_CASE("the memory viewer is a detached top-level window", "[ui]")
     CHECK(viewer->isWindow());
     CHECK_FALSE(window.isAncestorOf(viewer));
     CHECK(window.findChild<slopkit::ui::dialogs::MemoryViewerDialog*>() == nullptr);
+    // A companion window, not a window that owns the process lifetime: closing
+    // the shell must still end slopkit.
+    CHECK_FALSE(viewer->testAttribute(Qt::WA_QuitOnClose));
+}
+
+TEST_CASE("closing the main window ends the session", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("shell_close.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    window.show();
+    auto* viewer = window.memory_viewer();
+    REQUIRE(viewer != nullptr);
+    viewer->show();
+    QCoreApplication::processEvents();
+    REQUIRE(window.isVisible());
+    REQUIRE(viewer->isVisible());
+
+    window.close();
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(window.isVisible());
+    // Qt's last-window-closed handling ends the event loop once no visible
+    // top-level window owns the process lifetime; the shell alone owns it.
+    int lifetime_owners = 0;
+    for (QWidget* widget : QApplication::topLevelWidgets())
+    {
+        if (widget->isVisible() && widget->testAttribute(Qt::WA_QuitOnClose))
+        {
+            ++lifetime_owners;
+        }
+    }
+    CHECK(lifetime_owners == 0);
 }

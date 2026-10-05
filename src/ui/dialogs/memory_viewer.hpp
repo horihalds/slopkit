@@ -43,7 +43,9 @@ namespace slopkit::ui::dialogs
     // The investigation window of the attached target: live disassembly over
     // live debugger stats, above the byte view. Reads run on the access worker
     // and the panes render cached bytes, never touching a session; Go To
-    // failures go to the log.
+    // failures go to the log. A companion window: built without a parent so the
+    // compositor stacks it normally, and not one of the windows that own the
+    // process lifetime, so closing the shell still ends slopkit.
     class MemoryViewerDialog : public QDialog, public ui::LiveSurface
     {
         Q_OBJECT
