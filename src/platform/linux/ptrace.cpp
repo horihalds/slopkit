@@ -148,9 +148,11 @@ namespace slopkit::platform
                 return stop;
             }
 
+            // Any other signal is a delivery stop, not a death: the thread is
+            // stopped so the signal can be handled before it continues.
             if (signal != SIGTRAP)
             {
-                stop.reason = StopReason::signalled;
+                stop.reason = StopReason::signal_stop;
                 if (const auto registers = get_registers(tid))
                 {
                     stop.address = registers->rip;

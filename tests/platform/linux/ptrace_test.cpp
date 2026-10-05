@@ -29,6 +29,10 @@ namespace
             const pid_t pid = ::fork();
             if (pid == 0)
             {
+                // The test process may ignore some signals; the child must use
+                // the default disposition so a delivered signal is observable.
+                ::signal(SIGUSR1, SIG_DFL);
+                ::signal(SIGTERM, SIG_DFL);
                 for (;;)
                 {
                     ::pause();
@@ -197,6 +201,35 @@ TEST_CASE("ptrace continues, interrupts and detaches a running target", "[ptrace
     const auto live = slopkit::platform::read_status(child.pid());
     REQUIRE(live.has_value());
     CHECK(live->tracer_pid == 0);
+}
+
+TEST_CASE("ptrace tells a signal delivery stop from a signal death", "[ptrace]")
+{
+    ChildProcess child;
+    REQUIRE(child.valid());
+
+    REQUIRE(slopkit::platform::seize(child.pid()).has_value());
+    REQUIRE(slopkit::platform::interrupt(child.pid()).has_value());
+    REQUIRE(slopkit::platform::wait(std::array {child.pid()}).has_value());
+
+    // Let the child run, then deliver SIGUSR1 from outside: it stops so the
+    // signal can be handled and the child is still alive, so this is a delivery
+    // stop rather than a death.
+    REQUIRE(slopkit::platform::cont(child.pid()).has_value());
+    REQUIRE(::kill(static_cast<pid_t>(child.pid()), SIGUSR1) == 0);
+    const auto delivery = slopkit::platform::wait(std::array {child.pid()});
+    REQUIRE(delivery.has_value());
+    CHECK(delivery->reason == StopReason::signal_stop);
+    CHECK(delivery->signal == SIGUSR1);
+    REQUIRE(slopkit::platform::read_status(child.pid()).has_value());
+
+    // Letting the signal through applies its default action: the child dies of
+    // it, which is a signal death and not a stop.
+    REQUIRE(slopkit::platform::cont(child.pid(), SIGUSR1).has_value());
+    const auto death = slopkit::platform::wait(std::array {child.pid()});
+    REQUIRE(death.has_value());
+    CHECK(death->reason == StopReason::signalled);
+    CHECK(death->signal == SIGUSR1);
 }
 
 TEST_CASE("ptrace reports a missing thread", "[ptrace]")

@@ -32,5 +32,6 @@ read/write path never attaches to the target. The technique categories:
 
 The concrete method is left to each plugin; a plugin may legitimately use a more
 detectable primitive while it is being brought up, as long as it reports that.
-The debugger is the sanctioned case: `linux-proc` uses `ptrace` only while an
-explicitly started debug session is open, and it reports that session in the log.
+The debugger is the sanctioned case: both `linux-proc` and `wine-proton` use
+`ptrace` only while an explicitly started debug session is open, and each reports
+that session in the log.

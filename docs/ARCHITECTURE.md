@@ -25,7 +25,7 @@ an out-of-process transport, with no UI change.
 | Plugin id | Claims | Precedence | Access methods |
 | --- | --- | --- | --- |
 | `linux-proc` | Any normal Linux process | 100 | `process_vm_*`, procfs, ptrace (debugger only) |
-| `wine-proton` | Wine/Proton game processes | 10 | `process_vm_*`, procfs |
+| `wine-proton` | Wine/Proton game processes | 10 | `process_vm_*`, procfs, ptrace (debugger only) |
 
 Lower precedence wins, so `wine-proton` is the default target for a Wine process
 that `linux-proc` also claims; the process picker still shows the alternatives.
@@ -91,9 +91,15 @@ beside the normal access path rather than in it, so the read/write path stays
 
 - `platform::ptrace` is the only place that calls `ptrace`. Both bundled plugins
   and the test binary link it through `slopkit_platform`.
-- `linux-proc` implements the ABI 1.4 `debug_*` operations over it; a plugin that
-  leaves those pointers null (for example `wine-proton`) simply cannot debug, and
-  the host reports `unsupported` instead of rejecting the plugin.
+- `platform::DebugSession` is the shared debugger core: it seizes the thread
+  group, owns the 64 software / 4 hardware breakpoint slots and the wait loop,
+  and both `linux-proc` and `wine-proton` implement the ABI 1.4 `debug_*`
+  operations as thin wrappers over it. Its `ForeignSignalPolicy` decides what
+  happens to a stop the debugger did not ask for: `suppress` resumes with signal
+  0 (what `linux-proc` uses), while `forward` re-delivers the signal to the
+  target's own handler and keeps waiting (`wine-proton`, because Wine's runtime
+  signals the target constantly). A target *killed* by a signal is still reported
+  so the controller can end the session.
 - `debug::PluginBackend` wraps its own plugin session, `debug::Worker` owns every
   call on one job thread — a tracee may only be ptraced by the thread that
   attached it — and `debug::Controller` is the UI-facing session owner: the

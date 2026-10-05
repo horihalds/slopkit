@@ -21,6 +21,7 @@ namespace slopkit::platform
         interrupt,   // PTRACE_INTERRUPT stopped the thread group
         exited,      // the tracee exited
         signalled,   // the tracee was killed by a signal
+        signal_stop, // the tracee was stopped to deliver a signal
     };
 
     // One waitpid result for a traced thread.
