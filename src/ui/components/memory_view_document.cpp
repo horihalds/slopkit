@@ -249,7 +249,7 @@ namespace slopkit::ui::components
             {
                 return;
             }
-            pending_bases_[slot] = base;
+            pending_bases_[slot] = PendingBlock {.base = base, .size = size};
             requests.push_back(ui::LiveRequest {.id = slot, .address = base, .size = size});
         };
 
@@ -280,12 +280,20 @@ namespace slopkit::ui::components
                 continue; // Not a block this pass submitted.
             }
 
-            const std::uint64_t base  = *pending_bases_[reading.id];
-            Block&              block = blocks_[base];
-            block.base                = base;
+            const PendingBlock& pending = *pending_bases_[reading.id];
+            Block&              block   = blocks_[pending.base];
+            block.base                  = pending.base;
 
             if (!reading.readable || reading.bytes.empty())
             {
+                // Give the window the buffer it was submitted with (zero-filled)
+                // so the failed bytes paint `?` instead of nothing at all.
+                const auto size = static_cast<std::size_t>(pending.size);
+                const bool grew = block.bytes.size() < size;
+                if (grew)
+                {
+                    block.bytes.resize(size, std::byte {0});
+                }
                 const bool was_readable = std::ranges::any_of(block.readable,
                                                               [](bool readable)
                                                               {
@@ -293,7 +301,7 @@ namespace slopkit::ui::components
                                                               });
                 block.readable.assign(block.bytes.size(), false);
                 block.changed.assign(block.bytes.size(), false);
-                dirty = dirty || was_readable;
+                dirty = dirty || was_readable || grew;
                 continue;
             }
 
@@ -358,7 +366,35 @@ namespace slopkit::ui::components
             {
                 result.text.remove(0, 2);
             }
+            return result;
         }
+
+        if (format_.hex)
+        {
+            // Two `?` per unreadable byte, each readable byte's digits in their
+            // own positions, walking the bytes most-significant first so a
+            // partially readable value lines up with scan::format_value's digits.
+            result.text.reserve(static_cast<qsizetype>(size) * 2);
+            for (std::size_t index = size; index-- > 0;)
+            {
+                const std::size_t position = start + index;
+                if (!block->readable[position])
+                {
+                    result.text += QStringLiteral("??");
+                    continue;
+                }
+                QString byte_text = to_qstring(scan::format_value(
+                    scan::ValueType::byte, std::span<const std::byte>(block->bytes.data() + position, 1), true));
+                if (byte_text.startsWith(QStringLiteral("0x")))
+                {
+                    byte_text.remove(0, 2);
+                }
+                result.text += byte_text;
+            }
+            return result;
+        }
+
+        result.text = QStringLiteral("?");
         return result;
     }
 
@@ -433,20 +469,6 @@ namespace slopkit::ui::components
         return text;
     }
 
-    bool MemoryViewDocument::any_unreadable() const
-    {
-        const std::uint64_t extent = window_extent();
-        for (std::uint64_t index = 0; index < extent; ++index)
-        {
-            std::byte value {};
-            if (!byte_at(first_byte_ + index, value))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
     void MemoryViewDocument::seed_written(std::uint64_t address, const std::vector<std::byte>& bytes)
     {
         const std::uint64_t base  = block_base_for(address);
@@ -474,19 +496,19 @@ namespace slopkit::ui::components
     {
         if (!target_.valid())
         {
-            emit statusChanged(tr("Not attached; cannot write."), true);
+            log::warning(log::category::ui, "memory view write refused: no target attached");
             return false;
         }
         if (write_pending_.has_value())
         {
-            emit statusChanged(tr("A write is already in progress."), true);
+            log::warning(log::category::ui, "memory view write refused: a write is already in progress");
             return false;
         }
 
         const std::size_t size = format_.size();
         if (size == 0)
         {
-            emit statusChanged(tr("Value: unsupported value type."), true);
+            log::warning(log::category::ui, "memory view write refused: unsupported value type");
             return false;
         }
 
@@ -496,13 +518,12 @@ namespace slopkit::ui::components
         if (!parsed)
         {
             log::warning(log::category::ui, std::format("memory view value rejected: {}", parsed.error().message));
-            emit statusChanged(tr("Value: %1").arg(to_qstring(parsed.error().message)), true);
             return false;
         }
         const std::vector<std::byte> encoded = scan::encode_value(format_.type, *parsed);
         if (encoded.size() != size)
         {
-            emit statusChanged(tr("Value: invalid value."), true);
+            log::warning(log::category::ui, "memory view write refused: invalid value");
             return false;
         }
 
@@ -528,7 +549,6 @@ namespace slopkit::ui::components
                 {
                     log::warning(log::category::ui,
                                  std::format("memory view write failed: {}", process::describe(*write.error)));
-                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*write.error))), true);
                     emit repaintRequested();
                     return;
                 }
@@ -536,13 +556,14 @@ namespace slopkit::ui::components
                 // Show what was just written without raising the change
                 // highlight, so the user's own write is not flagged as a move.
                 seed_written(address, cached);
-                emit statusChanged(tr("Value written."), false);
+                log::info(log::category::ui,
+                          std::format("memory view wrote {} byte(s) at {:#x}", cached.size(), address));
                 emit repaintRequested();
             });
         if (!submitted)
         {
             write_pending_.reset();
-            emit statusChanged(tr("Write unavailable."), true);
+            log::warning(log::category::ui, "memory view write refused: the access worker is not accepting jobs");
             return false;
         }
         return true;

@@ -17,13 +17,6 @@
 #include <QDialog>
 #include <QString>
 
-class QLabel;
-
-namespace slopkit::ui::widgets
-{
-    class StatusLabel;
-} // namespace slopkit::ui::widgets
-
 namespace slopkit::ui::components
 {
     class MemoryView;
@@ -33,9 +26,9 @@ namespace slopkit::ui::dialogs
 {
 
     // A hex-editor style live view of the attached target's memory: the
-    // ui::components::MemoryView filling the window behind a small status line.
-    // Reads and writes run on the access worker and the viewer renders its
-    // cached blocks, never touching a session.
+    // ui::components::MemoryView filling the whole window. Reads and writes run
+    // on the access worker and the viewer renders its cached blocks, never
+    // touching a session; write outcomes and Go To failures go to the log.
     class MemoryViewerDialog : public QDialog, public ui::LiveSurface
     {
         Q_OBJECT
@@ -46,8 +39,9 @@ namespace slopkit::ui::dialogs
         // Opens the viewer at `address`.
         void set_address(std::uint64_t address);
 
-        // Jumps to an address written as absolute ("0x1040") or module+RVA
-        // ("libc.so.6+1A2B"); false when the text does not name an address.
+        // Jumps to an address written as absolute ("0x1040"), a bare module
+        // name ("libc.so.6"), or module+RVA ("libc.so.6+1A2B"); false when the
+        // text does not name an address.
         bool go_to(const QString& text);
 
         // Sets the module image spans used to render module-relative addresses.
@@ -75,21 +69,14 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] std::string validate_go_to(std::string_view text) const;
         // Submits a pointer-chain expression to the worker and jumps on completion.
         void                      resolve_go_to(const std::string& expression);
-        // Asks the coordinator for an immediate pass and shows the loading state.
+        // Asks the coordinator for an immediate pass.
         void                      request_page();
-        void                      update_state();
 
         process::AccessWorker&         worker_;
         process::AttachedTarget&       target_;
         components::MemoryViewDocument document_;
         components::MemoryView*        view_ {};
-        QLabel*                        loading_label_ {};
-        widgets::StatusLabel*          status_ {};
         std::optional<process::JobId>  resolve_job_;
-
-        // The manual-request/loading state; the page cache lives in the document.
-        bool page_loaded_ {false};
-        bool manual_request_ {false};
     };
 
 } // namespace slopkit::ui::dialogs

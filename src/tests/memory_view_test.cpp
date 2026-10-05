@@ -18,12 +18,14 @@
 
 #include <QApplication>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QWheelEvent>
 
+#include "core/log.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
@@ -243,6 +245,24 @@ namespace
             document.apply_live_readings(readings);
         }
     };
+
+    // Removes the registered sink even when a failing assertion unwinds the case.
+    class SinkGuard
+    {
+    public:
+        explicit SinkGuard(slopkit::log::Sink sink) : id_(slopkit::log::Logger::instance().add_sink(std::move(sink))) {}
+
+        SinkGuard(const SinkGuard&)            = delete;
+        SinkGuard& operator=(const SinkGuard&) = delete;
+
+        ~SinkGuard()
+        {
+            slopkit::log::Logger::instance().remove_sink(id_);
+        }
+
+    private:
+        slopkit::log::SinkId id_;
+    };
 } // namespace
 
 TEST_CASE("the memory view document windows the visible block and its neighbours", "[memory_view]")
@@ -420,22 +440,46 @@ TEST_CASE("the memory view document decodes the row for each text encoding", "[m
     CHECK(fixture.document.text_row(kBase + 16).startsWith(QStringLiteral("A.B.")));
 }
 
-TEST_CASE("the memory view document reports unreadable bytes", "[memory_view]")
+TEST_CASE("the memory view document renders unreadable bytes as placeholders", "[memory_view]")
 {
     Fixture fixture;
-    fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0x11});
-    fixture.pass();
-    CHECK_FALSE(fixture.document.any_unreadable());
+    fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0xAB});
 
-    slopkit::ui::LiveReading failed;
-    failed.id                             = 1;
-    failed.readable                       = false;
-    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
-    fixture.document.apply_live_readings(std::vector<slopkit::ui::LiveReading> {failed});
-
-    CHECK(fixture.document.any_unreadable());
-    CHECK_FALSE(fixture.document.cell(kBase).readable);
+    // Nothing has been read for the window yet, so the cell stays blank: "not
+    // read yet" is not the same as "could not be read".
     CHECK(fixture.document.cell(kBase).text.isEmpty());
+
+    const auto fail_visible = [&fixture]
+    {
+        slopkit::ui::LiveReading failed;
+        failed.id                             = 1;
+        failed.readable                       = false;
+        [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
+        fixture.document.apply_live_readings(std::vector<slopkit::ui::LiveReading> {failed});
+    };
+
+    // A failed read gives the block its submitted buffer and paints `??`.
+    fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = true});
+    fail_visible();
+    CHECK_FALSE(fixture.document.cell(kBase).readable);
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("??"));
+
+    // A wider hex format shows two `?` per unreadable byte, matching the
+    // readable cell's width so columns stay aligned.
+    fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("????????"));
+    CHECK(fixture.document.cell(kBase).text.size() == 8);
+
+    // A decimal format collapses to a single `?`.
+    fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = false});
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("?"));
+
+    // A good pass replaces the placeholders with the value.
+    fixture.access.unreadable->clear();
+    fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = true});
+    fixture.pass();
+    CHECK(fixture.document.cell(kBase).readable);
+    CHECK(fixture.document.cell(kBase).text == QStringLiteral("AB"));
 }
 
 TEST_CASE("the memory view document writes through the access worker", "[memory_view]")
@@ -445,15 +489,11 @@ TEST_CASE("the memory view document writes through the access worker", "[memory_
     fixture.pass();
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = true});
 
-    QString message;
-    bool    is_error = false;
-    QObject::connect(&fixture.document,
-                     &MemoryViewDocument::statusChanged,
-                     [&](const QString& text, bool error)
-                     {
-                         message  = text;
-                         is_error = error;
-                     });
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
 
     CHECK(fixture.document.write_value(kBase, QStringLiteral("0xEF")));
     REQUIRE(pump_worker(fixture.worker,
@@ -461,31 +501,42 @@ TEST_CASE("the memory view document writes through the access worker", "[memory_
                         {
                             return fixture.access.memory->at(kBase) == std::byte {0xEF};
                         }));
-    CHECK_FALSE(is_error);
+    REQUIRE_FALSE(records.empty());
+    CHECK(records.back().level == slopkit::log::Level::info);
+    CHECK(records.back().message.find("memory view wrote") != std::string::npos);
 
     // The next identical reading does not flash the written byte as changed.
     fixture.pass();
     CHECK_FALSE(fixture.document.cell(kBase).changed);
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("EF"));
 
-    // A malformed value is rejected without touching memory.
+    // A malformed value is rejected without touching memory, with one record.
+    records.clear();
     CHECK_FALSE(fixture.document.write_value(kBase, QStringLiteral("not a number")));
-    CHECK(is_error);
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().level == slopkit::log::Level::warning);
+    CHECK(records.front().message.find("memory view value rejected") != std::string::npos);
     CHECK(fixture.access.memory->at(kBase) == std::byte {0xEF});
 
     // Only one write may be in flight.
     CHECK(fixture.document.write_value(kBase, QStringLiteral("0x01")));
+    records.clear();
     CHECK_FALSE(fixture.document.write_value(kBase, QStringLiteral("0x02")));
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().message == "memory view write refused: a write is already in progress");
     pump_worker(fixture.worker,
                 [&]
                 {
                     return fixture.access.memory->at(kBase) == std::byte {0x01};
                 });
 
-    // A detached target refuses the write with the expected message.
+    // A detached target refuses the write with one warning record.
+    records.clear();
     fixture.target.session_live = false;
     CHECK_FALSE(fixture.document.write_value(kBase, QStringLiteral("0x03")));
-    CHECK(message == QStringLiteral("Not attached; cannot write."));
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().level == slopkit::log::Level::warning);
+    CHECK(records.front().message == "memory view write refused: no target attached");
 }
 
 TEST_CASE("the memory view document clamps the window at address zero and the user-space ceiling", "[memory_view]")
@@ -783,9 +834,11 @@ TEST_CASE("the memory view options menu switches the display", "[memory_view]")
     CHECK(show_text->isCheckable());
     CHECK(show_text->isChecked());
 
-    // The top entry asks the dialog to prompt for an address.
+    // The top entry asks the dialog to prompt for an address and carries Ctrl+G.
     QAction* go_to = action(&menu, QStringLiteral("Go To..."));
     REQUIRE(go_to != nullptr);
+    CHECK(go_to == view.goto_action());
+    CHECK(go_to->shortcut() == QKeySequence(QStringLiteral("Ctrl+G")));
     bool asked = false;
     QObject::connect(&view,
                      &MemoryView::gotoRequested,

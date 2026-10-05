@@ -7,7 +7,6 @@
 #include <utility>
 #include <vector>
 
-#include <QLabel>
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
@@ -33,38 +32,15 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::build_layout()
     {
-        // The byte view fills the window; only the loading and status lines share
-        // the space below it.
+        // The byte view is the whole dialog: there is no status or loading line.
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(6, 6, 6, 6);
-        layout->setSpacing(4);
 
         view_ = new components::MemoryView(document_, this);
         layout->addWidget(view_, 1);
 
-        // The loading and status rows keep a constant height: hiding or clearing
-        // them would resize the byte view, re-align the live window and drop the
-        // pass in flight.
-        loading_label_ = new QLabel(tr("Loading..."), this);
-        loading_label_->setObjectName(QStringLiteral("loading_label"));
-        loading_label_->setMinimumHeight(loading_label_->fontMetrics().height());
-        layout->addWidget(loading_label_);
-
-        status_ = new widgets::StatusLabel(this);
-        status_->setMinimumHeight(status_->fontMetrics().height());
-        layout->addWidget(status_);
-
-        // "Go To..." in the right-click menu asks for an address here.
+        // "Go To..." in the right-click menu (or Ctrl+G) asks for an address here.
         connect(view_, &components::MemoryView::gotoRequested, this, &MemoryViewerDialog::prompt_go_to);
-
-        // A write result or rejection goes to the status line.
-        connect(&document_,
-                &components::MemoryViewDocument::statusChanged,
-                this,
-                [this](const QString& message, bool is_error)
-                {
-                    status_->set_status(is_error ? widgets::StatusKind::error : widgets::StatusKind::success, message);
-                });
     }
 
     void MemoryViewerDialog::showEvent(QShowEvent* event)
@@ -73,17 +49,12 @@ namespace slopkit::ui::dialogs
         // The coordinator only submits the window while the dialog is visible, so
         // showing it is enough to bring the page up to date.
         document_.set_visible(true);
-        page_loaded_ = false;
         request_page();
     }
 
     void MemoryViewerDialog::set_address(std::uint64_t address)
     {
         view_->set_first_byte(address);
-
-        // The cached window no longer matches the top byte.
-        page_loaded_ = false;
-        update_state();
         if (isVisible())
         {
             request_page();
@@ -96,12 +67,7 @@ namespace slopkit::ui::dialogs
         {
             return false;
         }
-        page_loaded_ = false;
-        update_state();
-        if (isVisible())
-        {
-            request_page();
-        }
+        set_address(view_->first_byte());
         return true;
     }
 
@@ -111,7 +77,7 @@ namespace slopkit::ui::dialogs
         options.title       = tr("Go To");
         options.label       = tr("Address or expression:");
         options.initial     = document_.display_text(view_->first_byte());
-        options.placeholder = QStringLiteral("module+0x10 or module+0d+5d+44");
+        options.placeholder = QStringLiteral("module, module+0x10 or module+0d+5d+44");
         options.monospace   = true;
         options.validate    = [this](const QString& text)
         {
@@ -131,9 +97,15 @@ namespace slopkit::ui::dialogs
         }
         if (expression->pointer_levels() == 0)
         {
-            if (!go_to(*accepted))
+            if (go_to(*accepted))
             {
-                log::warning(log::category::ui, "memory viewer got an unparseable address");
+                log::info(log::category::ui, std::format("memory viewer go to {}", accepted->toStdString()));
+            }
+            else
+            {
+                log::warning(
+                    log::category::ui,
+                    std::format("memory viewer go to failed: {} (unparseable address)", accepted->toStdString()));
             }
             return;
         }
@@ -162,41 +134,43 @@ namespace slopkit::ui::dialogs
     {
         const process::JobId id = worker_.next_job_id();
         resolve_job_            = id;
-        status_->set_status(widgets::StatusKind::info, tr("Resolving..."));
 
-        const bool submitted =
-            worker_.submit_resolve_expressions(id,
-                                               std::vector<process::ResolveRequest> {
-                                                   process::ResolveRequest {.key = 0, .expression = expression}
+        const bool submitted = worker_.submit_resolve_expressions(
+            id,
+            std::vector<process::ResolveRequest> {
+                process::ResolveRequest {.key = 0, .expression = expression}
         },
-                                               ui::module_refs(document_.module_spans()),
-                                               8,
-                                               [this, id](process::JobResult&& result)
-                                               {
-                                                   if (resolve_job_ != id)
-                                                   {
-                                                       return; // superseded by a later prompt
-                                                   }
-                                                   resolve_job_.reset();
+            ui::module_refs(document_.module_spans()),
+            8,
+            [this, id, expression](process::JobResult&& result)
+            {
+                if (resolve_job_ != id)
+                {
+                    return; // superseded by a later prompt
+                }
+                resolve_job_.reset();
 
-                                                   const auto& resolved = std::get<process::ResolveResult>(result);
-                                                   if (!resolved.error.has_value() && !resolved.items.empty()
-                                                       && resolved.items.front().address.has_value())
-                                                   {
-                                                       set_address(*resolved.items.front().address);
-                                                       return;
-                                                   }
-                                                   const QString message =
-                                                       resolved.error.has_value() || resolved.items.empty()
-                                                           ? tr("No target attached.")
-                                                           : QString::fromStdString(resolved.items.front().error);
-                                                   status_->set_status(widgets::StatusKind::error, message);
-                                               });
+                const auto& resolved = std::get<process::ResolveResult>(result);
+                if (!resolved.error.has_value() && !resolved.items.empty()
+                    && resolved.items.front().address.has_value())
+                {
+                    log::info(
+                        log::category::ui,
+                        std::format("memory viewer go to {} -> {:#x}", expression, *resolved.items.front().address));
+                    set_address(*resolved.items.front().address);
+                    return;
+                }
+                const std::string reason = resolved.error.has_value() || resolved.items.empty()
+                                             ? std::string("no target attached")
+                                             : resolved.items.front().error;
+                log::warning(log::category::ui, std::format("memory viewer go to failed: {} ({})", expression, reason));
+            });
 
         if (!submitted)
         {
             resolve_job_.reset();
-            status_->set_status(widgets::StatusKind::error, tr("Could not start the resolve."));
+            log::warning(log::category::ui,
+                         std::format("memory viewer go to failed: {} (could not start the resolve)", expression));
         }
     }
 
@@ -212,8 +186,6 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::request_page()
     {
-        manual_request_ = true;
-        update_state();
         emit liveRefreshRequested();
     }
 
@@ -229,27 +201,6 @@ namespace slopkit::ui::dialogs
             return;
         }
         document_.apply_live_readings(readings);
-        page_loaded_    = true;
-        manual_request_ = false;
-        update_state();
-    }
-
-    void MemoryViewerDialog::update_state()
-    {
-        const bool loading = target_.valid() && (manual_request_ || !page_loaded_);
-        loading_label_->setText(loading ? tr("Loading...") : QString());
-
-        if (!target_.valid())
-        {
-            status_->set_status(widgets::StatusKind::info, tr("No process attached."));
-            return;
-        }
-        if (document_.any_unreadable() && !loading)
-        {
-            status_->set_status(widgets::StatusKind::warning, tr("Some bytes could not be read."));
-            return;
-        }
-        status_->clear_status();
     }
 
 } // namespace slopkit::ui::dialogs

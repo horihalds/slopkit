@@ -761,8 +761,13 @@ TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")
     CHECK(slopkit::ui::parse_address_text("low+0x40", spans) == std::optional<std::uint64_t> {0x1040});
     CHECK(slopkit::ui::parse_address_text("low+0", spans) == std::optional<std::uint64_t> {0x1000});
 
+    // A bare module name resolves to its base, case-insensitively.
+    CHECK(slopkit::ui::parse_address_text("low", spans) == std::optional<std::uint64_t> {0x1000});
+    CHECK(slopkit::ui::parse_address_text("LOW", spans) == std::optional<std::uint64_t> {0x1000});
+
     // An unknown module or an unparsable RVA yields nothing.
     CHECK_FALSE(slopkit::ui::parse_address_text("missing+40", spans).has_value());
+    CHECK_FALSE(slopkit::ui::parse_address_text("missing", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("low+bogus", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("not an address", spans).has_value());
 }
@@ -5460,8 +5465,10 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
-    auto* loading = viewer.findChild<QLabel*>(QStringLiteral("loading_label"));
-    REQUIRE(loading != nullptr);
+
+    // The byte view is the whole dialog: no loading or status row remains.
+    CHECK(viewer.findChild<QLabel*>(QStringLiteral("loading_label")) == nullptr);
+    CHECK(viewer.findChildren<slopkit::ui::widgets::StatusLabel*>().isEmpty());
 
     // The target serves reads at the requested block base only, so a helper
     // seeds every block of the window the view just asked for.
@@ -5506,9 +5513,7 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
                     {
                         return view->cell_text(0x1000) == QStringLiteral("AB");
                     }));
-    // The indicator keeps its row but is empty while no pass is in flight.
-    CHECK(loading->isVisible());
-    CHECK(loading->text().isEmpty());
+    // No indicator row sits below the byte view, so nothing else changes.
 
     // A changed byte follows on the next pass.
     const std::uint64_t middle                = requests[1].address;
@@ -5649,10 +5654,127 @@ TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
     CHECK(viewer.go_to(QStringLiteral("0x2000")));
     CHECK(view->first_byte() == 0x2000);
 
+    // A bare module name jumps to the module base, case-insensitively.
+    CHECK(viewer.go_to(QStringLiteral("APP")));
+    CHECK(view->first_byte() == 0x1000);
+    CHECK(viewer.go_to(QStringLiteral("app")));
+    CHECK(view->first_byte() == 0x1000);
+
     // An unparsable value leaves the page where it was.
     const std::uint64_t before = view->first_byte();
+    CHECK_FALSE(viewer.go_to(QStringLiteral("missing")));
+    CHECK(view->first_byte() == before);
     CHECK_FALSE(viewer.go_to(QStringLiteral("missing+40")));
     CHECK(view->first_byte() == before);
+}
+
+TEST_CASE("the memory viewer opens Go To with Ctrl+G", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    UiFakeAccess                   access;
+    slopkit::process::AccessWorker worker {access};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->goto_action() != nullptr);
+    CHECK(view->goto_action()->shortcut() == QKeySequence(QStringLiteral("Ctrl+G")));
+
+    viewer.set_address(0x1000);
+    viewer.show();
+    view->setFocus();
+    QCoreApplication::processEvents();
+
+    // Answers the prompt as soon as it opens, recording that it did.
+    bool       opened        = false;
+    const auto answer_prompt = [&opened]
+    {
+        QTimer::singleShot(0,
+                           [&opened]
+                           {
+                               for (QWidget* widget : QApplication::topLevelWidgets())
+                               {
+                                   auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                                   if (box != nullptr && box->isVisible())
+                                   {
+                                       opened = true;
+                                       box->line_edit()->setText(QStringLiteral("0x2000"));
+                                       box->accept();
+                                       return;
+                                   }
+                               }
+                           });
+    };
+
+    // Ctrl+G opens the prompt; the offscreen platform can decline to dispatch
+    // window shortcuts, so fall back to the action the shortcut triggers.
+    answer_prompt();
+    QKeyEvent ctrl_g(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier);
+    QApplication::sendEvent(view, &ctrl_g);
+    QCoreApplication::processEvents();
+    if (!opened)
+    {
+        answer_prompt();
+        view->goto_action()->trigger();
+        QCoreApplication::processEvents();
+    }
+
+    CHECK(opened);
+    CHECK(view->first_byte() == 0x2000);
+    viewer.hide();
+}
+
+TEST_CASE("the memory viewer shows ? for bytes it cannot read", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+
+    viewer.set_address(0x1000);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        const std::size_t before = view->visible_rows();
+        QCoreApplication::processEvents();
+        if (view->visible_rows() == before)
+        {
+            break;
+        }
+    }
+
+    // No reading has arrived yet, so the visible cells stay blank.
+    CHECK(view->cell_text(0x1000).isEmpty());
+
+    const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+    REQUIRE(requests.size() == 3);
+    const std::uint64_t block_base = requests[1].address;
+    const std::uint64_t block_size = requests[1].size;
+
+    slopkit::ui::LiveReading failed;
+    failed.id       = 1;
+    failed.readable = false;
+    viewer.apply_live_readings(std::vector<slopkit::ui::LiveReading> {failed});
+
+    // Every value cell of the unreadable window now shows the placeholder.
+    CHECK(view->cell_text(0x1000) == QStringLiteral("??"));
+    CHECK(view->cell_text(block_base) == QStringLiteral("??"));
+    CHECK(view->cell_text(block_base + block_size - 1) == QStringLiteral("??"));
+
+    // A cell no reading covers at all stays blank.
+    viewer.hide();
+    viewer.set_address(0x1000000);
+    CHECK(view->cell_text(0x1000000).isEmpty());
 }
 
 TEST_CASE("the memory viewer go-to follows a pointer-chain expression", "[ui]")
@@ -5733,11 +5855,15 @@ TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
     // The pointer's own address cannot be read, so the chain fails at level 1.
     access.unreadable->insert(0x100000);
 
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
-    auto*                                    view   = viewer.findChild<slopkit::ui::components::MemoryView*>();
-    auto*                                    status = viewer.findChild<slopkit::ui::widgets::StatusLabel*>();
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
-    REQUIRE(status != nullptr);
     viewer.set_modules({module_image("app", 0x100000, 0x1000)});
     viewer.set_address(0x100000);
     viewer.show();
@@ -5772,11 +5898,19 @@ TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
     REQUIRE(go_to != nullptr);
     go_to->trigger();
 
-    // The failure is reported and the page does not move.
+    // The failure is logged and the page does not move.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return status->text().contains(QStringLiteral("cannot read pointer"));
+                        for (const slopkit::log::Record& record : records)
+                        {
+                            if (record.level == slopkit::log::Level::warning
+                                && record.message.find("memory viewer go to failed") != std::string::npos)
+                            {
+                                return true;
+                            }
+                        }
+                        return false;
                     }));
     CHECK(view->first_byte() == 0x100000);
     viewer.hide();

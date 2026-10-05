@@ -68,9 +68,11 @@ namespace slopkit::ui
     [[nodiscard]] std::optional<QString>
     module_relative_text(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
 
-    // A deref-free address: an absolute `0x…`/decimal value, or a
-    // `<module>+<RVA>` / `<literal>+<offset>` expression. A pointer chain (two
-    // or more offsets) yields nothing - it must go through the access worker.
+    // A deref-free address: an absolute `0x…`/decimal value, a bare module name
+    // (resolved case-insensitively to its base, winning over the decimal
+    // reading), or a `<module>+<RVA>` / `<literal>+<offset>` expression. A
+    // pointer chain (two or more offsets) yields nothing - it must go through
+    // the access worker.
     [[nodiscard]] std::optional<std::uint64_t> parse_address_text(std::string_view text, const ModuleSpans& spans);
 
     // The module map in the form the expression resolver expects.

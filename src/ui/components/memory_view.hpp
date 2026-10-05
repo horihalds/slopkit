@@ -10,6 +10,7 @@
 #include <QRect>
 #include <QString>
 
+class QAction;
 class QLineEdit;
 class QMenu;
 
@@ -31,8 +32,8 @@ namespace slopkit::ui::components
         // Jumps the top address to exactly `address` (clamped to the user-space
         // ceiling); Go To and the dialog's open-at address use this.
         void                        set_first_byte(std::uint64_t address);
-        // Parses `text` (absolute or module+RVA) and jumps there; false when the
-        // text does not name an address.
+        // Parses `text` (absolute, module+RVA or a bare module name) and jumps
+        // there; false when the text does not name an address.
         bool                        go_to(const QString& text);
         void                        set_text_column_visible(bool visible);
         [[nodiscard]] bool          text_column_visible() const noexcept;
@@ -45,7 +46,8 @@ namespace slopkit::ui::components
         // The viewport rect of the value cell at `address`, or nullopt when the
         // address is not on a visible row.
         [[nodiscard]] std::optional<QRect> cell_rect(std::uint64_t address) const;
-        // The value text the cell at `address` renders (empty when unreadable).
+        // The value text the cell at `address` renders (a `?` placeholder when
+        // unreadable, empty when no reading covers the address).
         [[nodiscard]] QString              cell_text(std::uint64_t address) const;
         // The hex offset text painted in the column header for `column` (no `0x`).
         [[nodiscard]] QString              column_offset_text(std::size_t column) const;
@@ -55,6 +57,11 @@ namespace slopkit::ui::components
         // each entry to apply itself. Public so tests can inspect it without
         // opening a menu.
         void populate_options_menu(QMenu& menu);
+
+        // The persistent "Go To..." action (Ctrl+G, window-scoped). It is a
+        // child of the view and is added to the view, so the shortcut fires
+        // anywhere in the dialog's window.
+        [[nodiscard]] QAction* goto_action() const noexcept;
 
         // The inline editor (created on first use, hidden afterwards).
         [[nodiscard]] QLineEdit* editor() const noexcept;
@@ -113,6 +120,7 @@ namespace slopkit::ui::components
         bool          text_column_visible_ {true};
         bool          layout_ready_ {false};
 
+        QAction*      goto_action_ {};
         QLineEdit*    editor_ {};
         bool          editing_ {false};
         std::uint64_t edit_address_ {0};

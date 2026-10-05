@@ -103,18 +103,21 @@ namespace slopkit::ui::components
         [[nodiscard]] Cell    cell(std::uint64_t address) const;
         [[nodiscard]] QString text_row(std::uint64_t row_address) const;
 
-        // True while any byte of the visible range could not be read.
-        [[nodiscard]] bool any_unreadable() const;
-
         // Parses `text` for the current format, encodes it and submits the write;
-        // false plus statusChanged when it is rejected or a write is in flight.
+        // false when it is rejected or a write is in flight.
         bool write_value(std::uint64_t address, const QString& text);
 
     signals:
-        void statusChanged(const QString& message, bool is_error);
         void repaintRequested(); // new bytes or a new change mask
 
     private:
+        // One window slot submitted by the pass in flight.
+        struct PendingBlock
+        {
+            std::uint64_t base {};
+            std::uint64_t size {};
+        };
+
         [[nodiscard]] std::uint64_t window_extent() const noexcept;
         [[nodiscard]] std::uint64_t visible_block_base() const noexcept;
         [[nodiscard]] std::uint64_t block_base_for(std::uint64_t address) const noexcept;
@@ -139,11 +142,13 @@ namespace slopkit::ui::components
 
         std::map<std::uint64_t, Block> blocks_;
 
-        // Bases of the three window slots submitted in the pass in flight; reset
-        // whenever the window moves, so a stale reading is dropped.
-        std::array<std::optional<std::uint64_t>, 3> pending_bases_ {};
-        std::optional<std::uint64_t>                last_window_base_;
-        process::ProcessId                          requested_pid_ {0};
+        // Bases of the three window slots submitted in the pass in flight plus
+        // their requested size; reset whenever the window moves, so a stale
+        // reading is dropped. The size lets a failed read still give its block a
+        // buffer to render `?` placeholders from.
+        std::array<std::optional<PendingBlock>, 3> pending_bases_ {};
+        std::optional<std::uint64_t>               last_window_base_;
+        process::ProcessId                         requested_pid_ {0};
 
         std::optional<process::JobId> write_pending_;
     };

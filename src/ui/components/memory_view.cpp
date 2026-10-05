@@ -11,6 +11,7 @@
 #include <QFontMetrics>
 #include <QHideEvent>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
@@ -85,6 +86,17 @@ namespace slopkit::ui::components
                 {
                     viewport()->update();
                 });
+
+        goto_action_ = new QAction(tr("Go To..."), this);
+        goto_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+G")));
+        goto_action_->setShortcutContext(Qt::WindowShortcut);
+        addAction(goto_action_);
+        connect(goto_action_, &QAction::triggered, this, &MemoryView::gotoRequested);
+    }
+
+    QAction* MemoryView::goto_action() const noexcept
+    {
+        return goto_action_;
     }
 
     std::uint64_t MemoryView::first_byte() const noexcept
@@ -504,9 +516,11 @@ namespace slopkit::ui::components
                                 }
                             });
                 }
-                editing_      = true;
-                edit_address_ = hit->address;
-                editor_->setText(document_.cell(hit->address).text);
+                editing_                            = true;
+                edit_address_                       = hit->address;
+                const MemoryViewDocument::Cell cell = document_.cell(hit->address);
+                // An unreadable cell opens empty rather than pre-filled with `?`.
+                editor_->setText(cell.readable ? cell.text : QString());
                 editor_->setGeometry(hit->rect);
                 editor_->show();
                 editor_->setFocus(Qt::MouseFocusReason);
@@ -527,8 +541,7 @@ namespace slopkit::ui::components
 
     void MemoryView::populate_options_menu(QMenu& menu)
     {
-        QAction* go_to = menu.addAction(tr("Go To..."));
-        connect(go_to, &QAction::triggered, this, &MemoryView::gotoRequested);
+        menu.addAction(goto_action_);
         menu.addSeparator();
 
         // One exclusive group spans every value format, so exactly one is checked.

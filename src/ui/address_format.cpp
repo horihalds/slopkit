@@ -154,6 +154,12 @@ namespace slopkit::ui
     {
         if (text.find('+') == std::string_view::npos)
         {
+            // A bare module name jumps to the module base; the lookup is
+            // case-insensitive and wins over the decimal reading of the text.
+            if (const ModuleSpan* span = spans.find_by_name(text); span != nullptr)
+            {
+                return span->base;
+            }
             // A plain absolute address keeps its historical decimal/0x rules.
             const auto parsed = scan::parse_address(text);
             return parsed.has_value() ? std::optional<std::uint64_t> {*parsed} : std::nullopt;
