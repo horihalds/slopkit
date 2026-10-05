@@ -137,6 +137,16 @@ namespace slopkit::ui::panels
         model_->set_address_mode(mode);
     }
 
+    std::vector<ui::LiveRequest> FoundListPanel::next_live_request()
+    {
+        return model_->next_live_request();
+    }
+
+    void FoundListPanel::apply_live_readings(std::span<const ui::LiveReading> readings)
+    {
+        model_->apply_live_readings(readings);
+    }
+
     QWidget* FoundListPanel::tab_order_first() const noexcept
     {
         return table_view_;

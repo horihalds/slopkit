@@ -20,9 +20,9 @@ cancel, overwrite the open table or merge the file's addresses into it.
 | Tool | Purpose | Status |
 | --- | --- | --- |
 | Process list | Browse running processes, see which plugin claims each one, inspect it and attach/detach. | Implemented |
-| Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans. | Implemented |
-| Address list | Track found addresses, edit and freeze their values, and save or reopen the table. | Implemented |
-| Memory browser | Hex dump of live memory around a chosen address. | Implemented |
+| Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans, keeping the shown hits up to date with live memory. | Implemented |
+| Address list | Track found addresses, edit and freeze their values, watch them refresh live, and save or reopen the table. | Implemented |
+| Memory browser | Hex dump of live memory around a chosen address, refreshed automatically. | Implemented |
 | Practice target | A separate `slopkit-sandbox` process exposing values of every scan type; launch it from `Help > Launch Practice Target` and attach to practise the scanner. | Implemented |
 | Disassembler | Instruction decoding (Zydis) of live memory. | Planned |
 | Debugger | Breakpoints, stepping and register inspection. | Planned |

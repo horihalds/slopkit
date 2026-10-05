@@ -1,11 +1,13 @@
 #pragma once
 
+#include <span>
 #include <vector>
 
 #include "process/types.hpp"
 #include "scan/engine.hpp"
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
+#include "ui/live_values.hpp"
 
 #include <QWidget>
 
@@ -26,7 +28,7 @@ namespace slopkit::ui::panels
     // The left half of the middle zone: the `Showing N of M results` list. It
     // only reads the engine's snapshot and appends double-clicked hits to the
     // address table. Its entry row hosts the Memory View button.
-    class FoundListPanel : public QWidget
+    class FoundListPanel : public QWidget, public ui::LiveSurface
     {
         Q_OBJECT
 
@@ -56,6 +58,10 @@ namespace slopkit::ui::panels
         // (last) of the found list's own run.
         [[nodiscard]] QWidget* tab_order_first() const noexcept; // the hits table
         [[nodiscard]] QWidget* tab_order_last() const noexcept;  // Memory View
+
+        // LiveSurface: the shown rows of the result set, delegated to the model.
+        [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
+        void apply_live_readings(std::span<const ui::LiveReading> readings) override;
 
     signals:
         // A request to open the Memory Viewer at the main module's entry point

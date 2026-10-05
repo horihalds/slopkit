@@ -41,6 +41,8 @@ TEST_CASE("A missing settings file falls back to the defaults", "[settings]")
     REQUIRE(controller.values().auto_load_last_table == false);
     REQUIRE(controller.values().last_table_path.isEmpty());
     REQUIRE(controller.values().last_directory.isEmpty());
+    REQUIRE(controller.values().live_update_enabled == true);
+    REQUIRE(controller.values().live_update_interval_ms == 250);
 }
 
 TEST_CASE("Settings survive a round-trip through the INI file", "[settings]")
@@ -53,6 +55,8 @@ TEST_CASE("Settings survive a round-trip through the INI file", "[settings]")
         controller.set_auto_load_last_table(true);
         controller.set_last_table_path(QStringLiteral("/tmp/roundtrip.skt"));
         controller.set_last_directory(QStringLiteral("/tmp"));
+        controller.set_live_update_enabled(false);
+        controller.set_live_update_interval_ms(1000);
     }
 
     SettingsController reloaded(path);
@@ -61,6 +65,8 @@ TEST_CASE("Settings survive a round-trip through the INI file", "[settings]")
     REQUIRE(reloaded.values().auto_load_last_table == true);
     REQUIRE(reloaded.values().last_table_path == QStringLiteral("/tmp/roundtrip.skt"));
     REQUIRE(reloaded.values().last_directory == QStringLiteral("/tmp"));
+    REQUIRE(reloaded.values().live_update_enabled == false);
+    REQUIRE(reloaded.values().live_update_interval_ms == 1000);
 }
 
 TEST_CASE("A hand-written INI file is loaded", "[settings]")
@@ -90,6 +96,36 @@ TEST_CASE("Unrecognised settings values fall back to the defaults", "[settings]"
     REQUIRE(controller.values().dark_theme == true);
     REQUIRE(controller.values().address_mode == AddressMode::module_relative);
     REQUIRE(controller.values().auto_load_last_table == false);
+    REQUIRE(controller.values().live_update_enabled == true);
+    REQUIRE(controller.values().live_update_interval_ms == 250);
+}
+
+TEST_CASE("The live-update interval is clamped into range", "[settings]")
+{
+    const QString low_path = scratch_file("live_low.ini");
+    write_text(low_path, "liveUpdateIntervalMs=1\n");
+    SettingsController low {low_path};
+    REQUIRE(low.values().live_update_interval_ms == 50);
+
+    const QString high_path = scratch_file("live_high.ini");
+    write_text(high_path, "liveUpdateIntervalMs=99999\n");
+    SettingsController high {high_path};
+    REQUIRE(high.values().live_update_interval_ms == 5000);
+
+    const QString malformed_path = scratch_file("live_malformed.ini");
+    write_text(malformed_path, "liveUpdateIntervalMs=soon\n");
+    SettingsController malformed {malformed_path};
+    REQUIRE(malformed.values().live_update_interval_ms == 250);
+}
+
+TEST_CASE("The live-update values survive a manual INI", "[settings]")
+{
+    const QString path = scratch_file("live_manual.ini");
+    write_text(path, "liveUpdateEnabled=false\nliveUpdateIntervalMs=1000\n[appearance]\ndark_theme=true\n");
+
+    SettingsController controller {path};
+    REQUIRE(controller.values().live_update_enabled == false);
+    REQUIRE(controller.values().live_update_interval_ms == 1000);
 }
 
 TEST_CASE("Settings signals fire once per real change", "[settings]")
@@ -99,6 +135,8 @@ TEST_CASE("Settings signals fire once per real change", "[settings]")
     int theme_changes     = 0;
     int mode_changes      = 0;
     int auto_load_changes = 0;
+    int live_changes      = 0;
+    int interval_changes  = 0;
     QObject::connect(&controller,
                      &SettingsController::darkThemeChanged,
                      [&theme_changes](bool)
@@ -117,6 +155,18 @@ TEST_CASE("Settings signals fire once per real change", "[settings]")
                      {
                          ++auto_load_changes;
                      });
+    QObject::connect(&controller,
+                     &SettingsController::liveUpdateChanged,
+                     [&live_changes](bool)
+                     {
+                         ++live_changes;
+                     });
+    QObject::connect(&controller,
+                     &SettingsController::liveUpdateIntervalChanged,
+                     [&interval_changes](int)
+                     {
+                         ++interval_changes;
+                     });
 
     controller.set_dark_theme(false);
     REQUIRE(theme_changes == 1);
@@ -132,9 +182,24 @@ TEST_CASE("Settings signals fire once per real change", "[settings]")
     REQUIRE(auto_load_changes == 1);
     controller.set_auto_load_last_table(true);
     REQUIRE(auto_load_changes == 1);
+
+    controller.set_live_update_enabled(false);
+    REQUIRE(live_changes == 1);
+    controller.set_live_update_enabled(false);
+    REQUIRE(live_changes == 1);
+
+    // A setter clamps before comparing, so an out-of-range value still changes
+    // once and lands in range.
+    controller.set_live_update_interval_ms(1);
+    REQUIRE(interval_changes == 1);
+    REQUIRE(controller.values().live_update_interval_ms == 50);
+    controller.set_live_update_interval_ms(50);
+    REQUIRE(interval_changes == 1);
 
     controller.set_dark_theme(true);
     REQUIRE(theme_changes == 2);
     controller.set_auto_load_last_table(false);
     REQUIRE(auto_load_changes == 2);
+    controller.set_live_update_enabled(true);
+    REQUIRE(live_changes == 2);
 }

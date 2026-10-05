@@ -18,6 +18,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -66,6 +67,7 @@ namespace slopkit::ui::dialogs
         categories_ = new QListWidget(this);
         categories_->addItem(tr("Appearance"));
         categories_->addItem(tr("Addresses"));
+        categories_->addItem(tr("Live update"));
         categories_->addItem(tr("Tables"));
         categories_->addItem(tr("Scanning"));
         categories_->addItem(tr("Plugins"));
@@ -76,6 +78,7 @@ namespace slopkit::ui::dialogs
         pages_ = new QStackedWidget(this);
         pages_->addWidget(build_appearance_page());
         pages_->addWidget(build_addresses_page());
+        pages_->addWidget(build_live_update_page());
         pages_->addWidget(build_tables_page());
         pages_->addWidget(build_scanning_page());
         pages_->addWidget(build_plugins_page());
@@ -104,11 +107,18 @@ namespace slopkit::ui::dialogs
         set_dark_theme(settings_.values().dark_theme);
         set_address_mode(settings_.values().address_mode);
         set_auto_load_last_table(settings_.values().auto_load_last_table);
+        set_live_update_enabled(settings_.values().live_update_enabled);
+        set_live_update_interval_ms(settings_.values().live_update_interval_ms);
         refresh_last_table();
         connect(&settings_, &SettingsController::darkThemeChanged, this, &SettingsDialog::set_dark_theme);
         connect(&settings_, &SettingsController::addressModeChanged, this, &SettingsDialog::set_address_mode);
         connect(
             &settings_, &SettingsController::autoLoadLastTableChanged, this, &SettingsDialog::set_auto_load_last_table);
+        connect(&settings_, &SettingsController::liveUpdateChanged, this, &SettingsDialog::set_live_update_enabled);
+        connect(&settings_,
+                &SettingsController::liveUpdateIntervalChanged,
+                this,
+                &SettingsDialog::set_live_update_interval_ms);
     }
 
     QWidget* SettingsDialog::build_appearance_page()
@@ -197,6 +207,57 @@ namespace slopkit::ui::dialogs
         note->setWordWrap(true);
         layout->addWidget(note);
         layout->addStretch(1);
+        return page;
+    }
+
+    QWidget* SettingsDialog::build_live_update_page()
+    {
+        auto* page   = new QWidget(this);
+        auto* layout = new QVBoxLayout(page);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        layout->addWidget(widgets::section_header(tr("Live update"), page));
+
+        live_update_check_ = new QCheckBox(tr("Keep values in sync with live memory"), page);
+        live_update_check_->setObjectName(QStringLiteral("live_update_enabled"));
+        layout->addWidget(live_update_check_);
+
+        auto* form            = new QFormLayout();
+        live_update_interval_ = new QSpinBox(page);
+        live_update_interval_->setObjectName(QStringLiteral("live_update_interval"));
+        live_update_interval_->setRange(50, 5000);
+        live_update_interval_->setSingleStep(50);
+        live_update_interval_->setSuffix(tr(" ms"));
+        form->addRow(tr("Refresh interval"), live_update_interval_);
+        layout->addLayout(form);
+
+        layout->addWidget(widgets::hint_text(tr("Refreshes the address list, the results list and the Memory Viewer "
+                                                "while a target is attached; the choice is remembered between runs."),
+                                             page));
+        layout->addStretch(1);
+
+        // clicked fires only for user input, so the programmatic sync cannot loop
+        // back into the controller.
+        connect(live_update_check_,
+                &QCheckBox::clicked,
+                this,
+                [this](bool checked)
+                {
+                    live_update_interval_->setEnabled(checked);
+                    log::debug(log::category::ui,
+                               checked ? "settings: live update enabled" : "settings: live update disabled");
+                    settings_.set_live_update_enabled(checked);
+                });
+
+        connect(live_update_interval_,
+                &QSpinBox::valueChanged,
+                this,
+                [this](int interval_ms)
+                {
+                    settings_.set_live_update_interval_ms(interval_ms);
+                });
+
         return page;
     }
 
@@ -364,6 +425,17 @@ namespace slopkit::ui::dialogs
     void SettingsDialog::set_auto_load_last_table(bool enabled)
     {
         auto_load_check_->setChecked(enabled);
+    }
+
+    void SettingsDialog::set_live_update_enabled(bool enabled)
+    {
+        live_update_check_->setChecked(enabled);
+        live_update_interval_->setEnabled(enabled);
+    }
+
+    void SettingsDialog::set_live_update_interval_ms(int interval_ms)
+    {
+        live_update_interval_->setValue(interval_ms);
     }
 
     void SettingsDialog::refresh_last_table()

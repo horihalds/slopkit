@@ -37,6 +37,8 @@ namespace
     using slopkit::process::ListResult;
     using slopkit::process::MemoryMapResult;
     using slopkit::process::ProbeResult;
+    using slopkit::process::ReadManyItem;
+    using slopkit::process::ReadManyResult;
     using slopkit::process::ReadResult;
     using slopkit::process::WriteItem;
     using slopkit::process::WriteResult;
@@ -787,6 +789,83 @@ TEST_CASE("job lifecycle detail is debug-only", "[worker][log]")
     {
         CHECK(record.level != slopkit::log::Level::debug);
     }
+}
+
+TEST_CASE("a batched read returns per-item results in request order", "[worker]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    bool attached = false;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&&)
+                             {
+                                 attached = true;
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached;
+                 }));
+
+    access.backend()->memory[0] = std::byte {0x11};
+    access.backend()->memory[8] = std::byte {0x33};
+
+    ReadManyResult batch;
+    worker.submit_read_many(worker.next_job_id(),
+                            std::vector<ReadManyItem> {
+                                {    .address = FakeBackend::kBase + 8, .size = 1},
+                                {        .address = FakeBackend::kBase, .size = 2},
+                                // Outside the backing store: fails on its own.
+                                {.address = FakeBackend::kBase + 0x100, .size = 4},
+    },
+                            [&](JobResult&& result)
+                            {
+                                batch = std::get<ReadManyResult>(std::move(result));
+                            });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return batch.items.size() == 3;
+                 }));
+    REQUIRE(batch.items.size() == 3);
+    REQUIRE(batch.items[0].has_value());
+    CHECK((*batch.items[0])[0] == std::byte {0x33});
+    REQUIRE(batch.items[1].has_value());
+    REQUIRE(batch.items[1]->size() == 2);
+    CHECK((*batch.items[1])[0] == std::byte {0x11});
+    CHECK((*batch.items[1])[1] == std::byte {0x00});
+    REQUIRE_FALSE(batch.items[2].has_value());
+    CHECK(batch.items[2].error() == AccessError::not_found);
+}
+
+TEST_CASE("a batched read before attach fails per item", "[worker]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    ReadManyResult batch;
+    worker.submit_read_many(worker.next_job_id(),
+                            std::vector<ReadManyItem> {
+                                {    .address = FakeBackend::kBase, .size = 4},
+                                {.address = FakeBackend::kBase + 4, .size = 4},
+    },
+                            [&](JobResult&& result)
+                            {
+                                batch = std::get<ReadManyResult>(std::move(result));
+                            });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return batch.items.size() == 2;
+                 }));
+    REQUIRE(batch.items.size() == 2);
+    CHECK_FALSE(batch.items[0].has_value());
+    CHECK_FALSE(batch.items[1].has_value());
+    CHECK(batch.items[0].error() == AccessError::internal);
+    CHECK(batch.items[1].error() == AccessError::internal);
 }
 
 TEST_CASE("worker construction and destruction stay healthy under repetition", "[worker]")

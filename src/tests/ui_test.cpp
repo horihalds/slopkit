@@ -9,8 +9,10 @@
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -48,6 +50,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollBar>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QString>
@@ -144,6 +147,10 @@ namespace
         return QString::fromStdString(path.string());
     }
 
+    // Address-keyed bytes the fake target serves. Shared with every attached
+    // backend, so a test can change memory between live passes.
+    using UiFakeMemory = std::map<std::uint64_t, std::vector<std::byte>>;
+
     // A tiny in-memory target the Process List dialog can attach to in tests.
     class UiFakeBackend final : public slopkit::process::SessionBackend
     {
@@ -153,6 +160,12 @@ namespace
         // When set, every read fails with this error, modelling a target whose
         // metadata is readable but whose memory cannot be.
         std::optional<slopkit::process::AccessError> read_error;
+        // The address keyed bytes reads are served from; shared with the access
+        // that created this backend.
+        std::shared_ptr<UiFakeMemory>                memory     = std::make_shared<UiFakeMemory>();
+        // Addresses whose read fails explicitly, so an unreadable row can sit
+        // next to a readable one.
+        std::shared_ptr<std::set<std::uint64_t>>     unreadable = std::make_shared<std::set<std::uint64_t>>();
 
         [[nodiscard]] slopkit::process::ProcessId pid() const noexcept override
         {
@@ -174,11 +187,22 @@ namespace
             return slopkit::process::AccessMethod::procfs_mem;
         }
 
-        std::expected<std::vector<std::byte>, slopkit::process::AccessError> read(std::uint64_t, std::size_t) override
+        std::expected<std::vector<std::byte>, slopkit::process::AccessError> read(std::uint64_t address,
+                                                                                  std::size_t   size) override
         {
             if (read_error.has_value())
             {
                 return std::unexpected(*read_error);
+            }
+            if (unreadable->contains(address))
+            {
+                return std::unexpected(slopkit::process::AccessError::not_found);
+            }
+            if (const auto entry = memory->find(address); entry != memory->end())
+            {
+                std::vector<std::byte> bytes = entry->second;
+                bytes.resize(size);
+                return bytes;
             }
             return std::vector<std::byte> {};
         }
@@ -217,6 +241,12 @@ namespace
         // Applied to each backend attach() creates, so a test can model a target
         // whose memory cannot be read.
         std::optional<slopkit::process::AccessError> read_error;
+        // Shared with every attached backend, so a test can seed and change
+        // memory between live passes.
+        std::shared_ptr<UiFakeMemory>                memory     = std::make_shared<UiFakeMemory>();
+        // Shared with every attached backend, so a test can mark a single
+        // address unreadable while the others still read.
+        std::shared_ptr<std::set<std::uint64_t>>     unreadable = std::make_shared<std::set<std::uint64_t>>();
         std::atomic<int>                             attach_calls {0};
         std::atomic<int>                             list_calls {0};
 
@@ -239,6 +269,8 @@ namespace
             backend->module_list = modules;
             backend->region_list = regions;
             backend->read_error  = read_error;
+            backend->memory      = memory;
+            backend->unreadable  = unreadable;
             return slopkit::process::Session {std::move(backend)};
         }
     };
@@ -1492,6 +1524,370 @@ TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui
     // Absolute mode restores the raw text.
     model.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(address_cell() == QStringLiteral("0x1040"));
+}
+
+namespace
+{
+    // A live surface that records what one pass asks for and what it applies,
+    // so the coordinator's cadence and gating can be asserted directly.
+    class StubLiveSurface : public slopkit::ui::LiveSurface
+    {
+    public:
+        std::vector<slopkit::ui::LiveRequest> requests;
+        int                                   request_calls {0};
+        int                                   apply_calls {0};
+        std::vector<bool>                     readables;
+
+        std::vector<slopkit::ui::LiveRequest> next_live_request() override
+        {
+            ++request_calls;
+            return requests;
+        }
+
+        void apply_live_readings(std::span<const slopkit::ui::LiveReading> readings) override
+        {
+            ++apply_calls;
+            readables.clear();
+            for (const auto& reading : readings)
+            {
+                readables.push_back(reading.readable);
+            }
+        }
+    };
+
+    // Adds an int32 entry with the given stored bytes.
+    void add_int32(slopkit::table::AddressTable& table, std::uint64_t address, std::byte stored = std::byte {1})
+    {
+        slopkit::table::AddressEntry entry;
+        entry.address = address;
+        entry.type    = slopkit::scan::ValueType::int32;
+        entry.bytes   = {stored, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    }
+
+    // Wraps the found-results model as a surface: the model is not a widget and
+    // the whole panel/engine is not needed to exercise the live path.
+    class ModelLiveSurface : public slopkit::ui::LiveSurface
+    {
+    public:
+        explicit ModelLiveSurface(slopkit::ui::models::FoundResultsModel& model) : model_(model) {}
+
+        std::vector<slopkit::ui::LiveRequest> next_live_request() override
+        {
+            return model_.next_live_request();
+        }
+
+        void apply_live_readings(std::span<const slopkit::ui::LiveReading> readings) override
+        {
+            model_.apply_live_readings(readings);
+        }
+
+    private:
+        slopkit::ui::models::FoundResultsModel& model_;
+    };
+} // namespace
+
+TEST_CASE("the live coordinator runs one gated pass per interval", "[ui]")
+{
+    application();
+
+    UiFakeAccess                    access;
+    slopkit::process::AccessWorker  worker {access};
+    slopkit::ui::SettingsController settings {scratch_settings_file("live_gate.ini")};
+
+    StubLiveSurface surface;
+    surface.requests.push_back({.id = 0, .address = 0x1000, .size = 4});
+
+    // A detached target submits nothing.
+    slopkit::process::AttachedTarget detached;
+    slopkit::ui::LiveValues          detached_live {worker, detached, settings};
+    detached_live.add_surface(&surface);
+    detached_live.poll();
+    CHECK(surface.request_calls == 0);
+
+    // With a target the first poll submits one batched pass; no session is
+    // attached to the worker yet, so the reading comes back unreadable.
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::LiveValues          live {worker, target, settings};
+    live.add_surface(&surface);
+    live.poll();
+    CHECK(surface.request_calls == 1);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return surface.apply_calls == 1;
+                    }));
+    REQUIRE(surface.readables.size() == 1);
+    CHECK_FALSE(surface.readables[0]);
+
+    // While a pass is in flight a second request does not queue another job.
+    surface.request_calls = 0;
+    live.request_now();
+    live.request_now();
+    CHECK(surface.request_calls == 1);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return surface.apply_calls == 2;
+                    }));
+
+    // An empty request set submits nothing.
+    surface.requests.clear();
+    surface.request_calls = 0;
+    live.request_now();
+    CHECK(surface.request_calls == 1);
+    CHECK(surface.apply_calls == 2);
+
+    // Disabled: nothing is requested even with a target attached.
+    settings.set_live_update_enabled(false);
+    surface.request_calls = 0;
+    live.request_now();
+    CHECK(surface.request_calls == 0);
+}
+
+TEST_CASE("the address list Value column follows live memory", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {scratch_settings_file("live_address.ini")};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    attach_app_session(worker);
+
+    const QModelIndex value_index = model->index(0, slopkit::ui::models::AddressTableModel::value);
+    const auto        value_text  = [&]()
+    {
+        return model->data(value_index, Qt::DisplayRole).toString();
+    };
+    const auto foreground = [&]()
+    {
+        return model->data(value_index, Qt::ForegroundRole).value<QColor>();
+    };
+
+    slopkit::ui::LiveValues live {worker, target, settings};
+    live.add_surface(&panel);
+
+    // The stored value shows until the first reading lands.
+    CHECK(value_text() == QStringLiteral("1"));
+
+    (*access.memory)[0x1040] = {std::byte {7}, std::byte {0}, std::byte {0}, std::byte {0}};
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return value_text() == QStringLiteral("7");
+                    }));
+
+    // A changed reading is flagged until the next change.
+    (*access.memory)[0x1040][0] = std::byte {9};
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return value_text() == QStringLiteral("9");
+                    }));
+    CHECK(foreground() == slopkit::ui::active_theme().warning);
+
+    // A settled read clears the highlight.
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return foreground() != slopkit::ui::active_theme().warning;
+                    }));
+    CHECK(value_text() == QStringLiteral("9"));
+}
+
+TEST_CASE("an unreadable address shows a question mark", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {scratch_settings_file("live_unreadable.ini")};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    add_int32(table, 0x2000);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    attach_app_session(worker);
+
+    const auto value_text = [&](int row)
+    {
+        return model->data(model->index(row, slopkit::ui::models::AddressTableModel::value), Qt::DisplayRole)
+            .toString();
+    };
+
+    slopkit::ui::LiveValues live {worker, target, settings};
+    live.add_surface(&panel);
+
+    (*access.memory)[0x1040] = {std::byte {5}, std::byte {0}, std::byte {0}, std::byte {0}};
+    access.unreadable->insert(0x2000);
+
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return value_text(0) == QStringLiteral("5") && value_text(1) == QStringLiteral("?");
+                    }));
+
+    // The failing row is muted and explains itself; the readable one is not.
+    const QModelIndex failing = model->index(1, slopkit::ui::models::AddressTableModel::value);
+    CHECK(model->data(failing, Qt::ForegroundRole).value<QColor>() == slopkit::ui::active_theme().text_muted);
+    CHECK(model->data(failing, Qt::ToolTipRole).toString() == QStringLiteral("Not readable"));
+    CHECK(
+        model->data(model->index(0, slopkit::ui::models::AddressTableModel::value), Qt::ForegroundRole).value<QColor>()
+        != slopkit::ui::active_theme().text_muted);
+}
+
+TEST_CASE("a value being written is left out of the live pass", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {scratch_settings_file("live_writing.ini")};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    attach_app_session(worker);
+
+    const QModelIndex value_index = model->index(0, slopkit::ui::models::AddressTableModel::value);
+    const auto        value_text  = [&]()
+    {
+        return model->data(value_index, Qt::DisplayRole).toString();
+    };
+
+    slopkit::ui::LiveValues live {worker, target, settings};
+    live.add_surface(&panel);
+
+    (*access.memory)[0x1040] = {std::byte {2}, std::byte {0}, std::byte {0}, std::byte {0}};
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return value_text() == QStringLiteral("2");
+                    }));
+
+    // A write in flight keeps its placeholder and is absent from the pass.
+    REQUIRE(model->setData(value_index, QStringLiteral("99"), Qt::EditRole));
+    CHECK(value_text() == QStringLiteral("Writing..."));
+    CHECK(panel.next_live_request().empty());
+
+    // The completion shows the written value without a change highlight.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return value_text() == QStringLiteral("99");
+                    }));
+    CHECK(model->data(value_index, Qt::ForegroundRole).value<QColor>() != slopkit::ui::active_theme().warning);
+}
+
+TEST_CASE("the results list Value column follows live memory for the shown rows", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {scratch_settings_file("live_results.ini")};
+
+    attach_app_session(worker);
+
+    // More hits than the display page, so only the shown window may be read.
+    constexpr std::uint64_t     kBase  = 0x1000;
+    constexpr std::size_t       kTotal = 300;
+    slopkit::scan::ScanSnapshot snapshot;
+    snapshot.state     = slopkit::scan::ScanState::done;
+    snapshot.hit_count = kTotal;
+    for (std::size_t i = 0; i < kTotal; ++i)
+    {
+        slopkit::scan::ScanHit hit;
+        hit.address = kBase + (i * 4);
+        hit.value   = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        snapshot.hits.push_back(std::move(hit));
+    }
+
+    slopkit::scan::ScanConfig config;
+    config.value_type = slopkit::scan::ValueType::int32;
+
+    slopkit::ui::models::FoundResultsModel model;
+    model.set_snapshot(std::move(snapshot), config);
+
+    ModelLiveSurface        surface {model};
+    slopkit::ui::LiveValues live {worker, target, settings};
+    live.add_surface(&surface);
+
+    const auto value_text = [&](int row)
+    {
+        return model.data(model.index(row, slopkit::ui::models::FoundResultsModel::value), Qt::DisplayRole).toString();
+    };
+
+    // Only the displayed page is requested, and it is the lowest addresses.
+    REQUIRE(model.rowCount() == static_cast<int>(slopkit::scan::kDisplayPage));
+    const std::vector<slopkit::ui::LiveRequest> requests = surface.next_live_request();
+    REQUIRE(requests.size() == slopkit::scan::kDisplayPage);
+    const std::uint64_t last_shown = kBase + ((slopkit::scan::kDisplayPage - 1) * 4);
+    for (const auto& request : requests)
+    {
+        CHECK(request.address >= kBase);
+        CHECK(request.address <= last_shown);
+    }
+
+    // The scan values show until the first reading lands.
+    CHECK(value_text(0) == QStringLiteral("1"));
+
+    (*access.memory)[kBase]      = {std::byte {7}, std::byte {0}, std::byte {0}, std::byte {0}};
+    (*access.memory)[last_shown] = {std::byte {8}, std::byte {0}, std::byte {0}, std::byte {0}};
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return value_text(0) == QStringLiteral("7");
+                    }));
+    CHECK(value_text(static_cast<int>(slopkit::scan::kDisplayPage) - 1) == QStringLiteral("8"));
+
+    // The row order is the scan's, unchanged by the live readings.
+    CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole)
+              .toString()
+              .startsWith(QStringLiteral("0x1000")));
+
+    // A changed reading is flagged with the theme's warning colour.
+    (*access.memory)[kBase][0] = std::byte {9};
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return value_text(0) == QStringLiteral("9");
+                    }));
+    CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::value), Qt::ForegroundRole).value<QColor>()
+          == slopkit::ui::active_theme().warning);
 }
 
 TEST_CASE("the address list delete confirmation follows the address mode", "[ui]")
@@ -4916,16 +5312,89 @@ TEST_CASE("the memory dump model renders static rows as module+RVA", "[ui]")
     CHECK(address_cell(1) == QStringLiteral("0x0000000005000010"));
 }
 
+TEST_CASE("the memory viewer page follows the live pass", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::ui::SettingsController  settings {scratch_settings_file("viewer_live_pass.ini")};
+
+    attach_app_session(worker);
+
+    using slopkit::ui::dialogs::MemoryDumpModel;
+    const std::size_t page = MemoryDumpModel::kRowBytes * MemoryDumpModel::kRows;
+
+    const std::uint64_t    first_base = 0x1000;
+    const std::uint64_t    next_base  = 0x2000;
+    std::vector<std::byte> first(page, std::byte {0});
+    first[0]                     = std::byte {0xAB};
+    (*access.memory)[first_base] = first;
+    std::vector<std::byte> second(page, std::byte {0});
+    second[0]                   = std::byte {0xCD};
+    (*access.memory)[next_base] = second;
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {target};
+    auto*                                    dump_view = viewer.findChild<QTableView*>();
+    REQUIRE(dump_view != nullptr);
+    auto* model = dump_view->model();
+    REQUIRE(model != nullptr);
+
+    slopkit::ui::LiveValues live {worker, target, settings};
+    live.add_surface(&viewer);
+    QObject::connect(&viewer,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::liveRefreshRequested,
+                     &live,
+                     &slopkit::ui::LiveValues::request_now);
+
+    const auto hex_row = [&](int row)
+    {
+        return model->data(model->index(row, MemoryDumpModel::hex), Qt::DisplayRole).toString();
+    };
+
+    // Showing the dialog is enough: the live pass loads the page with no Refresh.
+    viewer.set_address(first_base);
+    viewer.show();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return hex_row(0).startsWith(QStringLiteral("AB"));
+                    }));
+
+    // A changed reading follows on the next pass.
+    (*access.memory)[first_base][0] = std::byte {0xEF};
+    live.request_now();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return hex_row(0).startsWith(QStringLiteral("EF"));
+                    }));
+
+    // A completion whose page moved on while the pass was in flight is dropped.
+    viewer.hide();
+    viewer.set_address(next_base); // hidden, so no request updates the identity
+    const std::vector<slopkit::ui::LiveReading> stale {
+        slopkit::ui::LiveReading {.id = 0, .readable = true, .bytes = first}
+    };
+    viewer.apply_live_readings(stale);
+    CHECK(hex_row(0).trimmed().isEmpty());
+
+    viewer.show();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return hex_row(0).startsWith(QStringLiteral("CD"));
+                    }));
+}
+
 TEST_CASE("the memory viewer box accepts module-relative addresses", "[ui]")
 {
     application();
 
-    slopkit::plugin::PluginHost      host;
-    slopkit::process::PluginAccess   access {host};
-    slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target = fake_target();
 
-    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {target};
     auto*                                    address_edit = viewer.findChild<QLineEdit*>();
     REQUIRE(address_edit != nullptr);
     auto* go = button_labelled(viewer, QStringLiteral("Go"));
@@ -4964,11 +5433,12 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     auto* categories = settings.findChild<QListWidget*>();
     REQUIRE(categories != nullptr);
-    REQUIRE(categories->count() == 6);
+    REQUIRE(categories->count() == 7);
     CHECK(categories->item(0)->text() == QStringLiteral("Appearance"));
     CHECK(categories->item(1)->text() == QStringLiteral("Addresses"));
-    CHECK(categories->item(2)->text() == QStringLiteral("Tables"));
-    CHECK(categories->item(3)->text() == QStringLiteral("Scanning"));
+    CHECK(categories->item(2)->text() == QStringLiteral("Live update"));
+    CHECK(categories->item(3)->text() == QStringLiteral("Tables"));
+    CHECK(categories->item(4)->text() == QStringLiteral("Scanning"));
 
     auto* module_relative = radio_labelled(settings, QStringLiteral("Module + RVA"));
     REQUIRE(module_relative != nullptr);
@@ -5057,6 +5527,61 @@ TEST_CASE("the Tables setting toggles the auto-load switch", "[ui]")
     controller.set_auto_load_last_table(false);
     CHECK_FALSE(box->isChecked());
     CHECK(changes == 2);
+}
+
+TEST_CASE("the Live update setting drives the interval control", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost          host;
+    slopkit::scan::ScanEngine            engine;
+    slopkit::ui::SettingsController      controller {scratch_settings_file("live_dialog.ini")};
+    slopkit::ui::dialogs::SettingsDialog settings {host, engine, controller};
+
+    auto* check    = settings.findChild<QCheckBox*>(QStringLiteral("live_update_enabled"));
+    auto* interval = settings.findChild<QSpinBox*>(QStringLiteral("live_update_interval"));
+    REQUIRE(check != nullptr);
+    REQUIRE(interval != nullptr);
+    CHECK(check->isChecked());
+    CHECK(interval->isEnabled());
+    CHECK(interval->value() == 250);
+    CHECK(interval->minimum() == 50);
+    CHECK(interval->maximum() == 5000);
+
+    int live_changes     = 0;
+    int interval_changes = 0;
+    QObject::connect(&controller,
+                     &slopkit::ui::SettingsController::liveUpdateChanged,
+                     &controller,
+                     [&](bool)
+                     {
+                         ++live_changes;
+                     });
+    QObject::connect(&controller,
+                     &slopkit::ui::SettingsController::liveUpdateIntervalChanged,
+                     &controller,
+                     [&](int)
+                     {
+                         ++interval_changes;
+                     });
+
+    // Switching off disables the interval and persists the choice.
+    check->click();
+    CHECK(live_changes == 1);
+    CHECK_FALSE(controller.values().live_update_enabled);
+    CHECK_FALSE(interval->isEnabled());
+
+    // A new interval persists immediately.
+    interval->setValue(1000);
+    CHECK(interval_changes == 1);
+    CHECK(controller.values().live_update_interval_ms == 1000);
+
+    // A real programmatic change keeps the page in step.
+    controller.set_live_update_enabled(true);
+    CHECK(check->isChecked());
+    CHECK(interval->isEnabled());
+    controller.set_live_update_interval_ms(500);
+    CHECK(interval->value() == 500);
 }
 
 TEST_CASE("the Addresses setting switches the viewer live", "[ui]")

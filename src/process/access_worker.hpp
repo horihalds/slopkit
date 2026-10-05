@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <expected>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -32,6 +33,13 @@ namespace slopkit::process
         std::uint64_t          id {}; // table::AddressEntry::id
         std::uint64_t          address {};
         std::vector<std::byte> bytes;
+    };
+
+    // One address a batched live read must fetch; `size` is the value's width.
+    struct ReadManyItem
+    {
+        std::uint64_t address {};
+        std::size_t   size {};
     };
 
     // Metadata of a successful app attach; the session itself stays in the
@@ -81,6 +89,15 @@ namespace slopkit::process
         std::optional<AccessError> error;
     };
 
+    // One reading per batched request, kept in request order. A single
+    // unreadable address reports its own error without failing the batch.
+    using ReadManyItemResult = std::expected<std::vector<std::byte>, AccessError>;
+
+    struct ReadManyResult
+    {
+        std::vector<ReadManyItemResult> items;
+    };
+
     struct WriteResult
     {
         JobId                      id {};
@@ -106,6 +123,7 @@ namespace slopkit::process
                                    AttachResult,
                                    AppIndexResult,
                                    ReadResult,
+                                   ReadManyResult,
                                    WriteResult,
                                    FreezeResult,
                                    MemoryMapResult>;
@@ -140,6 +158,7 @@ namespace slopkit::process
         bool submit_application_index(JobId id, JobCallback on_done);
         bool submit_memory_map(JobId id, JobCallback on_done);
         bool submit_read(JobId id, std::uint64_t address, std::size_t size, JobCallback on_done);
+        bool submit_read_many(JobId id, std::vector<ReadManyItem> items, JobCallback on_done);
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
@@ -172,6 +191,7 @@ namespace slopkit::process
             application_index,
             memory_map,
             read,
+            read_many,
             write,
             freeze,
             detach,
@@ -179,16 +199,17 @@ namespace slopkit::process
 
         struct Request
         {
-            JobKind                kind {};
-            JobId                  id {};
-            ProcessId              pid {};
-            std::string            plugin_id;
-            std::uint64_t          address {};
-            std::size_t            size {};
-            std::uint64_t          entry_id {};
-            std::vector<std::byte> bytes;
-            std::vector<WriteItem> items;
-            JobCallback            on_done;
+            JobKind                   kind {};
+            JobId                     id {};
+            ProcessId                 pid {};
+            std::string               plugin_id;
+            std::uint64_t             address {};
+            std::size_t               size {};
+            std::uint64_t             entry_id {};
+            std::vector<std::byte>    bytes;
+            std::vector<WriteItem>    items;
+            std::vector<ReadManyItem> read_items;
+            JobCallback               on_done;
         };
 
         struct Completion
@@ -207,6 +228,7 @@ namespace slopkit::process
         AppIndexResult          do_application_index();
         MemoryMapResult         do_memory_map();
         ReadResult              do_read(const Request& request);
+        ReadManyResult          do_read_many(const Request& request);
         WriteResult             do_write(const Request& request);
         FreezeResult            do_freeze(const Request& request);
         AttachResult            do_detach();

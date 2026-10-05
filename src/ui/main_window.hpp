@@ -42,6 +42,7 @@ namespace slopkit::ui::widgets
 
 namespace slopkit::ui
 {
+    class LiveValues;
     class SettingsController;
 
     // The application window: menu bar, status bar and the three split zones. It
@@ -148,6 +149,10 @@ namespace slopkit::ui
         QAction* about_action_ {};
 
         QTimer* tick_timer_ {};
+
+        // The one live-pass coordinator; owns the cadence the three surfaces
+        // follow and submits a single batched read per interval.
+        LiveValues* live_values_ {};
 
         // In-flight freeze job, if any; one at a time.
         std::optional<process::JobId> freeze_pending_;

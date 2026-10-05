@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "process/access_worker.hpp"
@@ -9,6 +10,7 @@
 #include "process/types.hpp"
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
+#include "ui/live_values.hpp"
 
 #include <QAbstractTableModel>
 
@@ -59,13 +61,42 @@ namespace slopkit::ui::models
         // The rendered Address column text for `address`.
         [[nodiscard]] QString address_text(std::uint64_t address) const;
 
+        // The addresses of the rows that should be re-read, in row order; the
+        // entry being written and zero-width entries are skipped. The ids echo
+        // the row index, so a reading can be matched back to its row.
+        [[nodiscard]] std::vector<LiveRequest> next_live_request();
+
+        // Applies one live pass: a reading whose row has since changed identity
+        // or address is dropped. Emits dataChanged for the value cells whose
+        // text or colour changed.
+        void apply_live_readings(std::span<const LiveReading> readings);
+
     signals:
         void statusChanged(const QString& message, bool is_error);
 
     private:
-        bool write_value_at(int row, const QString& text);
-        bool same_as_last() const;
-        void note_table_changed();
+        // The live reading of one row; invalidated when the entry at that row
+        // changes identity.
+        struct LiveCell
+        {
+            bool                                  has_reading {false};
+            bool                                  readable {false};
+            std::optional<std::vector<std::byte>> bytes; // the last successful reading
+            bool                                  changed {false};
+        };
+
+        // The row and entry id of one in-flight request, in request order.
+        struct LivePending
+        {
+            std::size_t   row {};
+            std::uint64_t entry_id {};
+        };
+
+        bool                          write_value_at(int row, const QString& text);
+        bool                          same_as_last() const;
+        void                          note_table_changed();
+        void                          seed_live_write(std::uint64_t entry_id);
+        [[nodiscard]] const LiveCell* live_cell_at(std::size_t row) const;
 
         table::AddressTable&     table_;
         process::AccessWorker&   worker_;
@@ -78,6 +109,9 @@ namespace slopkit::ui::models
 
         std::optional<process::JobId> write_pending_;
         std::optional<std::uint64_t>  writing_entry_;
+
+        std::vector<LiveCell>    live_;         // parallel to the table rows
+        std::vector<LivePending> live_pending_; // in-flight request identity, in order
     };
 
 } // namespace slopkit::ui::models

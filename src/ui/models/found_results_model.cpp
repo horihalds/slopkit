@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <numeric>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -78,7 +79,21 @@ namespace slopkit::ui::models
             case address:
                 return address_text(hit.address);
             case value:
+            {
+                const LiveCell* cell = live_cell_at(index.row());
+                if (cell != nullptr && cell->has_reading)
+                {
+                    if (!cell->readable)
+                    {
+                        return tr("?");
+                    }
+                    if (cell->bytes.has_value())
+                    {
+                        return to_qstring(scan::format_value(config_.value_type, *cell->bytes, config_.hex));
+                    }
+                }
                 return to_qstring(scan::format_value(config_.value_type, hit.value, config_.hex));
+            }
             case previous:
                 return hit.previous.empty()
                          ? QString()
@@ -95,6 +110,31 @@ namespace slopkit::ui::models
             if (index.column() == address && static_hits_[static_cast<std::size_t>(index.row())])
             {
                 return QBrush(active_theme().success);
+            }
+            if (index.column() == value)
+            {
+                const LiveCell* cell = live_cell_at(index.row());
+                if (cell != nullptr && cell->has_reading)
+                {
+                    if (!cell->readable)
+                    {
+                        return active_theme().text_muted;
+                    }
+                    if (cell->changed)
+                    {
+                        return active_theme().warning;
+                    }
+                }
+            }
+            break;
+        case Qt::ToolTipRole:
+            if (index.column() == value)
+            {
+                const LiveCell* cell = live_cell_at(index.row());
+                if (cell != nullptr && cell->has_reading && !cell->readable)
+                {
+                    return tr("Not readable");
+                }
             }
             break;
         default:
@@ -141,6 +181,8 @@ namespace slopkit::ui::models
             hits_ = std::make_shared<const std::vector<scan::ScanHit>>(std::move(snapshot.hits));
         }
         config_ = std::move(config);
+        live_.clear();
+        live_pending_.clear();
         rebuild_window();
         endResetModel();
     }
@@ -181,9 +223,13 @@ namespace slopkit::ui::models
             return;
         }
         address_mode_ = mode;
+        live_.clear();
+        live_pending_.clear();
         if (!order_.empty())
         {
-            emit dataChanged(index(0, address), index(static_cast<int>(order_.size()) - 1, address), {Qt::DisplayRole});
+            emit dataChanged(index(0, address),
+                             index(static_cast<int>(order_.size()) - 1, value),
+                             {Qt::DisplayRole, Qt::ForegroundRole});
         }
     }
 
@@ -230,6 +276,112 @@ namespace slopkit::ui::models
     {
         const ui::ModuleSpan* main = module_spans_.main();
         return main != nullptr && address >= main->base && address < main->end;
+    }
+
+    std::vector<LiveRequest> FoundResultsModel::next_live_request()
+    {
+        live_pending_.clear();
+        const std::size_t shown = order_.size();
+        if (live_.size() != shown)
+        {
+            live_.assign(shown, LiveCell {});
+        }
+
+        std::vector<LiveRequest> requests;
+        requests.reserve(shown);
+        live_pending_.reserve(shown);
+        for (std::size_t row = 0; row < shown; ++row)
+        {
+            const auto  hit_index = static_cast<std::size_t>(order_[row]);
+            const auto& hit       = (*hits_)[hit_index];
+            if (hit.value.empty())
+            {
+                continue; // A zero-width hit has nothing to read.
+            }
+            requests.push_back(LiveRequest {.id = row, .address = hit.address, .size = hit.value.size()});
+            live_pending_.push_back(LivePending {.row = row, .hit_index = order_[row], .address = hit.address});
+        }
+        return requests;
+    }
+
+    void FoundResultsModel::apply_live_readings(std::span<const LiveReading> readings)
+    {
+        const std::size_t count = std::min(readings.size(), live_pending_.size());
+
+        std::optional<int> run_start;
+        std::optional<int> run_end;
+        const auto         flush = [&]()
+        {
+            if (run_start.has_value())
+            {
+                emit dataChanged(
+                    index(*run_start, value), index(*run_end, value), {Qt::DisplayRole, Qt::ForegroundRole});
+                run_start.reset();
+                run_end.reset();
+            }
+        };
+
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const LivePending& pending = live_pending_[i];
+            const LiveReading& reading = readings[i];
+            const std::size_t  row     = pending.row;
+            if (reading.id != row || row >= order_.size() || row >= live_.size())
+            {
+                continue; // Out of range; leave the row alone.
+            }
+            if (order_[row] != pending.hit_index
+                || (*hits_)[static_cast<std::size_t>(order_[row])].address != pending.address)
+            {
+                continue; // The row moved to another hit since the request.
+            }
+
+            LiveCell&  cell      = live_[row];
+            const bool was_state = cell.has_reading;
+            const bool was_read  = cell.readable;
+            const bool was_chg   = cell.changed;
+            const auto was_bytes = cell.bytes;
+
+            const bool readable = reading.readable && !reading.bytes.empty();
+            if (readable)
+            {
+                cell.changed = cell.bytes.has_value() && *cell.bytes != reading.bytes;
+                cell.bytes   = reading.bytes;
+            }
+            else
+            {
+                cell.changed = false;
+            }
+            cell.has_reading = true;
+            cell.readable    = readable;
+
+            const int row_index = static_cast<int>(row);
+            if (was_state != cell.has_reading || was_read != cell.readable || was_chg != cell.changed
+                || was_bytes != cell.bytes)
+            {
+                if (!run_start.has_value())
+                {
+                    run_start = row_index;
+                }
+                run_end = row_index;
+            }
+            else
+            {
+                flush();
+            }
+        }
+        flush();
+
+        live_pending_.clear();
+    }
+
+    const FoundResultsModel::LiveCell* FoundResultsModel::live_cell_at(int row) const
+    {
+        if (row < 0 || row >= static_cast<int>(live_.size()))
+        {
+            return nullptr;
+        }
+        return &live_[static_cast<std::size_t>(row)];
     }
 
     // Shows the top `scan::kDisplayPage` rows of the whole-list ordering: the
@@ -283,6 +435,8 @@ namespace slopkit::ui::models
                               return sort_order_ == Qt::AscendingOrder ? by < 0 : by > 0;
                           });
         order_.resize(shown);
+        live_.clear();
+        live_pending_.clear();
         refresh_static_flags();
     }
 

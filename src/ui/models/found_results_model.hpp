@@ -2,11 +2,14 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <span>
 #include <vector>
 
 #include "process/types.hpp"
 #include "scan/engine.hpp"
 #include "ui/address_format.hpp"
+#include "ui/live_values.hpp"
 
 #include <QAbstractTableModel>
 
@@ -70,12 +73,39 @@ namespace slopkit::ui::models
         // True when the address lies inside the target's main image span.
         [[nodiscard]] bool is_main_hit(std::uint64_t address) const;
 
+        // The addresses of the shown rows, in row order; a zero-width hit is
+        // skipped. The ids echo the row index.
+        [[nodiscard]] std::vector<LiveRequest> next_live_request();
+
+        // Applies one live pass; a reading whose row, hit or address has moved
+        // on is dropped. Emits dataChanged for the value cells that changed.
+        void apply_live_readings(std::span<const LiveReading> readings);
+
         // The hit a row currently shows, or nullptr when the row is out of date.
         [[nodiscard]] const scan::ScanHit* hit_at(int row) const;
 
     private:
-        void rebuild_window();
-        void refresh_static_flags();
+        // The live reading of one shown row; cleared whenever the window is
+        // rebuilt.
+        struct LiveCell
+        {
+            bool                                  has_reading {false};
+            bool                                  readable {false};
+            std::optional<std::vector<std::byte>> bytes;
+            bool                                  changed {false};
+        };
+
+        // The identity of one in-flight request, in request order.
+        struct LivePending
+        {
+            std::size_t   row {};
+            int           hit_index {};
+            std::uint64_t address {};
+        };
+
+        void                          rebuild_window();
+        void                          refresh_static_flags();
+        [[nodiscard]] const LiveCell* live_cell_at(int row) const;
 
         // The source rows: the engine's whole stored result set once a scan
         // finished, or a local copy of the running incremental page. Never null.
@@ -86,6 +116,9 @@ namespace slopkit::ui::models
         std::vector<int>                                  order_;
         // Parallel to `order_`, not to `hits_`.
         std::vector<bool>                                 static_hits_;
+        // Parallel to `order_`; the live reading of each shown row.
+        std::vector<LiveCell>                             live_;
+        std::vector<LivePending>                          live_pending_;
         ui::ModuleSpans                                   module_spans_;
         ui::AddressMode                                   address_mode_ {ui::AddressMode::module_relative};
         int                                               sort_column_ {address};

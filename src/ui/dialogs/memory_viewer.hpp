@@ -4,12 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
 #include "ui/address_format.hpp"
+#include "ui/live_values.hpp"
 
 #include <QAbstractTableModel>
 #include <QDialog>
@@ -19,7 +21,6 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QTableView;
-class QTimer;
 
 namespace slopkit::ui::widgets
 {
@@ -84,12 +85,12 @@ namespace slopkit::ui::dialogs
     // A hex dump of the attached target's memory. Reads run on the access worker
     // and the viewer renders one cached page, never touching a session. The
     // disassembler pane is out of scope, so this ships the byte and ASCII view.
-    class MemoryViewerDialog : public QDialog
+    class MemoryViewerDialog : public QDialog, public ui::LiveSurface
     {
         Q_OBJECT
 
     public:
-        MemoryViewerDialog(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent = nullptr);
+        MemoryViewerDialog(process::AttachedTarget& target, QWidget* parent = nullptr);
 
         // Opens the viewer at `address`, aligned down to a row boundary.
         void set_address(std::uint64_t address);
@@ -99,9 +100,17 @@ namespace slopkit::ui::dialogs
         // Chooses how static addresses are shown in the address box and rows.
         void set_address_mode(ui::AddressMode mode);
 
+        // LiveSurface: the current page while the dialog is shown and a target is
+        // attached; the coordinator submits it with the other surfaces' reads.
+        [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
+        void apply_live_readings(std::span<const ui::LiveReading> readings) override;
+
+    signals:
+        // Asks the window's live coordinator for an immediate pass (Refresh/Go).
+        void liveRefreshRequested();
+
     protected:
         void showEvent(QShowEvent* event) override;
-        void hideEvent(QHideEvent* event) override;
 
     private:
         void                  build_layout();
@@ -110,11 +119,12 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] QString display_text(std::uint64_t address) const;
         void                  previous_page();
         void                  next_page();
-        // Submits one page read unless a request is already in flight.
+        // Asks the coordinator for an immediate pass.
         void                  request_page();
+        // Renders one page result; shared by the manual and live paths.
+        void                  apply_page(std::uint64_t base, const std::vector<std::byte>& bytes, bool readable);
         void                  update_state();
 
-        process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
 
         std::uint64_t         base_ {};
@@ -127,13 +137,13 @@ namespace slopkit::ui::dialogs
         QTableView*           dump_view_ {};
         MemoryDumpModel*      dump_model_ {};
         widgets::StatusLabel* status_ {};
-        QTimer*               refresh_timer_ {};
 
-        std::optional<process::JobId> pending_;
-        std::uint64_t                 requested_base_ {0};
-        process::ProcessId            requested_pid_ {0};
-        bool                          refresh_requested_ {false};
-        bool                          ever_requested_ {false};
+        // The identity of the page request in flight, so a stale completion is
+        // dropped, plus the manual-request/loading state.
+        std::uint64_t      requested_base_ {0};
+        process::ProcessId requested_pid_ {0};
+        bool               page_loaded_ {false};
+        bool               manual_request_ {false};
     };
 
 } // namespace slopkit::ui::dialogs

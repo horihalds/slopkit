@@ -1,5 +1,6 @@
 #include "ui/settings.hpp"
 
+#include <algorithm>
 #include <format>
 #include <optional>
 
@@ -19,8 +20,14 @@ namespace slopkit::ui
         constexpr auto kAutoLoadKey      = "tables/auto_load_last";
         constexpr auto kLastTableKey     = "tables/last_path";
         constexpr auto kLastDirectoryKey = "files/last_directory";
+        constexpr auto kLiveEnabledKey   = "liveUpdateEnabled";
+        constexpr auto kLiveIntervalKey  = "liveUpdateIntervalMs";
         constexpr auto kModuleRelative   = "module_relative";
         constexpr auto kAbsolute         = "absolute";
+
+        constexpr int kMinLiveIntervalMs     = 50;
+        constexpr int kMaxLiveIntervalMs     = 5000;
+        constexpr int kDefaultLiveIntervalMs = 250;
 
         std::optional<bool> parse_bool(const QVariant& value)
         {
@@ -41,6 +48,13 @@ namespace slopkit::ui
                 }
             }
             return std::nullopt;
+        }
+
+        std::optional<int> parse_int(const QVariant& value)
+        {
+            bool      ok     = false;
+            const int parsed = value.toInt(&ok);
+            return ok ? std::optional<int> {parsed} : std::nullopt;
         }
 
         std::optional<AddressMode> parse_address_mode(const QVariant& value)
@@ -124,6 +138,29 @@ namespace slopkit::ui
         store();
     }
 
+    void SettingsController::set_live_update_enabled(bool enabled)
+    {
+        if (values_.live_update_enabled == enabled)
+        {
+            return;
+        }
+        values_.live_update_enabled = enabled;
+        store();
+        emit liveUpdateChanged(enabled);
+    }
+
+    void SettingsController::set_live_update_interval_ms(int interval_ms)
+    {
+        const int clamped = std::clamp(interval_ms, kMinLiveIntervalMs, kMaxLiveIntervalMs);
+        if (values_.live_update_interval_ms == clamped)
+        {
+            return;
+        }
+        values_.live_update_interval_ms = clamped;
+        store();
+        emit liveUpdateIntervalChanged(clamped);
+    }
+
     void SettingsController::load()
     {
         const auto file_path = store_->fileName().toStdString();
@@ -169,17 +206,50 @@ namespace slopkit::ui
                          std::format("settings file {}: malformed {} value", file_path, kAutoLoadKey));
         }
 
+        const auto live_enabled_key = QString::fromLatin1(kLiveEnabledKey);
+        if (const auto enabled = parse_bool(store_->value(live_enabled_key)); enabled.has_value())
+        {
+            values_.live_update_enabled = *enabled;
+        }
+        else if (store_->contains(live_enabled_key))
+        {
+            log::warning(log::category::app,
+                         std::format("settings file {}: malformed {} value", file_path, kLiveEnabledKey));
+        }
+
+        const auto live_interval_key = QString::fromLatin1(kLiveIntervalKey);
+        if (const auto interval = parse_int(store_->value(live_interval_key)); interval.has_value())
+        {
+            values_.live_update_interval_ms = std::clamp(*interval, kMinLiveIntervalMs, kMaxLiveIntervalMs);
+            if (values_.live_update_interval_ms != *interval)
+            {
+                log::warning(log::category::app,
+                             std::format("settings file {}: {} out of range, clamped to {}",
+                                         file_path,
+                                         kLiveIntervalKey,
+                                         values_.live_update_interval_ms));
+            }
+        }
+        else if (store_->contains(live_interval_key))
+        {
+            values_.live_update_interval_ms = kDefaultLiveIntervalMs;
+            log::warning(log::category::app,
+                         std::format("settings file {}: malformed {} value", file_path, kLiveIntervalKey));
+        }
+
         values_.last_table_path = store_->value(QString::fromLatin1(kLastTableKey)).toString();
         values_.last_directory  = store_->value(QString::fromLatin1(kLastDirectoryKey)).toString();
 
         log::debug(log::category::app,
                    std::format("settings loaded: dark_theme={}, address_mode={}, auto_load_last={}, "
-                               "last_table={}, last_directory={}",
+                               "last_table={}, last_directory={}, live_update={}, live_interval_ms={}",
                                values_.dark_theme,
                                values_.address_mode == AddressMode::absolute ? "absolute" : "module_relative",
                                values_.auto_load_last_table,
                                values_.last_table_path.toStdString(),
-                               values_.last_directory.toStdString()));
+                               values_.last_directory.toStdString(),
+                               values_.live_update_enabled,
+                               values_.live_update_interval_ms));
     }
 
     void SettingsController::store()
@@ -193,6 +263,8 @@ namespace slopkit::ui
         store_->setValue(QString::fromLatin1(kAutoLoadKey), values_.auto_load_last_table);
         store_->setValue(QString::fromLatin1(kLastTableKey), values_.last_table_path);
         store_->setValue(QString::fromLatin1(kLastDirectoryKey), values_.last_directory);
+        store_->setValue(QString::fromLatin1(kLiveEnabledKey), values_.live_update_enabled);
+        store_->setValue(QString::fromLatin1(kLiveIntervalKey), values_.live_update_interval_ms);
         store_->sync();
     }
 

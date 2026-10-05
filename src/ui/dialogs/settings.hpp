@@ -16,6 +16,7 @@ class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
 class QRadioButton;
+class QSpinBox;
 class QStackedWidget;
 
 namespace slopkit::ui::widgets
@@ -51,6 +52,10 @@ namespace slopkit::ui::dialogs
         // Keeps the Tables switch in step without re-emitting.
         void set_auto_load_last_table(bool enabled);
 
+        // Keeps the live-update switch and interval in step without re-emitting.
+        void set_live_update_enabled(bool enabled);
+        void set_live_update_interval_ms(int interval_ms);
+
     signals:
         // The new fast-scan alignment default, forwarded to the scanner panel.
         void alignmentChanged(quint64 alignment);
@@ -61,6 +66,7 @@ namespace slopkit::ui::dialogs
     private:
         [[nodiscard]] QWidget* build_appearance_page();
         [[nodiscard]] QWidget* build_addresses_page();
+        [[nodiscard]] QWidget* build_live_update_page();
         [[nodiscard]] QWidget* build_tables_page();
         [[nodiscard]] QWidget* build_scanning_page();
         [[nodiscard]] QWidget* build_plugins_page();
@@ -81,6 +87,8 @@ namespace slopkit::ui::dialogs
         QRadioButton*         module_relative_button_ {};
         QRadioButton*         absolute_button_ {};
         QCheckBox*            auto_load_check_ {};
+        QCheckBox*            live_update_check_ {};
+        QSpinBox*             live_update_interval_ {};
         QLabel*               last_table_label_ {};
         QLineEdit*            alignment_edit_ {};
         QLineEdit*            result_cap_edit_ {};

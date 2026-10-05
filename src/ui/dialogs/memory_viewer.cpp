@@ -14,7 +14,6 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTableView>
-#include <QTimer>
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
@@ -216,26 +215,14 @@ namespace slopkit::ui::dialogs
         return module_spans_;
     }
 
-    MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
-                                           process::AttachedTarget& target,
-                                           QWidget*                 parent)
-        : QDialog(parent), worker_(worker), target_(target)
+    MemoryViewerDialog::MemoryViewerDialog(process::AttachedTarget& target, QWidget* parent)
+        : QDialog(parent), target_(target)
     {
         setWindowTitle(tr("Memory Viewer"));
         resize(760, 560);
 
         build_layout();
         set_address(0);
-
-        refresh_timer_ = new QTimer(this);
-        refresh_timer_->setInterval(500);
-        connect(refresh_timer_,
-                &QTimer::timeout,
-                this,
-                [this]
-                {
-                    request_page();
-                });
     }
 
     void MemoryViewerDialog::build_layout()
@@ -293,7 +280,6 @@ namespace slopkit::ui::dialogs
                 this,
                 [this]
                 {
-                    refresh_requested_ = true;
                     request_page();
                 });
     }
@@ -301,15 +287,10 @@ namespace slopkit::ui::dialogs
     void MemoryViewerDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);
-        refresh_timer_->start();
-        refresh_requested_ = true;
+        // The coordinator only submits the page while the dialog is visible, so
+        // showing it is enough to bring the page up to date.
+        page_loaded_ = false;
         request_page();
-    }
-
-    void MemoryViewerDialog::hideEvent(QHideEvent* event)
-    {
-        QDialog::hideEvent(event);
-        refresh_timer_->stop();
     }
 
     void MemoryViewerDialog::set_modules(std::vector<process::ModuleInfo> modules)
@@ -340,8 +321,7 @@ namespace slopkit::ui::dialogs
 
         // The cached page belongs to the previous base.
         dump_model_->clear();
-        ever_requested_    = false;
-        refresh_requested_ = true;
+        page_loaded_ = false;
         update_state();
         if (isVisible())
         {
@@ -376,73 +356,60 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::request_page()
     {
-        if (pending_.has_value() || !target_.valid())
-        {
-            update_state();
-            return;
-        }
-        if (ever_requested_ && !refresh_requested_ && target_.pid == requested_pid_ && base_ == requested_base_)
-        {
-            update_state();
-            return;
-        }
-
-        const std::uint64_t      base = base_;
-        const process::ProcessId pid  = target_.pid;
-
-        const process::JobId job_id = worker_.next_job_id();
-        pending_                    = job_id;
-        requested_base_             = base;
-        requested_pid_              = pid;
-        refresh_requested_          = false;
-        ever_requested_             = true;
+        manual_request_ = true;
         update_state();
+        emit liveRefreshRequested();
+    }
 
-        const bool submitted = worker_.submit_read(
-            job_id,
-            base,
-            MemoryDumpModel::kRowBytes * MemoryDumpModel::kRows,
-            [this, base, pid, job_id](process::JobResult&& result)
-            {
-                if (pending_ != job_id)
-                {
-                    return; // Superseded or shut down.
-                }
-                pending_.reset();
-
-                // Drop a page whose target or base changed while it was in
-                // flight.
-                if (!target_.valid() || target_.pid != pid || base_ != base)
-                {
-                    update_state();
-                    return;
-                }
-
-                auto& read = std::get<process::ReadResult>(result);
-                if (read.error || read.bytes.empty())
-                {
-                    log::debug(log::category::ui, std::format("memory page at 0x{:X} could not be read", base));
-                    dump_model_->clear();
-                }
-                else
-                {
-                    log::debug(log::category::ui,
-                               std::format("memory page at 0x{:X} loaded ({} byte(s))", base, read.bytes.size()));
-                    dump_model_->set_page(base, std::move(read.bytes));
-                }
-                update_state();
-            });
-        if (!submitted)
+    std::vector<ui::LiveRequest> MemoryViewerDialog::next_live_request()
+    {
+        if (!isVisible() || !target_.valid())
         {
-            pending_.reset();
-            update_state();
+            return {};
         }
+        requested_base_ = base_;
+        requested_pid_  = target_.pid;
+        return {
+            ui::LiveRequest {.id = 0, .address = base_, .size = MemoryDumpModel::kRowBytes * MemoryDumpModel::kRows}
+        };
+    }
+
+    void MemoryViewerDialog::apply_live_readings(std::span<const ui::LiveReading> readings)
+    {
+        if (readings.empty())
+        {
+            return;
+        }
+        if (!target_.valid() || target_.pid != requested_pid_ || base_ != requested_base_)
+        {
+            return; // The target or the page moved on while the pass was in flight.
+        }
+        const ui::LiveReading& reading = readings.front();
+        apply_page(requested_base_, reading.bytes, reading.readable);
+    }
+
+    void MemoryViewerDialog::apply_page(std::uint64_t base, const std::vector<std::byte>& bytes, bool readable)
+    {
+        if (!readable || bytes.empty())
+        {
+            log::debug(log::category::ui, std::format("memory page at 0x{:X} could not be read", base));
+            dump_model_->clear();
+        }
+        else
+        {
+            log::debug(log::category::ui, std::format("memory page at 0x{:X} loaded ({} byte(s))", base, bytes.size()));
+            dump_model_->set_page(base, bytes);
+        }
+        page_loaded_    = true;
+        manual_request_ = false;
+        update_state();
     }
 
     void MemoryViewerDialog::update_state()
     {
-        loading_label_->setVisible(pending_.has_value());
-        refresh_button_->setEnabled(target_.valid() && !pending_.has_value());
+        const bool loading = target_.valid() && (manual_request_ || !page_loaded_);
+        loading_label_->setVisible(loading);
+        refresh_button_->setEnabled(target_.valid());
         previous_button_->setEnabled(base_ > 0);
         next_button_->setEnabled(target_.valid());
         go_button_->setEnabled(target_.valid());
@@ -452,7 +419,7 @@ namespace slopkit::ui::dialogs
             status_->set_status(widgets::StatusKind::info, tr("No process attached."));
             return;
         }
-        if (dump_model_->any_unreadable() && !pending_.has_value())
+        if (dump_model_->any_unreadable() && !loading)
         {
             status_->set_status(widgets::StatusKind::warning,
                                 tr("Some rows could not be read; their bytes are marked with '?'."));

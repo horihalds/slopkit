@@ -28,6 +28,7 @@
 #include "ui/dialogs/process_list.hpp"
 #include "ui/dialogs/settings.hpp"
 #include "ui/dialogs/table_settings.hpp"
+#include "ui/live_values.hpp"
 #include "ui/panels/address_list_panel.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
@@ -312,7 +313,16 @@ namespace slopkit::ui
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
 
-        memory_view_ = new dialogs::MemoryViewerDialog(worker_, target_, this);
+        memory_view_ = new dialogs::MemoryViewerDialog(target_, this);
+
+        // The one live cadence, driven by the window's tick; surfaces register
+        // here so a single poll submits a single batched read.
+        live_values_ = new LiveValues(worker_, target_, settings_, this);
+        live_values_->add_surface(found_list_);
+        live_values_->add_surface(address_list_);
+        live_values_->add_surface(memory_view_);
+        connect(
+            memory_view_, &dialogs::MemoryViewerDialog::liveRefreshRequested, live_values_, &LiveValues::request_now);
 
         log_ = new dialogs::LogDialog(this);
 
@@ -464,6 +474,7 @@ namespace slopkit::ui
         scan_progress_->setValue(scanner_->progress_percent());
         run_freeze_pass();
         refresh_target_label();
+        live_values_->poll();
     }
 
     void MainWindow::on_memory_view_requested(quint64 address)

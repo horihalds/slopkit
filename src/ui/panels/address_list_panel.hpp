@@ -1,13 +1,16 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
+#include "ui/live_values.hpp"
 
 #include <QString>
 #include <QWidget>
@@ -26,7 +29,7 @@ namespace slopkit::ui::panels
     // The bottom zone: the editable address list with its context menu. It owns
     // no session; edits are encoded by the model and the writes are submitted to
     // the access worker.
-    class AddressListPanel : public QWidget
+    class AddressListPanel : public QWidget, public ui::LiveSurface
     {
         Q_OBJECT
 
@@ -90,6 +93,10 @@ namespace slopkit::ui::panels
         // The address list's only focusable control; the window joins its own
         // chain onto it, so no panel-local chain call is needed.
         [[nodiscard]] QWidget* tab_order_first() const noexcept; // the address list
+
+        // LiveSurface: the rows of the address list, delegated to the model.
+        [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
+        void apply_live_readings(std::span<const ui::LiveReading> readings) override;
 
     signals:
         // A request to show an address, fed by the context menu.

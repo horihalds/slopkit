@@ -123,6 +123,16 @@ namespace slopkit::ui::panels
         model_->refresh();
     }
 
+    std::vector<ui::LiveRequest> AddressListPanel::next_live_request()
+    {
+        return model_->next_live_request();
+    }
+
+    void AddressListPanel::apply_live_readings(std::span<const ui::LiveReading> readings)
+    {
+        model_->apply_live_readings(readings);
+    }
+
     void AddressListPanel::set_modules(std::vector<process::ModuleInfo> modules)
     {
         model_->set_modules(std::move(modules));

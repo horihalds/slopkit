@@ -276,6 +276,27 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_read_many(JobId id, std::vector<ReadManyItem> items, JobCallback on_done)
+    {
+        // The live pass batches a bounded set of displayed values; a runaway
+        // list is a programming error, so refuse it instead of monopolising the
+        // worker.
+        constexpr std::size_t kMaxItems = 1024;
+        if (items.size() > kMaxItems)
+        {
+            log::warning(log::category::process,
+                         std::format("batched read of {} item(s) rejected (limit {})", items.size(), kMaxItems));
+            return false;
+        }
+
+        Request request;
+        request.kind       = JobKind::read_many;
+        request.id         = id;
+        request.read_items = std::move(items);
+        request.on_done    = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_write(
         JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done)
     {
@@ -326,6 +347,8 @@ namespace slopkit::process
             return "memory-map";
         case JobKind::read:
             return "read";
+        case JobKind::read_many:
+            return "read-many";
         case JobKind::write:
             return "write";
         case JobKind::freeze:
@@ -354,6 +377,8 @@ namespace slopkit::process
             return do_memory_map();
         case JobKind::read:
             return do_read(request);
+        case JobKind::read_many:
+            return do_read_many(request);
         case JobKind::write:
             return do_write(request);
         case JobKind::freeze:
@@ -513,6 +538,54 @@ namespace slopkit::process
                 std::format(
                     "read of {} byte(s) at 0x{:X} failed: {}", request.size, request.address, describe(*result.error)));
         }
+        return result;
+    }
+
+    ReadManyResult AccessWorker::do_read_many(const Request& request)
+    {
+        ReadManyResult result;
+        result.items.reserve(request.read_items.size());
+
+        if (!session_)
+        {
+            // No session at all: every requested address is unreadable, but the
+            // batch still completes so the caller's in-flight guard clears.
+            result.items.assign(request.read_items.size(), std::unexpected(AccessError::internal));
+            log::warning(log::category::process,
+                         std::format("batched read of {} address(es) requested without an attached target",
+                                     request.read_items.size()));
+            return result;
+        }
+
+        std::size_t failed = 0;
+        for (const auto& item : request.read_items)
+        {
+            std::vector<std::byte> bytes(item.size);
+            if (auto read = session_->read_into(item.address, bytes))
+            {
+                if (*read < bytes.size())
+                {
+                    // A short read still carries usable bytes; keep only what
+                    // the backend actually produced.
+                    bytes.resize(*read);
+                }
+                result.items.emplace_back(std::move(bytes));
+            }
+            else
+            {
+                ++failed;
+                result.items.emplace_back(std::unexpected(read.error()));
+                log::debug(log::category::process,
+                           std::format("live read of {} byte(s) at 0x{:X} failed: {}",
+                                       item.size,
+                                       item.address,
+                                       describe(read.error())));
+            }
+        }
+
+        log::debug(
+            log::category::process,
+            std::format("batched read of {} address(es) completed, {} failed", request.read_items.size(), failed));
         return result;
     }
 
