@@ -1,11 +1,11 @@
 # Index
 
-- `README.md` — project front page: what slopkit is, its plugin architecture, anti-detection stance, build/run instructions, layout and roadmap.
+- `README.md` — project front page: what slopkit is, the tool status table, quick-start build/run/test/install instructions and links into `docs/` for the architecture, anti-detection stance and repository index.
 - `AGENTS.md` — AI agent operating guide: project rules, toolchain and conventions, including the index-first file-discovery rule and the install-on-completion rule.
 - `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
 - `configure.sh` — configures the CMake/Ninja build in `build/`.
 - `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included; for a per-user prefix it refreshes the MIME/desktop databases and makes slopkit the default `.skt` handler.
-- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the shared `slopkit_ui_common` static library (theme, fonts, settings, the widget components and the logger/version both UI binaries need), the `slopkit_platform` library, the `slopkit_add_icon_resources` and `add_slopkit_plugin` helpers and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, the `.skt` MIME package, the hicolor application/MIME icons and docs. Defaults to an optimized `RelWithDebInfo` build when no build type is given, and compiles every target with `-march=native -mtune=native` unless the default-on `SLOPKIT_NATIVE` option is turned off.
+- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the shared `slopkit_ui_common` static library (theme, fonts, settings, the widget components and the logger/version both UI binaries need), the `slopkit_platform` library, the `slopkit_add_icon_resources` and `add_slopkit_plugin` helpers and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, the `.skt` MIME package, the hicolor application/MIME icons, and the `README.md` plus the `docs/` tree (`*.md`) into the documentation directory. Defaults to an optimized `RelWithDebInfo` build when no build type is given, and compiles every target with `-march=native -mtune=native` unless the default-on `SLOPKIT_NATIVE` option is turned off.
 - `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
 - `.clang-format` — C++ formatting rules for the project.
 - `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
@@ -30,6 +30,8 @@
 - `assets/icons/warning.svg` — warning glyph source (embedded as `ActionIcon::warning`).
 - `assets/application-x-slopkit-table.xml` — shared-mime-info definition registering `application/x-slopkit-table` for `.skt` files (glob plus the `slopkit-table` content magic).
 - `assets/slopkit.desktop.in` — desktop entry template with the configured `Exec` path, the `.skt` `MimeType` and a `%f` file argument.
+- `docs/ARCHITECTURE.md` — plugin-first design: the host/plugin split, the `ProcessAccess` seam, the bundled plugins and their precedence, plugin discovery and how to write a plugin.
+- `docs/ANTI_DETECTION.md` — anti-detection stance: the technique categories behind the ptrace-free default access path.
 - `docs/INDEX.md` — this file: one line per project file.
 - `docs/UI_DESIGN.md` — UI and design rules for the project.
 - `docs/LOGGING.md` — logging conventions: levels, category ownership per module, message style and the hot-path/never-log-from-a-sink rules.

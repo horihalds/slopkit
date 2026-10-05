@@ -384,3 +384,9 @@ install(FILES ${CMAKE_SOURCE_DIR}/assets/icons/icon.svg
 
 install(FILES ${CMAKE_SOURCE_DIR}/README.md ${CMAKE_SOURCE_DIR}/assets/fonts/OFL.txt
     DESTINATION ${CMAKE_INSTALL_DOCDIR})
+
+# The rest of the documentation ships next to the README, so the relative
+# `docs/...` links in the installed README resolve.
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/docs/
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs
+    FILES_MATCHING PATTERN "*.md")
