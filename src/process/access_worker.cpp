@@ -58,6 +58,18 @@ namespace slopkit::process
             }
             return std::nullopt;
         }
+
+        // Decodes a little-endian pointer of at most eight bytes; a shorter read
+        // is padded with zeroes.
+        std::uint64_t decode_pointer(std::span<const std::byte> bytes)
+        {
+            std::uint64_t value = 0;
+            for (std::size_t i = 0; i < bytes.size() && i < sizeof(value); ++i)
+            {
+                value |= static_cast<std::uint64_t>(std::to_integer<unsigned char>(bytes[i])) << (8 * i);
+            }
+            return value;
+        }
     } // namespace
 
     AccessWorker::AccessWorker(ProcessAccess& access) : access_(access)
@@ -297,6 +309,33 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_resolve_expressions(JobId                        id,
+                                                  std::vector<ResolveRequest>  requests,
+                                                  std::vector<expr::ModuleRef> modules,
+                                                  std::size_t                  pointer_size,
+                                                  JobCallback                  on_done)
+    {
+        // The re-resolution pass batches a bounded set of displayed entries; a
+        // runaway list is a programming error, so refuse it instead of
+        // monopolising the worker.
+        constexpr std::size_t kMaxItems = 1024;
+        if (requests.size() > kMaxItems)
+        {
+            log::warning(log::category::process,
+                         std::format("batched resolve of {} item(s) rejected (limit {})", requests.size(), kMaxItems));
+            return false;
+        }
+
+        Request request;
+        request.kind          = JobKind::resolve_expressions;
+        request.id            = id;
+        request.resolve_items = std::move(requests);
+        request.module_refs   = std::move(modules);
+        request.pointer_size  = pointer_size;
+        request.on_done       = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_write(
         JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done)
     {
@@ -355,6 +394,8 @@ namespace slopkit::process
             return "freeze";
         case JobKind::detach:
             return "detach";
+        case JobKind::resolve_expressions:
+            return "resolve-expressions";
         }
         return "unknown";
     }
@@ -385,6 +426,8 @@ namespace slopkit::process
             return do_freeze(request);
         case JobKind::detach:
             return do_detach();
+        case JobKind::resolve_expressions:
+            return do_resolve(request);
         }
         return ListResult {};
     }
@@ -684,6 +727,67 @@ namespace slopkit::process
         session_.reset();
         attached_ = false;
         return AttachResult {};
+    }
+
+    ResolveResult AccessWorker::do_resolve(const Request& request)
+    {
+        ResolveResult result;
+
+        if (!session_)
+        {
+            // No session at all: the whole batch fails so the caller's in-flight
+            // guard clears, but nothing is read.
+            result.error = AccessError::internal;
+            log::warning(log::category::process,
+                         std::format("resolve of {} expression(s) requested without an attached target",
+                                     request.resolve_items.size()));
+            return result;
+        }
+
+        const std::size_t pointer_size = request.pointer_size == 0 ? 8 : request.pointer_size;
+        const auto reader = [this, pointer_size](std::uint64_t address) -> std::expected<std::uint64_t, std::string>
+        {
+            const auto bytes = session_->read(address, pointer_size);
+            if (!bytes)
+            {
+                return std::unexpected(std::string {describe(bytes.error())});
+            }
+            return decode_pointer(*bytes);
+        };
+
+        result.items.reserve(request.resolve_items.size());
+        std::size_t failed = 0;
+        for (const auto& item : request.resolve_items)
+        {
+            ResolveItemResult entry;
+            entry.key = item.key;
+
+            const auto expression = expr::parse(item.expression);
+            if (!expression)
+            {
+                entry.error = expression.error().message;
+                ++failed;
+                result.items.push_back(std::move(entry));
+                continue;
+            }
+
+            const auto resolved =
+                expr::evaluate(*expression, request.module_refs, reader, expr::Options {.pointer_size = pointer_size});
+            if (resolved)
+            {
+                entry.address = *resolved;
+            }
+            else
+            {
+                entry.error = resolved.error().message;
+                ++failed;
+            }
+            result.items.push_back(std::move(entry));
+        }
+
+        log::debug(log::category::process,
+                   std::format("resolved {} expression(s), {} failed", request.resolve_items.size(), failed));
+        return result;
     }
 
 } // namespace slopkit::process

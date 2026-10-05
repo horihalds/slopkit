@@ -232,6 +232,10 @@ namespace slopkit::ui
                     log::debug(log::category::ui, std::format("memory map applied: {} module(s)", modules.size()));
                     found_list_->set_modules(modules);
                     address_list_->set_modules(modules);
+                    if (add_address_ != nullptr)
+                    {
+                        add_address_->set_modules(modules);
+                    }
                     memory_view_->set_modules(std::move(modules));
                 });
 
@@ -309,7 +313,7 @@ namespace slopkit::ui
                     refresh_target_label();
                 });
 
-        add_address_ = new dialogs::AddAddressDialog(address_table_, this);
+        add_address_ = new dialogs::AddAddressDialog(address_table_, worker_, this);
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
 

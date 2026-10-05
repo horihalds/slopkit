@@ -3,6 +3,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
 #include <string>
 #include <string_view>
@@ -21,7 +22,6 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "scan/types.hpp"
-#include "scan/value.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 
@@ -50,7 +50,8 @@ namespace slopkit::ui::dialogs
         }
     } // namespace
 
-    AddAddressDialog::AddAddressDialog(table::AddressTable& table, QWidget* parent) : QDialog(parent), table_(table)
+    AddAddressDialog::AddAddressDialog(table::AddressTable& table, process::AccessWorker& worker, QWidget* parent)
+        : QDialog(parent), table_(table), worker_(worker)
     {
         setWindowTitle(tr("Add Address"));
         setMinimumWidth(360);
@@ -69,7 +70,7 @@ namespace slopkit::ui::dialogs
         address_edit_ = new QLineEdit(this);
         address_edit_->setObjectName(QStringLiteral("address_edit"));
         address_edit_->setFont(mono_font());
-        address_edit_->setPlaceholderText(QStringLiteral("0x1234"));
+        address_edit_->setPlaceholderText(QStringLiteral("firefox-bin+0x4096"));
         form->addRow(tr("Address"), address_edit_);
 
         type_combo_ = new QComboBox(this);
@@ -99,14 +100,14 @@ namespace slopkit::ui::dialogs
         layout->addWidget(status_);
 
         auto* buttons      = new QHBoxLayout();
-        auto* add_button   = new widgets::PrimaryButton(tr("Add"), this);
+        add_button_        = new widgets::PrimaryButton(tr("Add"), this);
         auto* close_button = widgets::secondary_button(tr("Close"), this);
-        buttons->addWidget(add_button);
+        buttons->addWidget(add_button_);
         buttons->addWidget(close_button);
         buttons->addStretch(1);
         layout->addLayout(buttons);
 
-        connect(add_button, &QPushButton::clicked, this, &AddAddressDialog::commit);
+        connect(add_button_, &QPushButton::clicked, this, &AddAddressDialog::commit);
         connect(close_button, &QPushButton::clicked, this, &QDialog::close);
         connect(type_combo_,
                 &QComboBox::currentIndexChanged,
@@ -119,11 +120,23 @@ namespace slopkit::ui::dialogs
         reset_form();
     }
 
+    void AddAddressDialog::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        spans_.set_modules(modules);
+        // A new memory map means new module bases, so an in-flight resolve is stale.
+        resolve_job_.reset();
+        if (add_button_ != nullptr)
+        {
+            add_button_->setEnabled(true);
+            add_button_->setText(tr("Add"));
+        }
+    }
+
     void AddAddressDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);
         // Every opening starts from a clean form, so a previous entry is never
-        // submitted twice by accident.
+        // submitted twice by accident and a late completion is inert.
         reset_form();
     }
 
@@ -136,6 +149,13 @@ namespace slopkit::ui::dialogs
 
     void AddAddressDialog::reset_form()
     {
+        resolve_job_.reset();
+        if (add_button_ != nullptr)
+        {
+            add_button_->setEnabled(true);
+            add_button_->setText(tr("Add"));
+        }
+
         description_edit_->setText(tr("New address"));
         address_edit_->clear();
         type_combo_->setCurrentIndex(kDefaultTypeIndex);
@@ -148,15 +168,99 @@ namespace slopkit::ui::dialogs
     void AddAddressDialog::commit()
     {
         log::debug(log::category::ui, "add address submitted");
-        const auto address = scan::parse_address(address_edit_->text().toStdString());
-        if (!address)
+
+        const std::string text       = address_edit_->text().toStdString();
+        const auto        expression = expr::parse(text);
+        if (!expression)
         {
-            log::warning(log::category::ui, std::format("add address rejected: {}", address.error().message));
-            status_->set_status(widgets::StatusKind::error,
-                                tr("Address: %1").arg(QString::fromStdString(address.error().message)));
+            reject_address(QString::fromStdString(expression.error().message));
             return;
         }
 
+        if (expression->pointer_levels() == 0)
+        {
+            // At most one offset: resolve it here. The reader is never reached.
+            const auto resolved =
+                expr::evaluate(*expression,
+                               ui::module_refs(spans_),
+                               [](std::uint64_t) -> std::expected<std::uint64_t, std::string>
+                               {
+                                   return std::unexpected(std::string {"a pointer read was required"});
+                               });
+            if (!resolved)
+            {
+                reject_address(QString::fromStdString(resolved.error().message));
+                return;
+            }
+            add_entry(*resolved, text);
+            return;
+        }
+
+        begin_resolve(text);
+    }
+
+    void AddAddressDialog::reject_address(const QString& message)
+    {
+        log::warning(log::category::ui, std::format("add address rejected: {}", message.toStdString()));
+        status_->set_status(widgets::StatusKind::error, tr("Address: %1").arg(message));
+    }
+
+    void AddAddressDialog::begin_resolve(std::string expression)
+    {
+        const process::JobId id = worker_.next_job_id();
+        resolve_job_            = id;
+        add_button_->setEnabled(false);
+        add_button_->setText(tr("Resolving..."));
+        status_->set_status(widgets::StatusKind::info, tr("Resolving..."));
+
+        const bool submitted =
+            worker_.submit_resolve_expressions(id,
+                                               std::vector<process::ResolveRequest> {
+                                                   process::ResolveRequest {.key = 0, .expression = expression}
+        },
+                                               ui::module_refs(spans_),
+                                               8,
+                                               [this, id, expression](process::JobResult&& result)
+                                               {
+                                                   finish_resolve(id, expression, std::move(result));
+                                               });
+
+        if (!submitted)
+        {
+            resolve_job_.reset();
+            add_button_->setEnabled(true);
+            add_button_->setText(tr("Add"));
+            reject_address(tr("the resolve worker is not accepting jobs"));
+        }
+    }
+
+    void AddAddressDialog::finish_resolve(process::JobId id, const std::string& expression, process::JobResult&& result)
+    {
+        if (resolve_job_ != id)
+        {
+            return; // a later opening superseded this resolve
+        }
+        resolve_job_.reset();
+        add_button_->setEnabled(true);
+        add_button_->setText(tr("Add"));
+
+        const auto& resolved = std::get<process::ResolveResult>(result);
+        if (resolved.error.has_value())
+        {
+            reject_address(tr("a target is required for a pointer expression"));
+            return;
+        }
+        if (resolved.items.empty() || !resolved.items.front().address.has_value())
+        {
+            reject_address(resolved.items.empty() ? tr("the expression could not be resolved")
+                                                  : QString::fromStdString(resolved.items.front().error));
+            return;
+        }
+        add_entry(*resolved.items.front().address, expression);
+    }
+
+    void AddAddressDialog::add_entry(std::uint64_t address, const std::string& expression)
+    {
         const auto  type    = static_cast<scan::ValueType>(type_combo_->currentIndex());
         const bool  dynamic = type == scan::ValueType::string || type == scan::ValueType::byte_array;
         std::size_t size    = scan::value_size(type);
@@ -174,7 +278,8 @@ namespace slopkit::ui::dialogs
 
         table::AddressEntry entry;
         entry.description = description_edit_->text().toStdString();
-        entry.address     = *address;
+        entry.address     = address;
+        entry.expression  = expression;
         entry.type        = type;
         entry.hex         = hex_check_->isChecked();
         entry.bytes.assign(size, std::byte {0});

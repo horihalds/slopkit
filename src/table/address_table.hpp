@@ -23,7 +23,8 @@ namespace slopkit::table
         std::uint64_t          id {}; // Stable identity, assigned by AddressTable::add.
         bool                   active {false};
         std::string            description;
-        std::uint64_t          address {};
+        std::uint64_t          address {}; // the last successful resolution
+        std::string            expression; // empty for a plain absolute address
         scan::ValueType        type {scan::ValueType::int32};
         std::vector<std::byte> bytes;
         bool                   hex {false};

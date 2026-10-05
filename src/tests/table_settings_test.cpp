@@ -225,7 +225,7 @@ TEST_CASE("an empty settings value is not written to the file", "[table]")
     std::filesystem::remove(path);
 
     REQUIRE(lines.size() == 2);
-    CHECK(lines[0] == "slopkit-table 1");
+    CHECK(lines[0] == "slopkit-table 2");
     CHECK(lines[1].starts_with("entry "));
 }
 

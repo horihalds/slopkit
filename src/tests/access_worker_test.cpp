@@ -20,6 +20,7 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "expr/resolver.hpp"
 #include "process/access.hpp"
 #include "process/access_worker.hpp"
 #include "process/types.hpp"
@@ -40,6 +41,8 @@ namespace
     using slopkit::process::ReadManyItem;
     using slopkit::process::ReadManyResult;
     using slopkit::process::ReadResult;
+    using slopkit::process::ResolveRequest;
+    using slopkit::process::ResolveResult;
     using slopkit::process::WriteItem;
     using slopkit::process::WriteResult;
 
@@ -941,4 +944,103 @@ TEST_CASE("worker construction and destruction stay healthy under repetition", "
     CHECK(finished.load());
     CHECK(cycles_done.load() == 2 * kCycles);
     CHECK(callbacks.load() == kCycles);
+}
+
+TEST_CASE("a batched resolve evaluates expressions with pointer chains", "[worker]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    bool attached = false;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&&)
+                             {
+                                 attached = true;
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached;
+                 }));
+
+    // Store a pointer value at the module base: it points at base + 0x10.
+    constexpr std::uint64_t kPointer = FakeBackend::kBase + 0x10;
+    auto&                   memory   = access.backend()->memory;
+    for (std::size_t i = 0; i < sizeof(kPointer); ++i)
+    {
+        memory[i] = static_cast<std::byte>((kPointer >> (8 * i)) & 0xFF);
+    }
+
+    const std::vector<slopkit::expr::ModuleRef> modules {
+        {"firefox-bin", FakeBackend::kBase}
+    };
+
+    ResolveResult batch;
+    worker.submit_resolve_expressions(worker.next_job_id(),
+                                      std::vector<ResolveRequest> {
+                                          {.key = 1,             .expression = "0x2000"}, // absolute literal
+                                          {.key = 2,   .expression = "firefox-bin+0+20"}, // pointer chain
+                                          {.key = 3,     .expression = "firefox-bin+zz"}, // parse failure
+                                          {.key = 4, .expression = "firefox-bin+1000+0"}, // unreadable pointer
+    },
+                                      modules,
+                                      8,
+                                      [&](JobResult&& result)
+                                      {
+                                          batch = std::get<ResolveResult>(std::move(result));
+                                      });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return batch.items.size() == 4;
+                 }));
+
+    REQUIRE_FALSE(batch.error.has_value());
+    REQUIRE(batch.items.size() == 4);
+
+    CHECK(batch.items[0].key == 1);
+    REQUIRE(batch.items[0].address.has_value());
+    CHECK(*batch.items[0].address == 0x2000);
+    CHECK(batch.items[0].error.empty());
+
+    CHECK(batch.items[1].key == 2);
+    REQUIRE(batch.items[1].address.has_value());
+    CHECK(*batch.items[1].address == 0x1010 + 0x20);
+
+    // A bad expression fails only its own item.
+    CHECK(batch.items[2].key == 3);
+    CHECK_FALSE(batch.items[2].address.has_value());
+    CHECK(batch.items[2].error == "invalid offset 'zz'");
+
+    // An unreadable pointer level fails only its own item.
+    CHECK(batch.items[3].key == 4);
+    CHECK_FALSE(batch.items[3].address.has_value());
+    CHECK(batch.items[3].error.find("cannot read pointer at level 1") != std::string::npos);
+}
+
+TEST_CASE("a batched resolve without an attached target fails the job", "[worker]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    ResolveResult batch;
+    worker.submit_resolve_expressions(worker.next_job_id(),
+                                      std::vector<ResolveRequest> {
+                                          {.key = 1, .expression = "firefox-bin"}
+    },
+                                      std::vector<slopkit::expr::ModuleRef> {{"firefox-bin", FakeBackend::kBase}},
+                                      8,
+                                      [&](JobResult&& result)
+                                      {
+                                          batch = std::get<ResolveResult>(std::move(result));
+                                      });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return batch.error.has_value();
+                 }));
+    CHECK(batch.error == AccessError::internal);
+    CHECK(batch.items.empty());
 }

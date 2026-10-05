@@ -1,10 +1,8 @@
 #include "ui/address_format.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cstddef>
 #include <iterator>
-#include <system_error>
 
 #include "scan/value.hpp"
 
@@ -44,25 +42,6 @@ namespace slopkit::ui
             }
             return true;
         }
-
-        std::optional<std::uint64_t> parse_hex(std::string_view text)
-        {
-            if (text.empty())
-            {
-                return std::nullopt;
-            }
-            if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
-            {
-                text.remove_prefix(2);
-            }
-            std::uint64_t value     = 0;
-            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, 16);
-            if (error != std::errc {} || end != text.data() + text.size())
-            {
-                return std::nullopt;
-            }
-            return value;
-        }
     } // namespace
 
     void ModuleSpans::set_modules(std::span<const process::ModuleInfo> modules)
@@ -100,6 +79,11 @@ namespace slopkit::ui
     bool ModuleSpans::empty() const
     {
         return spans_.empty();
+    }
+
+    std::span<const ModuleSpan> ModuleSpans::spans() const
+    {
+        return spans_;
     }
 
     const ModuleSpan* ModuleSpans::containing(std::uint64_t address) const
@@ -168,26 +152,53 @@ namespace slopkit::ui
 
     std::optional<std::uint64_t> parse_address_text(std::string_view text, const ModuleSpans& spans)
     {
-        const std::size_t plus = text.find('+');
-        if (plus != std::string_view::npos)
+        if (text.find('+') == std::string_view::npos)
         {
-            const std::string_view name = text.substr(0, plus);
-            const std::string_view rva  = text.substr(plus + 1);
-            if (!name.empty())
-            {
-                if (const ModuleSpan* span = spans.find_by_name(name); span != nullptr)
-                {
-                    if (const auto offset = parse_hex(rva); offset.has_value())
-                    {
-                        return span->base + *offset;
-                    }
-                }
-            }
-            return std::nullopt;
+            // A plain absolute address keeps its historical decimal/0x rules.
+            const auto parsed = scan::parse_address(text);
+            return parsed.has_value() ? std::optional<std::uint64_t> {*parsed} : std::nullopt;
         }
 
-        const auto parsed = scan::parse_address(text);
-        return parsed.has_value() ? std::optional<std::uint64_t> {*parsed} : std::nullopt;
+        const auto expression = expr::parse(text);
+        if (!expression || expression->offsets.size() != 1)
+        {
+            return std::nullopt; // a pointer chain needs the worker
+        }
+
+        std::uint64_t base = 0;
+        if (const ModuleSpan* span = spans.find_by_name(expression->base); span != nullptr)
+        {
+            base = span->base;
+        }
+        else if (const auto literal = expr::parse_literal(expression->base); literal.has_value())
+        {
+            base = *literal;
+        }
+        else
+        {
+            return std::nullopt;
+        }
+        return base + expression->offsets.front().value;
+    }
+
+    std::vector<expr::ModuleRef> module_refs(const ModuleSpans& spans)
+    {
+        std::vector<expr::ModuleRef> refs;
+        refs.reserve(spans.spans().size());
+        for (const ModuleSpan& span : spans.spans())
+        {
+            refs.push_back(expr::ModuleRef {span.name, span.base});
+        }
+        return refs;
+    }
+
+    std::optional<std::uint64_t> module_base(const ModuleSpans& spans, std::string_view name)
+    {
+        if (const ModuleSpan* span = spans.find_by_name(name); span != nullptr)
+        {
+            return span->base;
+        }
+        return std::nullopt;
     }
 
 } // namespace slopkit::ui

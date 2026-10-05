@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "process/access_worker.hpp"
@@ -65,18 +68,24 @@ namespace slopkit::ui::dialogs
         void showEvent(QShowEvent* event) override;
 
     private:
-        void build_layout();
-        // Asks for an address text and jumps to it; a bad value is only logged.
-        void prompt_go_to();
+        void                      build_layout();
+        // Asks for an address expression and jumps to it.
+        void                      prompt_go_to();
+        // Validates one Go To expression: an empty string when acceptable.
+        [[nodiscard]] std::string validate_go_to(std::string_view text) const;
+        // Submits a pointer-chain expression to the worker and jumps on completion.
+        void                      resolve_go_to(const std::string& expression);
         // Asks the coordinator for an immediate pass and shows the loading state.
-        void request_page();
-        void update_state();
+        void                      request_page();
+        void                      update_state();
 
+        process::AccessWorker&         worker_;
         process::AttachedTarget&       target_;
         components::MemoryViewDocument document_;
         components::MemoryView*        view_ {};
         QLabel*                        loading_label_ {};
         widgets::StatusLabel*          status_ {};
+        std::optional<process::JobId>  resolve_job_;
 
         // The manual-request/loading state; the page cache lives in the document.
         bool page_loaded_ {false};

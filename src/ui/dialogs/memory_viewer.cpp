@@ -1,16 +1,18 @@
 #include "ui/dialogs/memory_viewer.hpp"
 
 #include <cstdint>
+#include <format>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include <QInputDialog>
 #include <QLabel>
-#include <QLineEdit>
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "ui/components/input_box.hpp"
 #include "ui/components/memory_view.hpp"
 #include "ui/components/widgets.hpp"
 
@@ -20,7 +22,7 @@ namespace slopkit::ui::dialogs
     MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
                                            QWidget*                 parent)
-        : QDialog(parent), target_(target), document_(worker, target, this)
+        : QDialog(parent), worker_(worker), target_(target), document_(worker, target, this)
     {
         setWindowTitle(tr("Memory Viewer"));
         resize(760, 560);
@@ -105,20 +107,96 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::prompt_go_to()
     {
-        bool          ok   = false;
-        const QString text = QInputDialog::getText(this,
-                                                   tr("Go To"),
-                                                   tr("Address or module+RVA:"),
-                                                   QLineEdit::Normal,
-                                                   document_.display_text(view_->first_byte()),
-                                                   &ok);
-        if (!ok || text.isEmpty())
+        widgets::InputBoxOptions options;
+        options.title       = tr("Go To");
+        options.label       = tr("Address or expression:");
+        options.initial     = document_.display_text(view_->first_byte());
+        options.placeholder = QStringLiteral("module+0x10 or module+0d+5d+44");
+        options.monospace   = true;
+        options.validate    = [this](const QString& text)
+        {
+            return QString::fromStdString(validate_go_to(text.toStdString()));
+        };
+
+        const auto accepted = widgets::get_text(options, this);
+        if (!accepted || accepted->isEmpty())
         {
             return;
         }
-        if (!go_to(text))
+
+        const auto expression = expr::parse(accepted->toStdString());
+        if (!expression)
         {
-            log::warning(log::category::ui, "memory viewer got an unparseable address");
+            return; // the live validator already reported it
+        }
+        if (expression->pointer_levels() == 0)
+        {
+            if (!go_to(*accepted))
+            {
+                log::warning(log::category::ui, "memory viewer got an unparseable address");
+            }
+            return;
+        }
+        resolve_go_to(accepted->toStdString());
+    }
+
+    std::string MemoryViewerDialog::validate_go_to(std::string_view text) const
+    {
+        const auto expression = expr::parse(text);
+        if (!expression)
+        {
+            return expression.error().message;
+        }
+        if (ui::module_base(document_.module_spans(), expression->base).has_value())
+        {
+            return {};
+        }
+        if (expr::parse_literal(expression->base).has_value())
+        {
+            return {};
+        }
+        return std::format("unknown module or literal '{}'", expression->base);
+    }
+
+    void MemoryViewerDialog::resolve_go_to(const std::string& expression)
+    {
+        const process::JobId id = worker_.next_job_id();
+        resolve_job_            = id;
+        status_->set_status(widgets::StatusKind::info, tr("Resolving..."));
+
+        const bool submitted =
+            worker_.submit_resolve_expressions(id,
+                                               std::vector<process::ResolveRequest> {
+                                                   process::ResolveRequest {.key = 0, .expression = expression}
+        },
+                                               ui::module_refs(document_.module_spans()),
+                                               8,
+                                               [this, id](process::JobResult&& result)
+                                               {
+                                                   if (resolve_job_ != id)
+                                                   {
+                                                       return; // superseded by a later prompt
+                                                   }
+                                                   resolve_job_.reset();
+
+                                                   const auto& resolved = std::get<process::ResolveResult>(result);
+                                                   if (!resolved.error.has_value() && !resolved.items.empty()
+                                                       && resolved.items.front().address.has_value())
+                                                   {
+                                                       set_address(*resolved.items.front().address);
+                                                       return;
+                                                   }
+                                                   const QString message =
+                                                       resolved.error.has_value() || resolved.items.empty()
+                                                           ? tr("No target attached.")
+                                                           : QString::fromStdString(resolved.items.front().error);
+                                                   status_->set_status(widgets::StatusKind::error, message);
+                                               });
+
+        if (!submitted)
+        {
+            resolve_job_.reset();
+            status_->set_status(widgets::StatusKind::error, tr("Could not start the resolve."));
         }
     }
 

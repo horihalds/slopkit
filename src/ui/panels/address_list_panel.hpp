@@ -1,7 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -117,10 +119,23 @@ namespace slopkit::ui::panels
         void show_context_menu(const QPoint& position);
         void set_status(const QString& message, bool is_error);
         void save_to_path(const QString& path);
+        // Re-resolves every entry that carries an expression, at most once per
+        // interval unless the expression set or the module map changed.
+        void maybe_resolve_expressions();
 
-        table::AddressTable&       table_;
-        models::AddressTableModel* model_ {};
-        QTableView*                table_view_ {};
+        table::AddressTable&                  table_;
+        process::AccessWorker&                worker_;
+        process::AttachedTarget&              target_;
+        ui::ModuleSpans                       modules_;
+        models::AddressTableModel*            model_ {};
+        QTableView*                           table_view_ {};
+        std::optional<process::JobId>         resolve_job_;
+        bool                                  resolving_ {false};
+        bool                                  force_resolve_ {true};
+        std::chrono::steady_clock::time_point last_resolve_ {};
+        // The ids and expression texts of the last batch, so a changed set of
+        // expressions resolves at once instead of waiting for the interval.
+        std::string                           expression_signature_;
 
         // The pre-filled path of the open/save dialogs.
         QString table_path_;

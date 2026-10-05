@@ -265,6 +265,10 @@ namespace slopkit::table
                     }
                     entry.bytes = std::move(*bytes);
                 }
+                else if (key == "expr")
+                {
+                    entry.expression = std::move(value);
+                }
                 else
                 {
                     return std::unexpected(std::format("line {}: unknown key '{}'", line_number, key));
@@ -361,7 +365,7 @@ namespace slopkit::table
             return std::unexpected("cannot open " + path.string() + " for writing");
         }
 
-        file << "slopkit-table 1\n";
+        file << "slopkit-table 2\n";
         const TableSettings& settings = table.settings();
         if (!settings.empty())
         {
@@ -373,13 +377,18 @@ namespace slopkit::table
         }
         for (const auto& entry : table.entries())
         {
-            file << std::format("entry description=\"{}\" address=0x{:X} type={} frozen={} hex={} value={}\n",
+            file << std::format("entry description=\"{}\" address=0x{:X} type={} frozen={} hex={} value={}",
                                 escape(entry.description),
                                 entry.address,
                                 type_token(entry.type),
                                 entry.active ? 1 : 0,
                                 entry.hex ? 1 : 0,
                                 hex_bytes(entry.bytes));
+            if (!entry.expression.empty())
+            {
+                file << std::format(" expr=\"{}\"", escape(entry.expression));
+            }
+            file << '\n';
         }
         if (!file)
         {

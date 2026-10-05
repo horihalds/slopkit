@@ -16,6 +16,7 @@
 #include <variant>
 #include <vector>
 
+#include "expr/resolver.hpp"
 #include "process/access.hpp"
 #include "process/types.hpp"
 
@@ -81,6 +82,30 @@ namespace slopkit::process
         std::vector<std::string> executables;
     };
 
+    // One expression a batched resolve must evaluate; `key` is echoed back so the
+    // caller can match the result to the entry that requested it.
+    struct ResolveRequest
+    {
+        std::uint64_t key {};
+        std::string   expression;
+    };
+
+    // One resolved expression. `address` is set on success; otherwise `error`
+    // carries the readable reason. An unreadable item never fails the batch.
+    struct ResolveItemResult
+    {
+        std::uint64_t                key {};
+        std::optional<std::uint64_t> address;
+        std::string                  error;
+    };
+
+    struct ResolveResult
+    {
+        // In request order. Empty when the job itself fails (no session).
+        std::vector<ResolveItemResult> items;
+        std::optional<AccessError>     error;
+    };
+
     struct ReadResult
     {
         JobId                      id {};
@@ -126,7 +151,8 @@ namespace slopkit::process
                                    ReadManyResult,
                                    WriteResult,
                                    FreezeResult,
-                                   MemoryMapResult>;
+                                   MemoryMapResult,
+                                   ResolveResult>;
 
     // Runs on the UI thread inside AccessWorker::drain().
     using JobCallback = std::move_only_function<void(JobResult&&)>;
@@ -159,6 +185,14 @@ namespace slopkit::process
         bool submit_memory_map(JobId id, JobCallback on_done);
         bool submit_read(JobId id, std::uint64_t address, std::size_t size, JobCallback on_done);
         bool submit_read_many(JobId id, std::vector<ReadManyItem> items, JobCallback on_done);
+        // Evaluates every expression (pointer reads included) in one job. The
+        // module map is a snapshot the caller keeps current; `pointer_size` is
+        // the target's pointer width.
+        bool submit_resolve_expressions(JobId                        id,
+                                        std::vector<ResolveRequest>  requests,
+                                        std::vector<expr::ModuleRef> modules,
+                                        std::size_t                  pointer_size,
+                                        JobCallback                  on_done);
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
@@ -195,21 +229,25 @@ namespace slopkit::process
             write,
             freeze,
             detach,
+            resolve_expressions,
         };
 
         struct Request
         {
-            JobKind                   kind {};
-            JobId                     id {};
-            ProcessId                 pid {};
-            std::string               plugin_id;
-            std::uint64_t             address {};
-            std::size_t               size {};
-            std::uint64_t             entry_id {};
-            std::vector<std::byte>    bytes;
-            std::vector<WriteItem>    items;
-            std::vector<ReadManyItem> read_items;
-            JobCallback               on_done;
+            JobKind                      kind {};
+            JobId                        id {};
+            ProcessId                    pid {};
+            std::string                  plugin_id;
+            std::uint64_t                address {};
+            std::size_t                  size {};
+            std::uint64_t                entry_id {};
+            std::vector<std::byte>       bytes;
+            std::vector<WriteItem>       items;
+            std::vector<ReadManyItem>    read_items;
+            std::vector<ResolveRequest>  resolve_items;
+            std::vector<expr::ModuleRef> module_refs;
+            std::size_t                  pointer_size {};
+            JobCallback                  on_done;
         };
 
         struct Completion
@@ -232,6 +270,7 @@ namespace slopkit::process
         WriteResult             do_write(const Request& request);
         FreezeResult            do_freeze(const Request& request);
         AttachResult            do_detach();
+        ResolveResult           do_resolve(const Request& request);
 
         ProcessAccess&          access_;
         std::mutex              mutex_;

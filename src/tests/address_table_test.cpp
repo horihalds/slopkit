@@ -180,6 +180,7 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     original.add(make_entry(0x1234, ValueType::int32, {0x40, 0x00, 0x00, 0x00}));
     original.entries()[0].description = "player health";
     original.entries()[0].active      = true;
+    original.entries()[0].expression  = "game+0x10";
 
     original.add(make_entry(0x100000, ValueType::float64, {0, 0, 0, 0, 0, 0, 0x10, 0x40}));
     original.entries()[1].description = "he said \"hi\"";
@@ -201,6 +202,7 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     CHECK(loaded.entries()[0].active);
     CHECK_FALSE(loaded.entries()[0].hex);
     CHECK(loaded.entries()[0].bytes == original.entries()[0].bytes);
+    CHECK(loaded.entries()[0].expression == "game+0x10");
 
     CHECK(loaded.entries()[1].description == "he said \"hi\"");
     CHECK(loaded.entries()[1].address == 0x100000);
@@ -208,11 +210,51 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     CHECK_FALSE(loaded.entries()[1].active);
     CHECK(loaded.entries()[1].hex);
     CHECK(loaded.entries()[1].bytes == original.entries()[1].bytes);
+    CHECK(loaded.entries()[1].expression.empty());
 
     // Ids are not persisted; the loader regenerates non-zero, unique ids.
     CHECK(loaded.entries()[0].id != 0);
     CHECK(loaded.entries()[1].id != 0);
     CHECK(loaded.entries()[0].id != loaded.entries()[1].id);
+}
+
+TEST_CASE("a v1 entry line loads without an expression", "[table]")
+{
+    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_v1.skt";
+    std::filesystem::remove(path);
+    {
+        std::ofstream file(path);
+        file << "slopkit-table 1\n";
+        file << "entry description=\"legacy\" address=0xABC type=i32 frozen=0 hex=0 value=01000000\n";
+    }
+
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded.entries()[0].description == "legacy");
+    CHECK(loaded.entries()[0].address == 0xABC);
+    CHECK(loaded.entries()[0].expression.empty());
+}
+
+TEST_CASE("an expression with quotes and spaces round-trips", "[table]")
+{
+    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_expr.skt";
+    std::filesystem::remove(path);
+
+    AddressTable original;
+    auto         entry = make_entry(0x2000, ValueType::int32, {0x01, 0x00, 0x00, 0x00});
+    entry.expression   = "my \"module\"+0x10";
+    original.add(entry);
+
+    REQUIRE(slopkit::table::save(path, original).has_value());
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded.entries()[0].expression == "my \"module\"+0x10");
 }
 
 TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")

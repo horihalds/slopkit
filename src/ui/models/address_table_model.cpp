@@ -63,6 +63,10 @@ namespace slopkit::ui::models
             case description:
                 return to_qstring(entry.description);
             case address:
+                if (!entry.expression.empty())
+                {
+                    return to_qstring(entry.expression);
+                }
                 return address_text(entry.address);
             case type:
                 return to_qstring(scan::describe(entry.type));
@@ -127,6 +131,10 @@ namespace slopkit::ui::models
             if (index.column() == frozen)
             {
                 return tr("Freeze this value");
+            }
+            if (index.column() == address && !entry.expression.empty())
+            {
+                return QStringLiteral("0x") + QString::number(entry.address, 16).toUpper();
             }
             if (index.column() == value)
             {
@@ -519,8 +527,8 @@ namespace slopkit::ui::models
             const auto& current = entries[index];
             const auto& last    = last_entries_[index];
             if (current.id != last.id || current.active != last.active || current.description != last.description
-                || current.address != last.address || current.type != last.type || current.hex != last.hex
-                || current.bytes != last.bytes)
+                || current.address != last.address || current.expression != last.expression || current.type != last.type
+                || current.hex != last.hex || current.bytes != last.bytes)
             {
                 return false;
             }

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "expr/resolver.hpp"
 #include "process/types.hpp"
 
 #include <QString>
@@ -37,9 +38,11 @@ namespace slopkit::ui
     class ModuleSpans
     {
     public:
-        void               set_modules(std::span<const process::ModuleInfo> modules);
-        void               clear();
-        [[nodiscard]] bool empty() const;
+        void                                      set_modules(std::span<const process::ModuleInfo> modules);
+        void                                      clear();
+        [[nodiscard]] bool                        empty() const;
+        // The file-backed images, sorted by base.
+        [[nodiscard]] std::span<const ModuleSpan> spans() const;
 
         bool operator==(const ModuleSpans&) const = default;
 
@@ -65,7 +68,15 @@ namespace slopkit::ui
     [[nodiscard]] std::optional<QString>
     module_relative_text(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
 
-    // "0x…"/decimal as today, plus "<module>+<RVA>" resolved against `spans`.
+    // A deref-free address: an absolute `0x…`/decimal value, or a
+    // `<module>+<RVA>` / `<literal>+<offset>` expression. A pointer chain (two
+    // or more offsets) yields nothing - it must go through the access worker.
     [[nodiscard]] std::optional<std::uint64_t> parse_address_text(std::string_view text, const ModuleSpans& spans);
+
+    // The module map in the form the expression resolver expects.
+    [[nodiscard]] std::vector<expr::ModuleRef> module_refs(const ModuleSpans& spans);
+
+    // The base of the module named `name` (case-insensitive), or nothing.
+    [[nodiscard]] std::optional<std::uint64_t> module_base(const ModuleSpans& spans, std::string_view name);
 
 } // namespace slopkit::ui

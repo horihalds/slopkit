@@ -1,5 +1,6 @@
 #include "ui/panels/address_list_panel.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -48,7 +49,7 @@ namespace slopkit::ui::panels
                                        process::AccessWorker&   worker,
                                        process::AttachedTarget& target,
                                        QWidget*                 parent)
-        : QWidget(parent), table_(table)
+        : QWidget(parent), table_(table), worker_(worker), target_(target)
     {
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(8, 8, 8, 8);
@@ -121,6 +122,7 @@ namespace slopkit::ui::panels
     void AddressListPanel::refresh()
     {
         model_->refresh();
+        maybe_resolve_expressions();
     }
 
     std::vector<ui::LiveRequest> AddressListPanel::next_live_request()
@@ -135,7 +137,136 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::set_modules(std::vector<process::ModuleInfo> modules)
     {
+        modules_.set_modules(modules);
         model_->set_modules(std::move(modules));
+        // A new memory map means new bases, so resolve at the next tick.
+        force_resolve_ = true;
+    }
+
+    void AddressListPanel::maybe_resolve_expressions()
+    {
+        if (resolving_ || !target_.valid())
+        {
+            return;
+        }
+
+        std::vector<process::ResolveRequest> requests;
+        std::string                          signature;
+        for (const table::AddressEntry& entry : table_.entries())
+        {
+            if (entry.expression.empty())
+            {
+                continue;
+            }
+            requests.push_back(process::ResolveRequest {.key = entry.id, .expression = entry.expression});
+            signature += std::to_string(entry.id);
+            signature += ':';
+            signature += entry.expression;
+            signature += ';';
+        }
+
+        constexpr auto kResolveInterval = std::chrono::seconds(1);
+        const auto     now              = std::chrono::steady_clock::now();
+        if (requests.empty())
+        {
+            expression_signature_.clear();
+            force_resolve_ = false;
+            return;
+        }
+        // A new or edited expression resolves at once; otherwise the interval
+        // throttles the repeated pointer reads.
+        if (!force_resolve_ && signature == expression_signature_ && now - last_resolve_ < kResolveInterval)
+        {
+            return;
+        }
+        force_resolve_        = false;
+        expression_signature_ = signature;
+
+        const process::JobId id = worker_.next_job_id();
+        resolve_job_            = id;
+        resolving_              = true;
+        last_resolve_           = now;
+
+        // Keep the submitted texts so a completion can be validated against the
+        // current entries (an entry edited meanwhile is not overwritten).
+        const auto submitted_requests = requests;
+        const bool submitted          = worker_.submit_resolve_expressions(
+            id,
+            std::move(requests),
+            ui::module_refs(modules_),
+            8,
+            [this, id, submitted_requests](process::JobResult&& result)
+            {
+                if (resolve_job_ != id)
+                {
+                    return; // a later pass superseded this one
+                }
+                resolve_job_.reset();
+                resolving_ = false;
+
+                const auto& resolved = std::get<process::ResolveResult>(result);
+                if (resolved.error.has_value())
+                {
+                    return; // detached between submit and completion
+                }
+
+                auto    entries = table_.entries();
+                bool    changed = false;
+                QString first_error;
+                for (const process::ResolveItemResult& item : resolved.items)
+                {
+                    const auto request = std::find_if(submitted_requests.begin(),
+                                                      submitted_requests.end(),
+                                                      [&](const process::ResolveRequest& candidate)
+                                                      {
+                                                          return candidate.key == item.key;
+                                                      });
+                    if (request == submitted_requests.end())
+                    {
+                        continue;
+                    }
+                    const auto entry = std::find_if(entries.begin(),
+                                                    entries.end(),
+                                                    [&](const table::AddressEntry& candidate)
+                                                    {
+                                                        return candidate.id == item.key;
+                                                    });
+                    // Drop an entry removed or edited while the resolve ran.
+                    if (entry == entries.end() || entry->expression != request->expression)
+                    {
+                        continue;
+                    }
+                    if (item.address.has_value())
+                    {
+                        if (entry->address != *item.address)
+                        {
+                            entry->address = *item.address;
+                            changed        = true;
+                        }
+                    }
+                    else if (first_error.isEmpty())
+                    {
+                        first_error = QString::fromStdString(item.error);
+                    }
+                }
+
+                if (changed)
+                {
+                    model_->refresh();
+                }
+                if (!first_error.isEmpty())
+                {
+                    log::warning(log::category::ui,
+                                 std::format("expression resolve failed: {}", first_error.toStdString()));
+                    set_status(tr("Expression resolve failed: %1").arg(first_error), true);
+                }
+            });
+        if (!submitted)
+        {
+            resolve_job_.reset();
+            resolving_ = false;
+            set_status(tr("Expression resolve could not be started."), true);
+        }
     }
 
     void AddressListPanel::set_address_mode(ui::AddressMode mode)

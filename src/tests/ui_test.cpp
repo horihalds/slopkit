@@ -70,6 +70,7 @@
 #include "scan/source.hpp"
 #include "table/serializer.hpp"
 #include "ui/address_format.hpp"
+#include "ui/components/input_box.hpp"
 #include "ui/components/memory_view.hpp"
 #include "ui/components/memory_view_document.hpp"
 #include "ui/components/message_box.hpp"
@@ -1527,6 +1528,35 @@ TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui
     CHECK(address_cell() == QStringLiteral("0x1040"));
 }
 
+TEST_CASE("the address-table model shows an entry's expression and its resolved tooltip", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    slopkit::table::AddressEntry entry;
+    entry.address    = 0x1040;
+    entry.expression = "app+40";
+    entry.type       = slopkit::scan::ValueType::int32;
+    entry.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(entry);
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+
+    const auto address_index = model.index(0, slopkit::ui::models::AddressTableModel::address);
+    CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+40"));
+    CHECK(model.data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x1040"));
+
+    // A plain entry keeps the resolved address in the cell and carries no tooltip.
+    table.entries()[0].expression.clear();
+    CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("0x1040"));
+    CHECK(model.data(address_index, Qt::ToolTipRole).toString().isEmpty());
+}
+
 namespace
 {
     // A live surface that records what one pass asks for and what it applies,
@@ -1708,6 +1738,108 @@ TEST_CASE("the address list Value column follows live memory", "[ui]")
                         return foreground() != slopkit::ui::active_theme().warning;
                     }));
     CHECK(value_text() == QStringLiteral("9"));
+}
+
+TEST_CASE("the address list re-resolves stored expressions on a slower cadence", "[ui]")
+{
+    application();
+
+    UiFakeAccess                     access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target      = fake_target();
+    constexpr std::uint64_t          module_base = 0x100000;
+
+    const auto store_pointer = [&](std::uint64_t value)
+    {
+        std::vector<std::byte> bytes(8);
+        for (std::size_t index = 0; index < bytes.size(); ++index)
+        {
+            bytes[index] = static_cast<std::byte>((value >> (8 * index)) & 0xFF);
+        }
+        (*access.memory)[module_base] = std::move(bytes);
+    };
+    store_pointer(0x200000);
+
+    slopkit::table::AddressTable table;
+    slopkit::table::AddressEntry chained;
+    chained.expression = "app+0+8";
+    chained.type       = slopkit::scan::ValueType::int32;
+    chained.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(chained);
+    slopkit::table::AddressEntry relative;
+    relative.expression = "app+20";
+    relative.type       = slopkit::scan::ValueType::int32;
+    relative.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(relative);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    int data_changes = 0;
+    QObject::connect(model,
+                     &QAbstractItemModel::dataChanged,
+                     [&](const QModelIndex&, const QModelIndex&, const QList<int>&)
+                     {
+                         ++data_changes;
+                     });
+    QString status;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     [&](const QString& message, bool)
+                     {
+                         status = message;
+                     });
+
+    attach_app_session(worker);
+    panel.set_modules({module_image("app", module_base, 0x1000)});
+
+    // One refresh resolves the whole batch: the chain dereferences, the
+    // module-relative entry is a plain offset.
+    panel.refresh();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table.entries()[0].address == 0x200008 && table.entries()[1].address == 0x100020;
+                    }));
+    CHECK(data_changes > 0);
+    const QModelIndex address_index = model->index(0, slopkit::ui::models::AddressTableModel::address);
+    CHECK(model->data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+0+8"));
+    CHECK(model->data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x200008"));
+
+    // A second refresh inside the interval resolves nothing: moving the pointer
+    // and refreshing must leave the stored address untouched.
+    store_pointer(0x300000);
+    panel.refresh();
+    for (int attempt = 0; attempt < 20; ++attempt)
+    {
+        worker.drain();
+        QApplication::processEvents();
+    }
+    CHECK(table.entries()[0].address == 0x200008);
+
+    // An edited expression resolves at once instead of waiting for the interval.
+    table.entries()[0].expression = "app+0+4";
+    panel.refresh();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table.entries()[0].address == 0x300004;
+                    }));
+
+    // A failing resolve keeps the last good address and reports the reason.
+    access.unreadable->insert(module_base);
+    table.entries()[0].expression = "app+0+8";
+    status.clear();
+    panel.refresh();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.contains(QStringLiteral("cannot read pointer"));
+                    }));
+    CHECK(table.entries()[0].address == 0x300004);
 }
 
 TEST_CASE("an unreadable address shows a question mark", "[ui]")
@@ -5521,6 +5653,133 @@ TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
     const std::uint64_t before = view->first_byte();
     CHECK_FALSE(viewer.go_to(QStringLiteral("missing+40")));
     CHECK(view->first_byte() == before);
+}
+
+TEST_CASE("the memory viewer go-to follows a pointer-chain expression", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    UiFakeAccess                   access;
+    slopkit::process::AccessWorker worker {access};
+    attach_app_session(worker);
+
+    // A pointer stored at the module base points the chain onward.
+    constexpr std::uint64_t pointer = 0x200000;
+    std::vector<std::byte>  bytes(8);
+    for (std::size_t index = 0; index < bytes.size(); ++index)
+    {
+        bytes[index] = static_cast<std::byte>((pointer >> (8 * index)) & 0xFF);
+    }
+    (*access.memory)[0x100000] = std::move(bytes);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    viewer.set_modules({module_image("app", 0x100000, 0x1000)});
+    viewer.set_address(0x100000);
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    // Answer the prompt with the chain text as soon as it opens.
+    QTimer::singleShot(0,
+                       []
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                               if (box != nullptr && box->isVisible())
+                               {
+                                   box->line_edit()->setText(QStringLiteral("app+0+8"));
+                                   box->accept();
+                                   return;
+                               }
+                           }
+                       });
+
+    QMenu menu;
+    view->populate_options_menu(menu);
+    QAction* go_to = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Go To..."))
+        {
+            go_to = action;
+            break;
+        }
+    }
+    REQUIRE(go_to != nullptr);
+    go_to->trigger();
+
+    // The jump happens only once the worker resolves the chain.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return view->first_byte() == 0x200008;
+                    }));
+    viewer.hide();
+}
+
+TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    UiFakeAccess                   access;
+    slopkit::process::AccessWorker worker {access};
+    attach_app_session(worker);
+    // The pointer's own address cannot be read, so the chain fails at level 1.
+    access.unreadable->insert(0x100000);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target};
+    auto*                                    view   = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    auto*                                    status = viewer.findChild<slopkit::ui::widgets::StatusLabel*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(status != nullptr);
+    viewer.set_modules({module_image("app", 0x100000, 0x1000)});
+    viewer.set_address(0x100000);
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    QTimer::singleShot(0,
+                       []
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                               if (box != nullptr && box->isVisible())
+                               {
+                                   box->line_edit()->setText(QStringLiteral("app+0+8"));
+                                   box->accept();
+                                   return;
+                               }
+                           }
+                       });
+
+    QMenu menu;
+    view->populate_options_menu(menu);
+    QAction* go_to = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Go To..."))
+        {
+            go_to = action;
+            break;
+        }
+    }
+    REQUIRE(go_to != nullptr);
+    go_to->trigger();
+
+    // The failure is reported and the page does not move.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status->text().contains(QStringLiteral("cannot read pointer"));
+                    }));
+    CHECK(view->first_byte() == 0x100000);
+    viewer.hide();
 }
 
 TEST_CASE("the settings dialog offers the address display choice", "[ui]")
