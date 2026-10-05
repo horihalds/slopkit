@@ -1,6 +1,6 @@
 # slopkit
 
-slopkit is a Cheat Engine-like reverse-engineering toolset for games and software.
+slopkit is a reverse-engineering toolset.
 It targets Linux with **Wayland** as the primary display server (X11/XWayland is
 supported as a fallback), and it is built around a single rule: every interaction
 with another process goes through a plugin.
@@ -69,10 +69,3 @@ configure time and the docdir carries the `README.md`, `docs/` files and font li
 - [`docs/LOGGING.md`](docs/LOGGING.md) — logging conventions.
 - [`docs/INDEX.md`](docs/INDEX.md) — one line per project file (the repository map).
 - [`src/plugin/plugin_api.h`](src/plugin/plugin_api.h) — the C plugin ABI.
-
-## Roadmap
-
-1. Process list — done.
-2. Memory scanner and address list — done.
-3. Memory browser (hex dump) — done; the disassembler is next.
-4. Debugger.
