@@ -6,6 +6,7 @@
 #include "ui/components/disassembly_document.hpp"
 
 #include <QAbstractScrollArea>
+#include <QPoint>
 #include <QString>
 
 class QAction;
@@ -44,9 +45,9 @@ namespace slopkit::ui::components
         // The wrapped line count of the visible row `index` (0 = the top row).
         [[nodiscard]] std::size_t row_lines(std::size_t index) const;
 
-        // Fills `menu` with `Go To...` and `Copy address`. Public so tests can
-        // inspect it without opening a menu.
-        void populate_menu(QMenu& menu);
+        // Fills `menu` with `Go To...` and a `Copy` submenu for the decoded row
+        // `index`. Public so tests can inspect it without opening a menu.
+        void populate_menu(QMenu& menu, std::size_t row);
 
         // The persistent "Go To..." action of the listing. It carries no
         // shortcut - the byte view owns the window's single Ctrl+G.
@@ -90,7 +91,10 @@ namespace slopkit::ui::components
         // the cursor on the new base, keeping the old rows until it lands.
         void step_window(int direction);
 
-        void copy_address();
+        void                      copy_row(std::size_t row, CopyFormat format);
+        // The decoded row index under a viewport `position`, or the cursor row
+        // when the position falls above or below every painted row.
+        [[nodiscard]] std::size_t row_at_position(const QPoint& position) const;
 
         DisassemblyDocument& document_;
 

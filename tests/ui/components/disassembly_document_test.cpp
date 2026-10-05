@@ -13,6 +13,7 @@ namespace
 {
     using slopkit::ui::LiveReading;
     using slopkit::ui::LiveRequest;
+    using slopkit::ui::components::CopyFormat;
     using slopkit::ui::components::DisassemblyDocument;
 
     // A code window at an 8 KiB boundary, so the cursor sits at its start.
@@ -392,4 +393,32 @@ TEST_CASE("the disassembly document renders addresses through the module map", "
 
     fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("0x0000000000002010"));
+}
+
+TEST_CASE("the disassembly document renders every copy form of a row", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const DisassemblyDocument& document = fixture.document;
+
+    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0"));
+    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("0x2000"));
+    CHECK(document.copy_text(0, CopyFormat::bytes) == QStringLiteral("55"));
+    CHECK(document.copy_text(0, CopyFormat::instruction) == QStringLiteral("PUSH RBP"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("app+0: 55"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0: PUSH RBP"));
+    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction) == QStringLiteral("app+0: 55  PUSH RBP"));
+
+    // The combined forms follow the current display mode for the address.
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("0x0000000000002000: 55"));
+
+    // Out-of-range rows hand out nothing.
+    CHECK(document.copy_text(fixture.document.row_count(), CopyFormat::bytes).isEmpty());
 }

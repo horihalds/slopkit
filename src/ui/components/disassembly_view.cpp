@@ -358,15 +358,63 @@ namespace slopkit::ui::components
         return true;
     }
 
-    void DisassemblyView::copy_address()
+    std::size_t DisassemblyView::row_at_position(const QPoint& position) const
     {
-        QApplication::clipboard()->setText(document_.address_text(first_address_));
+        if (position.y() < kMargin + header_height_)
+        {
+            return first_row_; // The header, or above the first row.
+        }
+
+        int y = kMargin + header_height_;
+        for (std::size_t visible = 0; visible < visible_rows_; ++visible)
+        {
+            const std::size_t index = first_row_ + visible;
+            if (index >= document_.row_count())
+            {
+                break;
+            }
+            const std::size_t lines      = std::max<std::size_t>(1, document_.line_count(index, bytes_per_line_));
+            const int         row_height = static_cast<int>(lines) * line_height_;
+            if (position.y() < y + row_height)
+            {
+                return index;
+            }
+            y += row_height;
+        }
+        return first_row_; // Empty space below the rows: the cursor row.
     }
 
-    void DisassemblyView::populate_menu(QMenu& menu)
+    void DisassemblyView::copy_row(std::size_t row, CopyFormat format)
+    {
+        const QString text = document_.copy_text(row, format);
+        if (!text.isEmpty())
+        {
+            QApplication::clipboard()->setText(text);
+        }
+    }
+
+    void DisassemblyView::populate_menu(QMenu& menu, std::size_t row)
     {
         menu.addAction(goto_action_);
-        menu.addAction(tr("Copy address"), this, &DisassemblyView::copy_address);
+
+        QMenu*     copy     = menu.addMenu(tr("Copy"));
+        const auto add_copy = [this, copy, row](const QString& label, CopyFormat format)
+        {
+            connect(copy->addAction(label),
+                    &QAction::triggered,
+                    this,
+                    [this, row, format]
+                    {
+                        copy_row(row, format);
+                    });
+        };
+        add_copy(tr("Address (module + RVA)"), CopyFormat::module_relative);
+        add_copy(tr("Address (absolute)"), CopyFormat::absolute);
+        add_copy(tr("Bytes"), CopyFormat::bytes);
+        add_copy(tr("Instruction"), CopyFormat::instruction);
+        add_copy(tr("Address + bytes"), CopyFormat::address_and_bytes);
+        add_copy(tr("Address + instruction"), CopyFormat::address_and_instruction);
+        add_copy(tr("Address + bytes + instruction"), CopyFormat::address_bytes_instruction);
     }
 
     void DisassemblyView::resizeEvent(QResizeEvent* event)
@@ -493,8 +541,9 @@ namespace slopkit::ui::components
 
     void DisassemblyView::contextMenuEvent(QContextMenuEvent* event)
     {
-        QMenu menu(this);
-        populate_menu(menu);
+        const QPoint position = viewport()->mapFromGlobal(event->globalPos());
+        QMenu        menu(this);
+        populate_menu(menu, row_at_position(position));
         menu.exec(event->globalPos());
     }
 

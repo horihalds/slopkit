@@ -19,6 +19,18 @@
 namespace slopkit::ui::components
 {
 
+    // What the listing's Copy submenu puts on the clipboard for a decoded row.
+    enum class CopyFormat
+    {
+        module_relative,           // "<module>+<RVA>"; the absolute form outside every module
+        absolute,                  // "0x7F3A1B2C"
+        bytes,                     // "48 89 E5", or "??" when unreadable
+        instruction,               // "MOV RBP, RSP"
+        address_and_bytes,         // "app+10: 48 89 E5"
+        address_and_instruction,   // "app+10: MOV RBP, RSP"
+        address_bytes_instruction, // "app+10: 48 89 E5  MOV RBP, RSP"
+    };
+
     // The live state behind the disassembly listing: one aligned code window and
     // a lazily grown cache of the instructions decoded from it. It owns no
     // widget, so the risky part is testable headlessly; DisassemblyView only
@@ -55,6 +67,12 @@ namespace slopkit::ui::components
         [[nodiscard]] disasm::MachineMode    machine_mode() const noexcept;
         [[nodiscard]] QString                address_text(std::uint64_t address) const;
         [[nodiscard]] const ui::ModuleSpans& module_spans() const; // Go To validation
+
+        // The clipboard text for the decoded row `index` in `format`; empty when
+        // the row is out of range or the format has nothing to copy. The address
+        // forms follow the current display mode, the module-relative form falls
+        // back to the absolute form outside every module.
+        [[nodiscard]] QString copy_text(std::size_t index, CopyFormat format) const;
 
         // LiveSurface: one aligned window while visible with a target attached.
         [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;

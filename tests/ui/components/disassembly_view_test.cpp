@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <QApplication>
@@ -19,6 +20,7 @@ namespace
 {
     using slopkit::ui::LiveReading;
     using slopkit::ui::LiveRequest;
+    using slopkit::ui::components::CopyFormat;
     using slopkit::ui::components::DisassemblyDocument;
     using slopkit::ui::components::DisassemblyView;
 
@@ -67,6 +69,15 @@ namespace
             {
                 return candidate;
             }
+        }
+        return nullptr;
+    }
+
+    QMenu* submenu(QMenu& menu, const QString& text)
+    {
+        if (QAction* entry = action(menu, text); entry != nullptr)
+        {
+            return entry->menu();
         }
         return nullptr;
     }
@@ -353,7 +364,7 @@ TEST_CASE("the wrapped listing walks past a window boundary", "[ui]")
     view.hide();
 }
 
-TEST_CASE("the disassembly view menu offers Go To and Copy address", "[ui]")
+TEST_CASE("the disassembly view menu offers Go To and a Copy submenu", "[ui]")
 {
     application();
     ViewFixture fixture;
@@ -366,7 +377,7 @@ TEST_CASE("the disassembly view menu offers Go To and Copy address", "[ui]")
     fixture.pass();
 
     QMenu menu;
-    view.populate_menu(menu);
+    view.populate_menu(menu, 0);
 
     QAction* go_to = action(menu, QStringLiteral("Go To..."));
     REQUIRE(go_to != nullptr);
@@ -385,10 +396,25 @@ TEST_CASE("the disassembly view menu offers Go To and Copy address", "[ui]")
     go_to->trigger();
     CHECK(asked);
 
-    QAction* copy = action(menu, QStringLiteral("Copy address"));
+    QMenu* copy = submenu(menu, QStringLiteral("Copy"));
     REQUIRE(copy != nullptr);
-    copy->trigger();
-    CHECK(QApplication::clipboard()->text() == fixture.document.address_text(view.first_address()));
+    REQUIRE(copy->actions().size() == 7);
+
+    const auto check = [&](const QString& label, CopyFormat format)
+    {
+        QAction* entry = action(*copy, label);
+        REQUIRE(entry != nullptr);
+        QApplication::clipboard()->setText(QStringLiteral("sentinel"));
+        entry->trigger();
+        CHECK(QApplication::clipboard()->text() == fixture.document.copy_text(0, format));
+    };
+    check(QStringLiteral("Address (module + RVA)"), CopyFormat::module_relative);
+    check(QStringLiteral("Address (absolute)"), CopyFormat::absolute);
+    check(QStringLiteral("Bytes"), CopyFormat::bytes);
+    check(QStringLiteral("Instruction"), CopyFormat::instruction);
+    check(QStringLiteral("Address + bytes"), CopyFormat::address_and_bytes);
+    check(QStringLiteral("Address + instruction"), CopyFormat::address_and_instruction);
+    check(QStringLiteral("Address + bytes + instruction"), CopyFormat::address_bytes_instruction);
 
     view.hide();
 }

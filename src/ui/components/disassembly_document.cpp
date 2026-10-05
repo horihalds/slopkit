@@ -167,6 +167,51 @@ namespace slopkit::ui::components
         return module_spans_;
     }
 
+    QString DisassemblyDocument::copy_text(std::size_t index, CopyFormat format) const
+    {
+        if (index >= instructions_.size())
+        {
+            return {};
+        }
+        const Row     value   = row(index);
+        const QString address = address_text(value.address);
+        switch (format)
+        {
+        case CopyFormat::module_relative:
+            if (const auto relative =
+                    ui::module_relative_text(ui::AddressMode::module_relative, module_spans_, value.address);
+                relative.has_value())
+            {
+                return *relative;
+            }
+            return ui::format_absolute(value.address);
+        case CopyFormat::absolute:
+            return ui::format_absolute(value.address);
+        case CopyFormat::bytes:
+            return value.bytes;
+        case CopyFormat::instruction:
+            return value.text;
+        case CopyFormat::address_and_bytes:
+            return value.bytes.isEmpty() ? address : address + QStringLiteral(": ") + value.bytes;
+        case CopyFormat::address_and_instruction:
+            return value.text.isEmpty() ? address : address + QStringLiteral(": ") + value.text;
+        case CopyFormat::address_bytes_instruction:
+        {
+            QString text = address;
+            if (!value.bytes.isEmpty())
+            {
+                text += QStringLiteral(": ") + value.bytes;
+            }
+            if (!value.text.isEmpty())
+            {
+                text += (value.bytes.isEmpty() ? QStringLiteral(": ") : QStringLiteral("  ")) + value.text;
+            }
+            return text;
+        }
+        }
+        return {};
+    }
+
     std::vector<ui::LiveRequest> DisassemblyDocument::next_live_request()
     {
         pending_.reset();
