@@ -96,15 +96,14 @@ them for every task in this repository.
 
 ## Project index
 
-- Prefer `docs/INDEX.md` for file discovery over shell searches such as `find`
-  (or tree-wide `ls`/`grep`): it lists every project file with a terse
-  description. Fall back to `find` only when the file is not indexed yet or the
-  index looks stale.
-- `docs/INDEX.md` at the repository root indexes every file in the project: what
-  it is and what it does.
-- Whenever a task adds, removes, renames or repurposes a file, update `docs/INDEX.md`
-  in the same change so every file stays indexed exactly once.
-- Be terse when writing the index
+- `docs/INDEX.md` maps the repository: one line per file, the path alone when the
+  filename explains the file, otherwise the path plus a few words. Prefer it for
+  file discovery over shell searches such as `find` (or tree-wide `ls`/`grep`);
+  fall back to `find` only when a file is not indexed yet or the index looks stale.
+- Update `docs/INDEX.md` in the same change whenever a task adds, removes, renames
+  or repurposes a file, so every file stays indexed exactly once.
+- Keep it brief: no description for a self-explanatory filename, and only a very
+  short note (a few words) when one is needed — never list a file's members.
 
 ## Address tables and `.skt` files
 

@@ -1,277 +1,279 @@
 # Index
 
-- `README.md` — project front page: what slopkit is, the tool status table, quick-start build/run/test/install instructions and links into `docs/` for the architecture, anti-detection stance and repository index.
-- `AGENTS.md` — AI agent operating guide: project rules, toolchain and conventions, including the index-first file-discovery rule and the install-on-completion rule.
-- `build.sh` — builds the CMake/Ninja project, configuring first when `build/` is missing.
-- `configure.sh` — configures the CMake/Ninja build in `build/`.
-- `install.sh` — configures, builds and installs into `PREFIX` (default `~/.local`), desktop entry and icons included; for a per-user prefix it refreshes the MIME/desktop databases and makes slopkit the default `.skt` handler.
-- `CMakeLists.txt` — CMake build: links Qt 6 Widgets and system Zydis via pkg-config, enables AUTOMOC, embeds the UI fonts and the generated icon set as Qt resources, defines the `slopkit` app, the shared `slopkit_ui_common` static library (theme, fonts, settings, the widget components and the logger/version both UI binaries need), the `slopkit_platform` library, the `slopkit_add_icon_resources` and `add_slopkit_plugin` helpers and the bundled `linux-proc` and `wine-proton` plugins, builds fixture plugins and the Catch2/CTest `slopkit_tests` target, and installs the binary, plugins, desktop entry, the `.skt` MIME package, the hicolor application/MIME icons, and the `README.md` plus the `docs/` tree (`*.md`) into the documentation directory. Defaults to an optimized `RelWithDebInfo` build when no build type is given, and compiles every target with `-march=native -mtune=native` unless the default-on `SLOPKIT_NATIVE` option is turned off.
-- `.gitignore` — ignores build output, CMake/Ninja artifacts, editor files and `tmp/`.
-- `.clang-format` — C++ formatting rules for the project.
-- `cmake/EmbedFont.cmake` — `embed_font()` helper that turns a binary file into a generated C++ header.
-- `cmake/EmbedIcon.cmake` — `slopkit_icon_pngs()` renders the hicolor PNG set from `assets/icons/icon.svg` and `slopkit_action_icon_pngs()` renders the embedded action glyphs (both sets become Qt resources).
-- `assets/fonts/NotoSans-Regular.ttf` — bundled UI font (Noto Sans Regular).
-- `assets/fonts/NotoSansMono-Regular.ttf` — bundled monospace UI font (Noto Sans Mono Regular).
-- `assets/fonts/OFL.txt` — SIL Open Font License for the bundled font.
-- `assets/icons/icon.svg` — vector source of the program/desktop icon (rasterised into the hicolor set and the embedded window icon).
-- `assets/icons/cancel.svg` — cancel glyph source (embedded as `ActionIcon::cancel`).
-- `assets/icons/checkmark.svg` — checkmark glyph source (embedded as `ActionIcon::checkmark`).
-- `assets/icons/chip.svg` — chip glyph source (embedded as `ActionIcon::chip`).
-- `assets/icons/diskette.svg` — diskette glyph source (shared by the File > Save Table and Save Table As menu icons; embedded as `ActionIcon::diskette`).
-- `assets/icons/error.svg` — error glyph source (embedded as `ActionIcon::error`).
-- `assets/icons/file.svg` — file glyph source (embedded as `ActionIcon::file`).
-- `assets/icons/folder.svg` — folder glyph source (File > Open Table's icon; embedded as `ActionIcon::folder`).
-- `assets/icons/home.svg` — home glyph source (embedded as `ActionIcon::home`).
-- `assets/icons/info.svg` — info glyph source (embedded as `ActionIcon::info`).
-- `assets/icons/ok.svg` — ok glyph source (embedded as `ActionIcon::ok`).
-- `assets/icons/search.svg` — search glyph source (embedded as `ActionIcon::search`).
-- `assets/icons/settings.svg` — settings glyph source (embedded as `ActionIcon::settings`).
-- `assets/icons/target.svg` — crosshair glyph source (File > Open Process's icon and the Table Settings Use Attached Process button; embedded as `ActionIcon::target`).
-- `assets/icons/warning.svg` — warning glyph source (embedded as `ActionIcon::warning`).
-- `assets/application-x-slopkit-table.xml` — shared-mime-info definition registering `application/x-slopkit-table` for `.skt` files (glob plus the `slopkit-table` content magic).
-- `assets/slopkit.desktop.in` — desktop entry template with the configured `Exec` path, the `.skt` `MimeType` and a `%f` file argument.
-- `docs/ARCHITECTURE.md` — plugin-first design: the host/plugin split, the `ProcessAccess` seam, the bundled plugins and their precedence, plugin discovery and how to write a plugin.
-- `docs/ANTI_DETECTION.md` — anti-detection stance: the technique categories behind the ptrace-free default access path.
-- `docs/INDEX.md` — this file: one line per project file.
-- `docs/UI_DESIGN.md` — UI and design rules for the project.
-- `docs/LOGGING.md` — logging conventions: levels, category ownership per module, message style and the hot-path/never-log-from-a-sink rules.
-- `reference/README.md` — placeholder documenting the read-only `reference/` tree.
-- `src/main.cpp` — application entry point; dispatches to `slopkit::app::run`.
-- `src/core/version.hpp` — declares `slopkit::version()`.
-- `src/core/version.cpp` — implements `slopkit::version()`.
-- `src/core/log.hpp` — the process-wide `slopkit::log` logger: levels, timestamped categorised records, a bounded history, the sink registry and the stderr/rolling-file sink factories.
-- `src/core/log.cpp` — mutex-guarded level filtering, history and sink fan-out, the `HH:MM:SS.mmm level [category] message` line format and the XDG state-dir default log path.
-- `src/core/log_categories.hpp` — the shared log category constants (`app`, `plugin`, `process`, `memory`, `scan`, `table`, `debug`, `ui`).
-- `src/debug/backend.hpp` — the `DebugBackend` seam and its value types (`RegisterValue`, `StopReason`/`StopEvent`, `HardwareKind`, `Frame`) that the controller and the tests depend on.
-- `src/debug/plugin_backend.hpp` — `debug::PluginBackend`, the `DebugBackend` over `plugin::PluginHost`/`PluginSession` that opens its own plugin session and reports `unsupported` when a plugin leaves the debug pointers null.
-- `src/debug/plugin_backend.cpp` — maps the ABI 1.4 debug operations onto `std::expected<..., AccessError>` and releases the register/frame buffers through the plugin allocator.
-- `src/debug/worker.hpp` — the debug `Worker`'s submit API, its result variant and the completion callback/hook types.
-- `src/debug/worker.cpp` — the job thread that owns the ptrace relationship (every debug operation), plus the out-of-band interrupt helper and the bounded `drain()`.
-- `src/debug/breakpoints.hpp` — `debug::Kind`/`Breakpoint` (including the `hidden` flag the access watch sets) and the session-only `BreakpointTable`: slot allocation, duplicate refusal, enable/disable, clearing and hit counting.
-- `src/debug/access_watch.hpp` — `debug::WatchState`/`WatchHit` and the `AccessWatch` value the controller owns: one address watch's state, its instruction-coalesced rows with a 1024-row cap and a total hit count.
-- `src/debug/access_watch.cpp` — implements the start/replace/stop/clear transitions, the per-instruction coalescing and the cap/truncation bookkeeping.
-- `src/debug/breakpoints.cpp` — implements the software/hardware slot allocators, kind/size normalisation and the entry mutations.
-- `src/debug/step_over.hpp` — the pure `StepPlan`/`plan_step` decision that lifts a software trap sitting at RIP.
-- `src/debug/step_over.cpp` — implements `plan_step`.
-- `src/debug/controller.hpp` — `debug::Controller`, the UI-facing session owner: state machine (attaching to a running target), breakpoint table, register/backtrace cache, the access-watch API, `DebugBackend` injection and the Qt signals.
-- `src/debug/controller.cpp` — job submission, completion application in `drain()`, trap-to-breakpoint resolution with the RIP rewind, hit counting, expression resolution through `ui::ModuleSpans`, register-write gating, the invisible maintenance stop that arms/disarms while running and the watch's consume-and-resume hit loop.
-- `src/disasm/decoder.hpp` — the Qt-free Zydis wrapper: `MachineMode` (long 64 / legacy 32), the `Instruction` record (address, length, Intel-style upper-case text, validity, the `AddressRef` slices of the addresses its text prints and the `MemoryRef` operands behind them) and the `decode`/`decode_block` entry points.
-- `src/disasm/decoder.cpp` — one lazily initialised `ZydisDecoder` per machine mode and a shared upper-case Intel `ZydisFormatter`; decodes with `ZydisDecoderDecodeFull`, tokenizes the instruction into a fixed buffer to build the text and collect each printed address's slice and target (the one-shot format is the tokenize-failure fallback), records each explicit memory operand's base/index/scale/displacement/width, renders a rejected byte as a one-byte `.byte 0xNN` row and stops a block sweep at a truncated tail.
-- `src/expr/expression.hpp` — the parsed target-expression model: `Expression` (base text plus ordered offsets, `pointer_levels()`), `Offset`, `Error`, `parse_literal` (`0x`/bare hex, `#` decimal) and `parse` (`base ( "+" offset )*` with readable rejections).
-- `src/expr/expression.cpp` — implements `pointer_levels`, the `parse_literal` prefix/base handling and the `parse` `+`-splitting, whitespace trimming and per-offset validation.
-- `src/expr/resolver.hpp` — the resolver contract: `ModuleRef`/`Modules`, the injected `PointerReader` callback, `Options` (pointer width, default 8) and `ResolveError` (message plus the failed 1-based pointer level).
-- `src/expr/resolver.cpp` — implements `evaluate()`: case-insensitive module lookup first with a literal fallback, then the `base + o1` and dereference-plus-offset walk, tagging a read failure with its level.
-- `src/app/cli.hpp` — declares command-line parsing and the headless commands.
-- `src/app/cli.cpp` — parses `--log-level`/`--version`/`--list-plugins`/`--list-processes`, accepts one optional positional `<table.skt>` (a second positional argument is a usage error), installs the stderr and rolling-file log sinks, records startup and each headless command and runs the default GUI path with that table.
-- `src/app/instance.hpp` — the per-user single-instance socket name (`\0slopkit-<uid>`) and the `hand_off_open_request()` client that writes a path and waits for the running instance's `ok` acknowledgement.
-- `src/app/instance.cpp` — `getuid()`-scoped abstract socket name, connect/write/ack over a bounded timeout and the over-long-line refusal, plain POSIX with no Qt so a launch can hand off before `QApplication` exists.
-- `src/app/instance_server.hpp` — the Qt Core `InstanceServer`: the abstract-socket listener, `is_listening()` and the `tableRequested` signal.
-- `src/app/instance_server.cpp` — binds the abstract socket, accepts with a `QSocketNotifier`, buffers a hand-off per connection, acks `ok`, refuses an over-long line and emits `tableRequested` on the UI thread.
-- `src/app/sandbox.hpp` — declares `sandbox_binary_path()`, which resolves `<exe_dir>/slopkit-sandbox`, and `launch_sandbox()`, which starts it as slopkit's own child in its own session and returns the new pid or a readable reason.
-- `src/app/sandbox.cpp` — resolves the sibling binary the way the plugin search path resolves its directory and spawns it through `posix_spawn` with `POSIX_SPAWN_SETSID`.
-- `src/plugin/plugin_api.h` — the C plugin ABI: version macros, host services, descriptors (including the module main-image flag), access-method flags and the vtable.
-- `src/plugin/plugin.hpp` — `DynamicLibrary` RAII wrapper, `Plugin` facade and RAII `PluginSession` (including a caller-buffer `read_into`).
-- `src/plugin/plugin.cpp` — implements dlopen loading, the ABI handshake, the per-plugin host services (with log attribution) and typed plugin calls.
-- `src/plugin/plugin_host.hpp` — plugin discovery, diagnostics and the merged process listing.
-- `src/plugin/plugin_host.cpp` — scans the build-tree and installed plugin directories plus `SLOPKIT_PLUGIN_PATH`, loads plugins by precedence, records each accept/reject, routes plugin log messages (attributed to the emitting plugin) into `slopkit::log` and merges processes.
-- `src/platform/linux/procfs.hpp` — procfs types and queries: pids, status, exe/cmdline, mapped regions, threads, module entry points and main-image flagging.
-- `src/platform/linux/procfs.cpp` — implements procfs enumeration, text parsing, region classification, module merging, entry-point filling and main-image flagging.
-- `src/platform/linux/module_entry.hpp` — executable-image entry-point and PE-kind declaration for ELF and PE headers.
-- `src/platform/linux/module_entry.cpp` — parses ELF/PE headers, tells a PE executable from a DLL and reads a mapped file's header through `/proc`.
-- `src/platform/linux/ptrace.hpp` — the only place that declares ptrace: seize/interrupt/wait/cont/single-step/detach, register access, word/byte reads and writes, the DR0-DR7 debug registers, the signal-based `stop_thread` and the `StopReason` classification (a signal delivery stop vs a signal death).
-- `src/platform/linux/ptrace.cpp` — implements those on PTRACE_SEIZE/PTRACE_INTERRUPT, `waitpid(__WALL)`, GETREGSET/SETREGSET, PEEKDATA/POKEDATA and PEEKUSER/POKEUSER, classifying each stop from the int3 byte and the enabled DR slots and telling a signal delivery stop (`signal_stop`) from a signal death (`signalled`).
-- `src/platform/linux/debug_session.hpp` — `platform::DebugSession`, the shared opt-in ptrace debugger the bundled plugins wrap: thread-group bookkeeping, the software/hardware slot tables, `DebugFrame`, the resume/step/interrupt API and the `ForeignSignalPolicy` that suppresses or forwards the target's own signals.
-- `src/platform/linux/debug_session.cpp` — implements attach/detach over `platform::ptrace`, the trap step-over/re-arm, hardware DR programming, register access, the frame-pointer backtrace and the wait loop that forwards or reports a stop.
-- `src/platform/linux/memory.hpp` — memory read/write primitives, their result types and the cached-descriptor `MemAccess`; the read/write path stays ptrace-free.
-- `src/platform/linux/memory.cpp` — process_vm_* with a cached /proc/<pid>/mem fallback, plus one-shot wrappers for the stateless helpers.
-- `src/platform/linux/wine.hpp` — Wine/Proton detection types and classification entry points.
-- `src/platform/linux/wine.cpp` — environ/cmdline/maps heuristics that classify a process as Wine or Proton.
-- `src/platform/linux/desktop_entry.hpp` — `.desktop` entry parser and the application-executable index.
-- `src/platform/linux/desktop_entry.cpp` — parses `Name`/`Exec`/`NoDisplay` and scans `$XDG_DATA_DIRS` for applications, recording the index summary and malformed entries.
-- `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin implementing the C ABI over procfs, with per-session cached memory access and failure/enumeration records through the host log hook, plus the ABI 1.4 debug operations delegated to `platform::DebugSession` with the suppress signal policy (attach, detach, continue/step, registers, software and hardware breakpoints and the frame-pointer backtrace).
-- `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin claiming Wine/Proton processes, exposing their PE images, caching memory access per session and reporting failures through the host log hook, plus the ABI 1.4 debug operations delegated to `platform::DebugSession` with the forward signal policy so a Wine target debugs like a Linux one.
-- `src/process/types.hpp` — process/module/thread descriptors, the `is_file_backed` module predicate, the `main_module`, `match_process_by_name` and `match_process_by_exe_path` resolvers, access-method flags and `AccessError`.
-- `src/process/types.cpp` — implements the `main_module` resolution, the case-insensitive process-name and executable-basename lookups and the human-readable descriptions of errors, module kinds and access methods.
-- `src/process/access.hpp` — the `ProcessAccess`/`Session` seam the access worker depends on, including the caller-buffer `read_into`.
-- `src/process/access_worker.hpp` — job/result types (the batched `ReadManyItem`/`ReadManyResult` the live pass uses and the `ResolveRequest`/`ResolveResult` the expression resolver uses) and the background `AccessWorker` that serializes all target access.
-- `src/process/access_worker.cpp` — the worker thread, request/completion queues, worker-owned session and the job bodies (including a batched read that runs one `read_into` per item so a per-item failure never aborts the batch, and a batched expression resolve that dereferences pointer chains on the worker thread), recording the job lifecycle at `debug` and each failure once at `warning`.
-- `src/process/attachment.hpp` — `AttachedTarget`: metadata-only identity of the app-wide attachment (pid, name, executable path, plugin; the session lives in the access worker).
-- `src/process/attachment.cpp` — formats the process label and clears the metadata, including the executable path.
-- `src/process/plugin_access.hpp` — embedded `ProcessAccess` implementation over `PluginHost`.
-- `src/process/plugin_access.cpp` — attaches through plugins and tracks the access method actually used.
-- `src/sandbox/sandbox_values.hpp` — the practice target's value store: one field per slopkit value type plus an animated float, the heap marker, `reset()`/`advance()` and the headless `print_layout()`.
-- `src/sandbox/sandbox_values.cpp` — the process-wide static value object, the heap marker buffer, the animation step and the labelled layout print.
-- `src/sandbox/sandbox_window.hpp` — `SandboxWindow`: the live value table, the refresh/animation timers, the pause checkbox and the reset button.
-- `src/sandbox/sandbox_window.cpp` — builds the panels and rows from the component library, re-reads `values()` on a 100 ms tick (leaving a focused editor alone), animates on a 500 ms tick and renders the pattern and heap marker as hex.
-- `src/sandbox/main.cpp` — the sandbox entry point: stderr-only logging, the headless `--print-layout` flag, the Fusion style, the embedded fonts and the theme persisted by slopkit, then `SandboxWindow`.
-- `src/scan/types.hpp` — the scan value/scan/state enums, the region filter and their descriptions.
-- `src/scan/types.cpp` — string descriptions for the scan enums.
-- `src/scan/value.hpp` — parsed scan values, literal parsing/formatting and the comparison predicates.
-- `src/scan/value.cpp` — implements value parsing (decimal, hex, string, byte array), formatting and matching.
-- `src/scan/matcher.hpp` — the per-scan compiled `Matcher`: bound needle, exact/real/bytes/generic kinds and the find/match contract.
-- `src/scan/matcher.cpp` — builds the matcher and implements the typed compares, the memchr prefilter and the alignment-stepped search.
-- `src/scan/source.hpp` — the `MemorySource` read/read-into/regions seam and its session and buffer constructors.
-- `src/scan/source.cpp` — builds a source over a live session or an owned test buffer.
-- `src/scan/engine.hpp` — `ScanConfig`/`ScanHit`/`ScanSnapshot` (whose `hits` page only fills once a scan finishes and whose optional shared `result_hits` handle carries the whole stored set), `kDisplayPage` and the worker-threaded `ScanEngine`.
-- `src/scan/engine.cpp` — region filtering, parallel shard-pooled first scans over a compiled matcher, refinement scans, undo, cancellation and resetting to the idle state; publishes progress only while running and aliases the whole stored set once finished.
-- `src/table/address_table.hpp` — `AddressEntry` with a stable id and the optional expression it re-resolves from, the `AddressTable` model (value encoding, freeze snapshots and selection, no session) and the `MergeSummary` reported when appending the entries a merge does not already hold.
-- `src/table/address_table.cpp` — encodes entry values on the UI thread, builds freeze write snapshots and merges incoming entries with fresh ids, skipping ones already present by address, type and description.
-- `src/table/serializer.hpp` — the line-oriented save/load contract for address-table files, including the v2 header and the optional per-entry `expr` key.
-- `src/table/serializer.cpp` — hand-rolled v2 table-file reader and writer, no serialization dependency, persisting each entry's optional `expr` and keeping v1 lines loading with an empty expression, recording load/save summaries and malformed-line warnings.
-- `src/table/table_settings.hpp` — the per-table `TableSettings` value (target process, executable path, auto attach, match by exe path) owned by `AddressTable` and persisted in the table file.
-- `src/table/table_settings.cpp` — implements `TableSettings::empty()`.
-- `src/ui/app.hpp` — the `App`: owns the plugin host, the access worker, the attached target, the settings controller, the main window and the single-instance listener, and runs the Qt event loop.
-- `src/ui/app.cpp` — hands a launch table path to the running instance before building any GUI, otherwise owns the `InstanceServer` (routing `tableRequested` to the window's open flow and raising it), builds the `QApplication`, applies the Fusion style, the persisted theme palette and the embedded fonts, discovers plugins and enters the event loop with the worker's completion hook wired to `drain()`.
-- `src/ui/address_format.hpp` — `AddressMode`, the `ModuleSpan`/`ModuleSpans` lookup over file-backed module images with the main-image span, the `name+RVA` and absolute renderers, the deref-free address parser (absolute, bare module name and `module+RVA`) and the `module_refs()`/`module_base()` helpers the resolver consumes.
-- `src/ui/address_format.cpp` — span filtering and sorting, marking the main image, binary-search containment, case-insensitive name lookup, `0x`-prefixed absolute rendering, a deref-free address parser that resolves a bare module name to its base else falls through to `scan::parse_address`, and the `module_refs()`/`module_base()` helpers.
-- `src/ui/access_watch.hpp` — the widget-free instruction-operand resolution shared by the Memory Viewer and the Access Watch window: `ResolvedAccess` (address, operand text, width, write flag, resolved flag) and the `resolve_accesses()`/`watch_size()` contracts.
-- `src/ui/access_watch.cpp` — resolves each `disasm::MemoryRef` against a register context (base + index*scale + displacement, a rip-relative displacement from the instruction end, 32-bit register aliases) and snaps a width to the 1/2/4/8 bytes a data breakpoint can watch (defaulting to 4).
-- `src/ui/settings.hpp` — the persisted `ui::Settings` value (theme, address display mode, the auto-load-last-table switch, the remembered table/dialog directory, the live-update switch/interval and the detached Memory Viewer's saved window geometry) and the `ui::SettingsController` that owns the INI store and publishes change signals.
-- `src/ui/settings.cpp` — `QSettings` INI load/store under the XDG config dir for the theme, address mode, auto-load switch, remembered table/directory, the live-update switch/interval (clamped to 50–5000 ms) and the Memory Viewer window-geometry blob, defensive fallbacks for missing or unrecognised values (the geometry blob keeps its empty default) and change-only signals.
-- `src/ui/table_file.hpp` — the `.skt` naming rules for the table open/save dialogs (`table_file_path`, `default_table_path`).
-- `src/ui/table_file.cpp` — appends `.skt` only to a typed path without a suffix and returns `untitled.skt` for an empty one.
-- `src/ui/completion_notifier.hpp` — `CompletionNotifier`: the coalescing, thread-safe bridge from the access worker's completion hook to the Qt event loop.
-- `src/ui/completion_notifier.cpp` — posts at most one queued wake-up per drain and emits `completionsAvailable()` on the UI thread.
-- `src/ui/log_notifier.hpp` — `LogNotifier`: the thread-safe queue and coalesced queued wake-up that carries log records to the UI thread; removes its logger sink on destruction.
-- `src/ui/log_notifier.cpp` — registers the logger sink, queues records under a mutex and emits `recordsAvailable()` on the UI thread.
-- `src/ui/live_values.hpp` — `LiveRequest`/`LiveReading` and the `LiveSurface` seam, plus `ui::LiveValues`, the coordinator that owns the one live cadence.
-- `src/ui/live_values.cpp` — collects each registered surface's displayed addresses on a poll, gates on enabled/attached/interval/in-flight, submits one batched `submit_read_many` job and fans the readings back out.
-- `src/ui/main_window.hpp` — `MainWindow`: the File/View/Help menu bar (View holding Log, Settings, Breakpoints and Access Watch), the attached-process label on the left of the status bar with the address list's status line on the right, the splitter zones, the owned address table, the remembered-table and dialog-directory wiring, the dialogs (including Table Settings and the Access Watch window), the Help entry that launches the practice target, the injectable table-conflict prompt with `open_table_request()` as the one open flow, the shared settings controller, the one `ui::LiveValues` live-pass coordinator, the parentless Memory Viewer owned by `std::unique_ptr` and exposed through `memory_viewer()`, the two auto attach job guards, the private `apply_tab_order()` that links the panels' chains across their boundaries and the protected `event()` override that focuses the scanner's value box whenever the window becomes active again.
-- `src/ui/main_window.cpp` — builds the action set, the shortcuts and the layout, adds the attached-process label and the address-list status label to the status bar, pins the scan zone to the scanner's content height so the hits table ends level with the Memory Scan Options panel while the address list takes every remaining pixel, polls the panels on a 50 ms tick (which logs nothing) and drives the one `ui::LiveValues` pass at the end of it, fans the module map and the persisted address display mode out to the three views (handing the worker and each applied memory map to the Add Address dialog too), applies theme/address changes live, builds the detached Memory Viewer parentless and restores its saved geometry (persisting it again whenever the window reports a new one), records dialog openings and the target/freeze handoffs, launches the practice target from the Help menu and reports its pid or a readable failure reason in the status area, opens the log window from the View menu, seeds the remembered table and dialog directory, opens a launch table path (otherwise the remembered table) through `open_table_request()` — loading an empty table or asking Cancel/Overwrite/Merge — routes File > Open Table through the same flow, submits the freeze pass to the worker, runs the table-driven auto attach (list then attach) on a table load, joins the panels' tab-order runs into the window's fixed tab order at the end of the central build and focuses the scanner's value box whenever the window is re-activated.
-- `src/ui/theme.hpp` — the `Theme` colour-role struct, the dark/light constructors, `make_palette()` and `apply_theme()`.
-- `src/ui/theme.cpp` — theme values, the semantic-to-`QPalette` role mapping and the live application-palette install.
-- `src/ui/fonts.hpp` — the embedded-font registration and the proportional/monospace `QFont` accessors.
-- `src/ui/fonts.cpp` — registers the embedded Noto Sans and Noto Sans Mono through `QFontDatabase`.
-- `src/ui/components/widgets.hpp` — the Qt component helpers (section header, hint text, status label, primary/secondary button, panel, icon, tab-order chaining).
-- `src/ui/components/widgets.cpp` — implements the helpers (including the muted word-wrapped hint text and the null-skipping `chain_tab_order()` focus-chain builder), re-applying their themed palettes when the application palette changes.
-- `src/ui/components/message_box.hpp` — the themed, modal `MessageBox` dialog (kind glyph, main/informative text, standard button flags and a typed result) plus the `MessageBoxIcon`/`MessageBoxButton`/`MessageBoxResult` enums and the `confirm`/`ok_cancel`/`information`/`warning`/`error` helpers.
-- `src/ui/components/message_box.cpp` — builds the glyph/text/button layout from existing themed widgets, records the clicked button and maps Esc/window close to `MessageBoxResult::none`.
-- `src/ui/components/input_box.hpp` — the reusable single-line `InputBox` dialog: `InputValidator`/`InputBoxOptions` (title, label, initial, placeholder, ok_text, monospace, validate), the dialog with `text()`/`line_edit()`/`accept_button()` and the `get_text()` convenience.
-- `src/ui/components/input_box.cpp` — builds the label/field/status/button layout from the themed components, runs the validator on every edit and again on accept (gating OK and showing the message) and returns the accepted text from `get_text()`.
-- `src/ui/components/elided_tooltip_delegate.hpp` — the item delegate that reveals a cell's full text as a tooltip only when the column clips it.
-- `src/ui/components/elided_tooltip_delegate.cpp` — measures the cell text against the view's text rectangle and shows or hides the tooltip accordingly.
-- `src/ui/components/memory_view_document.hpp` — `ui::components::MemoryViewDocument`, the widget-free live state behind the Memory View: the three-block sliding window, the per-byte change mask, the value-format (`ValueFormat`) and text-encoding choices, module/address rendering, the `?` placeholder rule for unreadable bytes and the write submission, plus `Block`/`TextEncoding`.
-- `src/ui/components/memory_view_document.cpp` — caches the visible block and its two neighbours (aligned to the window extent), drops stale or foreign readings, formats cells through `scan::format_value`, renders `?` placeholders for bytes it could not read (zero-filling the failed block to its submitted size), decodes the row for ASCII/UTF-8/UTF-16, relies on `repaintRequested()` only for real changes, submits writes through `AccessWorker` and records every write outcome or refusal under `ui`.
-- `src/ui/components/memory_view.hpp` — `ui::components::MemoryView`, the custom-painted hex-editor byte view over a `MemoryViewDocument`: auto-fitted rows, a per-column hex offset header, unbounded scrolling, the inline editor, the right-click options menu (value format, text encoding, text column, Go To and Back) and the persistent `Go To...` action carrying the window-scoped `Ctrl+G`; explicit jumps are remembered in a per-pane Back history (`navigate_to`/`back`/`can_go_back`/`clear_history` and the `navigated()` signal).
-- `src/ui/components/memory_view.cpp` — paints the offset header, the address column, per-cell value text (hex without the `0x` prefix, or the `?` placeholder for an unreadable cell) and the optional text column with the change/unreadable colours, re-fits the row width on resize/format/encoding changes while keeping the top address fixed, scrolls through a relative scrollbar band, edits a cell in place (seeding an unreadable cell empty), owns the `Ctrl+G` `Go To...` action the menu reuses and records each explicit jump in `navigate_to()` before applying it, so `back()` can return and `go_to()` stays undoable.
-- `src/ui/components/disassembly_document.hpp` — `ui::components::DisassemblyDocument`, the widget-free live state behind the disassembly pane: one page-aligned 8 KiB code window on the dialog's live pass (ids from `0x1000`), the lazily grown decode cache, the rendered `Row` (address/bytes/instruction, `??` for an unreadable window, `.byte` for a rejected byte), the wrapped byte lines (`line_count`/`byte_line`), `row_at`/`row_addresses`/`row_memory`/`bytes_width`/`window_exhausted`, the machine mode, the instruction text with every printed address rendered like the row's address (through the module spans and address mode) and the `CopyFormat` clipboard texts (`copy_text`).
-- `src/ui/components/disassembly_document.cpp` — requests the page-aligned window while visible and attached, drops stale or foreign readings, re-decodes only when the payload's base is new (re-decoding a byte-identical window) or its bytes changed, steps the whole window by one aligned page, sweeps forward with `decode_block` bounded by the viewport plus slack and the window end, wraps a row's bytes at a bytes-per-line budget, renders addresses through the module spans and address mode (including every address inside an instruction's text), builds the `CopyFormat` clipboard text of a row and hands out the addresses a decoded row prints through `row_addresses()` (empty for a `.byte`, unreadable or out-of-range row).
-- `src/ui/components/disassembly_view.hpp` — `ui::components::DisassemblyView`, the custom-painted instruction listing over a `DisassemblyDocument`: font-metric line heights, address/bytes/instruction columns with a muted header, a bytes column that shrinks first and wraps (down to one byte per line), per-row heights from the wrapped line count, the relative scrollbar band, wheel/key navigation that steps whole page-aligned windows at the decoded bounds, the row-targeted context menu (`Go To...`, no shortcut, `Follow` and `Follow in Memory View` on a row that prints a reference, a per-pane `Back`, the `Copy` submenu of address/bytes/instruction texts and `Find out what addresses this instruction accesses` for a row with a memory operand) and the per-pane Back history (`navigate_to`/`back`/`can_go_back`/`clear_history` and the `navigated()`/`followInMemoryViewRequested()`/`instructionAccessesRequested()` signals).
-- `src/ui/components/disassembly_view.cpp` — paints the muted header and the decoded rows (muting `??`/`.byte`), one instruction per row, lays the address and instruction text on the first line and stacks the wrapped byte lines down the byte column, re-fits the columns and the row-fit count on resize, steps whole instructions with wheel/Up/Down/PageUp/PageDown/Home/End (crossing page boundaries), jumps the cursor with `go_to()` (routed through the recording `navigate_to()`), pops the per-pane Back history, toggles the document's visibility on show/hide and offers the instruction-accesses entry (disabled when the row has no memory operand).
-- `src/ui/models/found_results_model.hpp` — a `QAbstractTableModel` over the whole stored scan result set with Address/Value/Previous columns, showing the top `kDisplayPage` rows of the main-image-first ordering, plus the module spans and address mode that mark static hits and render their address, the `CopyFormat` clipboard texts and the live cache with the `next_live_request()`/`apply_live_readings()` seam the live pass drives.
-- `src/ui/models/found_results_model.cpp` — formats hits through `scan::format_value` in the monospace font; orders the whole set with `std::partial_sort` (main image, then other static hits, then dynamic), renders the address as `module+RVA` or absolute, builds the `module+RVA`/absolute/address+value clipboard texts, and shows the shown rows' live reading (or `?` in the muted colour for a failed read) in the Value column with the warning-coloured change highlight.
-- `src/ui/models/address_table_model.hpp` — a `QAbstractTableModel` over the `AddressTable`: description/value editing, the frozen checkbox, the async write, the module spans and the address mode, an entry expression rendered in the Address column with its resolved address as the tooltip, plus the live cache and the `next_live_request()`/`apply_live_readings()` seam the live pass drives.
-- `src/ui/models/address_table_model.cpp` — encodes edits through `AddressTable::encode_value`, submits one write job with the pending-job-id guard, shows an entry's expression in the Address column (with the resolved absolute address as its tooltip) and falls back to `module+RVA`/absolute rendering otherwise, and shows the live reading (or `?` in the muted colour for an unreadable address) in the Value column, flagging a changed reading with the theme's warning colour while `EditRole` keeps the stored value.
-- `src/ui/models/register_model.hpp` — `ui::models::RegisterModel`/`RegisterValue`, the Debugger pane's register `QAbstractTableModel`: the fixed x86-64 name list with em-dash placeholders, the controller-fed `set_values()`, the stopped-only edit gate, the commit handler, the pending (muted) state and the hex/decimal `parse_value()`.
-- `src/ui/models/register_model.cpp` — seeds the list, paints unread/pending cells muted, parses `0x`/bare-hex/decimal edits and routes a committed value to the handler.
-- `src/ui/models/call_stack_model.hpp` — `ui::models::CallStackModel`, the frame #/module+RVA/absolute table over the controller's backtrace and the shared `ModuleSpans`/address mode.
-- `src/ui/models/call_stack_model.cpp` — renders each frame through `module_relative_text`/`format_absolute`.
-- `src/ui/models/breakpoint_model.hpp` — `ui::models::BreakpointModel`, a snapshot `QAbstractTableModel` over the controller's breakpoint table with the checkable Enabled column.
-- `src/ui/models/breakpoint_model.cpp` — renders kind/size/expression/hits (muting disabled or unarmed entries), routes a checkbox toggle to `Controller::set_breakpoint_enabled` and skips the watch's hidden entry.
-- `src/ui/panels/debugger_panel.hpp` — `ui::panels::DebuggerPanel`, the Debugger pane: the run controls, a status line, the editable register table and the call stack, enabled strictly by the controller's state and exposing its widgets for the tests.
-- `src/ui/panels/debugger_panel.cpp` — builds the two-column control grid and both tables, wires the controller signals, formats registers as 16-digit hex and routes a committed edit to the controller.
-- `src/ui/dialogs/breakpoints.hpp` — `ui::dialogs::BreakpointsDialog`, the non-modal Breakpoints window: the table, the kind/size combos and Add/Remove/Clear, with `add_breakpoint_from_text()` exposed for the tests.
-- `src/ui/dialogs/access_watch.hpp` — `ui::dialogs::AccessWatchDialog`, the non-modal Access Watch window over the controller's one watch: the header line, the status/hint labels, the recorded-accesses and instruction-accesses tables, the row/selection accessors, the `start_watch()` seam and the `followRequested` signal.
-- `src/ui/dialogs/access_watch.cpp` — builds the window, diffs the controller's coalesced hits into the recorded-accesses table, batches the backward instruction reads through `process::AccessWorker` (longest decode ending at RIP, `??` fallback), resolves listing operands, wires Follow/Stop/Clear/Close and Watch writes/accesses, and reports arm failures on the status line.
-- `src/ui/dialogs/breakpoints.cpp` — builds the controls and the table, refreshes on `breakpointsChanged`, prompts for an address through the reusable `InputBox` and reports per-breakpoint arming failures on its hint line.
-- `src/ui/panels/scanner_panel.hpp` — the scan controls with padded whole-address-space range defaults, the handoff-created scan session, the scan engine whose lifecycle the engine logs itself, the `memoryMapApplied` module-map signal, the bottom-right Add Address and Table Settings buttons, the three read-only tab-order seam accessors the window joins its chain through and the public `focus_value_input()` that focuses the value box and selects its text.
-- `src/ui/panels/scanner_panel.cpp` — builds the scan config from the widgets, lists name-only module entries with the main image pinned after `All memory`, resolves the main-module address, applies the handed-over session, starts first/next/undo scans, resets the engine on New Scan, runs First Scan / Next Scan from Enter in the value box, logs its own actions under `ui` and rejects/handoff under `scan`, raises the Add Address and Table Settings requests and chains its controls' tab order.
-- `src/ui/panels/found_list_panel.hpp` — the one-line `Showing N of M results` list over the scan engine's snapshot and the address table; its entry row holds the Memory View button, it forwards the module map and address mode to the model, exposes the per-row context menu and the `accessWatchRequested` signal, carries the two read-only tab-order seam accessors (hits table, Memory View) and the `LiveSurface` overrides it delegates to the model.
-- `src/ui/panels/found_list_panel.cpp` — shows no rows with a `Scanning... N%` line while the engine runs and the main-image-first top page of the whole stored result set once it finishes, detects a new result set by its shared handle, forwards the module map and address mode to the model, builds the single always-visible result line from the rows on screen, adds double-clicked hits and offers the row menu with the `Add to address table` action, the `Copy` submenu (module + RVA, absolute, address + value) through the Qt clipboard and the two watch entries (disabled with `Attach to a target first.` while no target is attached, emitting `accessWatchRequested` with the hit's address, the scan width and the write or read/write kind otherwise); its table fills the scan zone so the hits bottom edge stays level with the Memory Scan Options panel, its entry row raises the Memory View request, and it installs the elided-tooltip delegate that reveals a clipped cell's value on hover; chains its hits table to the Memory View button and forwards the live surface calls to the model.
-- `src/ui/panels/address_list_panel.hpp` — the address list with editing, the context menu (whose `populate_row_menu()` is split out for tests), the `.skt` save, the path picker `choose_table_path()` and the `parse_table()`/`adopt_table()`/`merge_table()`/`load_table()` seams the window's open flow drives, the `tableLoaded`/`tablePathChanged`/`statusChanged` signals, the `accessWatchRequested` signal, the remembered table path and dialog directory, the forwarded module map and address mode, the stored-expression re-resolution state, the read-only tab-order seam accessor and the `LiveSurface` overrides it delegates to the model.
-- `src/ui/panels/address_list_panel.cpp` — drives the table model, confirms deletions using the model's address text, toggles freezes, parses a `.skt` into a scratch table without touching state, adopts it (replacing the table and emitting `tableLoaded()`) or merges the entries not already present without emitting it, reports status outcomes through `statusChanged()`, remembers the table path on every load/save, re-resolves stored expressions on a slower cadence of the window tick (one batched job, skipped while detached or in flight, an expression-set change or a new module map forces an immediate pass, a failure keeps the last good address), builds the per-row menu through `populate_row_menu()` — including the two watch entries, disabled with `Attach to a target first.` without a target and emitting `accessWatchRequested` with the entry's width otherwise — starts its native file dialogs in the remembered directory with the `.skt` filter and forwards the live surface calls to the model; exposes the address list to the window's tab chain.
-- `src/ui/dialogs/process_list.hpp` — the fixed-size Process List picker (its filter box steps the highlighted target with Up/Down) and its filtered, sortable process model.
-- `src/ui/dialogs/process_list.cpp` — Applications/Processes views, filtering, async listing/probe/index and attach/detach with inline busy states and a single failure message line, carrying the executable path into the attached target, stepping the highlighted target with Up/Down in the filter box (`eventFilter()`/`step_selection()`, cycling at both ends) and recording refreshes/probes at `debug`, attach/detach at `info` and failures at `warning`.
-- `src/ui/dialogs/add_address.hpp` — the Add Address dialog over the `AddressTable` with the access worker and the module map: it resets its form on every show and exposes `set_modules()` for expression resolution.
-- `src/ui/dialogs/add_address.cpp` — description/address/type/size form that resets on every show, resolves a typed expression (synchronously when deref-free, through a `submit_resolve_expressions` job for a pointer chain), reports invalid input inline and appends an entry carrying both the expression and the resolved address on a confirmed add, closing the dialog.
-- `src/ui/dialogs/memory_viewer.hpp` — the Memory Viewer's detached, parentless top-level three-pane shell over `MemoryView`/`DisassemblyView` and their documents: the 70/30 vertical and 70/30 horizontal splitters, the focus-aware `Ctrl+G` routing (`go_to`/`go_to_disassembly`), both cursors seeded by `set_address()` (which clears both histories), the module/address-mode fan-out, the one live pass (byte blocks then the listing window), the `instruction_accesses()` resolver seam with its `instructionAccessesResolved()` signal, the `geometryChanged()` signal raised on every hide and the deref-free/pointer-chain Go To helpers.
-- `src/ui/dialogs/memory_viewer.cpp` — builds the vertical and horizontal splitters (non-collapsible, stretch 70/30 and 70/30, seeded once on first show), the Disassembly panel and the Debugger panel with the register table, seeds both panes on `set_address` (clearing both Back histories), forwards the merged live readings to both documents, re-reads a pane whenever it navigates on its own (`navigated`), sends the listing's `followInMemoryViewRequested` to the byte view's `navigate_to()`, resolves a listing row's memory operands against the controller's registers for the Access Watch window, emits `geometryChanged(saveGeometry())` on every hide, prompts for an address through the reusable `InputBox` (validating module/literal bases live against the focused pane's map), resolves a deref-free value synchronously and a pointer chain through the worker before jumping that pane, logs each jump and failure under `ui` and raises an immediate pass on Go To/show.
-- `src/ui/dialogs/log.hpp` — the non-modal `LogDialog`: a live, filtered log view with Clear and Save As and a remembered save directory.
-- `src/ui/dialogs/log.cpp` — level and case-insensitive text filters over the records, history seeding on first show, live drain from the notifier, a record-count/path status line and Clear/Save As records, the save reporting the written path to the window.
-- `src/ui/dialogs/settings.hpp` — the Settings dialog as a view over `SettingsController` (categories — including the Live update and Tables pages — plus the session-only `alignmentChanged` signal).
-- `src/ui/dialogs/settings.cpp` — Appearance, Addresses, Live update, Tables, Scanning, Plugins and About pages; the theme/address radios, the Tables switch and the live-update checkbox/interval spin box drive the controller and follow it back.
-- `src/ui/dialogs/table_settings.hpp` — the non-modal Table Settings dialog editing the current table's target process, executable path, auto attach and match-by-exe-path settings, showing the attached process and exposing a refresh hook.
-- `src/ui/dialogs/table_settings.cpp` — groups the fields into labelled cards with hints, writes them into `AddressTable::settings()` on edit, refuses auto attach without the selected identifier (and the path toggle without a path), fills name and path from the attached process and re-reads the settings on every show.
-- `src/ui/dialogs/table_conflict.hpp` — the `TableConflictChoice`/`TableConflictInfo` types and the themed Cancel/Overwrite/Merge prompt shown before an open table is replaced.
-- `src/ui/dialogs/table_conflict.cpp` — builds the warning glyph, the both-files/both-counts main line and a muted hint, maps each button to its choice, marks Merge as the default and Esc/window close as Cancel, and exposes `ask_table_conflict()`.
-- `tests/support/test_main.cpp` — Catch2 test runner (`CATCH_CONFIG_MAIN`) and `slopkit_test_application()`, the one `QApplication` every widget test file shares.
-- `tests/support/fake_process.hpp` — the shared test fakes and helpers: `FakeMemory`, `FakeBackend`, `FakeAccess`, plus `application()`, `sample_processes()`, `module_image()`, `pump_ui()` and `scratch_settings_file()`.
-- `tests/support/fake_process.cpp` — the `FakeMemory`/`FakeBackend`/`FakeAccess` method definitions and the helper bodies.
-- `tests/support/ui_helpers.hpp` — the UI suites' shared Qt/test helpers (widget locators, the fake target, scratch settings/table writers, `LevelGuard`/`SinkGuard` and the live surfaces).
-- `tests/support/scan_helpers.hpp` — the scan suites' shared constants and helpers (`kBase`, the buffer sources, `exact_config()` and `wait()`).
-- `tests/support/access_worker_helpers.hpp` — the worker suites' shared `GatedAccess`, `pump()`, `LevelGuard`/`SinkGuard` and flat-window constant.
-- `tests/support/memory_view_helpers.hpp` — the memory-view suites' shared `Fixture` (a live document over a fake target), byte `fill`/`block_bytes`/`reading` helpers and the sink guard.
-- `tests/support/sandbox_helpers.hpp` — the sandbox suites' shared value-store access, the offscreen window fixture and the in-process scan helper.
-- `tests/support/fake_debug.hpp` — `FakeDebugBackend` (a scriptable `DebugBackend` recording every call, with a queue of stops and errors) and the `pump_until`/`wait_until` helpers.
-- `tests/core/version_test.cpp` — Catch2 tests for `slopkit::version()`.
-- `tests/expr/expression_test.cpp` — Catch2 tests for the expression module: literal parsing, `+`-splitting and rejections, `pointer_levels()`, and evaluation of module/literal bases, a scripted pointer chain and the level-tagged read failures.
-- `tests/ui/components/input_box_test.cpp` — offscreen cases for the `InputBox`: unvalidated accept, the `get_text` accept/reject/close paths, validator gating with the message and the blocked accept, Enter acceptance and the monospace option.
-- `tests/core/log_test.cpp` — logger tests: level filtering, level-name round-trips, multi-sink delivery and removal, a throwing sink, the history cap, concurrent calls and file rotation.
-- `tests/ui/settings_test.cpp` — settings tests: missing-file defaults, INI round-trip, hand-written values (including the auto-load switch, remembered paths and the live-update switch/interval clamp), the Memory Viewer geometry blob's round-trip and malformed-value fallback, junk fallback and change-only signals, and the main window applying the persisted settings at construction.
-- `tests/platform/linux/procfs_test.cpp` — parsing and classification tests for the procfs platform code.
-- `tests/platform/linux/desktop_entry_test.cpp` — `.desktop` parsing, exec basename and application classification tests, plus the `.skt` MIME/desktop packaging contract.
-- `tests/platform/linux/ptrace_test.cpp` — a forked child: seize/interrupt/wait, the register round-trip, the DR0/DR7 write-read-clear round-trip, word/byte peek/poke, continue+interrupt, detach, the signal delivery stop vs signal death classification and the missing-thread errors.
-- `tests/platform/linux/debug_session_test.cpp` — `platform::DebugSession` with the forward policy against a forked child: attach/detach, a software breakpoint hit and step-over, a hardware slot, the backtrace, a signal reaching the child's own handler with no stop reported, a job-control pair and a killed target.
-- `tests/scan/value_test.cpp` — value literal parsing for every type, malformed-value reporting and the format-back-to-text helpers.
-- `tests/scan/engine_test.cpp` — a first scan and its whole stored result set, refinement/undo/reset and comparison bounds, the merged unrunnable-scan case, cancellation and the hidden throughput benchmark.
-- `tests/scan/filter_test.cpp` — region flags, address range and alignment filtering, the whole-address-space stop at the last mapped region and cancel-keeps-results.
-- `tests/scan/matcher_test.cpp` — the compiled matcher against the generic comparison, and the uniform and floating-point needles.
-- `tests/scan/parallel_test.cpp` — a parallel first scan against the sequential one, chunk/shard-boundary matches, parallel cancellation and monotonic scanned-byte progress.
-- `tests/app/cli_test.cpp` — self-scans the test process through the built plugin and the `--scan` command.
-- `tests/app/sandbox_launch_test.cpp` — the sandbox launch paths: the binary beside the executable and for an empty directory, a live-pid spawn and a scan of the spawned target.
-- `tests/sandbox/sandbox_values_test.cpp` — the sandbox value-type mapping, field offsets, animation/health-wrap, the heap marker, `print_layout` and the in-process self-scan.
-- `tests/sandbox/sandbox_window_test.cpp` — the offscreen window: rows, write visibility, focused-editor skip, editor write-back, pause/resume, reset and clean destruction.
-- `tests/process/access_worker_test.cpp` — background access worker tests: non-blocking submits, ordering, session ownership, handoff, detach, shutdown safety, the probe/write/freeze/memory-map jobs and the `[process][log]` case.
-- `tests/process/access_worker_batch_test.cpp` — the batched `submit_read_many` (request order, a single-item failure and the no-session case) and the batched expression resolve (pointer chains, per-item parse/read failures and the no-session job error).
-- `tests/debug/breakpoints_test.cpp` — slot allocation, kind/size normalisation, duplicate refusal, the four hardware slots, enable/disable and hit counting.
-- `tests/debug/access_watch_test.cpp` — the watch's per-instruction coalescing, the 1024-row cap with its truncation flag and rising total, and the stop/clear/replace transitions.
-- `tests/debug/step_over_test.cpp` — the plain step, the trap-at-RIP lift and the unknown-instruction-size fallback.
-- `tests/debug/worker_test.cpp` — completion ordering, the error path, an interrupt serviced while a continue blocks and shutdown unblocking a blocked continue.
-- `tests/debug/controller_test.cpp` — the state machine, the trap hit with the RIP rewind, the step-over lift, hardware arming, arming/disarming through the invisible maintenance stop while running, the access watch's consume-and-resume hits, its arm-failure reasons, expression resolution and the register-write gate.
-- `tests/debug/practice_target_test.cpp` — a real session against a forked child: a non-pausing attach with the target's counter still advancing, `Break` for the stop-dependent assertions, a hardware write watchpoint with its DR slot, a software breakpoint hit and step-over, the backtrace, detach and the target still running untraced.
-- `tests/table/address_table_test.cpp` — address model id/encode/freeze/apply-write tests, the table-file save/load round-trip (including an expression and its escaping), a v1 line loading without one, and merge append/skip/idempotence cases.
-- `tests/table/table_settings_test.cpp` — table-settings `empty()`/round-trip/legacy-reset/malformed-line tests with executable-path persistence and the `match_process_by_name`/`match_process_by_exe_path` rules.
-- `tests/ui/table_file_test.cpp` — the `.skt` naming rules (`table_file_path`, `default_table_path`).
-- `tests/plugin/linux_proc_test.cpp` — loads the built plugin and exercises listing, memory read/write and errors.
-- `tests/plugin/linux_proc_debug_test.cpp` — the built plugin's ABI 1.4 debug operations against a forked child: attach, registers, a software breakpoint hit and step-over, a hardware execute hit with its DR slot, the backtrace and detach.
-- `tests/plugin/wine_proton_debug_test.cpp` — the built `wine-proton` plugin's ABI 1.4 debug operations against a forked child: attach, registers, a software breakpoint hit and step-over, a hardware execute hit with its DR slot, the backtrace and detach.
-- `tests/platform/linux/wine_test.cpp` — Wine/Proton classification fixtures, precedence order and the dual-claim default.
-- `tests/ui/theme_test.cpp` — both themes define every colour role, `make_palette` maps them onto the Qt palette, `apply_theme` installs and caches the theme, and themed widgets follow a live theme switch.
-- `tests/ui/address_format_test.cpp` — the module spans (file-backed ordering, main image, path-derived label), the module-relative and absolute address renderers, the no-module fallback and `parse_address_text`.
-- `tests/ui/access_watch_test.cpp` — the widget-free operand resolver: base/index/scale/displacement, a rip-relative displacement from the instruction end, absolute and negative displacements, the 32-bit register aliases, an unresolved operand and the width snapping.
-- `tests/ui/main_window_test.cpp` — the File/View/Help shell build, the fixed Tab order across the scan flow, the re-activation focus restoration, the Memory Viewer being a detached, unparented top-level window and the View > Access Watch window opening once.
-- `tests/ui/table_open_test.cpp` — the load report, remembered paths, overwrite/merge/adopt of an open table and the auto-load on/off/failure start-up paths.
-- `tests/ui/auto_attach_test.cpp` — the auto-attach matching rules (target name vs exe path) across the success, skip and failure paths.
-- `tests/ui/live_values_test.cpp` — the gated live coordinator: one pass per interval, in-flight suppression, empty request sets and the disabled switch.
-- `tests/ui/components/widgets_test.cpp` — the action icons are non-null multi-size resources.
-- `tests/ui/models/found_results_model_test.cpp` — the found-results model: snapshot mirroring, clipboard texts, hex copies, static-hit marking/grouping, main-image first and the whole-set ordering under a sort.
-- `tests/ui/models/address_table_model_test.cpp` — the address-table model's edit path, module+RVA rendering, address mode and the stored-expression tooltip.
-- `tests/ui/models/register_model_test.cpp` — the placeholder table, hex/decimal parsing, the stopped-only edit gate, the commit handler and the muted pending state.
-- `tests/ui/models/call_stack_model_test.cpp` — frame rendering in both address modes and the single-frame (no frame pointer) case.
-- `tests/ui/models/breakpoint_model_test.cpp` — rows mirroring the table, the checkable Enabled toggle, kind/size/address labels, the hit counter and the access watch's hidden entry staying out.
-- `tests/ui/panels/scanner_panel_test.cpp` — the scan-range defaults and module dropdown, Start/New Scan/Undo, the value box behaviour and the main-module entry point.
-- `tests/ui/panels/found_list_panel_test.cpp` — the one-line result header, empty-until-finished and cancel-restores-rows gating, the row menu (watch entries disabled without a target and emitting the hit's address/width/kind with one), static-first ordering, the elided tooltip and the live value column.
-- `tests/ui/panels/address_list_panel_test.cpp` — the live value column, stored-expression re-resolution, `?` for unreadable values, in-edit exclusion, the delete confirmation and the row menu's access-watch entries (disabled without a target).
-- `tests/ui/panels/debugger_panel_test.cpp` — control enablement across the session states (running after attach with step/resume disabled and Break enabled), the Breakpoints button signal, register editability and the missing-target case.
-- `tests/ui/dialogs/process_list_test.cpp` — the process-list dialog cases: listing, refresh, filters, attach and the search flow.
-- `tests/ui/dialogs/memory_viewer_test.cpp` — the Memory Viewer's three-pane split and ratios, the follow-live pass (four requests), the top address across resize, both cursors seeded by `set_address`, the Go To variants with the focus-aware `Ctrl+G`, the detached/no-transient-parent window and its geometry surviving a restart, the open-at history reset and the listing's `Follow in Memory View` wiring, the entry-row drive, the read-only register placeholder and the instruction-operand resolution (with and without a register context).
-- `tests/ui/dialogs/access_watch_test.cpp` — the Access Watch window: arming through its seam, a coalesced hit row with the recovered code, Follow/Stop/Clear, the resolved-operand table with a resolved and an unresolved row, and the arm-failure status line.
-- `tests/ui/dialogs/settings_test.cpp` — the settings dialog's address-display choice, with the Tables auto-load switch, the Live update interval control and the Addresses live switch as sections.
-- `tests/ui/dialogs/table_settings_test.cpp` — the non-modal Table Settings dialog's in-place edits, fill-from-process and name-only fill.
-- `tests/ui/dialogs/log_test.cpp` — the log dialog's live records, level/text filters, Clear, history seeding and the `ui`-category record.
-- `tests/ui/dialogs/breakpoints_test.cpp` — adding by absolute and module expressions, the kind/size selection, removal, Clear All, mirroring an external change and the watch's hidden entry staying out.
-- `tests/ui/components/memory_view_document_test.cpp` — the headless document: windowing and cache reuse, dropped stale/foreign readings, the change mask, per-format cell text, text encodings, unreadable placeholders, writes through the worker, the zero/ceiling clamps and the static-row module+RVA rendering.
-- `tests/ui/components/message_box_test.cpp` — offscreen cases for the themed `MessageBox`: clicked standard buttons and their results, the requested default button, the kind-to-glyph mapping, an empty button set, Esc/reject dismissal, the informative line's show/hide, a live theme switch and the `confirm`/`ok_cancel`/`information`/`warning`/`error`/`message_box` helper results.
-- `tests/ui/dialogs/table_conflict_test.cpp` — offscreen cases for the conflict prompt: each button's choice, Merge as the default, Esc/reject as cancel, exactly three buttons and the both-files/both-counts wording.
-- `tests/ui/components/memory_view_test.cpp` — the offscreen viewer: row auto-fit, top-address preservation across resize/format/encoding changes, row scrolling and the zero clamp, the inline editor, the options menu (including the per-pane Back entry) and the per-column offset header.
-- `tests/app/instance_test.cpp` — the single-instance socket layer: a hand-off reaches a listening server and is acked, nobody-listening fails immediately, a taken name cannot listen, an over-long path is refused and the socket name is uid-scoped.
-- `tests/ui/dialogs/add_address_test.cpp` — offscreen cases for the Add Address dialog over a fake target: the form resets on every show, a confirmed add stores the expression and closes the dialog, a module expression resolves synchronously, a pointer chain resolves through the worker before the entry is added, and an invalid address or dynamic size keeps it open with an inline error.
-- `tests/plugin/plugin_host_test.cpp` — loader diagnostics, default/installed search paths, missing-directory tolerance and headless commands.
-- `tests/disasm/decoder_test.cpp` — the Zydis wrapper: known encodings and lengths, block address advance and count, the truncated tail, the `.byte` row, the long-64 vs legacy-32 difference, the empty buffer, the address slices the decoder reports for branches, RIP-relative/indirect/absolute memory operands and the no-slice families, and the `MemoryRef` operands for register-relative, scaled-index, rip-relative and absolute memory plus the empty `lea`/`.byte` cases.
-- `tests/ui/components/disassembly_document_test.cpp` — the headless disassembly document: the aligned window request, hidden/detached gating, dropped stale/foreign readings, the payload-change invalidation, the lazy decode and window ceiling, the page-aligned window step and `window_exhausted()`, the wrapped byte lines, the rendered `??`/`.byte` rows, `row_at` inside an instruction, the `row_addresses()` references, the address rendering, the instruction text rendered through the module map in both address modes (in-map and out-of-map targets) and the `copy_text` forms.
-- `tests/ui/components/disassembly_view_test.cpp` — the offscreen listing: viewport row fit, painted row text and byte columns, the bytes-column wrap when the pane narrows, the cursor and page step across a wrap, wheel/key scrolling, page-boundary stepping, Home/End, the `go_to()` variants, the `Follow`/`Follow in Memory View` entries and the per-pane Back history, the row-targeted `Copy` submenu and clipboard, a painted branch target rendered through the module map, the cursor across a resize, the document visibility toggle and the `Find out what addresses this instruction accesses` entry's availability and emission.
-- `tests/fixtures/bad_abi_plugin.cpp` — fixture plugin with an incompatible ABI major version.
-- `tests/fixtures/no_entry_plugin.cpp` — fixture library without a `slopkit_plugin_entry` symbol.
-- `tests/fixtures/missing_regions_plugin.cpp` — fixture plugin whose vtable predates `list_regions` and is too small.
-- `tests/fixtures/old_abi_minor_plugin.cpp` — fixture plugin whose vtable reports an older ABI minor version.
-- `tests/fixtures/logging_plugin.cpp` — valid fixture plugin that reports through the host services log hook at entry and when a session is opened.
+One line per project file; the path alone where the filename explains the file, otherwise a brief note.
+
+- `.clang-format`
+- `.gitignore`
+- `AGENTS.md`
+- `build.sh`
+- `CMakeLists.txt`
+- `configure.sh`
+- `install.sh`
+- `README.md`
+- `cmake/EmbedFont.cmake` — embeds a binary file as a C++ header.
+- `cmake/EmbedIcon.cmake` — icon rasterisation and resource helpers.
+- `assets/application-x-slopkit-table.xml` — `.skt` MIME definition.
+- `assets/fonts/NotoSansMono-Regular.ttf`
+- `assets/fonts/NotoSans-Regular.ttf`
+- `assets/fonts/OFL.txt` — bundled font licence.
+- `assets/icons/cancel.svg`
+- `assets/icons/checkmark.svg`
+- `assets/icons/chip.svg`
+- `assets/icons/diskette.svg`
+- `assets/icons/error.svg`
+- `assets/icons/file.svg`
+- `assets/icons/folder.svg`
+- `assets/icons/home.svg`
+- `assets/icons/icon.svg`
+- `assets/icons/info.svg`
+- `assets/icons/ok.svg`
+- `assets/icons/search.svg`
+- `assets/icons/settings.svg`
+- `assets/icons/target.svg`
+- `assets/icons/warning.svg`
+- `assets/slopkit.desktop.in` — desktop entry template.
+- `docs/ANTI_DETECTION.md` — ptrace-free access rationale.
+- `docs/ARCHITECTURE.md` — plugin-first design.
+- `docs/INDEX.md` — this file.
+- `docs/LOGGING.md` — logging conventions.
+- `docs/UI_DESIGN.md` — UI and design rules.
+- `reference/README.md` — read-only reference tree.
+- `src/app/cli.hpp` — CLI parsing and headless commands.
+- `src/app/cli.cpp`
+- `src/app/instance.hpp` — single-instance hand-off client.
+- `src/app/instance.cpp`
+- `src/app/instance_server.hpp` — single-instance socket server.
+- `src/app/instance_server.cpp`
+- `src/app/sandbox.hpp` — practice-target launch helpers.
+- `src/app/sandbox.cpp`
+- `src/core/log.hpp` — the process-wide logger.
+- `src/core/log.cpp`
+- `src/core/log_categories.hpp` — shared log category constants.
+- `src/core/version.hpp` — version string.
+- `src/core/version.cpp`
+- `src/debug/access_watch.hpp` — one address watch's state.
+- `src/debug/access_watch.cpp`
+- `src/debug/backend.hpp` — `DebugBackend` seam.
+- `src/debug/breakpoints.hpp` — breakpoint table.
+- `src/debug/breakpoints.cpp`
+- `src/debug/controller.hpp` — debug session controller.
+- `src/debug/controller.cpp`
+- `src/debug/plugin_backend.hpp` — `DebugBackend` over plugins.
+- `src/debug/plugin_backend.cpp`
+- `src/debug/step_over.hpp` — step-over planning.
+- `src/debug/step_over.cpp`
+- `src/debug/worker.hpp` — debug worker.
+- `src/debug/worker.cpp`
+- `src/disasm/decoder.hpp` — Zydis wrapper.
+- `src/disasm/decoder.cpp`
+- `src/expr/expression.hpp` — target-expression parsing.
+- `src/expr/expression.cpp`
+- `src/expr/resolver.hpp` — module/pointer resolution.
+- `src/expr/resolver.cpp`
+- `src/main.cpp`
+- `src/platform/linux/debug_session.hpp` — shared opt-in ptrace debugger.
+- `src/platform/linux/debug_session.cpp`
+- `src/platform/linux/desktop_entry.hpp` — `.desktop` entry parser.
+- `src/platform/linux/desktop_entry.cpp`
+- `src/platform/linux/memory.hpp` — memory read/write primitives.
+- `src/platform/linux/memory.cpp`
+- `src/platform/linux/module_entry.hpp` — ELF/PE entry parsing.
+- `src/platform/linux/module_entry.cpp`
+- `src/platform/linux/procfs.hpp` — procfs queries.
+- `src/platform/linux/procfs.cpp`
+- `src/platform/linux/ptrace.hpp` — ptrace wrappers.
+- `src/platform/linux/ptrace.cpp`
+- `src/platform/linux/wine.hpp` — Wine/Proton detection.
+- `src/platform/linux/wine.cpp`
+- `src/plugin/plugin.hpp` — dynamic plugin loading.
+- `src/plugin/plugin.cpp`
+- `src/plugin/plugin_api.h` — the C plugin ABI.
+- `src/plugin/plugin_host.hpp` — plugin discovery and diagnostics.
+- `src/plugin/plugin_host.cpp`
+- `src/plugins/linux_proc/linux_proc_plugin.cpp` — the `linux-proc` plugin.
+- `src/plugins/wine_proton/wine_proton_plugin.cpp` — the `wine-proton` plugin.
+- `src/process/access.hpp` — `ProcessAccess`/`Session` seam.
+- `src/process/access_worker.hpp` — background `AccessWorker`.
+- `src/process/access_worker.cpp`
+- `src/process/attachment.hpp` — attached-target metadata.
+- `src/process/attachment.cpp`
+- `src/process/plugin_access.hpp` — `ProcessAccess` over plugins.
+- `src/process/plugin_access.cpp`
+- `src/process/types.hpp` — process/module/thread types.
+- `src/process/types.cpp`
+- `src/sandbox/main.cpp` — sandbox entry point.
+- `src/sandbox/sandbox_values.hpp` — practice-target value store.
+- `src/sandbox/sandbox_values.cpp`
+- `src/sandbox/sandbox_window.hpp` — practice-target window.
+- `src/sandbox/sandbox_window.cpp`
+- `src/scan/engine.hpp` — scan engine.
+- `src/scan/engine.cpp`
+- `src/scan/matcher.hpp` — compiled scan matcher.
+- `src/scan/matcher.cpp`
+- `src/scan/source.hpp` — scan memory source.
+- `src/scan/source.cpp`
+- `src/scan/types.hpp` — scan enums and region filter.
+- `src/scan/types.cpp`
+- `src/scan/value.hpp` — scan value parsing and formatting.
+- `src/scan/value.cpp`
+- `src/table/address_table.hpp` — address table model.
+- `src/table/address_table.cpp`
+- `src/table/serializer.hpp` — `.skt` serialisation.
+- `src/table/serializer.cpp`
+- `src/table/table_settings.hpp` — per-table settings.
+- `src/table/table_settings.cpp`
+- `src/ui/access_watch.hpp` — instruction-operand resolver.
+- `src/ui/access_watch.cpp`
+- `src/ui/address_format.hpp` — module-relative address formatting.
+- `src/ui/address_format.cpp`
+- `src/ui/app.hpp` — GUI startup.
+- `src/ui/app.cpp`
+- `src/ui/completion_notifier.hpp` — background completion bridge.
+- `src/ui/completion_notifier.cpp`
+- `src/ui/components/disassembly_document.hpp` — disassembly pane state.
+- `src/ui/components/disassembly_document.cpp`
+- `src/ui/components/disassembly_view.hpp`
+- `src/ui/components/disassembly_view.cpp`
+- `src/ui/components/elided_tooltip_delegate.hpp`
+- `src/ui/components/elided_tooltip_delegate.cpp`
+- `src/ui/components/input_box.hpp`
+- `src/ui/components/input_box.cpp`
+- `src/ui/components/memory_view.hpp`
+- `src/ui/components/memory_view.cpp`
+- `src/ui/components/memory_view_document.hpp` — hex view state.
+- `src/ui/components/memory_view_document.cpp`
+- `src/ui/components/message_box.hpp`
+- `src/ui/components/message_box.cpp`
+- `src/ui/components/widgets.hpp`
+- `src/ui/components/widgets.cpp`
+- `src/ui/dialogs/access_watch.hpp`
+- `src/ui/dialogs/access_watch.cpp`
+- `src/ui/dialogs/add_address.hpp`
+- `src/ui/dialogs/add_address.cpp`
+- `src/ui/dialogs/breakpoints.hpp`
+- `src/ui/dialogs/breakpoints.cpp`
+- `src/ui/dialogs/log.hpp`
+- `src/ui/dialogs/log.cpp`
+- `src/ui/dialogs/memory_viewer.hpp`
+- `src/ui/dialogs/memory_viewer.cpp`
+- `src/ui/dialogs/process_list.hpp`
+- `src/ui/dialogs/process_list.cpp`
+- `src/ui/dialogs/settings.hpp`
+- `src/ui/dialogs/settings.cpp`
+- `src/ui/dialogs/table_conflict.hpp`
+- `src/ui/dialogs/table_conflict.cpp`
+- `src/ui/dialogs/table_settings.hpp`
+- `src/ui/dialogs/table_settings.cpp`
+- `src/ui/fonts.hpp` — bundled UI fonts.
+- `src/ui/fonts.cpp`
+- `src/ui/live_values.hpp` — live-update coordinator.
+- `src/ui/live_values.cpp`
+- `src/ui/log_notifier.hpp` — log record notifier.
+- `src/ui/log_notifier.cpp`
+- `src/ui/main_window.hpp`
+- `src/ui/main_window.cpp`
+- `src/ui/models/address_table_model.hpp`
+- `src/ui/models/address_table_model.cpp`
+- `src/ui/models/breakpoint_model.hpp`
+- `src/ui/models/breakpoint_model.cpp`
+- `src/ui/models/call_stack_model.hpp`
+- `src/ui/models/call_stack_model.cpp`
+- `src/ui/models/found_results_model.hpp`
+- `src/ui/models/found_results_model.cpp`
+- `src/ui/models/register_model.hpp`
+- `src/ui/models/register_model.cpp`
+- `src/ui/panels/address_list_panel.hpp`
+- `src/ui/panels/address_list_panel.cpp`
+- `src/ui/panels/debugger_panel.hpp`
+- `src/ui/panels/debugger_panel.cpp`
+- `src/ui/panels/found_list_panel.hpp`
+- `src/ui/panels/found_list_panel.cpp`
+- `src/ui/panels/scanner_panel.hpp`
+- `src/ui/panels/scanner_panel.cpp`
+- `src/ui/settings.hpp` — persisted settings.
+- `src/ui/settings.cpp`
+- `src/ui/table_file.hpp` — table file path helpers.
+- `src/ui/table_file.cpp`
+- `src/ui/theme.hpp`
+- `src/ui/theme.cpp`
+- `tests/app/cli_test.cpp`
+- `tests/app/instance_test.cpp` — single-instance socket tests.
+- `tests/app/sandbox_launch_test.cpp`
+- `tests/core/log_test.cpp`
+- `tests/core/version_test.cpp`
+- `tests/debug/access_watch_test.cpp`
+- `tests/debug/breakpoints_test.cpp`
+- `tests/debug/controller_test.cpp`
+- `tests/debug/practice_target_test.cpp` — real-session debug tests.
+- `tests/debug/step_over_test.cpp`
+- `tests/debug/worker_test.cpp`
+- `tests/disasm/decoder_test.cpp`
+- `tests/expr/expression_test.cpp`
+- `tests/fixtures/bad_abi_plugin.cpp` — fixture: rejects a bad ABI.
+- `tests/fixtures/logging_plugin.cpp` — fixture: logs through the host.
+- `tests/fixtures/missing_regions_plugin.cpp` — fixture: a plugin with no regions.
+- `tests/fixtures/no_entry_plugin.cpp` — fixture: a plugin with no entry points.
+- `tests/fixtures/old_abi_minor_plugin.cpp` — fixture: an older ABI minor.
+- `tests/platform/linux/debug_session_test.cpp`
+- `tests/platform/linux/desktop_entry_test.cpp`
+- `tests/platform/linux/procfs_test.cpp`
+- `tests/platform/linux/ptrace_test.cpp`
+- `tests/platform/linux/wine_test.cpp`
+- `tests/plugin/linux_proc_debug_test.cpp`
+- `tests/plugin/linux_proc_test.cpp`
+- `tests/plugin/plugin_host_test.cpp`
+- `tests/plugin/wine_proton_debug_test.cpp`
+- `tests/process/access_worker_batch_test.cpp`
+- `tests/process/access_worker_test.cpp`
+- `tests/sandbox/sandbox_values_test.cpp`
+- `tests/sandbox/sandbox_window_test.cpp`
+- `tests/scan/engine_test.cpp`
+- `tests/scan/filter_test.cpp` — region and range filtering tests.
+- `tests/scan/matcher_test.cpp`
+- `tests/scan/parallel_test.cpp` — parallel scan tests.
+- `tests/scan/value_test.cpp`
+- `tests/support/access_worker_helpers.hpp` — access worker test helpers.
+- `tests/support/fake_debug.hpp` — scriptable `DebugBackend` fake.
+- `tests/support/fake_process.hpp` — shared process/access fakes.
+- `tests/support/fake_process.cpp`
+- `tests/support/memory_view_helpers.hpp` — memory-view test fixture.
+- `tests/support/sandbox_helpers.hpp` — sandbox test helpers.
+- `tests/support/scan_helpers.hpp` — scan test helpers.
+- `tests/support/test_main.cpp` — Catch2 runner and shared `QApplication`.
+- `tests/support/ui_helpers.hpp` — UI test helpers.
+- `tests/table/address_table_test.cpp`
+- `tests/table/table_settings_test.cpp`
+- `tests/ui/access_watch_test.cpp`
+- `tests/ui/address_format_test.cpp`
+- `tests/ui/auto_attach_test.cpp` — auto-attach matching tests.
+- `tests/ui/components/disassembly_document_test.cpp`
+- `tests/ui/components/disassembly_view_test.cpp`
+- `tests/ui/components/input_box_test.cpp`
+- `tests/ui/components/memory_view_document_test.cpp`
+- `tests/ui/components/memory_view_test.cpp`
+- `tests/ui/components/message_box_test.cpp`
+- `tests/ui/components/widgets_test.cpp`
+- `tests/ui/dialogs/access_watch_test.cpp`
+- `tests/ui/dialogs/add_address_test.cpp`
+- `tests/ui/dialogs/breakpoints_test.cpp`
+- `tests/ui/dialogs/log_test.cpp`
+- `tests/ui/dialogs/memory_viewer_test.cpp`
+- `tests/ui/dialogs/process_list_test.cpp`
+- `tests/ui/dialogs/settings_test.cpp`
+- `tests/ui/dialogs/table_conflict_test.cpp`
+- `tests/ui/dialogs/table_settings_test.cpp`
+- `tests/ui/live_values_test.cpp` — live-update coordinator tests.
+- `tests/ui/main_window_test.cpp` — main-window shell tests.
+- `tests/ui/models/address_table_model_test.cpp`
+- `tests/ui/models/breakpoint_model_test.cpp`
+- `tests/ui/models/call_stack_model_test.cpp`
+- `tests/ui/models/found_results_model_test.cpp`
+- `tests/ui/models/register_model_test.cpp`
+- `tests/ui/panels/address_list_panel_test.cpp`
+- `tests/ui/panels/debugger_panel_test.cpp`
+- `tests/ui/panels/found_list_panel_test.cpp`
+- `tests/ui/panels/scanner_panel_test.cpp`
+- `tests/ui/settings_test.cpp`
+- `tests/ui/table_file_test.cpp`
+- `tests/ui/table_open_test.cpp` — open/merge/adopt table-flow tests.
+- `tests/ui/theme_test.cpp`
