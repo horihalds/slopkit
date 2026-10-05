@@ -30,6 +30,9 @@ namespace slopkit::ui::components
         constexpr int kMargin      = 4;
         constexpr int kCellPadding = 10;
 
+        // The gap between an instruction's text and its `NOPed:` annotation.
+        constexpr int kMarkerGap = 8;
+
         // The gap between the address, bytes and instruction columns: one shared
         // value, so both boundaries tighten together and the header stays aligned
         // with the rows painted below it.
@@ -470,6 +473,39 @@ namespace slopkit::ui::components
                     back();
                 });
 
+        // Rewriting live code and putting it back: one click each, the log and
+        // the warning-coloured rows are the feedback.
+        menu.addSeparator();
+        if (const CodePatch* replaced = document_.patch_at(row); replaced != nullptr)
+        {
+            QAction* restore =
+                menu.addAction(tr("Restore Original Instruction at %1").arg(document_.address_text(replaced->begin)));
+            restore->setToolTip(
+                tr("Write the instruction this session replaced (%1) back.").arg(replaced->original_text));
+            connect(restore,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        emit restoreRequested(row);
+                    });
+        }
+        else
+        {
+            QAction*   nop       = menu.addAction(tr("NOP Instruction"));
+            const bool decodable = row < document_.row_count() && !is_muted(document_.row(row));
+            nop->setEnabled(decodable);
+            nop->setToolTip(decodable ? tr("Replace this instruction with NOP bytes.")
+                                      : tr("Only a decoded instruction can be replaced."));
+            connect(nop,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        emit nopRequested(row);
+                    });
+        }
+
         menu.addSeparator();
 
         QMenu*     copy     = menu.addMenu(tr("Copy"));
@@ -568,8 +604,16 @@ namespace slopkit::ui::components
                              Qt::AlignLeft | Qt::AlignVCenter,
                              document_.address_text(row.address));
 
-            painter.setPen(is_muted(row) ? theme.text_muted : theme.text);
+            const bool patched = document_.patch_at(index) != nullptr;
+            painter.setPen(patched ? theme.warning : (is_muted(row) ? theme.text_muted : theme.text));
             painter.drawText(QRect(text_left, y, text_width, line_height_), Qt::AlignLeft | Qt::AlignVCenter, row.text);
+            if (const QString marker = document_.row_annotation(index); !marker.isEmpty())
+            {
+                const int used = painter.fontMetrics().horizontalAdvance(row.text) + kMarkerGap;
+                painter.drawText(QRect(text_left + used, y, std::max(0, text_width - used), line_height_),
+                                 Qt::AlignLeft | Qt::AlignVCenter,
+                                 marker);
+            }
 
             // The bytes wrap down their own column, one token group per line.
             for (std::size_t line = 0; line < lines; ++line)

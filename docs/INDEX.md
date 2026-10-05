@@ -130,6 +130,8 @@ One line per project file; the path alone where the filename explains the file, 
 - `src/ui/app.cpp`
 - `src/ui/completion_notifier.hpp` — background completion bridge.
 - `src/ui/completion_notifier.cpp`
+- `src/ui/components/code_patch.hpp` — NOP patch store for the listing.
+- `src/ui/components/code_patch.cpp`
 - `src/ui/components/disassembly_document.hpp` — disassembly pane state.
 - `src/ui/components/disassembly_document.cpp`
 - `src/ui/components/disassembly_view.hpp`
@@ -248,6 +250,7 @@ One line per project file; the path alone where the filename explains the file, 
 - `tests/ui/access_watch_test.cpp`
 - `tests/ui/address_format_test.cpp`
 - `tests/ui/auto_attach_test.cpp` — auto-attach matching tests.
+- `tests/ui/components/code_patch_test.cpp`
 - `tests/ui/components/disassembly_document_test.cpp`
 - `tests/ui/components/disassembly_view_test.cpp`
 - `tests/ui/components/input_box_test.cpp`

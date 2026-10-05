@@ -11,6 +11,7 @@
 #include "process/attachment.hpp"
 #include "process/types.hpp"
 #include "ui/address_format.hpp"
+#include "ui/components/code_patch.hpp"
 #include "ui/live_values.hpp"
 
 #include <QObject>
@@ -46,7 +47,10 @@ namespace slopkit::ui::components
         static constexpr std::size_t kDecodeSlack = 32;     // rows decoded past the viewport
         static constexpr std::size_t kIdBase      = 0x1000; // this pane's LiveRequest id
 
-        DisassemblyDocument(process::AccessWorker& worker, process::AttachedTarget& target, QObject* parent = nullptr);
+        DisassemblyDocument(process::AccessWorker&   worker,
+                            process::AttachedTarget& target,
+                            CodePatchTable&          patches,
+                            QObject*                 parent = nullptr);
 
         // The cursor the listing starts at and how many rows fit.
         void                        set_view(std::uint64_t first_address, std::size_t visible_rows);
@@ -118,6 +122,20 @@ namespace slopkit::ui::components
         // the window moves.
         [[nodiscard]] std::span<const disasm::MemoryRef> row_memory(std::size_t index) const;
 
+        // The applied NOP patch covering the decoded row `index` (a click anywhere in
+        // the replaced instruction reaches it); null when the row is not inside one.
+        [[nodiscard]] const CodePatch* patch_at(std::size_t index) const;
+        // The paint annotation for row `index`: "NOPed: MOV RBP, RSP" on the patch's own
+        // first row, empty everywhere else.
+        [[nodiscard]] QString          row_annotation(std::size_t index) const;
+
+        // Replaces the whole instruction on row `index` with NOP bytes and records what
+        // it held. False when there is no target, the row is not a decoded instruction
+        // whose bytes are fully cached, or a patch write is already in flight.
+        bool nop_instruction(std::size_t index);
+        // Writes the original bytes of the patch covering `address` back and forgets it.
+        bool restore_instruction(std::uint64_t address);
+
     signals:
         void rowsChanged(); // new bytes, a new window or a longer decode
 
@@ -129,16 +147,26 @@ namespace slopkit::ui::components
             std::uint64_t size {};
         };
 
-        [[nodiscard]] std::uint64_t window_base_for(std::uint64_t address) const noexcept;
+        [[nodiscard]] std::uint64_t              window_base_for(std::uint64_t address) const noexcept;
         // The base the currently decoded rows were swept from; the live window
         // while a step is in flight still holds the previous window's rows.
-        [[nodiscard]] std::uint64_t rows_base() const noexcept;
-        void                        reset_decode();
-        [[nodiscard]] QString       instruction_bytes(const disasm::Instruction& instruction) const;
-        [[nodiscard]] QString       instruction_text(const disasm::Instruction& instruction) const;
-        [[nodiscard]] std::size_t   byte_tokens(std::size_t index) const noexcept;
+        [[nodiscard]] std::uint64_t              rows_base() const noexcept;
+        void                                     reset_decode();
+        [[nodiscard]] QString                    instruction_bytes(const disasm::Instruction& instruction) const;
+        [[nodiscard]] QString                    instruction_text(const disasm::Instruction& instruction) const;
+        [[nodiscard]] std::size_t                byte_tokens(std::size_t index) const noexcept;
+        // The cached window bytes of `size` bytes at `address`, empty when they are not
+        // all cached (a window boundary).
+        [[nodiscard]] std::span<const std::byte> cached_bytes(std::uint64_t address, std::size_t size) const;
+        // Reflects bytes this session wrote into the cached window in place, so the
+        // listing shows them without waiting for an idle pass.
+        void                                     note_written(std::uint64_t address, std::span<const std::byte> bytes);
 
-        process::AttachedTarget& target_;
+        process::AccessWorker&        worker_;
+        process::AttachedTarget&      target_;
+        CodePatchTable&               patches_;
+        // The patch write in flight, so a second NOP or a restore is refused.
+        std::optional<process::JobId> patch_write_;
 
         std::uint64_t       first_address_ {0};
         std::size_t         visible_rows_ {1};

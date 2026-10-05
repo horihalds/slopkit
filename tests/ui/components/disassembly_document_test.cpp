@@ -1,9 +1,12 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <ranges>
+#include <string_view>
 #include <vector>
 
 #include "support/memory_view_helpers.hpp"
@@ -13,6 +16,8 @@ namespace
 {
     using slopkit::ui::LiveReading;
     using slopkit::ui::LiveRequest;
+    using slopkit::ui::components::CodePatch;
+    using slopkit::ui::components::CodePatchTable;
     using slopkit::ui::components::CopyFormat;
     using slopkit::ui::components::DisassemblyDocument;
 
@@ -24,7 +29,8 @@ namespace
         FakeAccess                       access;
         slopkit::process::AccessWorker   worker {access};
         slopkit::process::AttachedTarget target = attached_target();
-        DisassemblyDocument              document {worker, target};
+        CodePatchTable                   patches;
+        DisassemblyDocument              document {worker, target, patches};
 
         explicit DocFixture(std::uint64_t first = kCode, std::size_t rows = 8)
         {
@@ -55,6 +61,15 @@ namespace
             document.apply_live_readings(readings);
         }
     };
+
+    [[nodiscard]] bool logged(std::span<const slopkit::log::Record> records, std::string_view needle)
+    {
+        return std::ranges::any_of(records,
+                                   [needle](const slopkit::log::Record& record)
+                                   {
+                                       return record.message.find(needle) != std::string::npos;
+                                   });
+    }
 } // namespace
 
 TEST_CASE("the disassembly document requests one aligned window", "[ui]")
@@ -524,4 +539,161 @@ TEST_CASE("the disassembly document exposes a row's referenced addresses", "[ui]
     failed.readable = false;
     fixture.document.apply_live_readings(std::vector<LiveReading> {failed});
     CHECK(fixture.document.row_addresses(0).empty());
+}
+
+TEST_CASE("the disassembly document NOPs a whole instruction and restores it", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3}); // PUSH RBP; MOV RBP, RSP; RET
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    CHECK(fixture.document.patch_at(1) == nullptr);
+    CHECK(fixture.document.row_annotation(1).isEmpty());
+
+    CHECK(fixture.document.nop_instruction(1));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+
+    // The whole three-byte instruction became three 0x90 bytes; its neighbours
+    // are untouched.
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 3) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 4) == std::byte {0xC3});
+    REQUIRE(fixture.patches.size() == 1);
+
+    // The listing re-decoded what the target holds: three plain NOP rows.
+    fixture.document.ensure_rows(5);
+
+    const CodePatch* patch = fixture.document.patch_at(1);
+    REQUIRE(patch != nullptr);
+    CHECK(patch->begin == kCode + 1);
+    CHECK(patch->length == 3);
+    CHECK(patch->original_text == QStringLiteral("MOV RBP, RSP"));
+    CHECK(patch->original_bytes == std::vector<std::byte> {std::byte {0x48}, std::byte {0x89}, std::byte {0xE5}});
+
+    // Every row inside the replaced instruction carries the patch; the marker is
+    // on its first row only.
+    CHECK(fixture.document.patch_at(2) == patch);
+    CHECK(fixture.document.patch_at(3) == patch);
+    CHECK(fixture.document.patch_at(0) == nullptr);
+    CHECK(fixture.document.patch_at(4) == nullptr);
+    CHECK(fixture.document.row_annotation(1) == QStringLiteral("NOPed: MOV RBP, RSP"));
+    CHECK(fixture.document.row_annotation(2).isEmpty());
+
+    CHECK(fixture.document.row(0).text == QStringLiteral("PUSH RBP"));
+    CHECK(fixture.document.row(1).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(1).bytes == QStringLiteral("90"));
+    CHECK(fixture.document.row(2).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(3).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(4).text == QStringLiteral("RET"));
+
+    CHECK(logged(records, "disassembly nop: 3 byte(s) at 0x2001 replaced with NOP"));
+
+    // Restoring from a row inside the region writes the original bytes back and
+    // forgets the record.
+    records.clear();
+    CHECK(fixture.document.restore_instruction(kCode + 2));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x48});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0x89});
+    CHECK(fixture.access.memory->bytes.at(kCode + 3) == std::byte {0xE5});
+    CHECK(fixture.document.patch_at(1) == nullptr);
+    CHECK(fixture.document.row_annotation(1).isEmpty());
+    CHECK(logged(records, "disassembly restore: 3 byte(s) at 0x2001 written back"));
+
+    fixture.document.ensure_rows(3);
+    CHECK(fixture.document.row(1).text == QStringLiteral("MOV RBP, RSP"));
+}
+
+TEST_CASE("the disassembly document restores a one-byte instruction", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0xC3}); // PUSH RBP; RET
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    CHECK(fixture.document.nop_instruction(0));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x90});
+    REQUIRE(fixture.patches.size() == 1);
+    fixture.document.ensure_rows(2);
+
+    const CodePatch* patch = fixture.document.patch_at(0);
+    REQUIRE(patch != nullptr);
+    CHECK(patch->length == 1);
+    CHECK(patch->original_bytes.size() == 1);
+    CHECK(fixture.document.row_annotation(0) == QStringLiteral("NOPed: PUSH RBP"));
+
+    CHECK(fixture.document.restore_instruction(kCode));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+    CHECK(fixture.document.patch_at(0) == nullptr);
+
+    fixture.document.ensure_rows(2);
+    CHECK(fixture.document.row(0).text == QStringLiteral("PUSH RBP"));
+    CHECK(fixture.document.row(1).text == QStringLiteral("RET"));
+}
+
+TEST_CASE("the disassembly document refuses a NOP it cannot apply", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x06, 0xC3}); // PUSH RBP; .byte 0x06; RET
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    // A `.byte` row is not a decoded instruction, so nothing is written.
+    CHECK_FALSE(fixture.document.nop_instruction(1));
+    CHECK(logged(records, "disassembly nop refused"));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x06});
+
+    // A detached target refuses before anything else.
+    records.clear();
+    fixture.target.session_live = false;
+    CHECK_FALSE(fixture.document.nop_instruction(0));
+    CHECK(logged(records, "disassembly nop refused: no target attached"));
+    fixture.target.session_live = true;
+
+    // One write at a time: a second NOP is refused while the first is in flight.
+    records.clear();
+    CHECK(fixture.document.nop_instruction(0));
+    CHECK_FALSE(fixture.document.nop_instruction(2));
+    CHECK(logged(records, "disassembly nop refused: a code patch write is already in flight"));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0xC3}); // the refused row is untouched
 }

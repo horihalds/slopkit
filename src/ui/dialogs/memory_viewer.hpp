@@ -13,6 +13,7 @@
 #include "process/types.hpp"
 #include "ui/access_watch.hpp"
 #include "ui/address_format.hpp"
+#include "ui/components/code_patch.hpp"
 #include "ui/components/disassembly_document.hpp"
 #include "ui/components/memory_view_document.hpp"
 #include "ui/debug_session.hpp"
@@ -152,6 +153,7 @@ namespace slopkit::ui::dialogs
         process::AttachedTarget&        target_;
         debug::Controller&              debug_;
         DebugSessionGate                gate_;
+        components::CodePatchTable      patches_;
         components::MemoryViewDocument  document_;
         components::MemoryView*         view_ {};
         components::DisassemblyDocument disassembly_document_;

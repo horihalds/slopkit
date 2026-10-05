@@ -28,10 +28,11 @@ namespace
 
     struct ViewFixture
     {
-        FakeAccess                       access;
-        slopkit::process::AccessWorker   worker {access};
-        slopkit::process::AttachedTarget target = attached_target();
-        DisassemblyDocument              document {worker, target};
+        FakeAccess                              access;
+        slopkit::process::AccessWorker          worker {access};
+        slopkit::process::AttachedTarget        target = attached_target();
+        slopkit::ui::components::CodePatchTable patches;
+        DisassemblyDocument                     document {worker, target, patches};
 
         ViewFixture()
         {
@@ -572,6 +573,89 @@ TEST_CASE("the disassembly view offers the instruction accesses command", "[ui]"
     QAction* plain_accesses = action(plain, QStringLiteral("Find out what addresses this instruction accesses"));
     REQUIRE(plain_accesses != nullptr);
     CHECK_FALSE(plain_accesses->isEnabled());
+
+    view.hide();
+}
+
+TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
+{
+    application();
+    ViewFixture     fixture;
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    // PUSH RBP; MOV RBP, RSP; RET; .byte 0x06
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3, 0x06});
+    fixture.pass();
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+    fixture.document.ensure_rows(4);
+
+    // A decoded row offers the NOP entry and no restore entry.
+    QMenu decoded;
+    view.populate_menu(decoded, 1);
+    QAction* nop = action(decoded, QStringLiteral("NOP Instruction"));
+    REQUIRE(nop != nullptr);
+    CHECK(nop->isEnabled());
+    CHECK(nop->toolTip() == QStringLiteral("Replace this instruction with NOP bytes."));
+    CHECK(action(decoded, QStringLiteral("Restore Original Instruction at app+1")) == nullptr);
+
+    std::size_t requested = 99;
+    QObject::connect(&view,
+                     &DisassemblyView::nopRequested,
+                     &view,
+                     [&requested](std::size_t row)
+                     {
+                         requested = row;
+                     });
+    nop->trigger();
+    CHECK(requested == 1);
+
+    // A `.byte` row still shows the entry, disabled with the explanation.
+    QMenu byte_row;
+    view.populate_menu(byte_row, 3);
+    QAction* disabled = action(byte_row, QStringLiteral("NOP Instruction"));
+    REQUIRE(disabled != nullptr);
+    CHECK_FALSE(disabled->isEnabled());
+    CHECK(disabled->toolTip() == QStringLiteral("Only a decoded instruction can be replaced."));
+
+    // Apply a NOP to the `MOV RBP, RSP` and every covered row offers the
+    // restore instead, naming the instruction it replaced.
+    CHECK(fixture.document.nop_instruction(1));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    fixture.document.ensure_rows(6);
+
+    QMenu patched;
+    view.populate_menu(patched, 1);
+    CHECK(action(patched, QStringLiteral("NOP Instruction")) == nullptr);
+    QAction* restore = action(patched, QStringLiteral("Restore Original Instruction at app+1"));
+    REQUIRE(restore != nullptr);
+    CHECK(restore->toolTip().contains(QStringLiteral("MOV RBP, RSP")));
+
+    // A later row inside the region offers the same restore.
+    QMenu inside;
+    view.populate_menu(inside, 3);
+    CHECK(action(inside, QStringLiteral("Restore Original Instruction at app+1")) != nullptr);
+
+    std::size_t restored = 99;
+    QObject::connect(&view,
+                     &DisassemblyView::restoreRequested,
+                     &view,
+                     [&restored](std::size_t row)
+                     {
+                         restored = row;
+                     });
+    restore->trigger();
+    CHECK(restored == 1);
+
+    // The listing reads the bytes the target holds: three plain NOP rows.
+    CHECK(view.row_text(1) == QStringLiteral("NOP"));
+    CHECK(view.row_text(2) == QStringLiteral("NOP"));
+    CHECK(view.row_text(3) == QStringLiteral("NOP"));
 
     view.hide();
 }

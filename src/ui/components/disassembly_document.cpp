@@ -7,6 +7,8 @@
 #include <string>
 #include <utility>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "scan/types.hpp"
 
 namespace slopkit::ui::components
@@ -46,8 +48,11 @@ namespace slopkit::ui::components
         }
     } // namespace
 
-    DisassemblyDocument::DisassemblyDocument(process::AccessWorker&, process::AttachedTarget& target, QObject* parent)
-        : QObject(parent), target_(target)
+    DisassemblyDocument::DisassemblyDocument(process::AccessWorker&   worker,
+                                             process::AttachedTarget& target,
+                                             CodePatchTable&          patches,
+                                             QObject*                 parent)
+        : QObject(parent), worker_(worker), target_(target), patches_(patches)
     {
     }
 
@@ -89,6 +94,13 @@ namespace slopkit::ui::components
     std::uint64_t DisassemblyDocument::rows_base() const noexcept
     {
         return decoded_base_.value_or(window_base_);
+    }
+
+    void DisassemblyDocument::reset_decode()
+    {
+        instructions_.clear();
+        decoded_offset_   = 0;
+        decode_exhausted_ = false;
     }
 
     bool DisassemblyDocument::window_exhausted() const noexcept
@@ -368,6 +380,34 @@ namespace slopkit::ui::components
         return std::min<std::size_t>(instruction.length, bytes_.size() - offset);
     }
 
+    std::span<const std::byte> DisassemblyDocument::cached_bytes(std::uint64_t address, std::size_t size) const
+    {
+        if (!readable_ || !decoded_base_.has_value())
+        {
+            return {};
+        }
+        const std::uint64_t base = *decoded_base_;
+        if (address < base || address - base > bytes_.size() || size > bytes_.size() - (address - base))
+        {
+            return {};
+        }
+        return std::span<const std::byte>(bytes_.data() + static_cast<std::ptrdiff_t>(address - base), size);
+    }
+
+    void DisassemblyDocument::note_written(std::uint64_t address, std::span<const std::byte> bytes)
+    {
+        if (readable_ && decoded_base_.has_value() && address >= *decoded_base_
+            && address - *decoded_base_ + bytes.size() <= bytes_.size())
+        {
+            std::copy(
+                bytes.begin(), bytes.end(), bytes_.begin() + static_cast<std::ptrdiff_t>(address - *decoded_base_));
+        }
+        // The listing shows the bytes the target now holds without waiting for
+        // the next live pass, which would reach the same bytes anyway.
+        reset_decode();
+        emit rowsChanged();
+    }
+
     std::size_t DisassemblyDocument::line_count(std::size_t index, std::size_t per_line) const noexcept
     {
         const std::size_t tokens = byte_tokens(index);
@@ -438,6 +478,155 @@ namespace slopkit::ui::components
             return {};
         }
         return instructions_[index].memory;
+    }
+
+    const CodePatch* DisassemblyDocument::patch_at(std::size_t index) const
+    {
+        if (index >= instructions_.size())
+        {
+            return nullptr;
+        }
+        return patches_.covering(instructions_[index].address);
+    }
+
+    QString DisassemblyDocument::row_annotation(std::size_t index) const
+    {
+        const CodePatch* patch = patch_at(index);
+        if (patch == nullptr || index >= instructions_.size() || patch->begin != instructions_[index].address)
+        {
+            return {};
+        }
+        return QStringLiteral("NOPed: ") + patch->original_text;
+    }
+
+    bool DisassemblyDocument::nop_instruction(std::size_t index)
+    {
+        if (!target_.valid())
+        {
+            log::warning(log::category::ui, "disassembly nop refused: no target attached");
+            return false;
+        }
+        if (patch_write_.has_value())
+        {
+            log::warning(log::category::ui, "disassembly nop refused: a code patch write is already in flight");
+            return false;
+        }
+
+        const Row value = row(index);
+        if (index >= instructions_.size() || !value.readable || !instructions_[index].valid)
+        {
+            log::warning(log::category::ui, "disassembly nop refused: the row is not a decoded instruction");
+            return false;
+        }
+        const std::span<const std::byte> originals = cached_bytes(value.address, value.length);
+        if (originals.size() != value.length)
+        {
+            log::warning(log::category::ui, "disassembly nop refused: the instruction is not fully cached");
+            return false;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        patch_write_                = job_id;
+
+        std::vector<std::byte> original(originals.begin(), originals.end());
+        std::vector<std::byte> replacement = nop_bytes(value.length);
+        std::vector<std::byte> written     = replacement;
+        const bool             submitted   = worker_.submit_write(
+            job_id,
+            value.address,
+            value.address,
+            std::move(replacement),
+            [this,
+             job_id,
+             address  = value.address,
+             length   = value.length,
+             original = std::move(original),
+             text     = value.text,
+             written  = std::move(written)](process::JobResult&& result)
+            {
+                if (patch_write_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                patch_write_.reset();
+
+                const auto& write = std::get<process::WriteResult>(result);
+                if (write.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("disassembly nop failed: {}", process::describe(*write.error)));
+                    return;
+                }
+
+                patches_.apply_nop(address, length, std::move(original), text);
+                note_written(address, written);
+                log::info(log::category::ui,
+                          std::format("disassembly nop: {} byte(s) at {:#x} replaced with NOP", length, address));
+            });
+        if (!submitted)
+        {
+            patch_write_.reset();
+            log::warning(log::category::ui, "disassembly nop refused: the access worker is not accepting jobs");
+            return false;
+        }
+        return true;
+    }
+
+    bool DisassemblyDocument::restore_instruction(std::uint64_t address)
+    {
+        if (patch_write_.has_value())
+        {
+            log::warning(log::category::ui, "disassembly restore refused: a code patch write is already in flight");
+            return false;
+        }
+        const CodePatch* patch = patches_.covering(address);
+        if (patch == nullptr)
+        {
+            log::warning(log::category::ui, "disassembly restore refused: no patch covers this address");
+            return false;
+        }
+
+        const std::uint64_t    begin    = patch->begin;
+        std::vector<std::byte> original = patch->original_bytes;
+        const std::size_t      length   = original.size();
+
+        const process::JobId job_id = worker_.next_job_id();
+        patch_write_                = job_id;
+
+        std::vector<std::byte> written   = original;
+        const bool             submitted = worker_.submit_write(
+            job_id,
+            begin,
+            begin,
+            std::move(original),
+            [this, job_id, begin, length, written = std::move(written)](process::JobResult&& result)
+            {
+                if (patch_write_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                patch_write_.reset();
+
+                const auto& write = std::get<process::WriteResult>(result);
+                if (write.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("disassembly restore failed: {}", process::describe(*write.error)));
+                    return;
+                }
+
+                patches_.restore(begin);
+                note_written(begin, written);
+                log::info(log::category::ui,
+                          std::format("disassembly restore: {} byte(s) at {:#x} written back", length, begin));
+            });
+        if (!submitted)
+        {
+            patch_write_.reset();
+            log::warning(log::category::ui, "disassembly restore refused: the access worker is not accepting jobs");
+            return false;
+        }
+        return true;
     }
 
     std::optional<std::size_t> DisassemblyDocument::row_at(std::uint64_t address) const

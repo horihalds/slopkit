@@ -32,7 +32,7 @@ namespace slopkit::ui::dialogs
                                            debug::Controller&       debug,
                                            QWidget*                 parent)
         : QDialog(parent), worker_(worker), target_(target), debug_(debug), gate_(debug, target, *this, this),
-          document_(worker, target, this), disassembly_document_(worker, target, this)
+          document_(worker, target, this), disassembly_document_(worker, target, patches_, this)
     {
         setWindowTitle(tr("Memory Viewer"));
         resize(1280, 960);
@@ -115,6 +115,30 @@ namespace slopkit::ui::dialogs
                 &components::DisassemblyView::instructionAccessesRequested,
                 this,
                 &MemoryViewerDialog::instruction_accesses);
+        // Rewriting the attached target's code: the document applies the write
+        // through the access worker and the byte pane catches up on a fresh pass
+        // once it is submitted.
+        connect(disassembly_,
+                &components::DisassemblyView::nopRequested,
+                this,
+                [this](std::size_t row)
+                {
+                    if (disassembly_document_.nop_instruction(row))
+                    {
+                        request_page();
+                    }
+                });
+        connect(disassembly_,
+                &components::DisassemblyView::restoreRequested,
+                this,
+                [this](std::size_t row)
+                {
+                    if (const components::CodePatch* patch = disassembly_document_.patch_at(row);
+                        patch != nullptr && disassembly_document_.restore_instruction(patch->begin))
+                    {
+                        request_page();
+                    }
+                });
         return panel;
     }
 
@@ -419,6 +443,8 @@ namespace slopkit::ui::dialogs
 
     std::vector<ui::LiveRequest> MemoryViewerDialog::next_live_request()
     {
+        // A changed target, or a detach, makes every remembered patch stale.
+        patches_.note_target(target_.valid() ? target_.pid : 0);
         std::vector<ui::LiveRequest>       requests = document_.next_live_request();
         const std::vector<ui::LiveRequest> code     = disassembly_document_.next_live_request();
         requests.insert(requests.end(), code.begin(), code.end());

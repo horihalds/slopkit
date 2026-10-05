@@ -902,6 +902,35 @@ namespace
         viewer.apply_live_readings(readings);
         return code_base;
     }
+
+    // Puts `PUSH RBP; MOV RBP, RSP; RET` at the front of the listing's code
+    // window and applies one live pass, so rows 0..2 are those instructions. The
+    // fake serves the bytes sparsely, because a window-only fake is read-only.
+    std::uint64_t seed_listing_code(FakeAccess& access, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    {
+        const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+        const std::vector<std::byte>                code {
+            std::byte {0x55}, std::byte {0x48}, std::byte {0x89}, std::byte {0xE5}, std::byte {0xC3}};
+        std::vector<slopkit::ui::LiveReading> readings;
+        std::uint64_t                         code_base = 0;
+        readings.reserve(requests.size());
+        for (const slopkit::ui::LiveRequest& request : requests)
+        {
+            std::vector<std::byte> bytes(request.size, std::byte {0x90});
+            if (request.id == slopkit::ui::components::DisassemblyDocument::kIdBase)
+            {
+                code_base = request.address;
+                for (std::size_t index = 0; index < code.size(); ++index)
+                {
+                    bytes[index]                                  = code[index];
+                    access.memory->bytes[request.address + index] = code[index];
+                }
+            }
+            readings.push_back(slopkit::ui::LiveReading {request.id, true, std::move(bytes)});
+        }
+        viewer.apply_live_readings(readings);
+        return code_base;
+    }
 } // namespace
 
 TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
@@ -1123,4 +1152,87 @@ TEST_CASE("the memory viewer attaches the debugger on demand for the operands", 
 
     viewer.hide();
     denied.hide();
+}
+
+TEST_CASE("the memory viewer listing NOPs and restores an instruction", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    auto*                                    listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+
+    viewer.set_address(0x2000);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    const std::uint64_t code_base = seed_listing_code(access, viewer);
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
+    REQUIRE(listing->row_text(1) == QStringLiteral("MOV RBP, RSP"));
+
+    const auto menu_action = [](QMenu& menu, const QString& prefix) -> QAction*
+    {
+        for (QAction* candidate : menu.actions())
+        {
+            if (candidate->text().startsWith(prefix))
+            {
+                return candidate;
+            }
+        }
+        return nullptr;
+    };
+
+    // `NOP Instruction` on the MOV replaces its whole three-byte instruction.
+    QMenu menu;
+    listing->populate_menu(menu, 1);
+    QAction* nop = menu_action(menu, QStringLiteral("NOP Instruction"));
+    REQUIRE(nop != nullptr);
+    nop->trigger();
+    // Wait for the applied completion, not just the raw write: the listing only
+    // repaints the new bytes once the document's callback has run.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return listing->row_text(1) == QStringLiteral("NOP");
+                    }));
+
+    CHECK(access.memory->bytes.at(code_base) == std::byte {0x55});
+    CHECK(access.memory->bytes.at(code_base + 2) == std::byte {0x90});
+    CHECK(access.memory->bytes.at(code_base + 3) == std::byte {0x90});
+    CHECK(access.memory->bytes.at(code_base + 4) == std::byte {0xC3});
+    CHECK(listing->row_text(1) == QStringLiteral("NOP"));
+    CHECK(listing->row_text(2) == QStringLiteral("NOP"));
+    CHECK(listing->row_text(3) == QStringLiteral("NOP"));
+    CHECK(listing->row_text(4) == QStringLiteral("RET"));
+
+    // Right-clicking a later row of the run offers the restore, which writes the
+    // original bytes back.
+    QMenu patched;
+    listing->populate_menu(patched, 2);
+    QAction* restore = menu_action(patched, QStringLiteral("Restore Original Instruction at "));
+    REQUIRE(restore != nullptr);
+    restore->trigger();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return listing->row_text(1) == QStringLiteral("MOV RBP, RSP");
+                    }));
+
+    CHECK(access.memory->bytes.at(code_base + 2) == std::byte {0x89});
+    CHECK(access.memory->bytes.at(code_base + 3) == std::byte {0xE5});
+    CHECK(listing->row_text(1) == QStringLiteral("MOV RBP, RSP"));
+    CHECK(listing->row_text(2) == QStringLiteral("RET"));
+
+    viewer.hide();
 }

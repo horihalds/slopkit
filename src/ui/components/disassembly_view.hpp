@@ -70,6 +70,10 @@ namespace slopkit::ui::components
         void followInMemoryViewRequested(std::uint64_t address); // "Follow in Memory View"
         // "Find out what addresses this instruction accesses" on the decoded row.
         void instructionAccessesRequested(std::size_t row);
+        // "NOP Instruction" on the decoded row.
+        void nopRequested(std::size_t row);
+        // "Restore Original Instruction" on a row the session NOPed.
+        void restoreRequested(std::size_t row);
 
     protected:
         void resizeEvent(QResizeEvent* event) override;
