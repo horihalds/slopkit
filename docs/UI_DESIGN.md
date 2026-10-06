@@ -125,6 +125,7 @@ Wayland is the primary target. The app must run natively on Wayland, with X11/XW
 - Match every completion against the pending job id and ignore stale results (a changed selection, target, page or removed entry), so an out-of-order result never corrupts the view.
 - The live value pass batches the addresses the visible surfaces show into one `submit_read_many` job, so one interval costs one job and one session lock; a per-address failure never aborts the rest of the batch. Stored address expressions are re-resolved the same way: one batched `submit_resolve_expressions` job per interval, keyed by entry id, where each failure keeps the entry's last good address and is reported once per state change.
 - Only the UI thread touches widgets; the worker thread touches neither.
+- `Pause the game while scanning` suspends the target through the access worker (the `suspend` job) immediately before a scan starts and resumes it (the `resume` job) as soon as the engine stops running — finished, failed, cancelled or reset by `New Scan` — so the target is never left stopped and a session that performed the suspend resumes its target when it closes. A refused or failed suspend still starts the scan against a running target and is logged once under `scan`; the option is enabled only while a target is attached, its plugin can suspend and no debug session is running, and each blocked state explains itself in its tooltip.
 
 ## Debugger, breakpoints and access watch
 

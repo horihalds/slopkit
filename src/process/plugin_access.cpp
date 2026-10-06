@@ -102,6 +102,21 @@ namespace slopkit::process
                 return session_.regions();
             }
 
+            [[nodiscard]] bool supports_suspend() const noexcept override
+            {
+                return session_.supports_suspend();
+            }
+
+            std::expected<void, AccessError> suspend() override
+            {
+                return session_.suspend_target();
+            }
+
+            std::expected<void, AccessError> resume() override
+            {
+                return session_.resume_target();
+            }
+
         private:
             plugin::PluginSession     session_;
             ProcessId                 pid_ {};

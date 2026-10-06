@@ -31,7 +31,7 @@ Lower precedence wins, so `wine-proton` is the default target for a Wine process
 that `linux-proc` also claims; the process picker still shows the alternatives.
 
 Both plugins link the shared ABI plumbing in `src/plugins/support/` — the session
-registry, string arena, error mapping, the vtable and all 21 entry functions — and
+registry, string arena, error mapping, the vtable and all 23 entry functions — and
 supply only a `PluginProfile` (identity, precedence, access methods, claim policy,
 module shaping and foreign-signal policy), so a fix there lands in both. Each
 plugin still keeps its own state because the host `dlopen`s plugins with
@@ -85,6 +85,10 @@ host calls:
   `debug_get_registers` / `debug_set_register` / `debug_set_software_breakpoint` /
   `debug_set_hardware_breakpoint` / `debug_backtrace`), left null by a plugin that
   cannot debug
+- `suspend_target` / `resume_target` — the ABI 1.5 suspend operations, left null
+  by a plugin that cannot stop its target. A session that suspended its target
+  resumes it when the session closes or is destroyed, so an orderly teardown never
+  leaves a target frozen.
 
 `src/plugin/plugin_api.h` is the authoritative contract, and the bundled plugins
 under `src/plugins/` are the worked example. They do not hand-write the vtable:

@@ -43,6 +43,8 @@ namespace slopkit::ui::panels
     public:
         ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent = nullptr);
 
+        ~ScannerPanel() override;
+
         [[nodiscard]] scan::ScanEngine& engine() noexcept;
 
         // Sets the fast-scan alignment field, used by the Settings dialog.
@@ -56,6 +58,11 @@ namespace slopkit::ui::panels
         // Polled by the window's tick: refreshes the enable state and the
         // progress bar, and logs a changed engine message.
         void refresh();
+
+        // Reports whether a debug session is running; while it is, pausing for a
+        // scan is unavailable, because a SIGSTOP/SIGCONT pair would fight the
+        // debugger.
+        void set_debug_session_active(bool active);
 
         [[nodiscard]] int progress_percent() const noexcept;
 
@@ -141,6 +148,38 @@ namespace slopkit::ui::panels
         process::ProcessId            worker_pid_ {0};
         std::string                   worker_plugin_;
         std::optional<process::JobId> handoff_pending_;
+
+        // Starts the engine, either directly or after a successful suspend of the
+        // target; `refine` picks next_scan over first_scan.
+        void start_engine(scan::ScanConfig config, bool refine);
+        // Queues a scan behind a suspend when pausing is on and available, else
+        // starts it immediately.
+        void begin_scan(scan::ScanConfig config, bool refine);
+        // Resumes a target this panel suspended once the engine has stopped; safe
+        // to call every tick.
+        void maybe_resume_target();
+        // Enables the pause checkbox and picks its tooltip from the current
+        // attach/capability/debug state.
+        void update_pause_check();
+
+        // Pause-while-scanning state machine, all touched on the UI thread: the
+        // built config waiting for the in-flight suspend, the suspend/resume
+        // jobs, and whether this panel currently holds the target stopped.
+        struct PendingScan
+        {
+            scan::ScanConfig config;
+            bool             refine {false};
+        };
+
+        std::optional<PendingScan>    pending_scan_;
+        std::optional<process::JobId> suspend_pending_;
+        std::optional<process::JobId> resume_pending_;
+        bool                          target_suspended_ {false};
+        bool                          resume_warn_logged_ {false};
+        // The handoff reports whether the target's plugin can suspend, and the
+        // window reports whether a debug session is running; both gate the check.
+        bool                          can_suspend_ {false};
+        bool                          debug_session_active_ {false};
 
         // The target's memory map, fetched once per attach so the `All memory`
         // range spans the whole process address space (0 to the user-space

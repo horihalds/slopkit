@@ -192,6 +192,39 @@ namespace slopkit::test
         return region_list;
     }
 
+    bool FakeBackend::supports_suspend() const noexcept
+    {
+        return can_suspend;
+    }
+
+    std::expected<void, process::AccessError> FakeBackend::suspend()
+    {
+        ++suspends;
+        if (suspend_calls)
+        {
+            ++(*suspend_calls);
+        }
+        if (suspend_error.has_value())
+        {
+            return std::unexpected(*suspend_error);
+        }
+        return {};
+    }
+
+    std::expected<void, process::AccessError> FakeBackend::resume()
+    {
+        ++resumes;
+        if (resume_calls)
+        {
+            ++(*resume_calls);
+        }
+        if (resume_error.has_value())
+        {
+            return std::unexpected(*resume_error);
+        }
+        return {};
+    }
+
     std::expected<std::vector<process::ProcessInfo>, process::AccessError> FakeAccess::list_processes()
     {
         ++list_calls;
@@ -205,12 +238,17 @@ namespace slopkit::test
         {
             return std::unexpected(process::AccessError::permission_denied);
         }
-        auto backend         = std::make_unique<FakeBackend>(memory);
-        backend->fake_pid    = fake_pid;
-        backend->unreadable  = unreadable;
-        backend->read_error  = read_error;
-        backend->module_list = modules;
-        backend->region_list = regions;
+        auto backend           = std::make_unique<FakeBackend>(memory);
+        backend->fake_pid      = fake_pid;
+        backend->unreadable    = unreadable;
+        backend->read_error    = read_error;
+        backend->module_list   = modules;
+        backend->region_list   = regions;
+        backend->can_suspend   = can_suspend;
+        backend->suspend_error = suspend_error;
+        backend->resume_error  = resume_error;
+        backend->suspend_calls = suspend_calls;
+        backend->resume_calls  = resume_calls;
         return process::Session {std::move(backend)};
     }
 

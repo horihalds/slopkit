@@ -38,7 +38,7 @@ extern "C"
 #endif
 
 #define SLOPKIT_PLUGIN_ABI_VERSION_MAJOR 1
-#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 4
+#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 5
 #define SLOPKIT_PLUGIN_ABI_VERSION       ((SLOPKIT_PLUGIN_ABI_VERSION_MAJOR << 16) | SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
 
     /* Status codes carried in `slopkit_result::code`. */
@@ -260,6 +260,17 @@ extern "C"
             void* session, uint32_t slot, int32_t kind, uint64_t address, size_t size, int32_t insert);
         /* The raw stack frames of a stopped thread, top first. */
         slopkit_result (*debug_backtrace)(void* session, uint32_t tid, slopkit_frame_info** out, size_t* out_count);
+
+        /* --- suspend operations (ABI 1.5), appended so a plugin built against
+           an older minor keeps loading with these left null. A plugin that
+           leaves them null simply cannot suspend; the host reports
+           "unsupported" and never calls them. --- */
+
+        /* Stops every thread of the session's target with SIGSTOP. Its memory
+           stays readable. Idempotent. */
+        slopkit_result (*suspend_target)(void* session);
+        /* Resumes a target stopped by suspend_target with SIGCONT. Idempotent. */
+        slopkit_result (*resume_target)(void* session);
     } slopkit_plugin_vtable;
 
     /*

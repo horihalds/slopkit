@@ -53,6 +53,17 @@ namespace slopkit::ui::panels
         refresh();
     }
 
+    ScannerPanel::~ScannerPanel()
+    {
+        // The plugin session resumes its own target when it closes, but do not
+        // rely on that here: ask for a resume now. The callback deliberately does
+        // not capture this panel, which may be gone before it is drained.
+        if (target_suspended_)
+        {
+            worker_.submit_resume(worker_.next_job_id(), worker_pid_, [](process::JobResult&&) {});
+        }
+    }
+
     scan::ScanEngine& ScannerPanel::engine() noexcept
     {
         return engine_;
@@ -206,7 +217,8 @@ namespace slopkit::ui::panels
         options_body->addLayout(fast_row);
 
         pause_scanning_check_ = new QCheckBox(tr("Pause the game while scanning"));
-        pause_scanning_check_->setToolTip(tr("Accepted as a setting; no effect until a plugin can suspend the target"));
+        pause_scanning_check_->setToolTip(
+            tr("Freeze the game while a scan runs and resume it as soon as the scan finishes."));
         options_body->addWidget(pause_scanning_check_);
 
         layout->addStretch(1);
@@ -270,6 +282,7 @@ namespace slopkit::ui::panels
                     {
                         log::debug(log::category::ui, "New Scan");
                         engine_.reset();
+                        maybe_resume_target();
                     }
                     else
                     {
@@ -303,6 +316,7 @@ namespace slopkit::ui::panels
                 {
                     log::debug(log::category::ui, "Cancel Scan");
                     engine_.cancel();
+                    maybe_resume_target();
                     refresh();
                 });
         connect(add_address_button_, &QPushButton::clicked, this, &ScannerPanel::addAddressRequested);
@@ -371,6 +385,7 @@ namespace slopkit::ui::panels
         worker_session_ = process::Session {};
         worker_pid_     = 0;
         worker_plugin_.clear();
+        can_suspend_ = false;
         if (!target_.valid())
         {
             clear_memory_map();
@@ -415,6 +430,7 @@ namespace slopkit::ui::panels
                                               }
 
                                               worker_session_ = std::move(*attached.handed_session);
+                                              can_suspend_    = attached.info.has_value() && attached.info->can_suspend;
                                           });
         if (!submitted)
         {
@@ -656,7 +672,7 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::start_first_scan()
     {
-        const auto config = build_config();
+        auto config = build_config();
         if (!config)
         {
             log::warning(log::category::scan, config.error());
@@ -667,12 +683,12 @@ namespace slopkit::ui::panels
             log::warning(log::category::scan, "No scan session; attach a process first.");
             return;
         }
-        engine_.first_scan(*config, scan::make_session_source(worker_session_));
+        begin_scan(std::move(*config), false);
     }
 
     void ScannerPanel::start_next_scan()
     {
-        const auto config = build_config();
+        auto config = build_config();
         if (!config)
         {
             log::warning(log::category::scan, config.error());
@@ -683,7 +699,166 @@ namespace slopkit::ui::panels
             log::warning(log::category::scan, "Run a first scan before refining.");
             return;
         }
-        engine_.next_scan(*config);
+        begin_scan(std::move(*config), true);
+    }
+
+    void ScannerPanel::start_engine(scan::ScanConfig config, bool refine)
+    {
+        if (refine)
+        {
+            engine_.next_scan(std::move(config));
+        }
+        else
+        {
+            engine_.first_scan(std::move(config), scan::make_session_source(worker_session_));
+        }
+    }
+
+    void ScannerPanel::begin_scan(scan::ScanConfig config, bool refine)
+    {
+        if (suspend_pending_.has_value() || pending_scan_.has_value())
+        {
+            return; // A start is already in flight.
+        }
+
+        const bool pause = pause_scanning_check_->isChecked() && can_suspend_ && !debug_session_active_
+                        && static_cast<bool>(worker_session_);
+        if (!pause)
+        {
+            start_engine(std::move(config), refine);
+            return;
+        }
+
+        // Suspend first; the scan starts from the completion, and a refused
+        // suspend still starts the scan against a running target.
+        pending_scan_ = PendingScan {std::move(config), refine};
+
+        const process::JobId job_id = worker_.next_job_id();
+        suspend_pending_            = job_id;
+        const bool submitted =
+            worker_.submit_suspend(job_id,
+                                   worker_pid_,
+                                   [this, job_id](process::JobResult&& result)
+                                   {
+                                       if (suspend_pending_ != job_id)
+                                       {
+                                           return; // Superseded or shut down.
+                                       }
+
+                                       const auto suspended = std::get<process::SuspendResult>(std::move(result));
+                                       if (suspended.error)
+                                       {
+                                           log::warning(log::category::scan,
+                                                        std::string("Pause failed, scanning a running target: ")
+                                                            + std::string(process::describe(*suspended.error)));
+                                       }
+                                       else
+                                       {
+                                           target_suspended_ = true;
+                                       }
+
+                                       // Start the engine inside the completion, and only then clear the
+                                       // pending state, so no tick observes "suspended and idle".
+                                       if (pending_scan_)
+                                       {
+                                           PendingScan pending = std::move(*pending_scan_);
+                                           pending_scan_.reset();
+                                           start_engine(std::move(pending.config), pending.refine);
+                                       }
+                                       suspend_pending_.reset();
+                                       refresh();
+                                   });
+        if (!submitted)
+        {
+            suspend_pending_.reset();
+            PendingScan pending = std::move(*pending_scan_);
+            pending_scan_.reset();
+            log::warning(log::category::scan, "Pause unavailable, scanning a running target.");
+            start_engine(std::move(pending.config), pending.refine);
+        }
+    }
+
+    void ScannerPanel::maybe_resume_target()
+    {
+        if (!target_suspended_ || resume_pending_.has_value() || suspend_pending_.has_value() || engine_.is_running())
+        {
+            return;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        resume_pending_             = job_id;
+        const bool submitted        = worker_.submit_resume(
+            job_id,
+            worker_pid_,
+            [this, job_id](process::JobResult&& result)
+            {
+                if (resume_pending_ != job_id)
+                {
+                    return; // Superseded or shut down.
+                }
+                resume_pending_.reset();
+
+                const auto resumed = std::get<process::SuspendResult>(std::move(result));
+                if (!resumed.error)
+                {
+                    target_suspended_   = false;
+                    resume_warn_logged_ = false;
+                    return;
+                }
+                if (*resumed.error == process::AccessError::not_found
+                    || *resumed.error == process::AccessError::unsupported)
+                {
+                    // The session is gone; its destructor resumes the target.
+                    target_suspended_ = false;
+                    return;
+                }
+                if (!resume_warn_logged_)
+                {
+                    log::warning(log::category::scan,
+                                 std::string("Resume failed: ") + std::string(process::describe(*resumed.error)));
+                    resume_warn_logged_ = true;
+                }
+            });
+        if (!submitted)
+        {
+            resume_pending_.reset();
+        }
+    }
+
+    void ScannerPanel::update_pause_check()
+    {
+        if (!target_.valid() || !static_cast<bool>(worker_session_))
+        {
+            pause_scanning_check_->setEnabled(false);
+            pause_scanning_check_->setToolTip(tr("Attach to a target first."));
+            return;
+        }
+        if (!can_suspend_)
+        {
+            pause_scanning_check_->setEnabled(false);
+            pause_scanning_check_->setToolTip(tr("This target's plugin cannot suspend the game."));
+            return;
+        }
+        if (debug_session_active_)
+        {
+            pause_scanning_check_->setEnabled(false);
+            pause_scanning_check_->setToolTip(
+                tr("Unavailable while a debug session runs; resuming the game would fight the debugger."));
+            return;
+        }
+        pause_scanning_check_->setEnabled(true);
+        pause_scanning_check_->setToolTip(
+            tr("Freeze the game while a scan runs and resume it as soon as the scan finishes."));
+    }
+
+    void ScannerPanel::set_debug_session_active(bool active)
+    {
+        if (debug_session_active_ == active)
+        {
+            return;
+        }
+        debug_session_active_ = active;
+        refresh();
     }
 
     void ScannerPanel::activate_scan_from_input()
@@ -718,7 +893,7 @@ namespace slopkit::ui::panels
         const scan::ScanSnapshot snapshot    = engine_.snapshot();
         const bool               running     = snapshot.state == scan::ScanState::running;
         const bool               has_results = engine_.has_results();
-        const bool               preparing   = handoff_pending_.has_value();
+        const bool               preparing   = handoff_pending_.has_value() || suspend_pending_.has_value();
         const bool               attached    = target_.valid() && static_cast<bool>(worker_session_) && !preparing;
 
         scan_button_->setText(has_results ? tr("New Scan") : tr("First Scan"));
@@ -728,6 +903,9 @@ namespace slopkit::ui::panels
         cancel_button_->setVisible(running);
 
         progress_percent_ = static_cast<int>(std::clamp(snapshot.progress, 0.0f, 1.0f) * 100.0f);
+
+        maybe_resume_target();
+        update_pause_check();
     }
 
 } // namespace slopkit::ui::panels

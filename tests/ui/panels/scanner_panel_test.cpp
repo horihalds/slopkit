@@ -1016,3 +1016,260 @@ TEST_CASE("the scanner resolves the main module entry point", "[ui]")
     slopkit::ui::panels::ScannerPanel no_map_panel {no_map_worker, invalid_target};
     CHECK(no_map_panel.main_module_address() == 0);
 }
+
+TEST_CASE("a ticked pause suspends before the scan and resumes when it stops", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.can_suspend = true;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    region.writable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("10"));
+
+    auto* pause       = checkbox_labelled(panel, QStringLiteral("Pause the game while scanning"));
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    REQUIRE(pause != nullptr);
+    REQUIRE(scan_button != nullptr);
+
+    // The suspend capability arrives with the handoff, which enables the box.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return pause->isEnabled();
+                    }));
+    REQUIRE(scan_button->isEnabled());
+    pause->setChecked(true);
+
+    scan_button->click();
+
+    // The suspend is in flight: the engine has not started and the scan button
+    // is held disabled by the pending job.
+    CHECK_FALSE(panel.engine().is_running());
+    CHECK_FALSE(panel.engine().has_results());
+    CHECK_FALSE(scan_button->isEnabled());
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return access.suspend_calls->load() == 1 && panel.engine().has_results();
+                    }));
+    CHECK(panel.engine().has_results());
+
+    // Once the engine stops, the panel resumes the target exactly once.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return access.resume_calls->load() == 1;
+                    }));
+    CHECK(access.suspend_calls->load() == 1);
+    CHECK(access.resume_calls->load() == 1);
+}
+
+TEST_CASE("an unticked pause never suspends the target", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.can_suspend = true;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    region.writable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("10"));
+
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    REQUIRE(scan_button != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return scan_button->isEnabled();
+                    }));
+
+    scan_button->click();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return panel.engine().has_results() && !panel.engine().is_running();
+                    }));
+    for (int tick = 0; tick < 5; ++tick)
+    {
+        panel.refresh();
+        worker.drain();
+        QCoreApplication::processEvents();
+    }
+
+    CHECK(access.suspend_calls->load() == 0);
+    CHECK(access.resume_calls->load() == 0);
+}
+
+TEST_CASE("a refused suspend still starts the scan and warns once", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.can_suspend   = true;
+    access.suspend_error = slopkit::process::AccessError::permission_denied;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    region.writable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    REQUIRE(value != nullptr);
+    value->setText(QStringLiteral("10"));
+
+    auto* pause       = checkbox_labelled(panel, QStringLiteral("Pause the game while scanning"));
+    auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
+    REQUIRE(pause != nullptr);
+    REQUIRE(scan_button != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return pause->isEnabled();
+                    }));
+    pause->setChecked(true);
+
+    std::vector<slopkit::log::Record> records;
+    const LevelGuard                  level_guard;
+    const SinkGuard                   sink_guard(
+        [&records](const slopkit::log::Record& record)
+        {
+            records.push_back(record);
+        });
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    scan_button->click();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        panel.refresh();
+                        return panel.engine().has_results() && !panel.engine().is_running();
+                    }));
+
+    int pause_warnings = 0;
+    for (const auto& record : records)
+    {
+        if (record.category == "scan" && record.level == slopkit::log::Level::warning
+            && record.message.starts_with("Pause failed"))
+        {
+            ++pause_warnings;
+        }
+    }
+    // The refusal is logged exactly once and the scan still ran unpaused.
+    CHECK(pause_warnings == 1);
+    CHECK(access.suspend_calls->load() == 1);
+    CHECK(access.resume_calls->load() == 0);
+}
+
+TEST_CASE("the pause checkbox is gated on attach, capability and the debugger", "[ui]")
+{
+    application();
+
+    SECTION("no target")
+    {
+        FakeAccess                        access;
+        slopkit::process::AccessWorker    worker {access};
+        slopkit::process::AttachedTarget  invalid_target;
+        slopkit::ui::panels::ScannerPanel panel {worker, invalid_target};
+
+        auto* pause = checkbox_labelled(panel, QStringLiteral("Pause the game while scanning"));
+        REQUIRE(pause != nullptr);
+        CHECK_FALSE(pause->isEnabled());
+        CHECK(pause->toolTip() == QStringLiteral("Attach to a target first."));
+        CHECK_FALSE(pause->toolTip().contains(QStringLiteral("no effect")));
+    }
+
+    SECTION("the plugin cannot suspend")
+    {
+        FakeAccess access; // can_suspend stays false
+
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = fake_target();
+        attach_app_session(worker);
+
+        slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+        auto* pause = checkbox_labelled(panel, QStringLiteral("Pause the game while scanning"));
+        REQUIRE(pause != nullptr);
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            panel.refresh();
+                            return pause->toolTip() == QStringLiteral("This target's plugin cannot suspend the game.");
+                        }));
+        CHECK_FALSE(pause->isEnabled());
+    }
+
+    SECTION("a debug session is running")
+    {
+        FakeAccess access;
+        access.can_suspend = true;
+
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = fake_target();
+        attach_app_session(worker);
+
+        slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+        auto* pause = checkbox_labelled(panel, QStringLiteral("Pause the game while scanning"));
+        REQUIRE(pause != nullptr);
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            panel.refresh();
+                            return pause->isEnabled();
+                        }));
+
+        panel.set_debug_session_active(true);
+        panel.refresh();
+        CHECK_FALSE(pause->isEnabled());
+        CHECK(pause->toolTip().contains(QStringLiteral("debug session")));
+
+        // Leaving the debug session restores the option without a new attach.
+        panel.set_debug_session_active(false);
+        panel.refresh();
+        CHECK(pause->isEnabled());
+    }
+}

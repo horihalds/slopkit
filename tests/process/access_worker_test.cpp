@@ -524,3 +524,175 @@ TEST_CASE("a batched resolve without an attached target fails the job", "[proces
     CHECK(batch.error == AccessError::internal);
     CHECK(batch.items.empty());
 }
+
+TEST_CASE("a suspend and resume job reach the attached backend", "[process]")
+{
+    GatedAccess access {false};
+    access.can_suspend = true;
+    AccessWorker worker {access};
+
+    AttachResult attached;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&& result)
+                             {
+                                 attached = std::get<AttachResult>(std::move(result));
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached.info.has_value();
+                 }));
+    CHECK(attached.info->can_suspend);
+
+    bool          suspend_done = false;
+    SuspendResult suspended;
+    worker.submit_suspend(worker.next_job_id(),
+                          7,
+                          [&](JobResult&& result)
+                          {
+                              suspended    = std::get<SuspendResult>(std::move(result));
+                              suspend_done = true;
+                          });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return suspend_done;
+                 }));
+    CHECK_FALSE(suspended.error.has_value());
+    CHECK(access.backend()->suspends.load() == 1);
+
+    bool          resume_done = false;
+    SuspendResult resumed;
+    worker.submit_resume(worker.next_job_id(),
+                         7,
+                         [&](JobResult&& result)
+                         {
+                             resumed     = std::get<SuspendResult>(std::move(result));
+                             resume_done = true;
+                         });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return resume_done;
+                 }));
+    CHECK_FALSE(resumed.error.has_value());
+    CHECK(access.backend()->resumes.load() == 1);
+}
+
+TEST_CASE("a suspend job without an attached target is refused", "[process]")
+{
+    GatedAccess access {false};
+    access.can_suspend = true;
+    AccessWorker worker {access};
+
+    bool          done = false;
+    SuspendResult result;
+    worker.submit_suspend(worker.next_job_id(),
+                          7,
+                          [&](JobResult&& job)
+                          {
+                              result = std::get<SuspendResult>(std::move(job));
+                              done   = true;
+                          });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return done;
+                 }));
+    CHECK(result.error == AccessError::unsupported);
+}
+
+TEST_CASE("a suspend job refuses a stale target before reaching the backend", "[process]")
+{
+    GatedAccess access {false};
+    access.can_suspend = true;
+    AccessWorker worker {access};
+
+    AttachResult attached;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&& result)
+                             {
+                                 attached = std::get<AttachResult>(std::move(result));
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached.info.has_value();
+                 }));
+
+    bool          done = false;
+    SuspendResult result;
+    worker.submit_suspend(worker.next_job_id(),
+                          8,
+                          [&](JobResult&& job)
+                          {
+                              result = std::get<SuspendResult>(std::move(job));
+                              done   = true;
+                          });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return done;
+                 }));
+    CHECK(result.error == AccessError::not_found);
+    CHECK(access.backend()->suspends.load() == 0);
+
+    bool          resume_done = false;
+    SuspendResult resumed;
+    worker.submit_resume(worker.next_job_id(),
+                         8,
+                         [&](JobResult&& job)
+                         {
+                             resumed     = std::get<SuspendResult>(std::move(job));
+                             resume_done = true;
+                         });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return resume_done;
+                 }));
+    CHECK(resumed.error == AccessError::not_found);
+    CHECK(access.backend()->resumes.load() == 0);
+}
+
+TEST_CASE("a backend without suspend support reports unsupported", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    AttachResult attached;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&& result)
+                             {
+                                 attached = std::get<AttachResult>(std::move(result));
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached.info.has_value();
+                 }));
+    CHECK_FALSE(attached.info->can_suspend);
+
+    bool          done = false;
+    SuspendResult result;
+    worker.submit_suspend(worker.next_job_id(),
+                          7,
+                          [&](JobResult&& job)
+                          {
+                              result = std::get<SuspendResult>(std::move(job));
+                              done   = true;
+                          });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return done;
+                 }));
+    CHECK(result.error == AccessError::unsupported);
+    CHECK(access.backend()->suspends.load() == 0);
+}

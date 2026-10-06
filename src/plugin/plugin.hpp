@@ -84,6 +84,12 @@ namespace slopkit::plugin
         std::expected<std::vector<process::ThreadInfo>, process::AccessError> threads();
         std::expected<std::vector<process::RegionInfo>, process::AccessError> regions();
 
+        // True when the plugin implements the ABI 1.5 suspend operations.
+        [[nodiscard]] bool                        supports_suspend() const noexcept;
+        // Stops / resumes every thread of the session's target.
+        std::expected<void, process::AccessError> suspend_target();
+        std::expected<void, process::AccessError> resume_target();
+
         // True when the plugin implements the ABI 1.4 debug operations.
         [[nodiscard]] bool                         supports_debug() const noexcept;
         // Raw ABI view, for the debug backend that maps the debug_* operations

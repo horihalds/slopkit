@@ -16,6 +16,9 @@ namespace slopkit::plugins::support
     struct Session
     {
         Session(process::ProcessId process_id, platform::ForeignSignalPolicy policy);
+        // Resumes a target this session stopped, so closing, detaching or
+        // replacing a session never leaves the target frozen.
+        ~Session();
 
         Session(const Session&)            = delete;
         Session& operator=(const Session&) = delete;
@@ -23,6 +26,9 @@ namespace slopkit::plugins::support
         process::ProcessId     pid {};
         platform::MemAccess    mem;
         platform::DebugSession debug;
+        // True while this session has stopped the target itself; the destructor
+        // resumes only a target slopkit stopped, never one the user did.
+        bool                   suspended {false};
     };
 
     // The registry of open sessions, mutex-guarded because the host and the

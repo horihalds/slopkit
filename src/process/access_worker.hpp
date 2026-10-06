@@ -50,6 +50,7 @@ namespace slopkit::process
         ProcessId                  pid {};
         std::string                plugin_id;
         AccessMethod               method {AccessMethod::none};
+        bool                       can_suspend {false};
         std::optional<AccessError> read_error; // set when the target is not readable
     };
 
@@ -143,6 +144,12 @@ namespace slopkit::process
         std::optional<AccessError> error;
     };
 
+    // Outcome of a suspend or resume job; null error means it succeeded.
+    struct SuspendResult
+    {
+        std::optional<AccessError> error;
+    };
+
     using JobResult = std::variant<ListResult,
                                    ProbeResult,
                                    AttachResult,
@@ -151,6 +158,7 @@ namespace slopkit::process
                                    ReadManyResult,
                                    WriteResult,
                                    FreezeResult,
+                                   SuspendResult,
                                    MemoryMapResult,
                                    ResolveResult>;
 
@@ -196,6 +204,11 @@ namespace slopkit::process
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
+        // Stops / resumes the attached target through the worker's session. `pid`
+        // must match that session, so a stale target between the click and the
+        // job is refused instead of stopped.
+        bool submit_suspend(JobId id, ProcessId pid, JobCallback on_done);
+        bool submit_resume(JobId id, ProcessId pid, JobCallback on_done);
         // Detaching reuses AttachResult with an empty info; the caller knows it
         // requested a detach.
         bool submit_detach(JobId id, JobCallback on_done);
@@ -228,6 +241,8 @@ namespace slopkit::process
             read_many,
             write,
             freeze,
+            suspend,
+            resume,
             detach,
             resolve_expressions,
         };
@@ -269,6 +284,8 @@ namespace slopkit::process
         ReadManyResult          do_read_many(const Request& request);
         WriteResult             do_write(const Request& request);
         FreezeResult            do_freeze(const Request& request);
+        SuspendResult           do_suspend(const Request& request);
+        SuspendResult           do_resume(const Request& request);
         AttachResult            do_detach();
         ResolveResult           do_resolve(const Request& request);
 

@@ -359,6 +359,26 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_suspend(JobId id, ProcessId pid, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::suspend;
+        request.id      = id;
+        request.pid     = pid;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_resume(JobId id, ProcessId pid, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::resume;
+        request.id      = id;
+        request.pid     = pid;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_detach(JobId id, JobCallback on_done)
     {
         Request request;
@@ -392,6 +412,10 @@ namespace slopkit::process
             return "write";
         case JobKind::freeze:
             return "freeze";
+        case JobKind::suspend:
+            return "suspend";
+        case JobKind::resume:
+            return "resume";
         case JobKind::detach:
             return "detach";
         case JobKind::resolve_expressions:
@@ -424,6 +448,10 @@ namespace slopkit::process
             return do_write(request);
         case JobKind::freeze:
             return do_freeze(request);
+        case JobKind::suspend:
+            return do_suspend(request);
+        case JobKind::resume:
+            return do_resume(request);
         case JobKind::detach:
             return do_detach();
         case JobKind::resolve_expressions:
@@ -518,16 +546,20 @@ namespace slopkit::process
             return result;
         }
 
+        AttachInfo info {.pid         = request.pid,
+                         .plugin_id   = std::string(attached->plugin_id()),
+                         .method      = attached->advertised_methods(),
+                         .can_suspend = attached->supports_suspend(),
+                         .read_error  = std::nullopt};
+
         if (handoff)
         {
+            // The panel takes over the session and reads the target itself, but
+            // it still needs the metadata, notably the suspend capability.
+            result.info           = std::move(info);
             result.handed_session = std::move(*attached);
             return result;
         }
-
-        AttachInfo info {.pid        = request.pid,
-                         .plugin_id  = std::string(attached->plugin_id()),
-                         .method     = attached->advertised_methods(),
-                         .read_error = std::nullopt};
 
         if (const auto modules = attached->modules(); modules.has_value())
         {
@@ -718,6 +750,77 @@ namespace slopkit::process
 
         log::debug(log::category::process,
                    std::format("freeze pass wrote {} of {} value(s)", result.written, request.items.size()));
+        return result;
+    }
+
+    SuspendResult AccessWorker::do_suspend(const Request& request)
+    {
+        SuspendResult result;
+
+        // Refuse without touching the target when there is no session or the
+        // worker's session is not the pid the caller prepared the job for: a
+        // target replaced between the click and the job must not be stopped.
+        if (!session_)
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "suspend requested without an attached target");
+            return result;
+        }
+        if (session_->pid() != request.pid)
+        {
+            result.error = AccessError::not_found;
+            log::debug(
+                log::category::process,
+                std::format("suspend refused: the attached target is pid {}, not {}", session_->pid(), request.pid));
+            return result;
+        }
+        if (!session_->supports_suspend())
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "suspend refused: the plugin cannot suspend its target");
+            return result;
+        }
+
+        if (auto suspended = session_->suspend(); !suspended)
+        {
+            result.error = suspended.error();
+            log::debug(log::category::process,
+                       std::format("suspend of pid {} failed: {}", request.pid, describe(*result.error)));
+        }
+        return result;
+    }
+
+    SuspendResult AccessWorker::do_resume(const Request& request)
+    {
+        SuspendResult result;
+
+        if (!session_)
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "resume requested without an attached target");
+            return result;
+        }
+        if (session_->pid() != request.pid)
+        {
+            result.error = AccessError::not_found;
+            log::debug(
+                log::category::process,
+                std::format("resume refused: the attached target is pid {}, not {}", session_->pid(), request.pid));
+            return result;
+        }
+        if (!session_->supports_suspend())
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "resume refused: the plugin cannot resume its target");
+            return result;
+        }
+
+        if (auto resumed = session_->resume(); !resumed)
+        {
+            result.error = resumed.error();
+            log::debug(log::category::process,
+                       std::format("resume of pid {} failed: {}", request.pid, describe(*result.error)));
+        }
         return result;
     }
 

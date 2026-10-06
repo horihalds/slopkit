@@ -287,6 +287,16 @@ namespace slopkit::ui
                     debug_.set_modules(modules);
                     memory_view_->set_modules(std::move(modules));
                 });
+        // Pausing for a scan fights the debugger, so the panel needs the debug
+        // session state to gate its pause checkbox.
+        connect(&debug_,
+                &debug::Controller::stateChanged,
+                this,
+                [this]
+                {
+                    scanner_->set_debug_session_active(debug_.state() != debug::Controller::State::idle);
+                });
+        scanner_->set_debug_session_active(debug_.state() != debug::Controller::State::idle);
 
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);

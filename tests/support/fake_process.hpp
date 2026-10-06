@@ -98,6 +98,19 @@ namespace slopkit::test
         std::string                              fake_plugin_id {"fake"};
         std::atomic<int>                         reads {0};
         std::atomic<int>                         writes {0};
+        // Suspend capability and recording. `can_suspend` gates the capability
+        // the panel queries; `suspends`/`resumes` count the operations that
+        // reach the backend, and the error knobs model a refused operation.
+        bool                                     can_suspend {false};
+        std::optional<process::AccessError>      suspend_error;
+        std::optional<process::AccessError>      resume_error;
+        std::atomic<int>                         suspends {0};
+        std::atomic<int>                         resumes {0};
+        // Shared counters owned by the FakeAccess that built this backend, so a
+        // test observes suspend/resume jobs from outside the worker, whichever
+        // session (app or handoff) the backend belongs to.
+        std::shared_ptr<std::atomic<int>>        suspend_calls;
+        std::shared_ptr<std::atomic<int>>        resume_calls;
 
         [[nodiscard]] process::ProcessId    pid() const noexcept override;
         [[nodiscard]] std::string_view      plugin_id() const noexcept override;
@@ -111,6 +124,9 @@ namespace slopkit::test
         std::expected<std::vector<process::ModuleInfo>, process::AccessError> modules() override;
         std::expected<std::vector<process::ThreadInfo>, process::AccessError> threads() override;
         std::expected<std::vector<process::RegionInfo>, process::AccessError> regions() override;
+        [[nodiscard]] bool                        supports_suspend() const noexcept override;
+        std::expected<void, process::AccessError> suspend() override;
+        std::expected<void, process::AccessError> resume() override;
     };
 
     // A ProcessAccess serving a fixed process list that can be told to fail the
@@ -126,6 +142,11 @@ namespace slopkit::test
         std::shared_ptr<FakeMemory>              memory {std::make_shared<FakeMemory>()};
         std::shared_ptr<std::set<std::uint64_t>> unreadable {std::make_shared<std::set<std::uint64_t>>()};
         process::ProcessId                       fake_pid {42};
+        bool                                     can_suspend {false};
+        std::optional<process::AccessError>      suspend_error;
+        std::optional<process::AccessError>      resume_error;
+        std::shared_ptr<std::atomic<int>>        suspend_calls {std::make_shared<std::atomic<int>>(0)};
+        std::shared_ptr<std::atomic<int>>        resume_calls {std::make_shared<std::atomic<int>>(0)};
         std::atomic<int>                         attach_calls {0};
         std::atomic<int>                         list_calls {0};
 

@@ -6,7 +6,7 @@
 // the target. The opt-in debugger operations (ABI 1.4) do use ptrace, but only
 // while an explicitly started debug session is open.
 //
-// The ABI plumbing (session set, string arena, error mapping, vtable and all 21
+// The ABI plumbing (session set, string arena, error mapping, vtable and all 23
 // entries) lives in the shared plugins/support library; this file is only the
 // linux-proc profile plus the entry point.
 

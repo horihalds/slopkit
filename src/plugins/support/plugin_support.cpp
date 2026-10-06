@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "platform/linux/memory.hpp"
+#include "platform/linux/process_control.hpp"
 #include "platform/linux/procfs.hpp"
 #include "plugins/support/session.hpp"
 
@@ -876,6 +877,52 @@ namespace slopkit::plugins::support
             }
         }
 
+        slopkit_result plugin_suspend_target(void* handle) noexcept
+        {
+            try
+            {
+                auto* session = lookup_session(handle);
+                if (session == nullptr)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
+                }
+                const auto result = platform::suspend_process(session->pid);
+                if (!result)
+                {
+                    return fail(status_for(result.error()), message_for(result.error()));
+                }
+                session->suspended = true;
+                return ok();
+            }
+            catch (...)
+            {
+                return fail(SLOPKIT_ERR_INTERNAL, "unhandled exception");
+            }
+        }
+
+        slopkit_result plugin_resume_target(void* handle) noexcept
+        {
+            try
+            {
+                auto* session = lookup_session(handle);
+                if (session == nullptr)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
+                }
+                const auto result = platform::resume_process(session->pid);
+                if (!result)
+                {
+                    return fail(status_for(result.error()), message_for(result.error()));
+                }
+                session->suspended = false;
+                return ok();
+            }
+            catch (...)
+            {
+                return fail(SLOPKIT_ERR_INTERNAL, "unhandled exception");
+            }
+        }
+
         const slopkit_plugin_vtable g_vtable {
             SLOPKIT_PLUGIN_ABI_VERSION,
             sizeof(slopkit_plugin_vtable),
@@ -900,6 +947,8 @@ namespace slopkit::plugins::support
             plugin_debug_set_software_breakpoint,
             plugin_debug_set_hardware_breakpoint,
             plugin_debug_backtrace,
+            plugin_suspend_target,
+            plugin_resume_target,
         };
     } // namespace
 

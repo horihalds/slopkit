@@ -46,6 +46,7 @@ namespace
     using slopkit::process::ReadResult;
     using slopkit::process::ResolveRequest;
     using slopkit::process::ResolveResult;
+    using slopkit::process::SuspendResult;
     using slopkit::process::WriteItem;
     using slopkit::process::WriteResult;
     using slopkit::test::FakeBackend;
@@ -86,6 +87,9 @@ namespace
         // Applied to each backend attach() creates, so a test can model a target
         // whose metadata is readable but whose memory cannot be.
         std::optional<AccessError> read_error;
+        // Applied to each backend attach() creates, so a test can model a target
+        // whose plugin can (or cannot) suspend.
+        bool                       can_suspend {false};
 
         std::expected<std::vector<slopkit::process::ProcessInfo>, AccessError> list_processes() override
         {
@@ -109,6 +113,7 @@ namespace
             owned->module_count = 2;
             owned->thread_count = 3;
             owned->read_error   = read_error;
+            owned->can_suspend  = can_suspend;
             owned->fake_pid     = 7;
             owned->memory->base = kBase;
             owned->memory->flat.assign(0x40, std::byte {0});

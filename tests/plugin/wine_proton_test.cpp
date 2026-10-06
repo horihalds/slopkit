@@ -2,11 +2,18 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <string>
+#include <thread>
 #include <utility>
 
+#include <signal.h>
 #include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "platform/linux/procfs.hpp"
@@ -22,6 +29,66 @@ namespace
     using slopkit::process::ProcessId;
 
     constexpr std::size_t kPageSize = 4096;
+
+    // Kills and reaps the forked child when the test leaves the scope.
+    struct ChildGuard
+    {
+        pid_t pid {-1};
+
+        ChildGuard() = default;
+
+        explicit ChildGuard(pid_t child) : pid(child) {}
+
+        ChildGuard(const ChildGuard&)            = delete;
+        ChildGuard& operator=(const ChildGuard&) = delete;
+
+        ~ChildGuard()
+        {
+            if (pid > 0)
+            {
+                ::kill(pid, SIGKILL);
+                ::waitpid(pid, nullptr, 0);
+            }
+        }
+    };
+
+    // The state letter from /proc/<pid>/stat, parsed after the parenthesised
+    // command name so a name containing spaces cannot confuse it.
+    char process_state(ProcessId pid)
+    {
+        std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+        std::string   line;
+        if (!std::getline(stat, line))
+        {
+            return '\0';
+        }
+        const auto close = line.rfind(')');
+        if (close == std::string::npos || close + 2 >= line.size())
+        {
+            return '\0';
+        }
+        return line[close + 2];
+    }
+
+    // SIGSTOP/SIGCONT delivery is asynchronous, so the stopped/running state is
+    // polled with a bounded wait instead of asserted immediately.
+    bool wait_for_stopped(ProcessId pid, bool stopped, std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;)
+        {
+            const char state = process_state(pid);
+            if (state != '\0' && (state == 'T') == stopped)
+            {
+                return true;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
 } // namespace
 
 TEST_CASE("wine-proton is discovered with the expected metadata", "[wine_proton]")
@@ -186,4 +253,72 @@ TEST_CASE("wine-proton rejects a stale handle after close_session", "[wine_proto
     std::size_t   read   = 0;
     std::uint32_t method = 0;
     CHECK(vtable->read_memory(handle, 0x1000, &byte, 1, &read, &method).code == SLOPKIT_ERR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("wine-proton suspends and resumes its target", "[wine_proton]")
+{
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    ChildGuard guard(child);
+    if (child == 0)
+    {
+        for (;;)
+        {
+            ::pause();
+        }
+    }
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("wine-proton");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(static_cast<ProcessId>(child));
+    REQUIRE(session.has_value());
+
+    // The ABI 1.5 operations are present in the raw vtable.
+    const auto* vtable = session->vtable();
+    REQUIRE(vtable != nullptr);
+    CHECK(vtable->suspend_target != nullptr);
+    CHECK(vtable->resume_target != nullptr);
+    CHECK(session->supports_suspend());
+
+    REQUIRE(wait_for_stopped(static_cast<ProcessId>(child), false, std::chrono::seconds(2)));
+
+    REQUIRE(session->suspend_target().has_value());
+    CHECK(wait_for_stopped(static_cast<ProcessId>(child), true, std::chrono::seconds(2)));
+
+    REQUIRE(session->resume_target().has_value());
+    CHECK(wait_for_stopped(static_cast<ProcessId>(child), false, std::chrono::seconds(2)));
+}
+
+TEST_CASE("closing a suspended wine-proton session resumes the target", "[wine_proton]")
+{
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    ChildGuard guard(child);
+    if (child == 0)
+    {
+        for (;;)
+        {
+            ::pause();
+        }
+    }
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("wine-proton");
+    REQUIRE(plugin != nullptr);
+
+    {
+        auto session = plugin->open_session(static_cast<ProcessId>(child));
+        REQUIRE(session.has_value());
+        REQUIRE(session->suspend_target().has_value());
+        REQUIRE(wait_for_stopped(static_cast<ProcessId>(child), true, std::chrono::seconds(2)));
+    }
+
+    // close_session ran the session destructor, which must un-freeze the child.
+    CHECK(wait_for_stopped(static_cast<ProcessId>(child), false, std::chrono::seconds(2)));
 }

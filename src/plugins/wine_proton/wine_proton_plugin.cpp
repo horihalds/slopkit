@@ -6,7 +6,7 @@
 // Its opt-in debug session uses ptrace only while an explicitly started debug
 // session is open, exactly like linux-proc.
 //
-// The ABI plumbing (session set, string arena, error mapping, vtable and all 21
+// The ABI plumbing (session set, string arena, error mapping, vtable and all 23
 // entries) lives in the shared plugins/support library; this file is only the
 // wine-proton profile plus the entry point.
 

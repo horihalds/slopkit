@@ -6,11 +6,23 @@
 #include <unordered_set>
 #include <utility>
 
+#include "platform/linux/process_control.hpp"
+
 namespace slopkit::plugins::support
 {
     Session::Session(process::ProcessId process_id, platform::ForeignSignalPolicy policy)
         : pid(process_id), mem(process_id), debug(process_id, mem, policy)
     {
+    }
+
+    Session::~Session()
+    {
+        if (suspended)
+        {
+            // The last resort: a session that stopped the target must never
+            // leave it frozen when the session is destroyed.
+            static_cast<void>(platform::resume_process(pid));
+        }
     }
 
     namespace

@@ -48,6 +48,24 @@ namespace slopkit::process
         virtual std::expected<std::vector<ModuleInfo>, AccessError> modules() = 0;
         virtual std::expected<std::vector<ThreadInfo>, AccessError> threads() = 0;
         virtual std::expected<std::vector<RegionInfo>, AccessError> regions() = 0;
+
+        // Suspend/resume capability. Defaulted so an existing backend or a test
+        // fake that cannot stop a target keeps compiling; only a backend that
+        // actually implements the plugin ABI 1.5 operations overrides them.
+        [[nodiscard]] virtual bool supports_suspend() const noexcept
+        {
+            return false;
+        }
+
+        virtual std::expected<void, AccessError> suspend()
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
+
+        virtual std::expected<void, AccessError> resume()
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
     };
 
     // Move-only handle to an attached process. All operations return
@@ -139,6 +157,29 @@ namespace slopkit::process
                 return std::unexpected(AccessError::internal);
             }
             return backend_->regions();
+        }
+
+        [[nodiscard]] bool supports_suspend() const noexcept
+        {
+            return backend_ ? backend_->supports_suspend() : false;
+        }
+
+        std::expected<void, AccessError> suspend()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->suspend();
+        }
+
+        std::expected<void, AccessError> resume()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->resume();
         }
 
         [[nodiscard]] explicit operator bool() const noexcept

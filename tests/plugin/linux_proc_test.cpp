@@ -2,8 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <string>
+#include <thread>
 #include <utility>
 
 #include <signal.h>
@@ -47,6 +51,44 @@ namespace
             }
         }
     };
+
+    // The state letter from /proc/<pid>/stat, parsed after the parenthesised
+    // command name so a name containing spaces cannot confuse it.
+    char process_state(ProcessId pid)
+    {
+        std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+        std::string   line;
+        if (!std::getline(stat, line))
+        {
+            return '\0';
+        }
+        const auto close = line.rfind(')');
+        if (close == std::string::npos || close + 2 >= line.size())
+        {
+            return '\0';
+        }
+        return line[close + 2];
+    }
+
+    // SIGSTOP/SIGCONT delivery is asynchronous, so the stopped/running state is
+    // polled with a bounded wait instead of asserted immediately.
+    bool wait_for_stopped(ProcessId pid, bool stopped, std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        for (;;)
+        {
+            const char state = process_state(pid);
+            if (state != '\0' && (state == 'T') == stopped)
+            {
+                return true;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
 } // namespace
 
 TEST_CASE("linux-proc is discovered with the expected metadata", "[linux_proc]")
@@ -316,4 +358,66 @@ TEST_CASE("linux-proc reports clean errors", "[linux_proc]")
         const auto error = result.error();
         CHECK((error == AccessError::permission_denied || error == AccessError::not_found));
     }
+}
+
+TEST_CASE("linux-proc suspends and resumes its target", "[linux_proc]")
+{
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    ChildGuard guard(child);
+    if (child == 0)
+    {
+        for (;;)
+        {
+            ::pause();
+        }
+    }
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(static_cast<ProcessId>(child));
+    REQUIRE(session.has_value());
+    CHECK(session->supports_suspend());
+
+    REQUIRE(wait_for_stopped(static_cast<ProcessId>(child), false, std::chrono::seconds(2)));
+
+    REQUIRE(session->suspend_target().has_value());
+    CHECK(wait_for_stopped(static_cast<ProcessId>(child), true, std::chrono::seconds(2)));
+
+    REQUIRE(session->resume_target().has_value());
+    CHECK(wait_for_stopped(static_cast<ProcessId>(child), false, std::chrono::seconds(2)));
+}
+
+TEST_CASE("closing a suspended linux-proc session resumes the target", "[linux_proc]")
+{
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    ChildGuard guard(child);
+    if (child == 0)
+    {
+        for (;;)
+        {
+            ::pause();
+        }
+    }
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    {
+        auto session = plugin->open_session(static_cast<ProcessId>(child));
+        REQUIRE(session.has_value());
+        REQUIRE(session->suspend_target().has_value());
+        REQUIRE(wait_for_stopped(static_cast<ProcessId>(child), true, std::chrono::seconds(2)));
+    }
+
+    // close_session ran the session destructor, which must un-freeze the child.
+    CHECK(wait_for_stopped(static_cast<ProcessId>(child), false, std::chrono::seconds(2)));
 }

@@ -678,4 +678,68 @@ namespace slopkit::plugin
         return regions;
     }
 
+    bool PluginSession::supports_suspend() const noexcept
+    {
+        if (plugin_ == nullptr || handle_ == nullptr || plugin_->vtable_ == nullptr)
+        {
+            return false;
+        }
+        const auto* vtable = plugin_->vtable_;
+        return vtable->suspend_target != nullptr && vtable->resume_target != nullptr;
+    }
+
+    std::expected<void, process::AccessError> PluginSession::suspend_target()
+    {
+        if (!valid())
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (plugin_->vtable_->suspend_target == nullptr)
+        {
+            return std::unexpected(process::AccessError::unsupported);
+        }
+
+        slopkit_result result {};
+        try
+        {
+            result = plugin_->vtable_->suspend_target(handle_);
+        }
+        catch (...)
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (result.code != SLOPKIT_OK)
+        {
+            return std::unexpected(Plugin::classify(result));
+        }
+        return {};
+    }
+
+    std::expected<void, process::AccessError> PluginSession::resume_target()
+    {
+        if (!valid())
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (plugin_->vtable_->resume_target == nullptr)
+        {
+            return std::unexpected(process::AccessError::unsupported);
+        }
+
+        slopkit_result result {};
+        try
+        {
+            result = plugin_->vtable_->resume_target(handle_);
+        }
+        catch (...)
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (result.code != SLOPKIT_OK)
+        {
+            return std::unexpected(Plugin::classify(result));
+        }
+        return {};
+    }
+
 } // namespace slopkit::plugin
