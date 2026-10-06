@@ -5,6 +5,7 @@
 #include <format>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "core/log.hpp"
@@ -445,7 +446,11 @@ namespace slopkit::ui::components
 
         result.readable = true;
         result.bytes    = instruction_bytes(instruction);
-        result.text     = instruction_text(instruction);
+        result.segments = instruction_segments(instruction);
+        for (const RowSegment& segment : result.segments)
+        {
+            result.text += segment.text;
+        }
         return result;
     }
 
@@ -817,24 +822,97 @@ namespace slopkit::ui::components
         return joined_bytes(std::span<const std::byte>(bytes_.data() + offset, length));
     }
 
-    QString DisassemblyDocument::instruction_text(const disasm::Instruction& instruction) const
+    std::vector<RowSegment> DisassemblyDocument::instruction_segments(const disasm::Instruction& instruction) const
     {
-        if (instruction.addresses.empty() || module_spans_.empty())
+        // One classified slice of `instruction.text`: where it sits in the raw
+        // text and the run(s) that replace it. An address inside a module becomes
+        // a module-name run plus a plain `+RVA` run; every other slice is one run.
+        struct Mark
         {
-            return to_qstring(instruction.text);
+            std::size_t             offset {};
+            std::size_t             length {};
+            std::vector<RowSegment> runs;
+        };
+
+        std::vector<Mark> marks;
+        marks.reserve(instruction.tokens.size() + instruction.addresses.size());
+
+        for (const disasm::TokenSpan& span : instruction.tokens)
+        {
+            const std::string_view slice = std::string_view(instruction.text).substr(span.offset, span.length);
+            SegmentKind            kind  = SegmentKind::plain;
+            if (span.kind == disasm::TokenKind::cpu_register)
+            {
+                kind = SegmentKind::cpu_register;
+            }
+            else if (span.kind == disasm::TokenKind::immediate || span.kind == disasm::TokenKind::displacement)
+            {
+                kind = SegmentKind::immediate;
+            }
+            marks.push_back({span.offset, span.length, {RowSegment {to_qstring(slice), kind}}});
         }
 
-        std::string text = instruction.text;
-        for (const disasm::AddressRef& ref : instruction.addresses | std::views::reverse)
+        for (const disasm::AddressRef& ref : instruction.addresses)
         {
-            if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, ref.address);
-                relative.has_value())
+            const std::string_view slice    = std::string_view(instruction.text).substr(ref.offset, ref.length);
+            const auto             relative = ui::module_relative_text(address_mode_, module_spans_, ref.address);
+            if (!relative.has_value())
             {
-                // Back to front, so an earlier slice's offset stays valid.
-                text.replace(ref.offset, ref.length, relative->toStdString());
+                marks.push_back({ref.offset, ref.length, {RowSegment {to_qstring(slice), SegmentKind::immediate}}});
+                continue;
             }
+
+            const ui::ModuleSpan*   span        = module_spans_.containing(ref.address);
+            const qsizetype         name_length = static_cast<qsizetype>(span != nullptr ? span->name.size() : 0);
+            std::vector<RowSegment> runs;
+            runs.push_back({relative->left(name_length), SegmentKind::module});
+            if (const QString offset_text = relative->mid(name_length); !offset_text.isEmpty())
+            {
+                runs.push_back({offset_text, SegmentKind::plain});
+            }
+            marks.push_back({ref.offset, ref.length, std::move(runs)});
         }
-        return to_qstring(text);
+
+        std::ranges::sort(marks, {}, &Mark::offset);
+
+        std::vector<RowSegment> segments;
+        const auto              append = [&segments](QString text, SegmentKind kind)
+        {
+            if (text.isEmpty())
+            {
+                return;
+            }
+            if (kind == SegmentKind::plain && !segments.empty() && segments.back().kind == SegmentKind::plain)
+            {
+                segments.back().text += text;
+                return;
+            }
+            segments.push_back({std::move(text), kind});
+        };
+
+        const std::string_view raw    = instruction.text;
+        std::size_t            cursor = 0;
+        for (const Mark& mark : marks)
+        {
+            if (mark.offset < cursor)
+            {
+                continue; // an overlapping slice was already painted
+            }
+            if (mark.offset > cursor)
+            {
+                append(to_qstring(raw.substr(cursor, mark.offset - cursor)), SegmentKind::plain);
+            }
+            for (const RowSegment& run : mark.runs)
+            {
+                append(run.text, run.kind);
+            }
+            cursor = mark.offset + mark.length;
+        }
+        if (cursor < raw.size())
+        {
+            append(to_qstring(raw.substr(cursor)), SegmentKind::plain);
+        }
+        return segments;
     }
 
 } // namespace slopkit::ui::components

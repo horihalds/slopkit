@@ -3,12 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "ui/components/disassembly_document.hpp"
 #include "ui/components/navigation_history.hpp"
 #include "ui/components/neutral_scroller.hpp"
+#include "ui/theme.hpp"
 
 #include <QAbstractScrollArea>
+#include <QColor>
 #include <QPoint>
 #include <QString>
 
@@ -18,6 +21,18 @@ class QMouseEvent;
 
 namespace slopkit::ui::components
 {
+
+    // One run of the instruction text and the colour it is painted in.
+    struct PaintedSegment
+    {
+        QString text;
+        QColor  colour;
+    };
+
+    // The colour one run is painted with: the syntax role for a classified run
+    // and `base` (the row's own colour) for a plain one. Shared by paintEvent and
+    // row_segments(), so the two can never disagree.
+    [[nodiscard]] QColor syntax_colour(SegmentKind kind, const Theme& theme, const QColor& base);
 
     // The instruction listing: an address, byte and instruction column painted
     // from the document's decoded rows. It owns no process state - only the
@@ -58,14 +73,17 @@ namespace slopkit::ui::components
         [[nodiscard]] int bytes_width() const noexcept;
 
         // Re-fits the rows to the current viewport; the context menu calls this.
-        void                      relayout();
+        void                                      relayout();
         // The instruction text painted on the visible row `index` (0 = the top
         // row), for tests.
-        [[nodiscard]] QString     row_text(std::size_t index) const;
+        [[nodiscard]] QString                     row_text(std::size_t index) const;
+        // The coloured runs the listing paints on the visible row `index`
+        // (0 = the top row), for tests.
+        [[nodiscard]] std::vector<PaintedSegment> row_segments(std::size_t index) const;
         // How many byte tokens the wrapped bytes column shows per line.
-        [[nodiscard]] std::size_t bytes_per_line() const noexcept;
+        [[nodiscard]] std::size_t                 bytes_per_line() const noexcept;
         // The wrapped line count of the visible row `index` (0 = the top row).
-        [[nodiscard]] std::size_t row_lines(std::size_t index) const;
+        [[nodiscard]] std::size_t                 row_lines(std::size_t index) const;
 
         // Fills `menu` with `Go To...` and a `Copy` submenu for the decoded row
         // `index`. Public so tests can inspect it without opening a menu.

@@ -150,6 +150,100 @@ TEST_CASE("the disassembly view paints the decoded rows", "[ui]")
     view.hide();
 }
 
+TEST_CASE("the disassembly view colours instruction runs from the theme", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    ViewFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    const auto push = view.row_segments(0);
+    REQUIRE(push.size() == 2);
+    CHECK(push[0].text == QStringLiteral("PUSH "));
+    CHECK(push[0].colour == slopkit::ui::dark_theme().text);
+    CHECK(push[1].text == QStringLiteral("RBP"));
+    CHECK(push[1].colour == slopkit::ui::dark_theme().syntax_register);
+    CHECK(view.row_text(0) == QStringLiteral("PUSH RBP"));
+
+    // The light theme resolves the same runs through its own roles, live.
+    slopkit::ui::apply_theme(slopkit::ui::light_theme());
+    const auto light_push = view.row_segments(0);
+    REQUIRE(light_push.size() == 2);
+    CHECK(light_push[0].colour == slopkit::ui::light_theme().text);
+    CHECK(light_push[1].colour == slopkit::ui::light_theme().syntax_register);
+    CHECK(light_push[1].colour != push[1].colour);
+
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+    view.hide();
+}
+
+TEST_CASE("a patched row keeps the warning colour on its plain runs", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    ViewFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3}); // PUSH RBP; MOV RBP, RSP; RET
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    REQUIRE(fixture.document.nop_instruction(1));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    fixture.document.ensure_rows(3);
+
+    // `NOP` has no classified run, so the whole patched row stays warning-coloured.
+    const auto patched = view.row_segments(1);
+    REQUIRE(patched.size() == 1);
+    CHECK(patched[0].text == QStringLiteral("NOP"));
+    CHECK(patched[0].colour == slopkit::ui::dark_theme().warning);
+
+    view.hide();
+}
+
+TEST_CASE("a .byte row is painted as one muted run", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    ViewFixture fixture;
+    fixture.put(kCode, {0xC3, 0x06}); // RET; .byte 06
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto ret = view.row_segments(0);
+    REQUIRE(ret.size() == 1);
+    CHECK(ret[0].text == QStringLiteral("RET"));
+    CHECK(ret[0].colour == slopkit::ui::dark_theme().text);
+
+    const auto dot_byte = view.row_segments(1);
+    REQUIRE(dot_byte.size() == 1);
+    CHECK(dot_byte[0].text == QStringLiteral(".byte 06"));
+    CHECK(dot_byte[0].colour == slopkit::ui::dark_theme().text_muted);
+
+    view.hide();
+}
+
 TEST_CASE("the disassembly view scrolls by whole instructions and clamps", "[ui]")
 {
     application();

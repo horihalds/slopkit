@@ -20,6 +20,8 @@ namespace
     using slopkit::ui::components::CodePatchTable;
     using slopkit::ui::components::CopyFormat;
     using slopkit::ui::components::DisassemblyDocument;
+    using slopkit::ui::components::RowSegment;
+    using slopkit::ui::components::SegmentKind;
 
     // A code window at an 8 KiB boundary, so the cursor sits at its start.
     constexpr std::uint64_t kCode = 0x2000;
@@ -328,6 +330,7 @@ TEST_CASE("the disassembly document masks a refused window as ??", "[ui]")
     CHECK_FALSE(fixture.document.row(0).readable);
     CHECK(fixture.document.row(0).bytes == QStringLiteral("??"));
     CHECK(fixture.document.row(0).text.isEmpty());
+    CHECK(fixture.document.row(0).segments.empty());
 
     // A later good pass restores the decoded text.
     fixture.pass();
@@ -461,6 +464,114 @@ TEST_CASE("the disassembly document renders a branch target through the module m
     CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0000000000002017"));
     fixture.document.set_address_mode(slopkit::ui::AddressMode::module_relative);
     CHECK(fixture.document.row(0).text == QStringLiteral("JZ app+17"));
+}
+
+TEST_CASE("the disassembly document splits a module-relative line into coloured runs", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15}); // JZ +0x15 -> kCode + 0x17
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const auto jump = fixture.document.row(0);
+    REQUIRE(jump.segments.size() == 3);
+    CHECK(jump.segments[0].text == QStringLiteral("JZ "));
+    CHECK(jump.segments[0].kind == SegmentKind::plain);
+    CHECK(jump.segments[1].text == QStringLiteral("app"));
+    CHECK(jump.segments[1].kind == SegmentKind::module);
+    CHECK(jump.segments[2].text == QStringLiteral("+17"));
+    CHECK(jump.segments[2].kind == SegmentKind::plain);
+
+    QString joined;
+    for (const RowSegment& segment : jump.segments)
+    {
+        joined += segment.text;
+    }
+    CHECK(joined == jump.text);
+}
+
+TEST_CASE("the disassembly document colours a decoded address as an immediate", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+
+    // Without a module map the decoded address is the only classified run.
+    const auto decoded = fixture.document.row(0);
+    REQUIRE(decoded.segments.size() == 2);
+    CHECK(decoded.segments[0].text == QStringLiteral("JZ "));
+    CHECK(decoded.segments[0].kind == SegmentKind::plain);
+    CHECK(decoded.segments[1].text == QStringLiteral("0000000000002017"));
+    CHECK(decoded.segments[1].kind == SegmentKind::immediate);
+
+    // A module image that does not cover the target keeps the decoded address.
+    fixture.document.set_modules({module_image("app", kCode + 0x8000, 0x1000)});
+    const auto outside = fixture.document.row(0);
+    REQUIRE(outside.segments.size() == 2);
+    CHECK(outside.segments[1].kind == SegmentKind::immediate);
+
+    // Absolute mode restores the decoded address even when a module covers it.
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    const auto absolute = fixture.document.row(0);
+    REQUIRE(absolute.segments.size() == 2);
+    CHECK(absolute.segments[0].text == QStringLiteral("JZ "));
+    CHECK(absolute.segments[1].text == QStringLiteral("0000000000002017"));
+    CHECK(absolute.segments[1].kind == SegmentKind::immediate);
+}
+
+TEST_CASE("the disassembly document classifies registers and displacements", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x89, 0x43, 0x08}); // PUSH RBP; MOV [RBX+08], EAX
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto push = fixture.document.row(0);
+    REQUIRE(push.segments.size() == 2);
+    CHECK(push.segments[0].text == QStringLiteral("PUSH "));
+    CHECK(push.segments[0].kind == SegmentKind::plain);
+    CHECK(push.segments[1].text == QStringLiteral("RBP"));
+    CHECK(push.segments[1].kind == SegmentKind::cpu_register);
+
+    const auto store = fixture.document.row(1);
+    REQUIRE(store.segments.size() == 6);
+    CHECK(store.segments[0].text == QStringLiteral("MOV ["));
+    CHECK(store.segments[0].kind == SegmentKind::plain);
+    CHECK(store.segments[1].text == QStringLiteral("RBX"));
+    CHECK(store.segments[1].kind == SegmentKind::cpu_register);
+    CHECK(store.segments[2].text == QStringLiteral("+"));
+    CHECK(store.segments[2].kind == SegmentKind::plain);
+    CHECK(store.segments[3].text == QStringLiteral("08"));
+    CHECK(store.segments[3].kind == SegmentKind::immediate);
+    CHECK(store.segments[4].text == QStringLiteral("], "));
+    CHECK(store.segments[4].kind == SegmentKind::plain);
+    CHECK(store.segments[5].text == QStringLiteral("EAX"));
+    CHECK(store.segments[5].kind == SegmentKind::cpu_register);
+}
+
+TEST_CASE("a row with nothing to classify is one plain run", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0xC3, 0x06}); // RET; .byte 06
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto ret = fixture.document.row(0);
+    REQUIRE(ret.segments.size() == 1);
+    CHECK(ret.segments[0].text == QStringLiteral("RET"));
+    CHECK(ret.segments[0].kind == SegmentKind::plain);
+
+    const auto dot_byte = fixture.document.row(1);
+    REQUIRE(dot_byte.segments.size() == 1);
+    CHECK(dot_byte.segments[0].text == QStringLiteral(".byte 06"));
+    CHECK(dot_byte.segments[0].kind == SegmentKind::plain);
 }
 
 TEST_CASE("the disassembly document renders a memory operand's address through the module map", "[ui]")

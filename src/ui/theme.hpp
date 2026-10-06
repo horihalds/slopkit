@@ -23,6 +23,11 @@ namespace slopkit::ui
         QColor success;
         QColor warning;
         QColor error;
+        // The disassembly listing's machine-text roles: a register name, an
+        // immediate value (or displacement) and a module name.
+        QColor syntax_register;
+        QColor syntax_immediate;
+        QColor syntax_module;
     };
 
     [[nodiscard]] Theme dark_theme();

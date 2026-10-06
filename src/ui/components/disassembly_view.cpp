@@ -122,6 +122,39 @@ namespace slopkit::ui::components
         return document_.row(first_row_ + index).text;
     }
 
+    QColor syntax_colour(SegmentKind kind, const Theme& theme, const QColor& base)
+    {
+        switch (kind)
+        {
+        case SegmentKind::cpu_register:
+            return theme.syntax_register;
+        case SegmentKind::immediate:
+            return theme.syntax_immediate;
+        case SegmentKind::module:
+            return theme.syntax_module;
+        case SegmentKind::plain:
+            return base;
+        }
+        return base;
+    }
+
+    std::vector<PaintedSegment> DisassemblyView::row_segments(std::size_t index) const
+    {
+        const DisassemblyDocument::Row row   = document_.row(first_row_ + index);
+        const Theme&                   theme = active_theme();
+        const QColor                   base  = document_.patch_at(first_row_ + index) != nullptr
+                                                 ? theme.warning
+                                                 : (is_muted(row) ? theme.text_muted : theme.text);
+
+        std::vector<PaintedSegment> painted;
+        painted.reserve(row.segments.size());
+        for (const RowSegment& segment : row.segments)
+        {
+            painted.push_back({segment.text, syntax_colour(segment.kind, theme, base)});
+        }
+        return painted;
+    }
+
     std::size_t DisassemblyView::bytes_per_line() const noexcept
     {
         return bytes_per_line_;
@@ -699,9 +732,29 @@ namespace slopkit::ui::components
                              Qt::AlignLeft | Qt::AlignVCenter,
                              document_.address_text(row.address));
 
-            const bool patched = document_.patch_at(index) != nullptr;
-            painter.setPen(patched ? theme.warning : (is_muted(row) ? theme.text_muted : theme.text));
-            painter.drawText(QRect(text_left, y, text_width, line_height_), Qt::AlignLeft | Qt::AlignVCenter, row.text);
+            const bool   patched = document_.patch_at(index) != nullptr;
+            const QColor base    = patched ? theme.warning : (is_muted(row) ? theme.text_muted : theme.text);
+            if (row.segments.empty())
+            {
+                painter.setPen(base);
+                painter.drawText(
+                    QRect(text_left, y, text_width, line_height_), Qt::AlignLeft | Qt::AlignVCenter, row.text);
+            }
+            else
+            {
+                int x = text_left;
+                for (const RowSegment& run : row.segments)
+                {
+                    const int remaining = std::max(0, text_left + text_width - x);
+                    if (remaining == 0)
+                    {
+                        break;
+                    }
+                    painter.setPen(syntax_colour(run.kind, theme, base));
+                    painter.drawText(QRect(x, y, remaining, line_height_), Qt::AlignLeft | Qt::AlignVCenter, run.text);
+                    x += painter.fontMetrics().horizontalAdvance(run.text);
+                }
+            }
             if (const QString marker = document_.row_annotation(index); !marker.isEmpty())
             {
                 const int used = painter.fontMetrics().horizontalAdvance(row.text) + kMarkerGap;

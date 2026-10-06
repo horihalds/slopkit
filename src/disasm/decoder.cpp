@@ -58,6 +58,25 @@ namespace slopkit::disasm
             return std::format(".byte {:02X}", static_cast<unsigned>(value));
         }
 
+        // Maps a formatter token onto the slice kind a listing colours. Delimiters,
+        // parentheses, mnemonics, prefixes and absolute-address slices deliberately
+        // stay unclassified: the document renders those addresses itself.
+        [[nodiscard]] std::optional<TokenKind> token_kind(ZydisTokenType type)
+        {
+            switch (type)
+            {
+            case ZYDIS_TOKEN_REGISTER:
+                return TokenKind::cpu_register;
+            case ZYDIS_TOKEN_IMMEDIATE:
+                return TokenKind::immediate;
+            case ZYDIS_TOKEN_DISPLACEMENT:
+            case ZYDIS_TOKEN_ADDRESS_REL:
+                return TokenKind::displacement;
+            default:
+                return std::nullopt;
+            }
+        }
+
         // Zydis reports register names lower-case; the listing and the debugger
         // both print them upper-case, so normalise here.
         [[nodiscard]] std::string register_name(ZydisRegister reg)
@@ -149,7 +168,7 @@ namespace slopkit::disasm
             if (!ZYAN_SUCCESS(status))
             {
                 return {
-                    status, {address, 1, byte_text(code.front()), false, {}, {}},
+                    status, {address, 1, byte_text(code.front()), false, {}, {}, {}},
                      false
                 };
             }
@@ -180,13 +199,13 @@ namespace slopkit::disasm
                 if (!ZYAN_SUCCESS(formatted))
                 {
                     return {
-                        formatted, {address, 1, byte_text(code.front()), false, {}, {}},
+                        formatted, {address, 1, byte_text(code.front()), false, {}, {}, {}},
                          false
                     };
                 }
 
                 return {
-                    ZYAN_STATUS_SUCCESS, {address, decoded.length, buffer, true, {}, {}},
+                    ZYAN_STATUS_SUCCESS, {address, decoded.length, buffer, true, {}, {}, {}},
                      true
                 };
             }
@@ -196,6 +215,7 @@ namespace slopkit::disasm
             // operand whose absolute address Zydis can calculate.
             std::string             text;
             std::vector<AddressRef> addresses;
+            std::vector<TokenSpan>  tokens;
             std::size_t             operand = 0;
 
             while (token != nullptr)
@@ -210,6 +230,11 @@ namespace slopkit::disasm
                 const std::string_view value_text = value != nullptr ? std::string_view(value) : std::string_view {};
                 const std::size_t      offset     = text.size();
                 text += value_text;
+
+                if (const std::optional<TokenKind> kind = token_kind(type))
+                {
+                    tokens.push_back({offset, value_text.size(), *kind});
+                }
 
                 if (type == ZYDIS_TOKEN_ADDRESS_ABS)
                 {
@@ -239,7 +264,12 @@ namespace slopkit::disasm
 
             return {
                 ZYAN_STATUS_SUCCESS,
-                {address, decoded.length, std::move(text), true, std::move(addresses), std::move(memory)},
+                {address,
+                  decoded.length,
+                  std::move(text),
+                  true, std::move(addresses),
+                  std::move(memory),
+                  std::move(tokens)},
                 true
             };
         }

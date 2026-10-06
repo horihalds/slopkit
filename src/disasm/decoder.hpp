@@ -47,6 +47,24 @@ namespace slopkit::disasm
         bool         writes {};       // the operand is a destination
     };
 
+    // What a slice of Instruction::text is, for a listing that paints each kind
+    // in a colour of its own. The mnemonic, the brackets and the commas are not
+    // classified and stay in the default colour.
+    enum class TokenKind
+    {
+        cpu_register, // a register literal (`RAX`)
+        immediate,    // an immediate literal (`1`)
+        displacement, // a memory displacement or relative address (`-04`)
+    };
+
+    // One classified slice of text, as AddressRef slices it.
+    struct TokenSpan
+    {
+        std::size_t offset {}; // byte offset into Instruction::text (the text is ASCII)
+        std::size_t length {};
+        TokenKind   kind {};
+    };
+
     // One decoded instruction. `valid` is false for a byte Zydis rejects, which
     // is rendered as a one-byte `.byte NN` row so a listing never stalls.
     struct Instruction
@@ -57,6 +75,7 @@ namespace slopkit::disasm
         bool                    valid {};
         std::vector<AddressRef> addresses; // in the order the text prints them; empty for `.byte`
         std::vector<MemoryRef>  memory;    // explicit operands only; empty for `lea` and `.byte`
+        std::vector<TokenSpan>  tokens;    // in printed order; empty for `RET` and `.byte`
     };
 
     // Decodes the instruction at `address` from the front of `code`. Returns

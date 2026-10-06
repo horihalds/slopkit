@@ -35,6 +35,22 @@ namespace slopkit::ui::components
         address_bytes_instruction, // "app+10: 48 89 E5  MOV RBP, RSP"
     };
 
+    // How the listing paints one run of an instruction line.
+    enum class SegmentKind
+    {
+        plain,        // mnemonic, brackets, commas: the row's own colour
+        cpu_register, // a register name
+        immediate,    // an immediate or a displacement
+        module,       // the module name of a `module+RVA` address
+    };
+
+    // One painted run of the rendered line, in the order it prints.
+    struct RowSegment
+    {
+        QString     text;
+        SegmentKind kind {SegmentKind::plain};
+    };
+
     // The live state behind the disassembly listing: one aligned code window and
     // a lazily grown cache of the instructions decoded from it. It owns no
     // widget, so the risky part is testable headlessly; DisassemblyView only
@@ -102,11 +118,12 @@ namespace slopkit::ui::components
 
         struct Row
         {
-            std::uint64_t address {};
-            std::size_t   length {};
-            QString       bytes; // "48 89 E5", or "??" when unreadable
-            QString       text;  // "MOV RBP, RSP", or empty
-            bool          readable {};
+            std::uint64_t           address {};
+            std::size_t             length {};
+            QString                 bytes;    // "48 89 E5", or "??" when unreadable
+            QString                 text;     // "MOV RBP, RSP", or empty
+            std::vector<RowSegment> segments; // the runs `text` concatenates to; empty when unreadable
+            bool                    readable {};
         };
 
         [[nodiscard]] Row                                 row(std::size_t index) const;
@@ -168,14 +185,14 @@ namespace slopkit::ui::components
             std::uint64_t size {};
         };
 
-        [[nodiscard]] std::uint64_t window_base_for(std::uint64_t address) const noexcept;
+        [[nodiscard]] std::uint64_t           window_base_for(std::uint64_t address) const noexcept;
         // The base the currently decoded rows were swept from; the live window
         // while a step is in flight still holds the previous window's rows.
-        [[nodiscard]] std::uint64_t rows_base() const noexcept;
-        void                        reset_decode();
-        [[nodiscard]] QString       instruction_bytes(const disasm::Instruction& instruction) const;
-        [[nodiscard]] QString       instruction_text(const disasm::Instruction& instruction) const;
-        [[nodiscard]] std::size_t   byte_tokens(std::size_t index) const noexcept;
+        [[nodiscard]] std::uint64_t           rows_base() const noexcept;
+        void                                  reset_decode();
+        [[nodiscard]] QString                 instruction_bytes(const disasm::Instruction& instruction) const;
+        [[nodiscard]] std::vector<RowSegment> instruction_segments(const disasm::Instruction& instruction) const;
+        [[nodiscard]] std::size_t             byte_tokens(std::size_t index) const noexcept;
         // The bytes `text` assembles to for row `index`, using the instruction's memory
         // operands as the rip-relative template; the error when it does not assemble.
         [[nodiscard]] std::expected<std::vector<std::byte>, std::string> replacement_for(std::size_t      index,

@@ -201,6 +201,53 @@ TEST_CASE("instructions without a printed address carry no slices", "[disasm]")
     CHECK(truncated.addresses.empty());
 }
 
+TEST_CASE("decode classifies registers, immediates and displacements", "[disasm]")
+{
+    const auto mov =
+        *slopkit::disasm::decode(bytes({0x48, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(mov.text == "MOV RAX, 01");
+    REQUIRE(mov.tokens.size() == 2);
+    CHECK(mov.tokens[0].kind == slopkit::disasm::TokenKind::cpu_register);
+    CHECK(mov.text.substr(mov.tokens[0].offset, mov.tokens[0].length) == "RAX");
+    CHECK(mov.tokens[1].kind == slopkit::disasm::TokenKind::immediate);
+    CHECK(mov.text.substr(mov.tokens[1].offset, mov.tokens[1].length) == "01");
+
+    const auto load = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x5D, 0xFC}), 0x1000);
+    CHECK(load.text == "MOV RBX, [RBP-04]");
+    REQUIRE(load.tokens.size() == 3);
+    CHECK(load.tokens[0].kind == slopkit::disasm::TokenKind::cpu_register);
+    CHECK(load.text.substr(load.tokens[0].offset, load.tokens[0].length) == "RBX");
+    CHECK(load.tokens[1].kind == slopkit::disasm::TokenKind::cpu_register);
+    CHECK(load.text.substr(load.tokens[1].offset, load.tokens[1].length) == "RBP");
+    CHECK(load.tokens[2].kind == slopkit::disasm::TokenKind::displacement);
+    CHECK(load.text.substr(load.tokens[2].offset, load.tokens[2].length) == "04");
+
+    for (const auto& instruction : {mov, load})
+    {
+        for (const auto& span : instruction.tokens)
+        {
+            CHECK(span.length > 0);
+            CHECK(span.offset + span.length <= instruction.text.size());
+        }
+    }
+}
+
+TEST_CASE("mnemonics, brackets and commas are not classified", "[disasm]")
+{
+    const auto load = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x5D, 0xFC}), 0x1000);
+    for (const auto& span : load.tokens)
+    {
+        const std::string slice = load.text.substr(span.offset, span.length);
+        CHECK(slice != "MOV");
+        CHECK(slice != "[");
+        CHECK(slice != "]");
+        CHECK(slice != ",");
+    }
+
+    CHECK(slopkit::disasm::decode(bytes({0xC3}), 0x1000)->tokens.empty()); // RET has no operands
+    CHECK(slopkit::disasm::decode(bytes({0x06}), 0x1000)->tokens.empty()); // .byte row
+}
+
 TEST_CASE("decode_block keeps every slice inside its own instruction", "[disasm]")
 {
     const auto code         = bytes({0x74, 0x15, 0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0xC3});

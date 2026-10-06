@@ -16,6 +16,26 @@ TEST_CASE("both themes define every colour role", "[ui]")
     CHECK(dark.accent != light.accent);
 }
 
+TEST_CASE("the syntax roles are defined and distinct", "[ui]")
+{
+    const auto dark  = slopkit::ui::dark_theme();
+    const auto light = slopkit::ui::light_theme();
+
+    for (const auto& theme : {dark, light})
+    {
+        CHECK(theme.syntax_register != theme.text);
+        CHECK(theme.syntax_immediate != theme.text);
+        CHECK(theme.syntax_module != theme.text);
+        CHECK(theme.syntax_register != theme.syntax_immediate);
+        CHECK(theme.syntax_immediate != theme.syntax_module);
+        CHECK(theme.syntax_register != theme.syntax_module);
+    }
+
+    CHECK(dark.syntax_register != light.syntax_register);
+    CHECK(dark.syntax_immediate != light.syntax_immediate);
+    CHECK(dark.syntax_module != light.syntax_module);
+}
+
 TEST_CASE("make_palette maps the colour roles onto the Qt palette", "[ui]")
 {
     const auto     theme   = slopkit::ui::light_theme();

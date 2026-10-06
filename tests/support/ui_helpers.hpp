@@ -124,7 +124,10 @@ namespace
                                 theme.border,
                                 theme.success,
                                 theme.warning,
-                                theme.error};
+                                theme.error,
+                                theme.syntax_register,
+                                theme.syntax_immediate,
+                                theme.syntax_module};
         for (const QColor& role : roles)
         {
             CHECK(role.isValid());
