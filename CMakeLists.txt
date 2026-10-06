@@ -209,6 +209,7 @@ set(SLOPKIT_UI_COMMON_SOURCES
     ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/fonts.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/settings.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/platform.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/components/elided_tooltip_delegate.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/components/input_box.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/components/message_box.cpp

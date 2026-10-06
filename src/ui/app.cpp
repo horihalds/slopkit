@@ -14,6 +14,7 @@
 #include "core/log_categories.hpp"
 #include "core/version.hpp"
 #include "ui/fonts.hpp"
+#include "ui/platform.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui
@@ -28,6 +29,10 @@ namespace slopkit::ui
             log::info(log::category::app, "handed the open request to the running instance");
             return 0;
         }
+
+        // Pick the platform before the QApplication exists, so the remembered
+        // window frame can be restored where the platform honours it.
+        prefer_platform_with_remembered_positions();
 
         QApplication application(argc, argv);
         QApplication::setApplicationName(QStringLiteral("slopkit"));

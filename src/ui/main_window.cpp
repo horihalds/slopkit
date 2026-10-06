@@ -10,7 +10,6 @@
 #include <variant>
 
 #include <QAction>
-#include <QCoreApplication>
 #include <QEvent>
 #include <QFileInfo>
 #include <QKeySequence>
@@ -187,10 +186,12 @@ namespace slopkit::ui
         connect(quit_action_,
                 &QAction::triggered,
                 this,
-                []
+                [this]
                 {
                     log::debug(log::category::ui, "quit requested");
-                    QCoreApplication::quit();
+                    // Close the window so the geometry keeper writes the frame;
+                    // Qt's last-window-closed rule still ends the session.
+                    close();
                 });
 
         open_process_action_ = new QAction(tr("Open Process"), this);

@@ -466,6 +466,7 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
 
     const QString path = scratch_settings_file("main_geometry.ini");
     QSize         saved_size;
+    QPoint        saved_position;
     {
         slopkit::plugin::PluginHost      host;
         slopkit::process::PluginAccess   access {host};
@@ -477,9 +478,12 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         window.resize(700, 700);
         window.show();
         QCoreApplication::processEvents();
+        window.move(25, 35);
+        QCoreApplication::processEvents();
         // The offscreen platform may clamp an over-wide request, so the size to
         // restore is whatever the window actually holds when it is hidden.
-        saved_size = window.size();
+        saved_size     = window.size();
+        saved_position = window.pos();
         CHECK(saved_size != QSize(748, 768));
         window.hide();
         QCoreApplication::processEvents();
@@ -495,7 +499,13 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         slopkit::ui::SettingsController  settings {path};
         slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
+        // A real restart shows the window again, which is when the restored
+        // frame lands on the screen.
+        window.show();
+        QCoreApplication::processEvents();
+
         CHECK(window.size() == saved_size);
+        CHECK(window.pos() == saved_position);
     }
 }
 
@@ -534,4 +544,51 @@ TEST_CASE("a corrupt main-window geometry leaves the default size", "[ui]")
         }
     }
     CHECK(warnings == 1);
+}
+
+TEST_CASE("File > Quit closes the window and stores the geometry", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("shell_quit.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    window.show();
+    auto* viewer = window.memory_viewer();
+    REQUIRE(viewer != nullptr);
+    viewer->show();
+    QCoreApplication::processEvents();
+    REQUIRE(window.isVisible());
+
+    QAction* quit = nullptr;
+    for (QAction* action : window.menuBar()->actions().first()->menu()->actions())
+    {
+        if (action->text() == QStringLiteral("Quit"))
+        {
+            quit = action;
+        }
+    }
+    REQUIRE(quit != nullptr);
+    quit->trigger();
+    QCoreApplication::processEvents();
+
+    // Quit goes through the same close path as the window-manager button, so the
+    // geometry keeper writes the frame and no visible top-level still owns the
+    // process lifetime.
+    CHECK_FALSE(window.isVisible());
+    CHECK_FALSE(settings.window_geometry(slopkit::ui::WindowId::main).isEmpty());
+
+    int lifetime_owners = 0;
+    for (QWidget* widget : QApplication::topLevelWidgets())
+    {
+        if (widget->isVisible() && widget->testAttribute(Qt::WA_QuitOnClose))
+        {
+            ++lifetime_owners;
+        }
+    }
+    CHECK(lifetime_owners == 0);
 }

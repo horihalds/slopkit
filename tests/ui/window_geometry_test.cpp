@@ -136,6 +136,7 @@ TEST_CASE("the Log dialog reopens at its remembered size", "[window_geometry]")
 
     const QString path = scratch_settings_file("log_geometry.ini");
     QSize         saved_size;
+    QPoint        saved_position;
     {
         slopkit::plugin::PluginHost      host;
         slopkit::process::PluginAccess   access {host};
@@ -153,9 +154,12 @@ TEST_CASE("the Log dialog reopens at its remembered size", "[window_geometry]")
         log_dialog->resize(700, 640);
         log_dialog->show();
         QCoreApplication::processEvents();
+        log_dialog->move(30, 40);
+        QCoreApplication::processEvents();
         // The offscreen platform may clamp an over-wide request, so the size to
         // restore is whatever the dialog actually holds when it is hidden.
-        saved_size = log_dialog->size();
+        saved_size     = log_dialog->size();
+        saved_position = log_dialog->pos();
         CHECK(saved_size != QSize(760, 520));
         log_dialog->hide();
         QCoreApplication::processEvents();
@@ -176,6 +180,7 @@ TEST_CASE("the Log dialog reopens at its remembered size", "[window_geometry]")
         auto* log_dialog = window.findChild<slopkit::ui::dialogs::LogDialog*>();
         REQUIRE(log_dialog != nullptr);
         CHECK(log_dialog->size() == saved_size);
+        CHECK(log_dialog->pos() == saved_position);
     }
 }
 
@@ -184,6 +189,7 @@ TEST_CASE("the Process List keeps its locked size across a restart", "[window_ge
     application();
 
     const QString path = scratch_settings_file("process_list_geometry.ini");
+    QPoint        saved_position;
     {
         slopkit::plugin::PluginHost      host;
         slopkit::process::PluginAccess   access {host};
@@ -200,11 +206,13 @@ TEST_CASE("the Process List keeps its locked size across a restart", "[window_ge
         CHECK(picker->size() == QSize(600, 440));
 
         picker->move(120, 80);
+        QCoreApplication::processEvents();
+        saved_position = picker->pos();
         picker->hide();
         QCoreApplication::processEvents();
 
-        // Only the position is meaningful; the locked size makes the stored size
-        // part inert.
+        // The locked size makes the stored size part inert; the position is what
+        // the keeper restores.
         CHECK_FALSE(settings.window_geometry(WindowId::process_list).isEmpty());
     }
 
@@ -221,6 +229,7 @@ TEST_CASE("the Process List keeps its locked size across a restart", "[window_ge
         auto* picker = window.findChild<slopkit::ui::dialogs::ProcessListDialog*>();
         REQUIRE(picker != nullptr);
         CHECK(picker->size() == QSize(600, 440));
+        CHECK(picker->pos() == saved_position);
         CHECK(picker->minimumSize() == picker->maximumSize());
     }
 }

@@ -11,6 +11,7 @@
 #include "sandbox/sandbox_values.hpp"
 #include "sandbox/sandbox_window.hpp"
 #include "ui/fonts.hpp"
+#include "ui/platform.hpp"
 #include "ui/settings.hpp"
 #include "ui/theme.hpp"
 
@@ -30,6 +31,10 @@ int main(int argc, char** argv)
             return 0;
         }
     }
+
+    // Same platform choice as slopkit, so the two windows never disagree and
+    // the sandbox follows slopkit back onto XWayland.
+    slopkit::ui::prefer_platform_with_remembered_positions();
 
     QApplication application(argc, argv);
     QApplication::setApplicationName(QStringLiteral("slopkit-sandbox"));

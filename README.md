@@ -1,9 +1,10 @@
 # slopkit
 
 slopkit is a reverse-engineering toolset.
-It targets Linux with **Wayland** as the primary display server (X11/XWayland is
-supported as a fallback), and it is built around a single rule: every interaction
-with another process goes through a plugin.
+It targets Linux and, so that a remembered window position can be restored, runs
+its GUI on X11/XWayland when a `DISPLAY` is available; native Wayland is the
+fallback, and `QT_QPA_PLATFORM=wayland slopkit` forces it. It is built around a
+single rule: every interaction with another process goes through a plugin.
 
 The project is young: the plugin-first process-access ABI and host, two bundled
 plugins and the three-zone scanner shell (scan, address list, memory browser),
