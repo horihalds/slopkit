@@ -57,7 +57,7 @@ TEST_CASE("worker drains completions in submission order", "[debug][worker]")
 TEST_CASE("worker reports a job error through the completion", "[debug][worker]")
 {
     FakeDebugBackend backend;
-    backend.arm_error = slopkit::process::AccessError::permission_denied;
+    backend.fail_arm(slopkit::process::AccessError::permission_denied);
     Worker worker(backend);
 
     std::atomic<bool> finished {false};
@@ -123,7 +123,7 @@ TEST_CASE("worker services an interrupt while a continue blocks", "[debug][worke
             worker.drain();
             return interrupt_done.load();
         }));
-    CHECK(backend.last_interrupt_tid == 7);
+    CHECK(backend.last_interrupt_tid() == 7);
 
     REQUIRE(wait_until(
         [&]

@@ -131,9 +131,10 @@ TEST_CASE("the debug session gate attaches after consent and waits for running",
                            return ready == 1;
                        }));
     CHECK(controller.state() == Controller::State::running);
-    REQUIRE(backend.attached_pid.has_value());
-    CHECK(*backend.attached_pid == 42);
-    CHECK(backend.attached_plugin == "fake");
+    const auto attached_pid = backend.attached_pid();
+    REQUIRE(attached_pid.has_value());
+    CHECK(*attached_pid == 42);
+    CHECK(backend.attached_plugin() == "fake");
     CHECK(backend.count("attach") == 1);
     REQUIRE(progress.size() >= 2);
     CHECK(progress[1].contains(QStringLiteral("Debugger attached")));
@@ -230,7 +231,7 @@ TEST_CASE("the debug session gate reports a failed attach and drops the queue", 
     slopkit::test::application();
 
     slopkit::tests::FakeDebugBackend backend;
-    backend.attach_error = slopkit::process::AccessError::unsupported;
+    backend.fail_attach(slopkit::process::AccessError::unsupported);
     Controller controller {backend};
 
     AttachedTarget                target = slopkit::test::fake_target();

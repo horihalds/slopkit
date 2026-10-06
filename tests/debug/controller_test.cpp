@@ -33,9 +33,10 @@ TEST_CASE("controller walks the session state machine", "[debug][controller]")
                                && controller.registers().size() == 18 && controller.backtrace().size() == 1;
                        }));
 
-    REQUIRE(backend.attached_pid.has_value());
-    CHECK(*backend.attached_pid == 1234);
-    CHECK(backend.attached_plugin == "linux-proc");
+    const auto attached_pid = backend.attached_pid();
+    REQUIRE(attached_pid.has_value());
+    CHECK(*attached_pid == 1234);
+    CHECK(backend.attached_plugin() == "linux-proc");
     CHECK(controller.state_text().startsWith(QStringLiteral("Stopped at")));
 
     controller.stop();
@@ -82,7 +83,7 @@ TEST_CASE("controller refuses to start without a target or while open", "[debug]
 TEST_CASE("controller reports an unsupported plugin", "[debug][controller]")
 {
     FakeDebugBackend backend;
-    backend.attach_error = slopkit::process::AccessError::unsupported;
+    backend.fail_attach(slopkit::process::AccessError::unsupported);
     Controller controller(backend);
 
     QString error;
@@ -123,29 +124,29 @@ TEST_CASE("controller resolves a software trap and rewinds RIP", "[debug][contro
                        [&]
                        {
                            const auto* entry = controller.table().find(*id);
-                           return !backend.software_calls.empty() && entry != nullptr && entry->armed;
+                           return !backend.software_calls().empty() && entry != nullptr && entry->armed;
                        }));
-    CHECK(std::get<0>(backend.software_calls.front()) == 0);
-    CHECK(std::get<1>(backend.software_calls.front()) == 0x1000);
-    CHECK(std::get<2>(backend.software_calls.front()));
+    CHECK(std::get<0>(backend.software_calls().front()) == 0);
+    CHECK(std::get<1>(backend.software_calls().front()) == 0x1000);
+    CHECK(std::get<2>(backend.software_calls().front()));
     CHECK(controller.table().find(*id)->armed);
 
-    backend.stop_replies.push_back(StopEvent {StopReason::breakpoint, 4242, 0x1001, 0x1000, std::nullopt, 0});
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x1001, 0x1000, std::nullopt, 0});
     controller.resume();
     CHECK(controller.state() == Controller::State::running);
 
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return !backend.register_writes.empty();
+                           return !backend.register_writes().empty();
                        }));
 
     CHECK(controller.state() == Controller::State::stopped);
     CHECK(controller.last_stop().trap_address == 0x1000);
     CHECK(controller.last_stop().address == 0x1000);
     CHECK(controller.table().find(*id)->hits == 1);
-    CHECK(std::get<1>(backend.register_writes.front()) == "RIP");
-    CHECK(std::get<2>(backend.register_writes.front()) == 0x1000);
+    CHECK(std::get<1>(backend.register_writes().front()) == "RIP");
+    CHECK(std::get<2>(backend.register_writes().front()) == 0x1000);
     CHECK(controller.state_text().contains(QStringLiteral("breakpoint 1")));
 }
 
@@ -165,33 +166,33 @@ TEST_CASE("controller lifts a trap sitting at RIP when stepping", "[debug][contr
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return !backend.software_calls.empty();
+                           return !backend.software_calls().empty();
                        }));
 
-    backend.stop_replies.push_back(StopEvent {StopReason::breakpoint, 4242, 0x1001, 0x1000, std::nullopt, 0});
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x1001, 0x1000, std::nullopt, 0});
     controller.resume();
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return !backend.register_writes.empty();
+                           return !backend.register_writes().empty();
                        }));
 
-    backend.calls.clear();
-    backend.stop_replies.push_back(StopEvent {StopReason::single_step, 4242, 0x1002, 0x1002, std::nullopt, 0});
+    backend.clear_calls();
+    backend.queue_stop(StopEvent {StopReason::single_step, 4242, 0x1002, 0x1002, std::nullopt, 0});
     controller.step_over();
     REQUIRE(pump_until(controller,
                        [&]
                        {
                            return controller.state() == Controller::State::stopped && backend.count("cont") >= 1;
                        }));
-    CHECK(backend.last_resume_address == 0x1000);
-    CHECK(backend.last_resume_step_size == 1);
+    CHECK(backend.last_resume_address() == 0x1000);
+    CHECK(backend.last_resume_step_size() == 1);
 }
 
 TEST_CASE("controller steps plainly away from a trap", "[debug][controller]")
 {
     FakeDebugBackend backend;
-    backend.register_file = slopkit::tests::default_registers(0x5000);
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
     Controller controller(backend);
     controller.start(4242, "linux-proc");
     REQUIRE(pump_until(controller,
@@ -200,7 +201,7 @@ TEST_CASE("controller steps plainly away from a trap", "[debug][controller]")
                            return controller.state() == Controller::State::stopped;
                        }));
 
-    backend.calls.clear();
+    backend.clear_calls();
     controller.step_into();
     REQUIRE(pump_until(controller,
                        [&]
@@ -208,7 +209,7 @@ TEST_CASE("controller steps plainly away from a trap", "[debug][controller]")
                            return controller.state() == Controller::State::stopped && backend.count("step") >= 1;
                        }));
     CHECK(backend.count("cont") == 0);
-    CHECK(backend.last_step_tid == 4242);
+    CHECK(backend.last_step_tid() == 4242);
 }
 
 TEST_CASE("controller arms a hardware breakpoint in a DR slot", "[debug][controller]")
@@ -228,22 +229,22 @@ TEST_CASE("controller arms a hardware breakpoint in a DR slot", "[debug][control
                        [&]
                        {
                            const auto* entry = controller.table().find(*id);
-                           return !backend.hardware_calls.empty() && entry != nullptr && entry->armed;
+                           return !backend.hardware_calls().empty() && entry != nullptr && entry->armed;
                        }));
-    CHECK(std::get<0>(backend.hardware_calls.front()) == 0);
-    CHECK(std::get<1>(backend.hardware_calls.front()) == slopkit::debug::HardwareKind::write);
-    CHECK(std::get<2>(backend.hardware_calls.front()) == 0x2000);
-    CHECK(std::get<3>(backend.hardware_calls.front()) == 4);
+    CHECK(std::get<0>(backend.hardware_calls().front()) == 0);
+    CHECK(std::get<1>(backend.hardware_calls().front()) == slopkit::debug::HardwareKind::write);
+    CHECK(std::get<2>(backend.hardware_calls().front()) == 0x2000);
+    CHECK(std::get<3>(backend.hardware_calls().front()) == 4);
 
     // Removing it disarms the slot.
-    backend.hardware_calls.clear();
+    backend.clear_hardware_calls();
     controller.remove_breakpoint(*id);
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return !backend.hardware_calls.empty() && controller.table().empty();
+                           return !backend.hardware_calls().empty() && controller.table().empty();
                        }));
-    CHECK_FALSE(std::get<4>(backend.hardware_calls.front()));
+    CHECK_FALSE(std::get<4>(backend.hardware_calls().front()));
     CHECK(controller.table().empty());
 }
 
@@ -289,9 +290,9 @@ TEST_CASE("controller gates register writes on the stopped state", "[debug][cont
                        {
                            return backend.count("set_register") >= 1;
                        }));
-    REQUIRE(!backend.register_writes.empty());
-    CHECK(std::get<1>(backend.register_writes.front()) == "RAX");
-    CHECK(std::get<2>(backend.register_writes.front()) == 0x42);
+    REQUIRE(!backend.register_writes().empty());
+    CHECK(std::get<1>(backend.register_writes().front()) == "RAX");
+    CHECK(std::get<2>(backend.register_writes().front()) == 0x42);
 }
 
 TEST_CASE("controller arms breakpoints while the target runs through one invisible stop", "[debug][controller]")
@@ -314,7 +315,7 @@ TEST_CASE("controller arms breakpoints while the target runs through one invisib
                      {
                          states.push_back(controller.state());
                      });
-    backend.calls.clear();
+    backend.clear_calls();
 
     const auto first  = controller.add_breakpoint("0x2000", Kind::hardware_write, 4);
     const auto second = controller.add_breakpoint("0x3000", Kind::hardware_write, 4);
@@ -328,7 +329,7 @@ TEST_CASE("controller arms breakpoints while the target runs through one invisib
                            return controller.table().find(*first)->armed && controller.table().find(*second)->armed;
                        }));
     CHECK(backend.count("interrupt") == 1);
-    CHECK(backend.hardware_calls.size() == 2);
+    CHECK(backend.hardware_calls().size() == 2);
     CHECK(controller.state() == Controller::State::running);
     for (const Controller::State state : states)
     {
@@ -356,8 +357,8 @@ TEST_CASE("controller disarms a breakpoint while the target runs", "[debug][cont
                            return controller.table().find(*id)->armed;
                        }));
 
-    backend.calls.clear();
-    backend.hardware_calls.clear();
+    backend.clear_calls();
+    backend.clear_hardware_calls();
     controller.remove_breakpoint(*id);
     REQUIRE(pump_until(controller,
                        [&]
@@ -367,8 +368,8 @@ TEST_CASE("controller disarms a breakpoint while the target runs", "[debug][cont
 
     CHECK(controller.state() == Controller::State::running);
     CHECK(backend.count("interrupt") == 1);
-    REQUIRE(backend.hardware_calls.size() == 1);
-    CHECK_FALSE(std::get<4>(backend.hardware_calls.front()));
+    REQUIRE(backend.hardware_calls().size() == 1);
+    CHECK_FALSE(std::get<4>(backend.hardware_calls().front()));
 }
 
 namespace
@@ -415,8 +416,8 @@ TEST_CASE("controller collects access watch hits while the target runs", "[debug
 
     // Two stops on the watched slot coalesce into one row with a count, and the
     // target is resumed after each without ever looking stopped.
-    backend.stop_replies.push_back(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
-    backend.stop_replies.push_back(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
 
     controller.interrupt();
     REQUIRE(pump_until(controller,
@@ -526,7 +527,7 @@ TEST_CASE("controller refuses an access watch it cannot arm", "[debug][controlle
 TEST_CASE("controller captures the registers of a running target invisibly", "[debug][controller]")
 {
     FakeDebugBackend backend;
-    backend.register_file = slopkit::tests::default_registers(0x7000);
+    backend.set_register_file(slopkit::tests::default_registers(0x7000));
     Controller controller(backend);
     backend.block_continue = true;
     controller.start(4242, "linux-proc");
@@ -561,7 +562,7 @@ TEST_CASE("controller captures the registers of a running target invisibly", "[d
                          ++state_changes;
                      });
 
-    backend.calls.clear();
+    backend.clear_calls();
     int captured = 0;
     controller.capture_registers(
         [&captured]
@@ -620,7 +621,7 @@ TEST_CASE("controller captures immediately when the target is stopped or absent"
                                && controller.registers().size() == 18;
                        }));
 
-    backend.calls.clear();
+    backend.clear_calls();
     int stopped_captured = 0;
     controller.capture_registers(
         [&stopped_captured]

@@ -54,7 +54,7 @@ TEST_CASE("debugger pane renders its tables in the embedded mono font", "[ui][pa
 {
     slopkit::test::application();
     FakeDebugBackend backend;
-    backend.register_file = slopkit::tests::default_registers(0x1234);
+    backend.set_register_file(slopkit::tests::default_registers(0x1234));
     Controller controller(backend);
 
     DebuggerPanel pane(controller);

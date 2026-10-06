@@ -77,16 +77,14 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
     (*access.memory)[rip - 31][29] = std::byte {0x43};
     (*access.memory)[rip - 31][30] = std::byte {0x10};
 
-    backend.stop_replies.push_back(
-        slopkit::debug::StopEvent {slopkit::debug::StopReason::breakpoint, 42, rip, rip, slot, 0});
+    backend.queue_stop(slopkit::debug::StopEvent {slopkit::debug::StopReason::breakpoint, 42, rip, rip, slot, 0});
     controller.interrupt();
     REQUIRE(pump_until(controller,
                        [&]
                        {
                            return controller.watch().hit_count() == 1;
                        }));
-    backend.stop_replies.push_back(
-        slopkit::debug::StopEvent {slopkit::debug::StopReason::breakpoint, 42, rip, rip, slot, 0});
+    backend.queue_stop(slopkit::debug::StopEvent {slopkit::debug::StopReason::breakpoint, 42, rip, rip, slot, 0});
     controller.interrupt();
     REQUIRE(pump_until(controller,
                        [&]

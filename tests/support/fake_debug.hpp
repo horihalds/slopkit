@@ -64,67 +64,193 @@ namespace slopkit::tests
 
     // A scriptable DebugBackend: records every call and returns what the test
     // queues, so the controller and the worker can be driven without a target.
+    //
+    // Threading: the debug worker thread records through the overrides while the
+    // test thread reads and clears. Every recorded and scripted member therefore
+    // lives behind `state_mutex_` and is only touched through an accessor or a
+    // mutator, so a reader gets a snapshot and never sees a half-written value.
+    //
+    // Lock order: `state_mutex_` and `continue_mutex` are never held together.
+    // The overrides record under `state_mutex_`, release it, and only then touch
+    // `continue_mutex`/`continue_cv` — `cont()` records before it blocks, and
+    // `interrupt()` records before it releases the blocked continue.
     class FakeDebugBackend final : public slopkit::debug::DebugBackend
     {
     public:
         using StopReply = std::expected<StopEvent, AccessError>;
 
-        std::vector<std::string>   calls;
-        bool                       supported {true};
-        std::optional<AccessError> attach_error;
-        std::optional<AccessError> arm_error;
-        std::deque<StopReply>      stop_replies;
-        std::vector<RegisterValue> register_file {default_registers()};
-        std::vector<Frame>         frames {
-            {0x1000, 0}
-        };
+        // --- scripted input (written by the test thread) ----------------------
+        void fail_attach(AccessError error)
+        {
+            const std::lock_guard lock(state_mutex_);
+            attach_error_ = error;
+        }
 
-        std::optional<ProcessId>                                                               attached_pid;
-        std::string                                                                            attached_plugin;
-        std::uint64_t                                                                          last_resume_address {};
-        std::size_t                                                                            last_resume_step_size {};
-        std::optional<std::uint32_t>                                                           last_step_tid;
-        std::optional<std::uint32_t>                                                           last_interrupt_tid;
-        std::vector<std::tuple<std::uint32_t, std::uint64_t, bool>>                            software_calls;
-        std::vector<std::tuple<std::uint32_t, HardwareKind, std::uint64_t, std::size_t, bool>> hardware_calls;
-        std::vector<std::tuple<std::uint32_t, std::string, std::uint64_t>>                     register_writes;
+        void fail_arm(AccessError error)
+        {
+            const std::lock_guard lock(state_mutex_);
+            arm_error_ = error;
+        }
 
-        // Blocking simulation for the run-thread test.
-        bool                    block_continue {false};
+        void set_supported(bool value)
+        {
+            const std::lock_guard lock(state_mutex_);
+            supported_ = value;
+        }
+
+        void set_register_file(std::vector<RegisterValue> registers)
+        {
+            const std::lock_guard lock(state_mutex_);
+            register_file_ = std::move(registers);
+        }
+
+        void set_frames(std::vector<Frame> frames)
+        {
+            const std::lock_guard lock(state_mutex_);
+            frames_ = std::move(frames);
+        }
+
+        void queue_stop(StopReply reply)
+        {
+            const std::lock_guard lock(state_mutex_);
+            stop_replies_.push_back(std::move(reply));
+        }
+
+        // The blocking simulation: a flag crossed between threads, so an atomic.
+        std::atomic<bool>       block_continue {false};
         std::mutex              continue_mutex;
         std::condition_variable continue_cv;
         std::atomic<bool>       continue_entered {false};
         std::atomic<bool>       continue_released {false};
         std::atomic<bool>       interrupted {false};
-        std::uint32_t           interrupt_release_tid {};
+
+        // --- recorded output (written by the debug worker thread) -------------
+        [[nodiscard]] std::vector<std::string> calls() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return calls_;
+        }
+
+        [[nodiscard]] std::size_t count(std::string_view call) const
+        {
+            const std::lock_guard lock(state_mutex_);
+            std::size_t           total = 0;
+            for (const std::string& entry : calls_)
+            {
+                total += entry == call ? 1 : 0;
+            }
+            return total;
+        }
+
+        void clear_calls()
+        {
+            const std::lock_guard lock(state_mutex_);
+            calls_.clear();
+        }
+
+        [[nodiscard]] std::optional<ProcessId> attached_pid() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return attached_pid_;
+        }
+
+        [[nodiscard]] std::string attached_plugin() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return attached_plugin_;
+        }
+
+        [[nodiscard]] std::uint64_t last_resume_address() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return last_resume_address_;
+        }
+
+        [[nodiscard]] std::size_t last_resume_step_size() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return last_resume_step_size_;
+        }
+
+        [[nodiscard]] std::optional<std::uint32_t> last_step_tid() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return last_step_tid_;
+        }
+
+        [[nodiscard]] std::optional<std::uint32_t> last_interrupt_tid() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return last_interrupt_tid_;
+        }
+
+        [[nodiscard]] std::vector<std::tuple<std::uint32_t, std::uint64_t, bool>> software_calls() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return software_calls_;
+        }
+
+        [[nodiscard]] std::vector<std::tuple<std::uint32_t, HardwareKind, std::uint64_t, std::size_t, bool>>
+        hardware_calls() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return hardware_calls_;
+        }
+
+        void clear_hardware_calls()
+        {
+            const std::lock_guard lock(state_mutex_);
+            hardware_calls_.clear();
+        }
+
+        [[nodiscard]] std::vector<std::tuple<std::uint32_t, std::string, std::uint64_t>> register_writes() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return register_writes_;
+        }
+
+        [[nodiscard]] std::vector<RegisterValue> register_file() const
+        {
+            const std::lock_guard lock(state_mutex_);
+            return register_file_;
+        }
 
         std::expected<void, AccessError> attach(ProcessId pid, std::string_view plugin_id) override
         {
-            calls.emplace_back("attach");
-            attached_pid    = pid;
-            attached_plugin = std::string(plugin_id);
-            if (attach_error)
+            std::optional<AccessError> failure;
             {
-                return std::unexpected(*attach_error);
+                const std::lock_guard lock(state_mutex_);
+                calls_.emplace_back("attach");
+                attached_pid_    = pid;
+                attached_plugin_ = std::string(plugin_id);
+                failure          = attach_error_;
+            }
+            if (failure)
+            {
+                return std::unexpected(*failure);
             }
             return {};
         }
 
         std::expected<void, AccessError> detach() override
         {
-            calls.emplace_back("detach");
+            const std::lock_guard lock(state_mutex_);
+            calls_.emplace_back("detach");
             return {};
         }
 
         std::expected<StopEvent, AccessError> cont(std::uint64_t resume_address, std::size_t resume_step_size) override
         {
-            calls.emplace_back("cont");
-            last_resume_address   = resume_address;
-            last_resume_step_size = resume_step_size;
-            if (block_continue)
+            {
+                const std::lock_guard lock(state_mutex_);
+                calls_.emplace_back("cont");
+                last_resume_address_   = resume_address;
+                last_resume_step_size_ = resume_step_size;
+            }
+            if (block_continue.load())
             {
                 continue_entered = true;
-                std::unique_lock lock(continue_mutex);
+                std::unique_lock lock(continue_mutex); // state_mutex_ is free here
                 continue_cv.wait(lock,
                                  [this]
                                  {
@@ -140,18 +266,24 @@ namespace slopkit::tests
 
         std::expected<StopEvent, AccessError> step(std::uint32_t tid) override
         {
-            calls.emplace_back("step");
-            last_step_tid = tid;
+            {
+                const std::lock_guard lock(state_mutex_);
+                calls_.emplace_back("step");
+                last_step_tid_ = tid;
+            }
             return next_stop();
         }
 
         std::expected<void, AccessError> interrupt(std::uint32_t tid) override
         {
-            calls.emplace_back("interrupt");
-            last_interrupt_tid = tid;
-            interrupted        = true;
             {
-                const std::lock_guard lock(continue_mutex);
+                const std::lock_guard lock(state_mutex_);
+                calls_.emplace_back("interrupt");
+                last_interrupt_tid_ = tid;
+            }
+            interrupted = true;
+            {
+                const std::lock_guard lock(continue_mutex); // state_mutex_ is free here
                 continue_released = true;
             }
             continue_cv.notify_all();
@@ -160,17 +292,19 @@ namespace slopkit::tests
 
         std::expected<std::vector<RegisterValue>, AccessError> registers(std::uint32_t tid) override
         {
-            calls.emplace_back("registers");
             (void)tid;
-            return register_file;
+            const std::lock_guard lock(state_mutex_);
+            calls_.emplace_back("registers");
+            return register_file_;
         }
 
         std::expected<void, AccessError>
         set_register(std::uint32_t tid, std::string_view name, std::uint64_t value) override
         {
-            calls.emplace_back("set_register");
-            register_writes.emplace_back(tid, std::string(name), value);
-            for (RegisterValue& entry : register_file)
+            const std::lock_guard lock(state_mutex_);
+            calls_.emplace_back("set_register");
+            register_writes_.emplace_back(tid, std::string(name), value);
+            for (RegisterValue& entry : register_file_)
             {
                 if (entry.name == name)
                 {
@@ -183,11 +317,16 @@ namespace slopkit::tests
         std::expected<void, AccessError>
         set_software_breakpoint(std::uint32_t slot, std::uint64_t address, bool insert) override
         {
-            calls.emplace_back("set_software_breakpoint");
-            software_calls.emplace_back(slot, address, insert);
-            if (arm_error)
+            std::optional<AccessError> failure;
             {
-                return std::unexpected(*arm_error);
+                const std::lock_guard lock(state_mutex_);
+                calls_.emplace_back("set_software_breakpoint");
+                software_calls_.emplace_back(slot, address, insert);
+                failure = arm_error_;
+            }
+            if (failure)
+            {
+                return std::unexpected(*failure);
             }
             return {};
         }
@@ -195,48 +334,67 @@ namespace slopkit::tests
         std::expected<void, AccessError> set_hardware_breakpoint(
             std::uint32_t slot, HardwareKind kind, std::uint64_t address, std::size_t size, bool insert) override
         {
-            calls.emplace_back("set_hardware_breakpoint");
-            hardware_calls.emplace_back(slot, kind, address, size, insert);
-            if (arm_error)
+            std::optional<AccessError> failure;
             {
-                return std::unexpected(*arm_error);
+                const std::lock_guard lock(state_mutex_);
+                calls_.emplace_back("set_hardware_breakpoint");
+                hardware_calls_.emplace_back(slot, kind, address, size, insert);
+                failure = arm_error_;
+            }
+            if (failure)
+            {
+                return std::unexpected(*failure);
             }
             return {};
         }
 
         std::expected<std::vector<Frame>, AccessError> backtrace(std::uint32_t tid) override
         {
-            calls.emplace_back("backtrace");
             (void)tid;
-            return frames;
+            const std::lock_guard lock(state_mutex_);
+            calls_.emplace_back("backtrace");
+            return frames_;
         }
 
         [[nodiscard]] bool supports_debug() const override
         {
-            return supported;
-        }
-
-        [[nodiscard]] std::size_t count(const std::string& call) const
-        {
-            std::size_t total = 0;
-            for (const std::string& entry : calls)
-            {
-                total += entry == call ? 1 : 0;
-            }
-            return total;
+            const std::lock_guard lock(state_mutex_);
+            return supported_;
         }
 
     private:
         std::expected<StopEvent, AccessError> next_stop()
         {
-            if (stop_replies.empty())
+            const std::lock_guard lock(state_mutex_);
+            if (stop_replies_.empty())
             {
                 return StopEvent {slopkit::debug::StopReason::single_step, 4242, 0x1001, 0x1001, std::nullopt, 0};
             }
-            auto reply = std::move(stop_replies.front());
-            stop_replies.pop_front();
+            auto reply = std::move(stop_replies_.front());
+            stop_replies_.pop_front();
             return reply;
         }
+
+        mutable std::mutex         state_mutex_;
+        std::vector<std::string>   calls_;
+        std::optional<AccessError> attach_error_;
+        std::optional<AccessError> arm_error_;
+        bool                       supported_ {true};
+        std::deque<StopReply>      stop_replies_;
+        std::vector<RegisterValue> register_file_ {default_registers()};
+        std::vector<Frame>         frames_ {
+            {0x1000, 0}
+        };
+
+        std::optional<ProcessId>                                    attached_pid_;
+        std::string                                                 attached_plugin_;
+        std::uint64_t                                               last_resume_address_ {};
+        std::size_t                                                 last_resume_step_size_ {};
+        std::optional<std::uint32_t>                                last_step_tid_;
+        std::optional<std::uint32_t>                                last_interrupt_tid_;
+        std::vector<std::tuple<std::uint32_t, std::uint64_t, bool>> software_calls_;
+        std::vector<std::tuple<std::uint32_t, HardwareKind, std::uint64_t, std::size_t, bool>> hardware_calls_;
+        std::vector<std::tuple<std::uint32_t, std::string, std::uint64_t>>                     register_writes_;
     };
 
     // Drives a controller/worker until `predicate` is true, pumping completions.

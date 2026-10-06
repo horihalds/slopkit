@@ -1045,7 +1045,7 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     // runs, the target is put back running, the rows arrive unresolved and a
     // warning is reported instead of a silent empty table.
     slopkit::tests::FakeDebugBackend plain_backend;
-    plain_backend.register_file.clear();
+    plain_backend.set_register_file({});
     plain_backend.block_continue = true;
     slopkit::debug::Controller plain_controller {plain_backend};
     plain_controller.start(42, "fake");
