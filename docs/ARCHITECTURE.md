@@ -130,6 +130,15 @@ beside the normal access path rather than in it, so the read/write path stays
   cap), marks the `watchChanged()` signal dirty and resumes immediately, so the
   target keeps running. A new watch replaces the running one; `Stop` disarms it
   without dropping the recorded rows.
+- **Step Out** reuses the same table: from a stop it takes the caller's return
+  address from the cached frame-pointer backtrace (`frames[1].pc`), arms one
+  hidden software breakpoint there and submits the continue only from the
+  insert's completion, so a failed arm can never leave the target running
+  untrapped. The stop that hits that trap erases the transient entry before it is
+  reported, without counting a hit; any other stop — `Break`, another breakpoint,
+  a watch hit, a signal, an exit or a failed continue — drops the pending step-out
+  and is reported normally. A call stack with no caller frame refuses and warns
+  instead of running away.
 - The session is not started only from the Debugger pane: the watch commands
   (`Find out what writes/accesses this address` in the address list and the scan
   results, and `Find out what addresses this instruction accesses` in the

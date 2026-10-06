@@ -1299,7 +1299,7 @@ TEST_CASE("the memory viewer puts the debug controls in the listing column", "[u
     CHECK(listing_panel->isAncestorOf(code_pane->findChild<slopkit::ui::components::DisassemblyView*>()));
     CHECK(controls->y() < listing_panel->y());
 
-    // The bar carries all nine controls, with Step Out disabled.
+    // The bar carries all nine controls; with no session they are gated off.
     CHECK(controls->toggle_breakpoint_button() != nullptr);
     CHECK(controls->start_stop_button() != nullptr);
     CHECK(controls->resume_button() != nullptr);
@@ -1575,7 +1575,7 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     CHECK_FALSE(menu->step_into_action()->isEnabled());
     CHECK_FALSE(menu->step_over_action()->isEnabled());
     CHECK_FALSE(menu->step_out_action()->isEnabled());
-    CHECK(menu->step_out_action()->toolTip() == QStringLiteral("Stepping out is not supported yet."));
+    CHECK(menu->step_out_action()->toolTip() == QStringLiteral("Start the debugger first."));
 
     viewer.set_address(0x2000);
     viewer.show();
@@ -1590,6 +1590,7 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
         CHECK(menu->break_action()->isEnabled() == controls->break_button()->isEnabled());
         CHECK(menu->step_into_action()->isEnabled() == controls->step_into_button()->isEnabled());
         CHECK(menu->step_over_action()->isEnabled() == controls->step_over_button()->isEnabled());
+        CHECK(menu->step_out_action()->isEnabled() == controls->step_out_button()->isEnabled());
         CHECK(menu->toggle_breakpoint_action()->isEnabled() == controls->toggle_breakpoint_button()->isEnabled());
     };
 
@@ -1609,6 +1610,8 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     CHECK(menu->start_stop_action()->isEnabled());
     CHECK(menu->break_action()->isEnabled());
     CHECK_FALSE(menu->resume_action()->isEnabled());
+    CHECK_FALSE(menu->step_out_action()->isEnabled());
+    CHECK(menu->step_out_action()->toolTip() == QStringLiteral("Stop the target to step."));
     CHECK(menu->toggle_breakpoint_action()->toolTip() == QStringLiteral("Select an instruction in the listing first."));
     parity();
 
@@ -1622,6 +1625,7 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     CHECK(menu->resume_action()->isEnabled());
     CHECK(menu->step_into_action()->isEnabled());
     CHECK(menu->step_over_action()->isEnabled());
+    CHECK(menu->step_out_action()->isEnabled());
     CHECK_FALSE(menu->break_action()->isEnabled());
     parity();
 

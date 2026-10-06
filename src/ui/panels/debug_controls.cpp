@@ -47,12 +47,6 @@ namespace slopkit::ui::panels
         layout->addWidget(step_out_button_);
         layout->addWidget(breakpoints_button_);
 
-        // Step Out has no implementation yet (no controller step_out and no
-        // backend run-to-address), so the button documents the gap and never
-        // comes live.
-        step_out_button_->setEnabled(false);
-        step_out_button_->setToolTip(tr("Stepping out is not supported yet."));
-
         layout->addStretch(1);
 
         connect(toggle_breakpoint_button_,
@@ -70,6 +64,7 @@ namespace slopkit::ui::panels
         connect(break_button_, &QPushButton::clicked, &controller_, &debug::Controller::interrupt);
         connect(step_into_button_, &QPushButton::clicked, &controller_, &debug::Controller::step_into);
         connect(step_over_button_, &QPushButton::clicked, &controller_, &debug::Controller::step_over);
+        connect(step_out_button_, &QPushButton::clicked, &controller_, &debug::Controller::step_out);
         connect(breakpoints_button_, &QPushButton::clicked, this, &DebugControls::breakpointsRequested);
 
         // The controls stay reachable with the keyboard; the dialog appends the
@@ -121,6 +116,7 @@ namespace slopkit::ui::panels
         break_button_->setEnabled(enablement.interrupt);
         step_into_button_->setEnabled(enablement.step_into);
         step_over_button_->setEnabled(enablement.step_over);
+        step_out_button_->setEnabled(enablement.step_out);
 
         update_toggle_state();
     }

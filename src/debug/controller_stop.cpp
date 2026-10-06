@@ -63,6 +63,21 @@ namespace slopkit::debug
             return;
         }
 
+        // A stop that ends a pending step-out is the transient trap at the
+        // caller's return address being hit; any other stop cancels the step-out
+        // and is reported as usual. Maintenance and capture stops return above,
+        // so an internal round-trip never drops a pending step-out.
+        if (!stop_requested_ && step_out_id_.has_value())
+        {
+            const Breakpoint* pending = breakpoints_.software_at(stop.trap_address);
+            const bool own_trap = stop.reason == StopReason::breakpoint && !stop.breakpoint_slot && pending != nullptr
+                               && pending->id == *step_out_id_;
+            if (!own_trap)
+            {
+                drop_step_out();
+            }
+        }
+
         // A watch hit: record it and keep collecting, so the process is never
         // left paused for the user. `record` always consumes the stop.
         if (!stop_requested_ && stop.reason == StopReason::breakpoint && stop.breakpoint_slot.has_value()
@@ -104,8 +119,17 @@ namespace slopkit::debug
         {
             if (const Breakpoint* entry = breakpoints_.software_at(stop.trap_address); entry != nullptr)
             {
-                breakpoints_.count_hit(entry->id);
-                emit breakpointsChanged();
+                if (step_out_id_.has_value() && entry->id == *step_out_id_)
+                {
+                    // The step-out's own trap: erase the transient entry and
+                    // report an ordinary stop, counting no hit for it.
+                    finish_step_out();
+                }
+                else
+                {
+                    breakpoints_.count_hit(entry->id);
+                    emit breakpointsChanged();
+                }
 
                 // An int3 leaves RIP one past the trap; rewind it so the
                 // register view and the listing show the trapped instruction,

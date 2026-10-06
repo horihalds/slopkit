@@ -15,6 +15,7 @@ namespace slopkit::ui::panels
         bool interrupt {};         // running
         bool step_into {};         // stopped
         bool step_over {};         // stopped
+        bool step_out {};          // stopped
         bool clear_breakpoints {}; // at least one breakpoint armed
     };
 

@@ -20,6 +20,7 @@ namespace slopkit::ui::panels
         enablement.interrupt         = running;
         enablement.step_into         = stopped;
         enablement.step_over         = stopped;
+        enablement.step_out          = stopped;
         enablement.clear_breakpoints = has_breakpoints;
         return enablement;
     }

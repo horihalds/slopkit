@@ -98,10 +98,8 @@ namespace slopkit::ui::panels
         step_over_action_ = debug_menu_->addAction(tr("Step Over"));
         connect(step_over_action_, &QAction::triggered, &controller_, &debug::Controller::step_over);
 
-        // Step Out has no implementation yet, exactly as on the bar.
         step_out_action_ = debug_menu_->addAction(tr("Step Out"));
-        step_out_action_->setEnabled(false);
-        step_out_action_->setToolTip(tr("Stepping out is not supported yet."));
+        connect(step_out_action_, &QAction::triggered, &controller_, &debug::Controller::step_out);
 
         // Breakpoints... opens the same window the bar's button does: it is
         // emitted here and relayed to the bar's own request.
@@ -173,6 +171,10 @@ namespace slopkit::ui::panels
         step_over_action_->setEnabled(enablement.step_over);
         step_over_action_->setToolTip(
             enablement.step_over ? QString() : (running ? tr("Stop the target to step.") : needs_session));
+
+        step_out_action_->setEnabled(enablement.step_out);
+        step_out_action_->setToolTip(enablement.step_out ? QString()
+                                                         : (running ? tr("Stop the target to step.") : needs_session));
 
         break_action_->setEnabled(enablement.interrupt);
         break_action_->setToolTip(

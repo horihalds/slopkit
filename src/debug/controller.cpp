@@ -212,6 +212,7 @@ namespace slopkit::debug
         pending_slot_ops_.clear();
         pending_removals_.clear();
         drop_capture();
+        step_out_id_.reset();
         watch_       = AccessWatch {};
         watch_dirty_ = false;
         last_stop_   = StopEvent {};

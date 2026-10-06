@@ -3,6 +3,7 @@
 #include <QPushButton>
 
 #include <cstdint>
+#include <tuple>
 
 #include "debug/controller.hpp"
 #include "process/attachment.hpp"
@@ -158,19 +159,24 @@ TEST_CASE("the debug control bar re-gates the toggle when the attached target ch
     CHECK_FALSE(bar.start_stop_button()->isEnabled());
 }
 
-TEST_CASE("the debug control bar keeps Step Out disabled", "[ui][panels][debugger]")
+TEST_CASE("the debug control bar makes Step Out a live run control", "[ui][panels][debugger]")
 {
     slopkit::test::application();
     FakeDebugBackend backend;
     backend.block_continue = true;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
     Controller controller(backend);
 
     const slopkit::process::AttachedTarget target = attached_target();
     DebugControls                          bar(controller, target);
-    CHECK_FALSE(bar.step_out_button()->isEnabled());
-    CHECK(bar.step_out_button()->toolTip() == QStringLiteral("Stepping out is not supported yet."));
 
-    // A session, running and stopped, never lights it up.
+    // Idle: disabled, with the same explanation as Step Into / Step Over.
+    CHECK_FALSE(bar.step_out_button()->isEnabled());
+
     controller.start(target.pid, target.plugin_id);
     REQUIRE(pump_until(controller,
                        [&]
@@ -183,9 +189,30 @@ TEST_CASE("the debug control bar keeps Step Out disabled", "[ui][panels][debugge
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return controller.state() == Controller::State::stopped;
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
                        }));
-    CHECK_FALSE(bar.step_out_button()->isEnabled());
+    CHECK(bar.step_out_button()->isEnabled());
+    CHECK(bar.step_out_button()->toolTip().isEmpty());
+
+    // Clicking it reaches the controller: a transient breakpoint is inserted at
+    // the caller's return address.
+    bar.step_out_button()->click();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+    REQUIRE(backend.software_calls().size() == 1);
+    CHECK(std::get<1>(backend.software_calls().front()) == 0x6000);
+    CHECK(std::get<2>(backend.software_calls().front()));
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped && controller.breakpoints().empty();
+                       }));
 }
 
 TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a selection", "[ui][panels][debugger]")

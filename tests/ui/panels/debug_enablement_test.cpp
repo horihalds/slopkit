@@ -19,8 +19,7 @@ namespace
 TEST_CASE("the shared debugger enablement covers every session state", "[ui][panels][debugger]")
 {
     // The full truth table: session state x target validity x selection x
-    // breakpoints. `DebugEnablement` carries no `step_out`, so Step Out stays
-    // disabled by construction on every surface that renders this mapping.
+    // breakpoints. Step Into, Step Over and Step Out share the one stopped gate.
     for (const Controller::State state : states)
     {
         for (const bool target_valid : {false, true})
@@ -45,6 +44,7 @@ TEST_CASE("the shared debugger enablement covers every session state", "[ui][pan
                     CHECK(enablement.interrupt == running);
                     CHECK(enablement.step_into == stopped);
                     CHECK(enablement.step_over == stopped);
+                    CHECK(enablement.step_out == stopped);
                     CHECK(enablement.clear_breakpoints == has_breakpoints);
                 }
             }

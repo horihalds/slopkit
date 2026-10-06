@@ -633,3 +633,481 @@ TEST_CASE("controller captures immediately when the target is stopped or absent"
     CHECK(backend.count("registers") == 0);
     CHECK(controller.state() == Controller::State::stopped);
 }
+
+TEST_CASE("controller steps out through a transient hidden breakpoint", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+
+    backend.clear_calls();
+    backend.block_continue = true;
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+
+    CHECK(controller.state() == Controller::State::running);
+    REQUIRE(backend.software_calls().size() == 1);
+    CHECK(std::get<0>(backend.software_calls().front()) == 0);
+    CHECK(std::get<1>(backend.software_calls().front()) == 0x6000);
+    CHECK(std::get<2>(backend.software_calls().front()));
+    CHECK(backend.last_resume_address() == 0);
+    CHECK(backend.last_resume_step_size() == 0);
+
+    // The transient entry owns a slot but stays out of the panes.
+    REQUIRE(controller.breakpoints().size() == 1);
+    CHECK(controller.breakpoints().front().hidden);
+    CHECK(controller.breakpoints().front().address == 0x6000);
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+}
+
+TEST_CASE("controller lifts a trap sitting at RIP when stepping out", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x1000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x1000, 0},
+         slopkit::debug::Frame {0x2000, 0}
+    });
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+
+    const auto id = controller.add_breakpoint("0x1000", Kind::software, 1);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = controller.table().find(*id);
+                           return entry != nullptr && entry->armed;
+                       }));
+
+    backend.clear_calls();
+    backend.block_continue = true;
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+    CHECK(backend.last_resume_address() == 0x1000);
+    CHECK(backend.last_resume_step_size() == 1);
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+}
+
+TEST_CASE("controller reuses a user breakpoint at the caller's return address", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+
+    const auto id = controller.add_breakpoint("0x6000", Kind::software, 1);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = controller.table().find(*id);
+                           return entry != nullptr && entry->armed;
+                       }));
+
+    backend.clear_calls();
+    backend.block_continue = true;
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+
+    // No transient entry is added; the user's own trap is the one being run to.
+    std::size_t inserts_at_return = 0;
+    for (const auto& call : backend.software_calls())
+    {
+        inserts_at_return += (std::get<1>(call) == 0x6000 && std::get<2>(call)) ? 1 : 0;
+    }
+    CHECK(inserts_at_return == 1);
+    CHECK(controller.breakpoints().size() == 1);
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+    CHECK(controller.table().find(*id) != nullptr);
+}
+
+TEST_CASE("controller refuses to step out without a caller frame", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x1000));
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 1;
+                       }));
+
+    backend.clear_calls();
+    int warnings = 0;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&warnings](Controller::MessageKind kind, const QString& text)
+                     {
+                         if (kind == Controller::MessageKind::warning
+                             && text.contains(QStringLiteral("no caller frame")))
+                         {
+                             ++warnings;
+                         }
+                     });
+
+    controller.step_out();
+    CHECK(warnings == 1);
+    CHECK(controller.state() == Controller::State::stopped);
+    CHECK(backend.count("cont") == 0);
+    CHECK(backend.software_calls().empty());
+    CHECK(controller.breakpoints().empty());
+
+    // A caller frame whose return address is zero is refused the same way.
+    backend.set_frames({
+        slopkit::debug::Frame {0x1000, 0},
+         slopkit::debug::Frame {     0, 0}
+    });
+    controller.refresh();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.backtrace().size() == 2 && controller.backtrace()[1].pc == 0;
+                       }));
+    controller.step_out();
+    CHECK(warnings == 2);
+    CHECK(backend.software_calls().empty());
+}
+
+TEST_CASE("controller refuses a step-out whose transient arm fails", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+
+    backend.fail_arm(slopkit::process::AccessError::permission_denied);
+    backend.clear_calls();
+    int warnings = 0;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&warnings](Controller::MessageKind kind, const QString&)
+                     {
+                         if (kind == Controller::MessageKind::warning)
+                         {
+                             ++warnings;
+                         }
+                     });
+
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return backend.count("set_software_breakpoint") >= 1 && controller.breakpoints().empty();
+                       }));
+    CHECK(warnings == 1);
+    CHECK(controller.state() == Controller::State::stopped);
+    CHECK(backend.count("cont") == 0);
+}
+
+TEST_CASE("controller ignores a step-out without a stop", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.block_continue = true;
+    Controller controller(backend);
+
+    // Idle: nothing to run.
+    controller.step_out();
+    CHECK(controller.state() == Controller::State::idle);
+    CHECK(backend.software_calls().empty());
+
+    // Running: a second step-out never arms or continues.
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+    backend.clear_calls();
+    controller.step_out();
+    CHECK(controller.state() == Controller::State::running);
+    CHECK(backend.software_calls().empty());
+    CHECK(backend.count("cont") == 0);
+
+    backend.block_continue = false;
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+}
+
+TEST_CASE("controller consumes the step-out stop and erases the transient entry", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+    REQUIRE(controller.breakpoints().size() == 1);
+
+    backend.clear_calls();
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x6001, 0x6000, std::nullopt, 0});
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped && controller.breakpoints().empty()
+                               && !backend.register_writes().empty();
+                       }));
+
+    CHECK(controller.last_stop().trap_address == 0x6000);
+    CHECK(controller.state_text() == QStringLiteral("Stopped at 6000"));
+
+    bool rewound = false;
+    for (const auto& write : backend.register_writes())
+    {
+        rewound = rewound || (std::get<1>(write) == "RIP" && std::get<2>(write) == 0x6000);
+    }
+    CHECK(rewound);
+
+    bool disarmed = false;
+    for (const auto& call : backend.software_calls())
+    {
+        disarmed = disarmed || (std::get<1>(call) == 0x6000 && !std::get<2>(call));
+    }
+    CHECK(disarmed);
+}
+
+TEST_CASE("controller cancels a step-out on an unrelated stop", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+
+    backend.block_continue = true;
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+    REQUIRE(controller.breakpoints().size() == 1);
+
+    backend.clear_calls();
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           bool disarmed = false;
+                           for (const auto& call : backend.software_calls())
+                           {
+                               disarmed = disarmed || (std::get<1>(call) == 0x6000 && !std::get<2>(call));
+                           }
+                           return controller.state() == Controller::State::stopped && controller.breakpoints().empty()
+                               && disarmed;
+                       }));
+    CHECK(backend.count("interrupt") >= 1);
+}
+
+TEST_CASE("controller cancels a step-out on a user breakpoint in the callee", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+
+    const auto id = controller.add_breakpoint("0x7000", Kind::software, 1);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = controller.table().find(*id);
+                           return entry != nullptr && entry->armed;
+                       }));
+
+    backend.block_continue = true;
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running
+                               && controller.breakpoints().size() == 2;
+                       }));
+
+    backend.clear_calls();
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x7001, 0x7000, std::nullopt, 0});
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.breakpoints().size() == 1;
+                       }));
+
+    // The user's hit is reported and counted; the transient entry is gone.
+    CHECK(controller.table().find(*id)->hits == 1);
+    CHECK_FALSE(controller.breakpoints().front().hidden);
+}
+
+TEST_CASE("controller drops a pending step-out when the session ends", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+
+    // Stop Debugging while the step-out is pending.
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+    backend.block_continue = true;
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running
+                               && controller.breakpoints().size() == 1;
+                       }));
+
+    backend.block_continue = false;
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle && backend.count("detach") >= 1;
+                       }));
+    CHECK(controller.table().empty());
+
+    // Target exit while the step-out is pending.
+    backend.clear_calls();
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+    backend.block_continue = true;
+    controller.step_out();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running
+                               && controller.breakpoints().size() == 1;
+                       }));
+
+    backend.queue_stop(StopEvent {StopReason::exited, 4242, 0, 0, std::nullopt, 0});
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+    CHECK(controller.table().empty());
+}

@@ -78,6 +78,10 @@ namespace slopkit::debug
         void interrupt();
         void step_into();
         void step_over();
+        // Runs the target out of the current function with one transient hidden
+        // software breakpoint at the caller's return address. A call stack
+        // without a caller frame reports a warning and changes nothing.
+        void step_out();
 
         std::expected<std::uint64_t, std::string> add_breakpoint(std::string expression, Kind kind, std::size_t size);
         void                                      remove_breakpoint(std::uint64_t id);
@@ -135,6 +139,12 @@ namespace slopkit::debug
         void end_session(QString reason);
         void apply_detach(JobResult&& result, QString reason);
         void apply_stop(StopEvent stop);
+        void begin_step_out_run();
+        void submit_step_out_arm(std::uint64_t id);
+        void disarm_step_out(const Breakpoint& entry);
+        void apply_step_out_arm(JobResult&& result);
+        void finish_step_out();
+        void drop_step_out();
         void apply_registers(JobResult&& result);
         void apply_backtrace(JobResult&& result);
         void arm(std::uint64_t id);
@@ -148,30 +158,34 @@ namespace slopkit::debug
         [[nodiscard]] std::uint32_t active_tid() const noexcept;
         [[nodiscard]] QString       failure_text(process::AccessError error) const;
 
-        DebugBackend&              backend_;
-        Worker                     worker_;
-        BreakpointTable            breakpoints_;
-        ui::ModuleSpans            modules_;
-        ui::AddressMode            address_mode_ {ui::AddressMode::module_relative};
-        State                      state_ {State::idle};
-        StopEvent                  last_stop_;
-        std::vector<RegisterValue> registers_;
-        std::vector<Frame>         backtrace_;
-        process::ProcessId         pid_ {};
-        std::string                plugin_id_;
-        std::uint32_t              leader_ {};
-        bool                       stop_requested_ {false};
+        DebugBackend&                backend_;
+        Worker                       worker_;
+        BreakpointTable              breakpoints_;
+        ui::ModuleSpans              modules_;
+        ui::AddressMode              address_mode_ {ui::AddressMode::module_relative};
+        State                        state_ {State::idle};
+        StopEvent                    last_stop_;
+        std::vector<RegisterValue>   registers_;
+        std::vector<Frame>           backtrace_;
+        process::ProcessId           pid_ {};
+        std::string                  plugin_id_;
+        std::uint32_t                leader_ {};
+        bool                         stop_requested_ {false};
         // A maintenance stop is one the controller asked for purely to install or
         // remove a debug register; it is never reported to the UI.
-        bool                       maintenance_stop_ {false};
-        std::vector<PendingSlotOp> pending_slot_ops_;
-        std::vector<std::uint64_t> pending_removals_;
-        AccessWatch                watch_;
-        bool                       watch_dirty_ {false};
+        bool                         maintenance_stop_ {false};
+        std::vector<PendingSlotOp>   pending_slot_ops_;
+        std::vector<std::uint64_t>   pending_removals_;
+        AccessWatch                  watch_;
+        bool                         watch_dirty_ {false};
         // A one-shot invisible register read: `capture_` runs once the stop it
         // asked for has been consumed, and `capture_pending_` marks that stop.
-        std::function<void()>      capture_;
-        bool                       capture_pending_ {false};
+        std::function<void()>        capture_;
+        bool                         capture_pending_ {false};
+        // The transient hidden software breakpoint a step-out armed, while its
+        // stop is still pending; cleared as soon as that stop is consumed or any
+        // other stop cancels the step-out.
+        std::optional<std::uint64_t> step_out_id_ {};
     };
 
 } // namespace slopkit::debug
