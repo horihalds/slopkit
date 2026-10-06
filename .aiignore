@@ -1,0 +1,57 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+out/
+bin/
+lib/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+Testing/
+_deps/
+
+# Compiled artifacts
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.pch
+*.gch
+*.d
+
+# Dependencies and third-party code
+third_party/
+external/
+vendor/
+.conan/
+vcpkg_installed/
+
+# IDE, VCS, caches
+.git/
+.idea/
+.vscode/
+.cache/
+.clangd/
+*.log
+*.tmp
+
+# Coverage and profiling output
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+coverage/
+perf.data*
+
+# Large data or binary assets (adjust to your project)
+*.bin
+*.dat
+*.zip
+*.tar*
+*.png
+*.jpg
+*.pdf

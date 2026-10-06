@@ -66,8 +66,6 @@ configure time and the docdir carries the `README.md`, `docs/` files and font li
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — host/plugin split, the `ProcessAccess` seam, plugin discovery and writing a plugin.
-- [`docs/ANTI_DETECTION.md`](docs/ANTI_DETECTION.md) — why the default ptrace-free access path is hard to detect.
 - [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — UI and design rules for the project.
 - [`docs/LOGGING.md`](docs/LOGGING.md) — logging conventions.
-- [`docs/INDEX.md`](docs/INDEX.md) — a terse map of the project files.
 - [`src/plugin/plugin_api.h`](src/plugin/plugin_api.h) — the C plugin ABI.

@@ -94,17 +94,6 @@ them for every task in this repository.
 - Put tests under `./tests`, mirroring the `./src` module tree; CMake picks
   them up automatically.
 
-## Project index
-
-- `docs/INDEX.md` maps the repository: one line per file, the path alone when the
-  filename explains the file, otherwise the path plus a few words. Prefer it for
-  file discovery over shell searches such as `find` (or tree-wide `ls`/`grep`);
-  fall back to `find` only when a file is not indexed yet or the index looks stale.
-- Update `docs/INDEX.md` in the same change whenever a task adds, removes, renames
-  or repurposes a file, so every file stays indexed exactly once.
-- Keep it brief: no description for a self-explanatory filename, and only a very
-  short note (a few words) when one is needed — never list a file's members.
-
 ## Address tables and `.skt` files
 
 - An address table is an `.skt` file registered as `application/x-slopkit-table`
