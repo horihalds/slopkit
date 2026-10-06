@@ -45,3 +45,50 @@ TEST_CASE("values format back to text", "[scan]")
     CHECK(slopkit::scan::format_value(ValueType::int32, negative, false) == "-1");
     CHECK(slopkit::scan::format_value(ValueType::int32, negative, true) == "FFFFFFFF");
 }
+
+TEST_CASE("editable values convert between bases", "[scan]")
+{
+    SECTION("an integer reads decimal and renders bare hex, and back")
+    {
+        CHECK(slopkit::scan::convert_value_base(ValueType::int32, "10", false, true) == "A");
+        CHECK(slopkit::scan::convert_value_base(ValueType::int32, "A", true, false) == "10");
+    }
+
+    SECTION("a byte masks to its own width")
+    {
+        CHECK(slopkit::scan::convert_value_base(ValueType::byte, "127", false, true) == "7F");
+        CHECK(slopkit::scan::convert_value_base(ValueType::byte, "7F", true, false) == "127");
+        CHECK(slopkit::scan::convert_value_base(ValueType::byte, "-1", false, true) == "FF");
+        CHECK(slopkit::scan::convert_value_base(ValueType::byte, "FF", true, false) == "-1");
+    }
+
+    SECTION("a negative int64 round-trips through its full width")
+    {
+        const auto hex = slopkit::scan::convert_value_base(ValueType::int64, "-1", false, true);
+        REQUIRE(hex.has_value());
+        CHECK(*hex == "FFFFFFFFFFFFFFFF");
+        CHECK(slopkit::scan::convert_value_base(ValueType::int64, *hex, true, false) == "-1");
+    }
+
+    SECTION("a byte array converts token by token")
+    {
+        CHECK(slopkit::scan::convert_value_base(ValueType::byte_array, "10 20", false, true) == "A 14");
+        CHECK(slopkit::scan::convert_value_base(ValueType::byte_array, "A 14", true, false) == "10 20");
+    }
+
+    SECTION("an explicit prefix wins over the current base")
+    {
+        CHECK(slopkit::scan::convert_value_base(ValueType::int32, "0x10", false, true) == "10");
+        CHECK(slopkit::scan::convert_value_base(ValueType::int32, "#16", true, false) == "16");
+    }
+
+    SECTION("text with no counterpart is left alone")
+    {
+        CHECK_FALSE(slopkit::scan::convert_value_base(ValueType::int32, "", false, true).has_value());
+        CHECK_FALSE(slopkit::scan::convert_value_base(ValueType::int32, "12Z", false, true).has_value());
+        CHECK_FALSE(slopkit::scan::convert_value_base(ValueType::byte, "300", false, true).has_value());
+        CHECK_FALSE(slopkit::scan::convert_value_base(ValueType::float32, "1.5", false, true).has_value());
+        CHECK_FALSE(slopkit::scan::convert_value_base(ValueType::float64, "1.5", false, true).has_value());
+        CHECK_FALSE(slopkit::scan::convert_value_base(ValueType::string, "hello", false, true).has_value());
+    }
+}

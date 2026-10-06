@@ -1313,3 +1313,61 @@ TEST_CASE("the pause checkbox is gated on attach, capability and the debugger", 
         CHECK(pause->isEnabled());
     }
 }
+
+TEST_CASE("toggling the scanner Hex box converts the typed values", "[ui]")
+{
+    application();
+
+    FakeAccess                   access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* value = address_field(panel, "Value");
+    auto* hex   = checkbox_labelled(panel, QStringLiteral("Hex"));
+    REQUIRE(value != nullptr);
+    REQUIRE(hex != nullptr);
+
+    // "10" typed as decimal becomes bare hex "A" and reads back as "10".
+    value->setText(QStringLiteral("10"));
+    hex->setChecked(true);
+    CHECK(value->text() == QStringLiteral("A"));
+    hex->setChecked(false);
+    CHECK(value->text() == QStringLiteral("10"));
+
+    SECTION("both bounds convert for Value between")
+    {
+        auto* upper = address_field(panel, "Upper value");
+        REQUIRE(upper != nullptr);
+
+        for (auto* combo : panel.findChildren<QComboBox*>())
+        {
+            if (combo->currentText() == QStringLiteral("Exact Value"))
+            {
+                combo->setCurrentText(QStringLiteral("Value between"));
+            }
+        }
+
+        value->setText(QStringLiteral("10"));
+        upper->setText(QStringLiteral("20"));
+        hex->setChecked(true);
+        CHECK(value->text() == QStringLiteral("A"));
+        CHECK(upper->text() == QStringLiteral("14"));
+    }
+
+    SECTION("unconvertible text is left exactly as typed")
+    {
+        value->setText(QStringLiteral("12Z"));
+        hex->setChecked(true);
+        CHECK(value->text() == QStringLiteral("12Z"));
+    }
+}

@@ -1,6 +1,7 @@
 #include "ui/panels/scanner_panel.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <utility>
 
@@ -312,6 +313,7 @@ namespace slopkit::ui::panels
         connect(table_settings_button_, &QPushButton::clicked, this, &ScannerPanel::tableSettingsRequested);
 
         connect(value_edit_, &QLineEdit::returnPressed, this, &ScannerPanel::activate_scan_from_input);
+        connect(hex_check_, &QCheckBox::toggled, this, &ScannerPanel::convert_value_base_fields);
 
         connect(scan_type_combo_,
                 &QComboBox::currentIndexChanged,
@@ -346,6 +348,26 @@ namespace slopkit::ui::panels
         value_upper_edit_->setEnabled(wants_value);
         value_upper_edit_->setVisible(type == scan::ScanType::value_between);
         alignment_edit_->setEnabled(fast_scan_check_->isChecked());
+    }
+
+    void ScannerPanel::convert_value_base_fields(bool to_hex)
+    {
+        const bool                      from_hex = !to_hex;
+        const scan::ValueType           type     = current_value_type();
+        const std::array<QLineEdit*, 2> edits {value_edit_, value_upper_edit_};
+        for (QLineEdit* edit : edits)
+        {
+            const QString text = edit->text();
+            if (text.trimmed().isEmpty())
+            {
+                continue;
+            }
+            const auto converted = scan::convert_value_base(type, text.toStdString(), from_hex, to_hex);
+            if (converted.has_value())
+            {
+                edit->setText(to_qstring(*converted));
+            }
+        }
     }
 
     scan::ScanType ScannerPanel::current_scan_type() const noexcept

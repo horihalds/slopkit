@@ -275,6 +275,19 @@ namespace slopkit::scan
             }
             return std::format("{:0{}X}", magnitude, format_width(type));
         }
+
+        // Renders a signed value as bare uppercase hex masked to the width of
+        // its type, with no zero padding.
+        std::string format_hex_minimal(std::int64_t value, ValueType type)
+        {
+            std::uint64_t     magnitude = static_cast<std::uint64_t>(value);
+            const std::size_t bits      = integer_bits(type);
+            if (bits < 64)
+            {
+                magnitude &= (std::uint64_t {1} << bits) - 1;
+            }
+            return std::format("{:X}", magnitude);
+        }
     } // namespace
 
     std::expected<ScanValue, ValueError> parse_value(ValueType type, std::string_view text, bool hex)
@@ -420,6 +433,45 @@ namespace slopkit::scan
         }
         }
         return {};
+    }
+
+    std::optional<std::string> convert_value_base(ValueType type, std::string_view text, bool from_hex, bool to_hex)
+    {
+        const std::string_view trimmed = trim(text);
+        if (trimmed.empty())
+        {
+            return std::nullopt;
+        }
+
+        auto parsed = parse_value(type, trimmed, from_hex);
+        if (!parsed)
+        {
+            return std::nullopt;
+        }
+
+        if (std::holds_alternative<std::int64_t>(*parsed))
+        {
+            const std::int64_t value = std::get<std::int64_t>(*parsed);
+            return to_hex ? format_hex_minimal(value, type) : std::format("{}", value);
+        }
+
+        if (std::holds_alternative<std::vector<std::byte>>(*parsed))
+        {
+            const auto& bytes = std::get<std::vector<std::byte>>(*parsed);
+            std::string result;
+            for (std::size_t i = 0; i < bytes.size(); ++i)
+            {
+                if (i != 0)
+                {
+                    result += ' ';
+                }
+                const auto byte = static_cast<unsigned>(bytes[i]);
+                result += to_hex ? std::format("{:X}", byte) : std::format("{}", byte);
+            }
+            return result;
+        }
+
+        return std::nullopt;
     }
 
     std::vector<std::byte> encode_value(ValueType type, const ScanValue& value)

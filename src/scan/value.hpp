@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -38,6 +39,15 @@ namespace slopkit::scan
     // Renders `bytes` as the given type; the hex form uses bare uppercase
     // digits with no `0x` prefix.
     [[nodiscard]] std::string format_value(ValueType type, std::span<const std::byte> bytes, bool hex);
+
+    // Re-reads editable value text and re-renders it in the other base: parses
+    // `text` for `type` reading a bare token as `from_hex`, then formats the
+    // value as `to_hex`. Hex is bare uppercase digits with no padding; decimal
+    // is plain digits. Returns nothing when the text is empty, is not parseable
+    // in `from_hex`, or has no `to_hex` form (hex for a real, or any base switch
+    // for a string), so the caller leaves the field as typed.
+    [[nodiscard]] std::optional<std::string>
+    convert_value_base(ValueType type, std::string_view text, bool from_hex, bool to_hex);
 
     // Encodes a parsed value as its little-endian byte representation, using the
     // width of `type`; fixed-width types are truncated or zero-extended to fit.

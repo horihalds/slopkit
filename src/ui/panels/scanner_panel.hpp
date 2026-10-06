@@ -108,6 +108,10 @@ namespace slopkit::ui::panels
         void activate_scan_from_input();
         void update_value_inputs();
 
+        // Re-reads and rewrites the value boxes in the other base when the Hex
+        // checkbox is toggled, leaving any box it cannot convert as typed.
+        void convert_value_base_fields(bool to_hex);
+
         [[nodiscard]] scan::ScanType                               current_scan_type() const noexcept;
         [[nodiscard]] scan::ValueType                              current_value_type() const noexcept;
         [[nodiscard]] std::expected<scan::ScanConfig, std::string> build_config() const;
