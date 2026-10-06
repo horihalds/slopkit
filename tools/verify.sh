@@ -7,6 +7,9 @@ set -euo pipefail
 # readable. A failing stage never aborts the run — the remaining stages still
 # execute — and the exit status is non-zero if any stage failed.
 #
+# Run from any directory:
+#   tools/verify.sh [ctest args...]
+#
 # Extra arguments are forwarded to ctest through test.sh, so a targeted run
 # reuses the same entry point:
 #
@@ -14,7 +17,8 @@ set -euo pipefail
 
 # tools/ sits one level below the repository root; resolving it here keeps the
 # script working from any working directory.
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd "$script_dir/.." && pwd)"
 build_dir="$root_dir/build"
 
 # build/ is gitignored. Create the log directory up front: configure.sh/build.sh
@@ -84,7 +88,7 @@ fi
 # Goes through build.sh so an unconfigured tree configures itself first and the
 # build command is defined in exactly one place. The full transcript stays in
 # the log; only diagnostics reach the terminal.
-if run_logged "$build_log" "$root_dir/build.sh"; then
+if run_logged "$build_log" "$script_dir/build.sh"; then
     build_command_failed=0
 else
     build_command_failed=1
@@ -116,7 +120,7 @@ fi
 # only ever reflects this run.
 rm -f "$failed_log"
 test_command_ok=0
-if run_logged "$tests_log" "$root_dir/test.sh" "$@"; then
+if run_logged "$tests_log" "$script_dir/test.sh" "$@"; then
     test_command_ok=1
 fi
 

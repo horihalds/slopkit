@@ -352,7 +352,7 @@ catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offsc
 
 # --- install ---------------------------------------------------------------
 
-# The desktop entry bakes the absolute installed binary path; `install.sh`
+# The desktop entry bakes the absolute installed binary path; `tools/install.sh`
 # therefore passes the prefix at configure time.
 configure_file(${CMAKE_SOURCE_DIR}/assets/slopkit.desktop.in
     ${CMAKE_BINARY_DIR}/slopkit.desktop @ONLY)
@@ -371,7 +371,7 @@ install(TARGETS slopkit-linux_proc slopkit-wine_proton
 install(FILES ${CMAKE_BINARY_DIR}/slopkit.desktop
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
-# The `.skt` MIME type is registered through shared-mime-info; `install.sh`
+# The `.skt` MIME type is registered through shared-mime-info; `tools/install.sh`
 # refreshes the database afterwards.
 install(FILES ${CMAKE_SOURCE_DIR}/assets/application-x-slopkit-table.xml
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/mime/packages)

@@ -5,18 +5,25 @@ set -euo pipefail
 # hicolor icons. ImageMagick must be installed: the icon is generated from
 # assets/icons/icon.svg at configure time.
 #
-# The install prefix defaults to ~/.local and can be overridden:
-#   PREFIX=/usr/local ./install.sh
-# It is applied at configure time because the desktop entry bakes the absolute
-# path of the installed binary.
+# Run from any directory:
+#   PREFIX=/usr/local tools/install.sh
+#
+# The install prefix defaults to ~/.local and is applied at configure time
+# because the desktop entry bakes the absolute path of the installed binary.
+# The build step is delegated to tools/build.sh, so the build command has a
+# single definition; the configure above always fills the cache first.
 
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# tools/ sits one level below the repository root; resolving it here keeps the
+# script working from any working directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd "$script_dir/.." && pwd)"
 build_dir="$root_dir/build"
 prefix="${PREFIX:-$HOME/.local}"
 
 echo "Configuring CMake/Ninja build in: $build_dir (install prefix: $prefix)"
 cmake -G Ninja -B "$build_dir" -DCMAKE_INSTALL_PREFIX="$prefix" "$root_dir"
-cmake --build "$build_dir"
+"$script_dir/build.sh"
+echo "Installing into: $prefix"
 cmake --install "$build_dir"
 
 # Finish the `.skt` registration: refresh the per-user MIME and desktop
@@ -38,9 +45,9 @@ case "$prefix" in
         fi
         ;;
     *)
-        echo "To register .skt files with this system-wide prefix, run:"
-        echo "  update-mime-database $prefix/share/mime"
-        echo "  update-desktop-database $prefix/share/applications"
+        echo "To register .skt files with this system-wide prefix, run:" >&2
+        echo "  update-mime-database $prefix/share/mime" >&2
+        echo "  update-desktop-database $prefix/share/applications" >&2
         ;;
 esac
 

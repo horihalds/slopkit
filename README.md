@@ -34,8 +34,8 @@ Catch2, Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick
 (build-time only, for the icon set).
 
 ```sh
-./configure.sh
-./build.sh
+./tools/configure.sh
+./tools/build.sh
 ```
 
 Targets compile for the host CPU's full instruction set by default
@@ -66,9 +66,9 @@ Run:
 
 These flags work headlessly, with no display or GPU required.
 
-`./install.sh` configures, builds and installs slopkit with its desktop entry and
+`./tools/install.sh` configures, builds and installs slopkit with its desktop entry and
 hicolor icons into `~/.local` by default, with no root needed; override the
-prefix with `PREFIX` (`PREFIX=/usr/local ./install.sh`). The prefix is applied at
+prefix with `PREFIX` (`PREFIX=/usr/local ./tools/install.sh`). The prefix is applied at
 configure time and the docdir carries the `README.md`, `docs/` files and font licence.
 
 ## Documentation

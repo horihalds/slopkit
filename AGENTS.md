@@ -14,6 +14,12 @@ them for every task in this repository.
   move files or components, or change a component's responsibility (see
   "Maintaining this map" inside it).
 
+## General Guidelines
+- Rely on docs/ARCHITECTURE_MAP.md Do not rediscover files unnecessarily.
+- Limit exploration to ~25 tool calls, then ask at most 3 questions or propose a plan.
+- Do not re-read a file or re-run `git log`/`git status` you already have in context.
+- Pipe wide searches and scripts through `| head -40`.
+  
 ## Project & toolchain
 
 - This project is a C++23 project.
@@ -46,29 +52,27 @@ them for every task in this repository.
   (`-march=native -mtune=native`); pass `-DSLOPKIT_NATIVE=OFF` to CMake for a
   portable build targeting the compiler's default baseline.
 
-- Four convenience scripts at the repository root work from any directory:
-  `./configure.sh` runs the configure step, `./build.sh` builds (configuring
-  first when `build/` does not exist yet), `./install.sh` configures, builds and
-  installs into `PREFIX` (default `~/.local`), including the desktop entry and
-  hicolor icons, and `./test.sh` builds and runs the test suite with KDE's crash
-  notifications parked (see "Run the tests" below).
-
-- `tools/verify.sh` also works from any directory and is the one-shot
-  definition-of-done check: format check, warning-only build and the summarized
-  test run, with the full logs in `build/verify-*.log` and the extra arguments
-  forwarded to ctest.
+- Five convenience scripts under `tools/` work from any directory:
+  `./tools/configure.sh` runs the configure step, `./tools/build.sh` builds
+  (configuring first when `build/` does not exist yet), `./tools/install.sh`
+  configures, builds and installs into `PREFIX` (default `~/.local`), including
+  the desktop entry and hicolor icons, `./tools/test.sh` builds and runs the test
+  suite with KDE's crash notifications parked (see "Run the tests" below), and
+  `./tools/verify.sh` is the one-shot definition-of-done check: format check,
+  warning-only build and the summarized test run, with the full logs in
+  `build/verify-*.log` and the extra arguments forwarded to ctest.
 
 - When a completed plan changes anything that ships in the installed build —
   `src/**`, `CMakeLists.txt`, `cmake/**`, `assets/**` or `data/**` — run
-  `./install.sh` so the owner can try the installed build. Plans that only touch
+  `./tools/install.sh` so the owner can try the installed build. Plans that only touch
   `tests/**`, `README.md`, `AGENTS.md`, `docs/**`, formatting or comments skip it.
-  If `./install.sh` fails, report the failing command and its output and still
+  If `./tools/install.sh` fails, report the failing command and its output and still
   finish the plan.
   
 - Run the tests (Catch2 suites, wired into CTest):
 
   ```sh
-  ./test.sh
+  ./tools/test.sh
   ctest --test-dir build --output-on-failure
   ```
 
@@ -77,7 +81,7 @@ them for every task in this repository.
   `drkonqi-coredump-launcher` on its user socket and that shows the popup. The
   launcher has no per-process opt-out (`KDE_DEBUG` only skips the DrKonqi dialog,
   `KDE_COREDUMP_NOTIFY=1` only switches to the developer notification, and
-  `ulimit -c 0` does not stop the dump), so run the suite through `./test.sh`,
+  `ulimit -c 0` does not stop the dump), so run the suite through `./tools/test.sh`,
   which parks that socket for the run and restores it afterwards; the crashes
   still land in the journal and in `coredumpctl`. Set `SLOPKIT_TEST_NOTIFY=1` to
   keep the notifications while debugging a crash. A bare `ctest` parks nothing.
@@ -93,7 +97,7 @@ them for every task in this repository.
   (ctest sets QT_QPA_PLATFORM=offscreen and the 60 s timeout for you).
 - Direct binary: ALWAYS `QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "name1,name2,*glob*"`.
   Multiple names are comma-separated, never space-separated.
-- Never run broad tags like `[ui]` directly: it exceeds the tool timeout. Use `./test.sh`.
+- Never run broad tags like `[ui]` directly: it exceeds the tool timeout. Use `./tools/test.sh`.
 - Build warnings/errors only: `tools/verify.sh` runs the build and prints just
   the `warning:`/`error:`/`FAILED` lines (or by hand:
   `cmake --build build --target slopkit_tests 2>&1 | grep -E "error:|FAILED|warning:"`).
@@ -140,7 +144,7 @@ them for every task in this repository.
   (`assets/application-x-slopkit-table.xml`), so a double-click opens slopkit and
   the file carries the slopkit icon. Keep the MIME `slopkit-table` magic token in
   sync with the first line `src/table/serializer.cpp` writes.
-- `install.sh` finishes the registration (MIME/desktop database refresh and the
+- `tools/install.sh` finishes the registration (MIME/desktop database refresh and the
   per-user default handler) for a `$HOME` prefix; a system prefix only prints the
   commands.
 - A second launch hands its `<table.skt>` path to the running instance over the

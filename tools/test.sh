@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Builds and runs the CTest suite, parking KDE's crash notifications for the run.
+#
+# Run from any directory:
+#   tools/test.sh [ctest args...]
+
+# tools/ sits one level below the repository root; resolving it here keeps the
+# script working from any working directory.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root_dir="$(cd "$script_dir/.." && pwd)"
 build_dir="$root_dir/build"
 launcher_socket="drkonqi-coredump-launcher.socket"
 
-"$root_dir/build.sh"
+"$script_dir/build.sh"
 
 # A failing case may crash the test binary, and KDE's crash reporter turns every
 # crash of a process the user owns into a desktop notification: systemd-coredump
@@ -25,7 +33,7 @@ restore_launcher()
         if systemctl --user start "$launcher_socket" 2>/dev/null; then
             echo "Crash notifications restored."
         else
-            echo "Start $launcher_socket to get crash notifications back."
+            echo "Start $launcher_socket to get crash notifications back." >&2
         fi
     fi
 }

@@ -10,7 +10,7 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 
 | Directory | Responsibility |
 | --- | --- |
-| `(repo root)` | Build entry points: `CMakeLists.txt`, `configure.sh`, `build.sh`, `install.sh`, `test.sh` |
+| `(repo root)` | Top-level build entry point: `CMakeLists.txt` |
 | `src/app` | Process entry, CLI/headless modes, single-instance handoff, sandbox launch |
 | `src/core` | Shared logging (`log.hpp`, `log_categories.hpp`) and version string |
 | `src/debug` | Debugger core: session controller (split over `controller*.cpp`), worker, backends, breakpoints, step-over, access watch |
@@ -50,7 +50,7 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 | `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs) and `EmbedFont.cmake` (embeds fonts) |
 | `docs/` | Prose: `ARCHITECTURE.md`, this map, `UI_DESIGN.md`, `LOGGING.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
-| `tools` | Repo dev tooling (currently `verify.sh`, the one-shot format check + warning-only build + summarized test run) |
+| `tools` | Repo dev tooling: `configure.sh` (configure), `build.sh` (build, configuring first), `install.sh` (configure, build, install into `PREFIX`), `test.sh` (build + test with KDE crash notifications parked), `verify.sh` (one-shot format check + warning-only build + summarized test run) |
 
 ## 2. Module / component table
 
