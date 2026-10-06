@@ -303,6 +303,16 @@ if(CLANG_FORMAT_EXECUTABLE)
     set_tests_properties(clang-format-check PROPERTIES TIMEOUT 60)
 endif()
 
+# --- documentation ---------------------------------------------------------
+
+# `tools/docs-check.sh` verifies that relative doc links and anchor citations
+# resolve and that the markdown stays clean; see the script for the exact rules.
+# It needs neither clang-format nor a compiler, only bash and git.
+add_test(NAME docs-links-check
+    COMMAND ${CMAKE_SOURCE_DIR}/tools/docs-check.sh
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(docs-links-check PROPERTIES TIMEOUT 60)
+
 # Application modules (everything but the entry point) are compiled into the
 # test binary so tests can exercise them.
 set(SLOPKIT_TEST_SUPPORT_SOURCES ${SLOPKIT_SOURCES})

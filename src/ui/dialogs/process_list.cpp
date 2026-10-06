@@ -40,7 +40,8 @@ namespace slopkit::ui::dialogs
     {
         setWindowTitle(tr("Process List"));
 
-        // Deliberate deviation from docs/UI_DESIGN.md §8: the picker is
+        // Deliberate deviation from
+        // docs/UI_DESIGN.md#windows-dialogs-and-layout: the picker is
         // application-modal so the main window cannot be touched while a target
         // is half-chosen, and it is a fixed-size chooser: it cannot be resized,
         // minimized or maximized. The other dialogs stay non-modal. On Wayland

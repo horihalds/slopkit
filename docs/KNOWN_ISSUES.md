@@ -7,19 +7,11 @@ failure only when it is listed here **and** the test passes alone under
 
 ## How to use this file
 
-When a test fails during a full run:
-
-1. Rerun just that test under the same 60 s CTest timeout, using its exact name:
-
-   ```sh
-   ctest --test-dir build -R "<test name>" --output-on-failure
-   ```
-
-   (`tools/verify.sh -R "<test name>"` does the same after building.)
-2. If it passes alone and appears below, the full-run failure is the known flake —
-   note it and move on; there is nothing to debug.
-3. If it fails alone, or is not listed below, it is a regression: debug it. Do
-   not add it here just to make a run green.
+When a test fails during a full run, rerun it alone with its exact name and
+follow the procedure in [`docs/TESTING.md`](docs/TESTING.md). If it passes alone
+and is listed below, the failure is the known flake — note it and move on; there
+is nothing to debug. If it fails alone, or is not listed here, it is a
+regression: debug it, do not add it just to make a run green.
 
 ## Known flaky tests
 

@@ -38,21 +38,15 @@ Catch2, Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick
 ./tools/build.sh
 ```
 
-Targets compile for the host CPU's full instruction set by default
-(`-march=native -mtune=native`); for a portable build, configure with
-`-DSLOPKIT_NATIVE=OFF`.
-
-```sh
-ctest --test-dir build --output-on-failure
-```
-
 The whole definition of done — the format check, a warning-only build and the
-summarized test run — is one command, which also forwards extra arguments to
-ctest:
+summarized test run — is one command:
 
 ```sh
 ./tools/verify.sh
 ```
+
+Every command and recipe — a targeted test run, diagnostics, formatting, the
+known flakes — lives in [`docs/TESTING.md`](docs/TESTING.md).
 
 Run:
 
@@ -73,7 +67,8 @@ configure time and the docdir carries the `README.md`, `docs/` files and font li
 
 ## Documentation
 
-- [`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md) — fast lookup of where components live, the build/test commands and the conventions.
+- [`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md) — fast lookup of where components live and the project conventions.
+- [`docs/TESTING.md`](docs/TESTING.md) — configure, build, install, test and diagnose commands and recipes.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — host/plugin split, the `ProcessAccess` seam, plugin discovery and writing a plugin.
 - [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — UI and design rules for the project.
 - [`docs/LOGGING.md`](docs/LOGGING.md) — logging conventions.

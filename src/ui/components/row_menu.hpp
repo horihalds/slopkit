@@ -18,7 +18,8 @@ namespace slopkit::ui::widgets
     };
 
     // Qt shows an action's tooltip only when the menu asks for it, and every row
-    // menu here explains a disabled entry through it (docs/UI_DESIGN.md).
+    // menu here explains a disabled entry through it
+    // (docs/UI_DESIGN.md#custom-components).
     void show_explanations(QMenu& menu);
 
     // Enabled entry whose tooltip describes what it does.

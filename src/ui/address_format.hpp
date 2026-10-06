@@ -66,7 +66,7 @@ namespace slopkit::ui
     [[nodiscard]] QString format_absolute(std::uint64_t address);
 
     // "0x…": upper-case hex zero-padded to `digits`, for the fixed-width panes
-    // where addresses must line up (docs/UI_DESIGN.md section 5).
+    // where addresses must line up (docs/UI_DESIGN.md#fonts).
     [[nodiscard]] QString format_padded_hex(std::uint64_t value, int digits = 16);
 
     // A fixed-width pane row's address: module-relative where the mode and spans

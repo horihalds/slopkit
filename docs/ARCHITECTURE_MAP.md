@@ -1,10 +1,10 @@
 # Architecture Map
 
-Fast-lookup map of the repo: where components live and
-the rules a newcomer would otherwise get wrong. Read this before a task and only
-search the codebase broadly when it does not answer where something is. Deeper
-prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.md`,
-`docs/LOGGING.md` and the accepted flakes in `docs/KNOWN_ISSUES.md`.
+Fast-lookup map of the repo: where components live and the conventions a
+newcomer would otherwise get wrong. `AGENTS.md` routes each kind of task to the
+document that owns it; read this map second, and only search the codebase broadly
+when it does not answer where something is. `AGENTS.md` also routes to the sibling
+docs that hold the detail behind this map.
 
 ## 1. Directory map
 
@@ -48,9 +48,9 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 | `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `fonts/*.ttf` with `OFL.txt` |
 | `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs) and `EmbedFont.cmake` (embeds fonts) |
-| `docs/` | Prose: `ARCHITECTURE.md`, this map, `UI_DESIGN.md`, `LOGGING.md`, `KNOWN_ISSUES.md` |
+| `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
-| `tools` | Repo dev tooling: `configure.sh` (configure), `build.sh` (build, configuring first), `install.sh` (configure, build, install into `PREFIX`), `test.sh` (build + test with KDE crash notifications parked), `verify.sh` (one-shot format check + warning-only build + summarized test run) |
+| `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |
 
 ## 2. Module / component table
 
@@ -88,19 +88,33 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 
 ## 4. Conventions
 
-- C++23, namespaces `slopkit::<module>` mirroring `src/<module>`; `#pragma once`.
-- Each `.hpp` sits next to its same-named `.cpp`; CMake globs sources with
-  `CONFIGURE_DEPENDS`, so new files are picked up on the next configure.
+- C++23 (`-std=c++23`), namespaces `slopkit::<module>` mirroring `src/<module>`;
+  `#pragma once`, `[[nodiscard]]` on accessors, `Q_OBJECT` classes in headers
+  (AUTOMOC).
+- Reach for the standard library first: `std::expected`, `std::optional`,
+  `std::variant`, `std::span`, `std::string_view`, `std::format` / `std::print`,
+  `std::ranges` and views, `std::flat_map`, `std::mdspan`. Use the language
+  features that simplify code (concepts, `constexpr`/`consteval`, structured
+  bindings, designated initializers, `if consteval`, deducing `this`,
+  `std::unreachable`); if a C++23 feature is unavailable in the project's
+  compiler or standard library, fall back to the closest C++20/17 equivalent and
+  mention it.
+- Value semantics and RAII: `std::unique_ptr`/`std::make_unique` over raw
+  `new`/`delete`; no C-style casts, raw arrays, `NULL` or C string/IO functions
+  when a standard C++ alternative exists. Owner classes delete copy, and often
+  move.
 - Errors return `std::expected`/`std::optional` (e.g. `expr::parse`,
   `app::launch_sandbox`); worker results use `std::variant`.
-- Ownership is value semantics plus `std::unique_ptr`/`std::make_unique`; owner
-  classes delete copy (and often move); no raw `new`/`delete`, no C-style casts.
-- UI rule (see `AGENTS.md` and `docs/UI_DESIGN.md`): never touch a target on the
-  UI thread. Access goes through `AccessWorker`; debug through the debug worker.
-- `Q_OBJECT` classes live in headers (AUTOMOC); `[[nodiscard]]` on accessors.
+- Source layout: all sources under `src/`, each `.hpp` next to its same-named
+  `.cpp`, sub-folders group modules; tests under `tests/` mirror the `src` module
+  tree and CMake picks them up automatically. CMake globs sources with
+  `CONFIGURE_DEPENDS`, so new files are picked up on the next configure.
+- UI rule (owned by `docs/UI_DESIGN.md` and mandated by `AGENTS.md`): never touch
+  a target on the UI thread. Access goes through `AccessWorker`; debug through the
+  debug worker.
 - Formatting follows `.clang-format` and is enforced by `clang-format-check`.
-- System dependencies only: Zydis (pkg-config), Qt 6 Widgets, ImageMagick
-  (build-time), Catch2; never add a dependency without asking the owner.
+- Never add a dependency without asking the owner; the system dependency list is
+  owned by `README.md`.
 
 ## 5. Gotchas
 
@@ -111,7 +125,12 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
   first line `src/table/serializer.cpp` writes; `SLOPKIT_PLUGIN_RELATIVE_DIR` in
   `CMakeLists.txt`; `SLOPKIT_ACTION_ICON_NAMES` with `widgets::ActionIcon`; the
   plugin ABI version in `src/plugin/plugin_api.h` with the host handshake.
-- `reference/` is read-only — never modify anything under it.
+- `.skt` address tables are registered as `application/x-slopkit-table`, so a
+  double-click opens slopkit with the slopkit icon; `tools/install.sh` finishes
+  the MIME/desktop registration and the per-user default handler for a `$HOME`
+  prefix (a system prefix only prints the commands). A second launch hands its
+  `<table.skt>` path to the running instance over the per-user abstract socket in
+  `src/app/instance*`, which then runs the same open flow as File > Open Table.
 - `slopkit_tests` compiles every app source except the `main.cpp` entry points
   (`src/main.cpp`, `src/sandbox/main.cpp`), plus the sandbox sources minus
   `src/sandbox/main.cpp`; the fixture plugins are separate libraries, so a change
@@ -119,13 +138,14 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 - Widget tests run headless via `QT_QPA_PLATFORM=offscreen`; set it when running
   `slopkit_tests` directly. CTest enforces a 60s timeout per test.
 - Configure fails without ImageMagick, Zydis dev packages and `pkg-config`.
-- `tmp/` is the project scratch dir; empty it when a plan completes.
 
 ## 6. Maintaining this map
+
 - When you add, remove, rename, or move a file or component, or change a
   component's responsibility, update this map in the same task.
 - Update only the affected entries. Use `git diff --stat` or the files you
   just touched to decide what changed; do not re-explore the whole project.
 - Re-derive the rows you touch from `git ls-files <dir>` rather than memory, so
   the listing stays checkable.
-- Keep prose to a minimum
+- Keep prose to a minimum. Relative links and anchor citations are guarded by
+  the `docs-links-check` CTest test (`tools/docs-check.sh`).

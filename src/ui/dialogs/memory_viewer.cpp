@@ -37,7 +37,7 @@ namespace slopkit::ui::dialogs
         setWindowTitle(tr("Memory Viewer"));
         resize(1280, 960);
         setMinimumSize(720, 480);
-        // Built without a parent (docs/UI_DESIGN.md section 7) so the compositor
+        // Built without a parent (docs/UI_DESIGN.md#wayland) so the compositor
         // may stack it normally. That also makes it a top-level window of its
         // own, and a top-level window owns the process lifetime by default: it
         // must not, or closing the shell would leave slopkit running with no way

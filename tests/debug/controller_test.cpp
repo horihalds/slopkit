@@ -15,12 +15,6 @@ using slopkit::debug::StopReason;
 using slopkit::tests::FakeDebugBackend;
 using slopkit::tests::pump_until;
 
-namespace
-{
-    Controller::MessageKind last_kind {};
-    QString                 last_text;
-} // namespace
-
 TEST_CASE("controller walks the session state machine", "[debug][controller]")
 {
     FakeDebugBackend backend;
