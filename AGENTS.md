@@ -53,6 +53,11 @@ them for every task in this repository.
   hicolor icons, and `./test.sh` builds and runs the test suite with KDE's crash
   notifications parked (see "Run the tests" below).
 
+- `tools/verify.sh` also works from any directory and is the one-shot
+  definition-of-done check: format check, warning-only build and the summarized
+  test run, with the full logs in `build/verify-*.log` and the extra arguments
+  forwarded to ctest.
+
 - When a completed plan changes anything that ships in the installed build —
   `src/**`, `CMakeLists.txt`, `cmake/**`, `assets/**` or `data/**` — run
   `./install.sh` so the owner can try the installed build. Plans that only touch
@@ -89,7 +94,9 @@ them for every task in this repository.
 - Direct binary: ALWAYS `QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "name1,name2,*glob*"`.
   Multiple names are comma-separated, never space-separated.
 - Never run broad tags like `[ui]` directly: it exceeds the tool timeout. Use `./test.sh`.
-- Build errors only: `cmake --build build --target slopkit_tests 2>&1 | grep -E "error:|FAILED|warning:"`
+- Build warnings/errors only: `tools/verify.sh` runs the build and prints just
+  the `warning:`/`error:`/`FAILED` lines (or by hand:
+  `cmake --build build --target slopkit_tests 2>&1 | grep -E "error:|FAILED|warning:"`).
 - Format touched files before building: `clang-format -i <files>`.
 - A failing test: rerun it alone with `ctest -R`. If it passes alone, check KNOWN_ISSUES
   before debugging.
@@ -146,7 +153,7 @@ them for every task in this repository.
 - If the current branch has an upstream, also push the commit.
 
 ## Definition of done
-1. `clang-format-check`, build with zero warnings, `./test.sh` all green.
+1. `tools/verify.sh` all green.
 2. A flaky failure is acceptable only if it is listed in docs/KNOWN_ISSUES.md AND the
    test passes alone under `ctest -R`. Add new flakes to that file in the same commit.
 3. Docs/map updated; `tmp/` emptied; then commit (and push if upstream exists).

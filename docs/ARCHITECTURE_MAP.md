@@ -45,6 +45,7 @@ and `docs/LOGGING.md`.
 | `tests/ui/dialogs` | Tests for `src/ui/dialogs` |
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
+| `tools` | Repo dev tooling (currently `verify.sh`, the one-shot format check + warning-only build + summarized test run) |
 
 ## 2. Module / component table
 

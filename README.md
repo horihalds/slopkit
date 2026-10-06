@@ -46,6 +46,14 @@ Targets compile for the host CPU's full instruction set by default
 ctest --test-dir build --output-on-failure
 ```
 
+The whole definition of done — the format check, a warning-only build and the
+summarized test run — is one command, which also forwards extra arguments to
+ctest:
+
+```sh
+./tools/verify.sh
+```
+
 Run:
 
 ```sh
