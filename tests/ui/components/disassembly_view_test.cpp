@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QFontMetrics>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -16,6 +17,7 @@
 
 #include "support/memory_view_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
+#include "ui/fonts.hpp"
 
 namespace
 {
@@ -82,6 +84,26 @@ namespace
             return entry->menu();
         }
         return nullptr;
+    }
+
+    // Sends a viewport mouse event the way the toolkit would while dragging.
+    void mouse_event(DisassemblyView& view,
+                     QEvent::Type     type,
+                     const QPoint&    position,
+                     Qt::MouseButton  button,
+                     Qt::MouseButtons buttons)
+    {
+        QMouseEvent event(
+            type, QPointF(position), QPointF(view.viewport()->mapToGlobal(position)), button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(view.viewport(), &event);
+    }
+
+    // The viewport y inside the painted row `index`; mirrors the listing's own
+    // margin and line height so a press lands on the row itself.
+    int row_y(int index)
+    {
+        const QFontMetrics metrics(slopkit::ui::mono_font());
+        return 4 + (metrics.height() + 4) * (index + 1) + 2;
     }
 } // namespace
 
@@ -712,6 +734,248 @@ TEST_CASE("the disassembly view offers Edit Instruction and a double-click opens
                               Qt::NoModifier);
     QApplication::sendEvent(view.viewport(), &double_click);
     CHECK(requested == 0);
+
+    view.hide();
+}
+
+TEST_CASE("the disassembly view keeps its automatic columns until a drag", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    const int address_width = view.address_width();
+    const int bytes_width   = view.bytes_width();
+    CHECK(address_width > 0);
+    CHECK(bytes_width > 0);
+
+    // A press below the header is a selection, never a resize: the widths stay.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseMove, QPoint(400, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, QPoint(400, row_y(0)), Qt::LeftButton, Qt::NoButton);
+    CHECK(view.address_width() == address_width);
+    CHECK(view.bytes_width() == bytes_width);
+
+    view.hide();
+}
+
+TEST_CASE("dragging the address boundary reshapes the address column", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    const int    before = view.address_width();
+    // A press within the header's grab tolerance of the address boundary.
+    const QPoint origin(before, 4);
+
+    mouse_event(view, QEvent::MouseButtonPress, origin, Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseMove, origin + QPoint(40, 0), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, origin + QPoint(40, 0), Qt::LeftButton, Qt::NoButton);
+    CHECK(view.address_width() == before + 40);
+
+    // Dragging far left clamps to the address minimum instead of collapsing.
+    const int    widened = view.address_width();
+    const QPoint again(widened, 4);
+    mouse_event(view, QEvent::MouseButtonPress, again, Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseMove, QPoint(-1000, 4), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, QPoint(-1000, 4), Qt::LeftButton, Qt::NoButton);
+    CHECK(view.address_width() > 0);
+    CHECK(view.address_width() < widened);
+
+    view.hide();
+}
+
+TEST_CASE("dragging the bytes boundary rewraps the bytes column", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    // 15 bytes: redundant operand-size prefixes in front of `MOV RAX, imm64`.
+    fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+
+    DisassemblyView view(fixture.document);
+    view.resize(1400, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    REQUIRE(view.bytes_per_line() >= 15);
+    const int wide     = view.bytes_width();
+    // The bytes boundary sits one margin and gap past the address boundary.
+    const int boundary = view.address_width() + wide + 10;
+
+    // Widen to the left: one token per line, never a collapsed column.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(boundary, 4), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseMove, QPoint(-1000, 4), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, QPoint(-1000, 4), Qt::LeftButton, Qt::NoButton);
+    CHECK(view.bytes_width() < wide);
+    CHECK(view.bytes_per_line() == 1);
+    CHECK(view.row_lines(0) == 15);
+
+    // Widen back to the right: the column grows and the row unwraps again.
+    const int narrow    = view.bytes_width();
+    const int boundary2 = view.address_width() + narrow + 10;
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(boundary2, 4), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseMove, QPoint(5000, 4), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, QPoint(5000, 4), Qt::LeftButton, Qt::NoButton);
+    CHECK(view.bytes_width() > narrow);
+    CHECK(view.bytes_per_line() > 1);
+    CHECK(view.row_lines(0) < 15);
+
+    view.hide();
+}
+
+TEST_CASE("the disassembly view selects the clicked instruction", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    int                          changes = 0;
+    std::optional<std::uint64_t> last;
+    QObject::connect(&view,
+                     &DisassemblyView::selectionChanged,
+                     &view,
+                     [&](std::optional<std::uint64_t> address)
+                     {
+                         ++changes;
+                         last = address;
+                     });
+    CHECK_FALSE(view.selected_address().has_value());
+
+    // A left click on a row selects its address and announces it once.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, QPoint(60, row_y(0)), Qt::LeftButton, Qt::NoButton);
+    REQUIRE(view.selected_address().has_value());
+    CHECK(*view.selected_address() == kCode);
+    CHECK(changes == 1);
+    REQUIRE(last.has_value());
+    CHECK(*last == kCode);
+
+    // A second click on the same row changes nothing.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, QPoint(60, row_y(0)), Qt::LeftButton, Qt::NoButton);
+    CHECK(changes == 1);
+
+    // A right press targets the row under it too.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(2)), Qt::RightButton, Qt::RightButton);
+    REQUIRE(view.selected_address().has_value());
+    CHECK(*view.selected_address() == kCode + 2);
+    CHECK(changes == 2);
+
+    // The header band clears the selection.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, 2), Qt::LeftButton, Qt::LeftButton);
+    CHECK_FALSE(view.selected_address().has_value());
+    CHECK(changes == 3);
+
+    view.hide();
+}
+
+TEST_CASE("an undecodable row cannot be the selected instruction", "[ui]")
+{
+    application();
+    ViewFixture     fixture;
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    // NOP, then a `.byte 0x06` the decoder cannot decode.
+    fixture.put(kCode, {0x90, 0x06});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+    REQUIRE(view.row_text(1).startsWith(QStringLiteral(".byte")));
+
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    REQUIRE(view.selected_address().has_value());
+
+    // The `.byte` row is not an instruction: it refuses and clears the band.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(1)), Qt::LeftButton, Qt::LeftButton);
+    CHECK_FALSE(view.selected_address().has_value());
+
+    view.hide();
+}
+
+TEST_CASE("a jump clears the selected instruction", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    REQUIRE(view.selected_address().has_value());
+
+    int changes = 0;
+    QObject::connect(&view,
+                     &DisassemblyView::selectionChanged,
+                     &view,
+                     [&](std::optional<std::uint64_t>)
+                     {
+                         ++changes;
+                     });
+
+    view.navigate_to(kCode + 0x40);
+    CHECK_FALSE(view.selected_address().has_value());
+    CHECK(changes == 1);
+
+    // Back to a selected row: the jump home clears it again.
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    REQUIRE(view.selected_address().has_value());
+    CHECK(view.back());
+    CHECK_FALSE(view.selected_address().has_value());
+
+    view.hide();
+}
+
+TEST_CASE("the selected instruction survives a scroll", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
+    REQUIRE(view.selected_address().has_value());
+    CHECK(*view.selected_address() == kCode);
+
+    // The address, not a pixel, is remembered: scrolling the row away and back
+    // keeps it selected.
+    QKeyEvent page_down(QEvent::KeyPress, Qt::Key_PageDown, Qt::NoModifier);
+    QApplication::sendEvent(&view, &page_down);
+    CHECK(view.first_address() != kCode);
+    QKeyEvent page_up(QEvent::KeyPress, Qt::Key_PageUp, Qt::NoModifier);
+    QApplication::sendEvent(&view, &page_up);
+    CHECK(view.first_address() == kCode);
+    REQUIRE(view.selected_address().has_value());
+    CHECK(*view.selected_address() == kCode);
 
     view.hide();
 }

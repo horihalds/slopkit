@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include "ui/components/disassembly_document.hpp"
 #include "ui/components/navigation_history.hpp"
@@ -48,6 +49,14 @@ namespace slopkit::ui::components
         void                        clear_history() noexcept;
         [[nodiscard]] std::size_t   visible_rows() const noexcept;
 
+        // The selected instruction, or std::nullopt when nothing is selected.
+        [[nodiscard]] std::optional<std::uint64_t> selected_address() const noexcept;
+        void                                       set_selected_address(std::optional<std::uint64_t> address);
+
+        // The current column widths; the tests read them to check a drag.
+        [[nodiscard]] int address_width() const noexcept;
+        [[nodiscard]] int bytes_width() const noexcept;
+
         // Re-fits the rows to the current viewport; the context menu calls this.
         void                      relayout();
         // The instruction text painted on the visible row `index` (0 = the top
@@ -67,7 +76,9 @@ namespace slopkit::ui::components
         [[nodiscard]] QAction* goto_action() const noexcept;
 
     signals:
-        void gotoRequested();                                    // the user picked "Go To..." from the pane's menu
+        void gotoRequested(); // the user picked "Go To..." from the pane's menu
+        // The selected row changed (including a jump that clears it).
+        void selectionChanged(std::optional<std::uint64_t> address);
         void navigated();                                        // the top row moved (Follow / Back / Go To)
         void followInMemoryViewRequested(std::uint64_t address); // "Follow in Memory View"
         // "Find out what addresses this instruction accesses" on the decoded row.
@@ -84,12 +95,25 @@ namespace slopkit::ui::components
         void paintEvent(QPaintEvent* event) override;
         void wheelEvent(QWheelEvent* event) override;
         void keyPressEvent(QKeyEvent* event) override;
+        void mousePressEvent(QMouseEvent* event) override;
+        void mouseMoveEvent(QMouseEvent* event) override;
+        void mouseReleaseEvent(QMouseEvent* event) override;
         void mouseDoubleClickEvent(QMouseEvent* event) override;
         void contextMenuEvent(QContextMenuEvent* event) override;
+        void leaveEvent(QEvent* event) override;
         void showEvent(QShowEvent* event) override;
         void hideEvent(QHideEvent* event) override;
 
     private:
+        // A draggable column boundary: the address column's right edge or the
+        // bytes column's one.
+        enum class HeaderDrag
+        {
+            none,
+            address,
+            bytes
+        };
+
         // Re-derives the line height, column widths and the row fit, then
         // re-windows the rows.
         void recompute_layout();
@@ -116,6 +140,14 @@ namespace slopkit::ui::components
         // The decoded row index under a viewport `position`, or the cursor row
         // when the position falls above or below every painted row.
         [[nodiscard]] std::size_t row_at_position(const QPoint& position) const;
+        // Targets the row under a viewport `position`, clearing the selection
+        // when it falls on the header, the empty tail or an undecodable row.
+        void                      select_row_at(const QPoint& position);
+        // The draggable column boundary under a viewport `position`, inside the
+        // header band; `none` everywhere else.
+        [[nodiscard]] HeaderDrag  boundary_at(const QPoint& position) const;
+        // Reshapes the dragged column to follow the cursor and repaints.
+        void                      apply_drag(const QPoint& position);
 
         DisassemblyDocument& document_;
 
@@ -129,6 +161,16 @@ namespace slopkit::ui::components
         int               header_height_ {1};
         int               address_width_ {0};
         int               bytes_width_ {1};
+
+        // User-chosen widths; 0 keeps the automatic width for that column.
+        int        address_width_user_ {0};
+        int        bytes_width_user_ {0};
+        HeaderDrag header_drag_ {HeaderDrag::none};
+        HeaderDrag hover_boundary_ {HeaderDrag::none};
+        int        drag_origin_x_ {0};
+        int        drag_origin_width_ {0};
+
+        std::optional<std::uint64_t> selected_address_;
 
         QAction* goto_action_ {};
 

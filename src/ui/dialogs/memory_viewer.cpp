@@ -22,6 +22,7 @@
 #include "ui/components/input_box.hpp"
 #include "ui/components/memory_view.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/panels/debug_controls.hpp"
 #include "ui/panels/debugger_panel.hpp"
 
 namespace slopkit::ui::dialogs
@@ -73,7 +74,35 @@ namespace slopkit::ui::dialogs
         code_split_->setStretchFactor(0, 70);
         code_split_->setStretchFactor(1, 30);
 
-        split_->addWidget(code_split_);
+        // The one-line debug control bar spans the whole width above the split,
+        // so every control and the state line fit without starving a pane and
+        // the 70/30 code split stays exactly as it is.
+        auto* upper        = new QWidget(this);
+        auto* upper_layout = new QVBoxLayout(upper);
+        upper_layout->setContentsMargins(0, 0, 0, 0);
+        upper_layout->setSpacing(6);
+        controls_ = new panels::DebugControls(debug_, target_, upper);
+        upper_layout->addWidget(controls_);
+        upper_layout->addWidget(code_split_, 1);
+
+        // The control bar comes first in the tab order, then the pane's tables.
+        widgets::chain_tab_order(
+            {controls_->breakpoints_button(), debugger_->register_table(), debugger_->call_stack_table()});
+
+        // The toggle acts on the selected listing row: the controller resolves
+        // the row's own rendered address text, so the two never disagree.
+        connect(
+            controls_, &panels::DebugControls::toggleBreakpointRequested, this, &MemoryViewerDialog::toggle_breakpoint);
+        connect(disassembly_,
+                &components::DisassemblyView::selectionChanged,
+                this,
+                [this](std::optional<std::uint64_t> address)
+                {
+                    controls_->set_selected_instruction(
+                        address, address.has_value() ? disassembly_document_.address_text(*address) : QString());
+                });
+
+        split_->addWidget(upper);
         split_->addWidget(view_);
         split_->setStretchFactor(0, 70); // upper zone
         split_->setStretchFactor(1, 30); // hex byte view
@@ -185,7 +214,7 @@ namespace slopkit::ui::dialogs
     QWidget* MemoryViewerDialog::build_stats_pane()
     {
         auto* panel = new widgets::Panel(tr("Debugger"), this);
-        debugger_   = new panels::DebuggerPanel(debug_, target_, panel);
+        debugger_   = new panels::DebuggerPanel(debug_, panel);
         panel->body()->addWidget(debugger_);
         return panel;
     }
@@ -465,6 +494,11 @@ namespace slopkit::ui::dialogs
         return debugger_;
     }
 
+    panels::DebugControls* MemoryViewerDialog::debug_controls() const noexcept
+    {
+        return controls_;
+    }
+
     void MemoryViewerDialog::follow_stop()
     {
         const debug::StopEvent& stop = debug_.last_stop();
@@ -473,7 +507,25 @@ namespace slopkit::ui::dialogs
             return;
         }
         disassembly_->navigate_to(stop.address);
+        // A hit leaves the stopped instruction selected, so the bar's toggle
+        // has a target straight away.
+        disassembly_->set_selected_address(stop.address);
         emit liveRefreshRequested();
+    }
+
+    void MemoryViewerDialog::toggle_breakpoint(std::uint64_t address, const QString& expression)
+    {
+        if (const debug::Breakpoint* entry = debug_.table().software_at(address); entry != nullptr)
+        {
+            debug_.remove_breakpoint(entry->id);
+            return;
+        }
+        if (const auto added = debug_.add_breakpoint(expression.toStdString(), debug::Kind::software, 1); !added)
+        {
+            // The controller reports success through its signal but stays silent
+            // on a refusal, so surface the reason in the state line here.
+            controls_->report_error(QString::fromStdString(added.error()));
+        }
     }
 
     void MemoryViewerDialog::request_page()

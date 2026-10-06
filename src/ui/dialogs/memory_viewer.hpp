@@ -34,6 +34,7 @@ namespace slopkit::ui::components
 
 namespace slopkit::ui::panels
 {
+    class DebugControls;
     class DebuggerPanel;
 } // namespace slopkit::ui::panels
 
@@ -62,6 +63,10 @@ namespace slopkit::ui::dialogs
         // The Debugger pane, so the window can open the Breakpoints dialog from
         // the pane's button.
         [[nodiscard]] panels::DebuggerPanel* debugger_panel() const noexcept;
+
+        // The one-line debug control bar above the listing, so the window can
+        // open the Breakpoints dialog from its button.
+        [[nodiscard]] panels::DebugControls* debug_controls() const noexcept;
 
         // Jumps the byte view to an address written as absolute ("1040"), a
         // bare module name ("libc.so.6"), or module+RVA ("libc.so.6+1A2B");
@@ -148,6 +153,11 @@ namespace slopkit::ui::dialogs
         // After a stop, jumps the listing to RIP and asks for a fresh live pass.
         void follow_stop();
 
+        // Adds a software breakpoint at `address` when none is set there, and
+        // removes the existing one otherwise. `expression` is the listing's own
+        // rendered text for the row, which the controller resolves.
+        void toggle_breakpoint(std::uint64_t address, const QString& expression);
+
         // Asks the coordinator for an immediate pass.
         void request_page();
 
@@ -160,6 +170,7 @@ namespace slopkit::ui::dialogs
         components::MemoryView*         view_ {};
         components::DisassemblyDocument disassembly_document_;
         components::DisassemblyView*    disassembly_ {};
+        panels::DebugControls*          controls_ {};
         panels::DebuggerPanel*          debugger_ {};
         QSplitter*                      split_ {};
         QSplitter*                      code_split_ {};

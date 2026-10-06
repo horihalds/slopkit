@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "support/ui_helpers.hpp"
+#include "ui/panels/debug_controls.hpp"
 
 TEST_CASE("the main window shell is built", "[ui]")
 {
@@ -393,6 +394,30 @@ TEST_CASE("the memory viewer is a detached top-level window", "[ui]")
     // A companion window, not a window that owns the process lifetime: closing
     // the shell must still end slopkit.
     CHECK_FALSE(viewer->testAttribute(Qt::WA_QuitOnClose));
+}
+
+TEST_CASE("the debug control bar's Breakpoints button opens the window", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("debug_controls_breakpoints.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    window.show();
+    auto* viewer = window.memory_viewer();
+    REQUIRE(viewer != nullptr);
+    auto* controls = viewer->findChild<slopkit::ui::panels::DebugControls*>();
+    REQUIRE(controls != nullptr);
+
+    // The bar's button reaches the same window the View menu opens.
+    controls->breakpoints_button()->click();
+    auto* dialog = window.findChild<slopkit::ui::dialogs::BreakpointsDialog*>();
+    REQUIRE(dialog != nullptr);
+    CHECK(dialog->isVisible());
 }
 
 TEST_CASE("closing the main window ends the session", "[ui]")

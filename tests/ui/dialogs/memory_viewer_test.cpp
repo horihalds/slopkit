@@ -4,9 +4,12 @@
 
 #include <QWindow>
 
+#include <QPushButton>
+
 #include "support/ui_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
 #include "ui/models/register_model.hpp"
+#include "ui/panels/debug_controls.hpp"
 
 TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 {
@@ -1154,6 +1157,64 @@ TEST_CASE("the memory viewer attaches the debugger on demand for the operands", 
     denied.hide();
 }
 
+TEST_CASE("the memory viewer puts the debug controls above the split", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    auto* split = viewer.findChild<QSplitter*>(QStringLiteral("viewer_split"));
+    REQUIRE(split != nullptr);
+    REQUIRE(split->count() == 2);
+    QWidget* upper = split->widget(0);
+
+    auto* code_split = viewer.findChild<QSplitter*>(QStringLiteral("code_split"));
+    REQUIRE(code_split != nullptr);
+    REQUIRE(code_split->count() == 2);
+    QWidget* stats_pane = code_split->widget(1);
+
+    // The bar spans the whole width above the split, inside neither pane.
+    auto* controls = viewer.findChild<slopkit::ui::panels::DebugControls*>();
+    REQUIRE(controls != nullptr);
+    CHECK(upper->isAncestorOf(controls));
+    CHECK_FALSE(code_split->isAncestorOf(controls));
+    CHECK_FALSE(stats_pane->isAncestorOf(controls));
+
+    // It sits above the code split and reaches across the full pane width, so
+    // all nine controls and the state line fit.
+    CHECK(controls->parentWidget() == upper);
+    CHECK(controls->y() < code_split->y());
+    CHECK(controls->width() == code_split->width());
+
+    // The bar carries all nine controls, with Step Out disabled.
+    CHECK(controls->toggle_breakpoint_button() != nullptr);
+    CHECK(controls->start_button() != nullptr);
+    CHECK(controls->stop_button() != nullptr);
+    CHECK(controls->resume_button() != nullptr);
+    CHECK(controls->break_button() != nullptr);
+    CHECK(controls->step_into_button() != nullptr);
+    CHECK(controls->step_over_button() != nullptr);
+    REQUIRE(controls->step_out_button() != nullptr);
+    CHECK_FALSE(controls->step_out_button()->isEnabled());
+    CHECK(controls->breakpoints_button() != nullptr);
+
+    // The right pane holds the registers and the call stack and no run control.
+    CHECK(stats_pane->findChildren<QPushButton*>().isEmpty());
+    auto* register_table = stats_pane->findChild<QTableView*>(QStringLiteral("register_table"));
+    REQUIRE(register_table != nullptr);
+    auto* call_stack_table = stats_pane->findChild<QTableView*>(QStringLiteral("call_stack_table"));
+    REQUIRE(call_stack_table != nullptr);
+
+    viewer.hide();
+}
+
 TEST_CASE("the memory viewer listing NOPs and restores an instruction", "[ui]")
 {
     application();
@@ -1233,6 +1294,62 @@ TEST_CASE("the memory viewer listing NOPs and restores an instruction", "[ui]")
     CHECK(access.memory->bytes.at(code_base + 3) == std::byte {0xE5});
     CHECK(listing->row_text(1) == QStringLiteral("MOV RBP, RSP"));
     CHECK(listing->row_text(2) == QStringLiteral("RET"));
+
+    viewer.hide();
+}
+
+TEST_CASE("the toggle breakpoint button sets and clears a breakpoint", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::tests::FakeDebugBackend backend;
+    slopkit::debug::Controller       controller {backend};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
+    auto*                                    listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+    auto* controls = viewer.findChild<slopkit::ui::panels::DebugControls*>();
+    REQUIRE(controls != nullptr);
+
+    viewer.set_address(0x2000);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    const std::uint64_t code_base = seed_listing_code(access, viewer);
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
+
+    // The toggle needs a live session: start one and wait for the stop.
+    controls->start_button()->click();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == slopkit::debug::Controller::State::stopped;
+                       }));
+
+    // Select the first instruction: the bar's toggle comes live.
+    listing->set_selected_address(code_base);
+    REQUIRE(controls->toggle_breakpoint_button()->isEnabled());
+
+    // The first click adds one software breakpoint at the selected address.
+    controls->toggle_breakpoint_button()->click();
+    REQUIRE(controller.table().software_at(code_base) != nullptr);
+    CHECK(controller.breakpoints().size() == 1);
+
+    // The second click removes it again.
+    controls->toggle_breakpoint_button()->click();
+    CHECK(controller.table().software_at(code_base) == nullptr);
+    CHECK(controller.breakpoints().empty());
 
     viewer.hide();
 }

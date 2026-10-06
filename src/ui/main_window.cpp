@@ -37,7 +37,7 @@
 #include "ui/dialogs/table_settings.hpp"
 #include "ui/live_values.hpp"
 #include "ui/panels/address_list_panel.hpp"
-#include "ui/panels/debugger_panel.hpp"
+#include "ui/panels/debug_controls.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
 #include "ui/settings.hpp"
@@ -395,8 +395,8 @@ namespace slopkit::ui
                 live_values_,
                 &LiveValues::request_now);
 
-        connect(memory_view_->debugger_panel(),
-                &panels::DebuggerPanel::breakpointsRequested,
+        connect(memory_view_->debug_controls(),
+                &panels::DebugControls::breakpointsRequested,
                 this,
                 &MainWindow::show_breakpoints);
 

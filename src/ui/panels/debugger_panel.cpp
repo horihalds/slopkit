@@ -3,9 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <QGridLayout>
 #include <QHeaderView>
-#include <QPushButton>
 #include <QTableView>
 #include <QVBoxLayout>
 
@@ -20,44 +18,27 @@ namespace slopkit::ui::panels
 
     namespace
     {
-        widgets::StatusKind status_kind(debug::Controller::MessageKind kind)
-        {
-            switch (kind)
-            {
-            case debug::Controller::MessageKind::success:
-                return widgets::StatusKind::success;
-            case debug::Controller::MessageKind::warning:
-                return widgets::StatusKind::warning;
-            case debug::Controller::MessageKind::error:
-                return widgets::StatusKind::error;
-            case debug::Controller::MessageKind::info:
-            default:
-                return widgets::StatusKind::info;
-            }
-        }
-
         void apply_fixed_font(QTableView* table)
         {
             table->setFont(mono_font());
         }
     } // namespace
 
-    DebuggerPanel::DebuggerPanel(debug::Controller& controller, const process::AttachedTarget& target, QWidget* parent)
-        : QWidget(parent), controller_(controller), target_(target)
+    DebuggerPanel::DebuggerPanel(debug::Controller& controller, QWidget* parent)
+        : QWidget(parent), controller_(controller)
     {
         build_layout();
 
-        connect(&controller_, &debug::Controller::stateChanged, this, &DebuggerPanel::apply_state);
+        connect(&controller_, &debug::Controller::stateChanged, this, &DebuggerPanel::sync_editable);
         connect(&controller_,
                 &debug::Controller::registersChanged,
                 this,
                 [this]
                 {
                     refresh_registers();
-                    apply_state();
+                    sync_editable();
                 });
         connect(&controller_, &debug::Controller::backtraceChanged, this, &DebuggerPanel::refresh_backtrace);
-        connect(&controller_, &debug::Controller::message, this, &DebuggerPanel::apply_message);
 
         register_model_->set_commit_handler(
             [this](const std::string& name, std::uint64_t value)
@@ -70,7 +51,7 @@ namespace slopkit::ui::panels
                 return true;
             });
 
-        apply_state();
+        sync_editable();
         refresh_registers();
         refresh_backtrace();
     }
@@ -80,34 +61,6 @@ namespace slopkit::ui::panels
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(6);
-
-        auto* controls = new QGridLayout();
-        controls->setContentsMargins(0, 0, 0, 0);
-        controls->setHorizontalSpacing(4);
-        controls->setVerticalSpacing(4);
-        start_button_       = new widgets::PrimaryButton(tr("Start Debugging"), this);
-        stop_button_        = widgets::secondary_button(tr("Stop Debugging"), this);
-        resume_button_      = widgets::secondary_button(tr("Resume"), this);
-        break_button_       = widgets::secondary_button(tr("Break"), this);
-        step_into_button_   = widgets::secondary_button(tr("Step Into"), this);
-        step_over_button_   = widgets::secondary_button(tr("Step Over"), this);
-        breakpoints_button_ = widgets::secondary_button(tr("Breakpoints..."), this);
-        // Two columns keep the pane able to shrink into its 30% share.
-        controls->addWidget(start_button_, 0, 0);
-        controls->addWidget(stop_button_, 0, 1);
-        controls->addWidget(resume_button_, 1, 0);
-        controls->addWidget(break_button_, 1, 1);
-        controls->addWidget(step_into_button_, 2, 0);
-        controls->addWidget(step_over_button_, 2, 1);
-        controls->addWidget(breakpoints_button_, 3, 0);
-        controls->setColumnStretch(2, 1);
-        layout->addLayout(controls);
-
-        status_ = new widgets::StatusLabel(this);
-        // The state line reads "Stopped at <address> (breakpoint N)", so it is a mono
-        // read-out like the tables below it.
-        status_->setFont(mono_font());
-        layout->addWidget(status_);
 
         layout->addWidget(widgets::section_header(tr("Registers"), this));
         register_model_ = new models::RegisterModel(this);
@@ -142,63 +95,19 @@ namespace slopkit::ui::panels
         apply_fixed_font(call_stack_table_);
         layout->addWidget(call_stack_table_, 2);
 
-        connect(start_button_, &QPushButton::clicked, this, &DebuggerPanel::start_session);
-        connect(stop_button_, &QPushButton::clicked, &controller_, &debug::Controller::stop);
-        connect(resume_button_, &QPushButton::clicked, &controller_, &debug::Controller::resume);
-        connect(break_button_, &QPushButton::clicked, &controller_, &debug::Controller::interrupt);
-        connect(step_into_button_, &QPushButton::clicked, &controller_, &debug::Controller::step_into);
-        connect(step_over_button_, &QPushButton::clicked, &controller_, &debug::Controller::step_over);
-        connect(breakpoints_button_, &QPushButton::clicked, this, &DebuggerPanel::breakpointsRequested);
-
-        // The run controls stay reachable with the keyboard.
-        widgets::chain_tab_order({start_button_,
-                                  stop_button_,
-                                  resume_button_,
-                                  break_button_,
-                                  step_into_button_,
-                                  step_over_button_,
-                                  breakpoints_button_,
-                                  register_table_,
-                                  call_stack_table_});
+        // The pane's tables keep the keyboard reachable in order; the dialog
+        // links the control bar's last button to the register table.
+        widgets::chain_tab_order({register_table_, call_stack_table_});
     }
 
-    void DebuggerPanel::start_session()
+    void DebuggerPanel::sync_editable()
     {
-        if (!target_.valid())
-        {
-            status_->set_status(widgets::StatusKind::warning, tr("Attach to a target before starting the debugger."));
-            return;
-        }
-        controller_.start(target_.pid, target_.plugin_id);
-    }
-
-    void DebuggerPanel::apply_state()
-    {
-        const auto state    = controller_.state();
-        const bool idle     = state == debug::Controller::State::idle;
-        const bool stopped  = state == debug::Controller::State::stopped;
-        const bool running  = state == debug::Controller::State::running;
-        const bool starting = state == debug::Controller::State::starting;
-
-        start_button_->setEnabled(idle && target_.valid());
-        stop_button_->setEnabled(!idle && !starting);
-        resume_button_->setEnabled(stopped);
-        break_button_->setEnabled(running);
-        step_into_button_->setEnabled(stopped);
-        step_over_button_->setEnabled(stopped);
-        register_model_->set_editable(stopped);
-
-        status_->set_status(widgets::StatusKind::info, controller_.state_text());
-    }
-
-    void DebuggerPanel::apply_message(debug::Controller::MessageKind kind, const QString& text)
-    {
-        status_->set_status(status_kind(kind), text);
+        register_model_->set_editable(controller_.state() == debug::Controller::State::stopped);
     }
 
     void DebuggerPanel::refresh()
     {
-        apply_state();
+        sync_editable();
         refresh_registers();
         refresh_backtrace();
     }
@@ -231,46 +140,6 @@ namespace slopkit::ui::panels
     models::CallStackModel* DebuggerPanel::call_stack_model() const noexcept
     {
         return call_stack_model_;
-    }
-
-    QPushButton* DebuggerPanel::start_button() const noexcept
-    {
-        return start_button_;
-    }
-
-    QPushButton* DebuggerPanel::stop_button() const noexcept
-    {
-        return stop_button_;
-    }
-
-    QPushButton* DebuggerPanel::resume_button() const noexcept
-    {
-        return resume_button_;
-    }
-
-    QPushButton* DebuggerPanel::break_button() const noexcept
-    {
-        return break_button_;
-    }
-
-    QPushButton* DebuggerPanel::step_into_button() const noexcept
-    {
-        return step_into_button_;
-    }
-
-    QPushButton* DebuggerPanel::step_over_button() const noexcept
-    {
-        return step_over_button_;
-    }
-
-    QPushButton* DebuggerPanel::breakpoints_button() const noexcept
-    {
-        return breakpoints_button_;
-    }
-
-    widgets::StatusLabel* DebuggerPanel::status_label() const noexcept
-    {
-        return status_;
     }
 
     QTableView* DebuggerPanel::register_table() const noexcept

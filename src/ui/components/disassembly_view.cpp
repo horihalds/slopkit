@@ -1,6 +1,7 @@
 #include "ui/components/disassembly_view.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 
 #include "scan/types.hpp"
@@ -63,6 +64,7 @@ namespace slopkit::ui::components
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
         viewport()->setFont(mono_font());
+        viewport()->setMouseTracking(true);
 
         recompute_layout();
 
@@ -87,6 +89,32 @@ namespace slopkit::ui::components
     QAction* DisassemblyView::goto_action() const noexcept
     {
         return goto_action_;
+    }
+
+    std::optional<std::uint64_t> DisassemblyView::selected_address() const noexcept
+    {
+        return selected_address_;
+    }
+
+    void DisassemblyView::set_selected_address(std::optional<std::uint64_t> address)
+    {
+        if (selected_address_ == address)
+        {
+            return;
+        }
+        selected_address_ = address;
+        viewport()->update();
+        emit selectionChanged(selected_address_);
+    }
+
+    int DisassemblyView::address_width() const noexcept
+    {
+        return address_width_;
+    }
+
+    int DisassemblyView::bytes_width() const noexcept
+    {
+        return bytes_width_;
     }
 
     QString DisassemblyView::row_text(std::size_t index) const
@@ -120,27 +148,41 @@ namespace slopkit::ui::components
     void DisassemblyView::update_columns()
     {
         const QFontMetrics metrics(mono_font());
+        const int          glyph = std::max(1, metrics.horizontalAdvance(QLatin1Char('0')));
 
         // The address column follows the widest address on screen, but never
-        // narrower than the 16-digit absolute form so it does not jitter.
+        // narrower than the 16-digit absolute form so it does not jitter. A
+        // dragged width replaces the automatic one and is clamped so that the
+        // bytes column keeps one token and the instruction column its glyphs.
         QString       address_sample = QStringLiteral("0000000000000000");
         const QString top_text       = document_.address_text(first_address_);
         if (top_text.size() > address_sample.size())
         {
             address_sample = top_text;
         }
-        address_width_ = metrics.horizontalAdvance(address_sample) + kCellPadding;
+        const int min_address = metrics.horizontalAdvance(QStringLiteral("0000000000000000")) + kCellPadding;
+        const int min_bytes   = metrics.horizontalAdvance(QStringLiteral("00")) + kCellPadding;
+        if (address_width_user_ > 0)
+        {
+            const int address_max =
+                viewport()->width() - 2 * kMargin - 2 * kColumnGap - min_bytes - kMinInstructionChars * glyph;
+            address_width_ = std::clamp(address_width_user_, min_address, std::max(min_address, address_max));
+        }
+        else
+        {
+            address_width_ = metrics.horizontalAdvance(address_sample) + kCellPadding;
+        }
 
         // The bytes column wants the widest instruction's raw bytes, but gives
         // up its width first: it shrinks down to one byte token and wraps, and
-        // the instruction column keeps a guaranteed glyph budget.
-        const int glyph = std::max(1, metrics.horizontalAdvance(QLatin1Char('0')));
+        // the instruction column keeps a guaranteed glyph budget. A dragged
+        // width replaces the natural one and is clamped to the same bounds.
         const int natural_bytes =
             metrics.horizontalAdvance(QString(static_cast<qsizetype>(document_.bytes_width()), QLatin1Char('0')))
             + kCellPadding;
-        const int min_bytes = metrics.horizontalAdvance(QStringLiteral("00")) + kCellPadding;
         const int room      = viewport()->width() - 2 * kMargin - address_width_ - 2 * kColumnGap;
-        bytes_width_ = std::clamp(natural_bytes, min_bytes, std::max(min_bytes, room - kMinInstructionChars * glyph));
+        const int bytes_max = std::max(min_bytes, room - kMinInstructionChars * glyph);
+        bytes_width_ = std::clamp(bytes_width_user_ > 0 ? bytes_width_user_ : natural_bytes, min_bytes, bytes_max);
 
         // `n` byte tokens need `3n - 1` characters; take the largest count whose
         // rendered width still fits the column, and never fewer than one.
@@ -302,6 +344,7 @@ namespace slopkit::ui::components
 
     void DisassemblyView::set_first_address(std::uint64_t address)
     {
+        set_selected_address(std::nullopt);
         first_address_ = std::min(address, scan::kMaxUserAddress);
         scroller_.recenter();
         ensure_cursor_decoded();
@@ -378,6 +421,74 @@ namespace slopkit::ui::components
             y += row_height;
         }
         return first_row_; // Empty space below the rows: the cursor row.
+    }
+
+    void DisassemblyView::select_row_at(const QPoint& position)
+    {
+        std::optional<std::uint64_t> address;
+        if (position.y() >= kMargin + header_height_)
+        {
+            int y = kMargin + header_height_;
+            for (std::size_t visible = 0; visible < visible_rows_; ++visible)
+            {
+                const std::size_t index = first_row_ + visible;
+                if (index >= document_.row_count())
+                {
+                    break;
+                }
+                const std::size_t lines      = std::max<std::size_t>(1, document_.line_count(index, bytes_per_line_));
+                const int         row_height = static_cast<int>(lines) * line_height_;
+                if (position.y() < y + row_height)
+                {
+                    const DisassemblyDocument::Row row = document_.row(index);
+                    if (!is_muted(row))
+                    {
+                        address = row.address;
+                    }
+                    break;
+                }
+                y += row_height;
+            }
+        }
+        set_selected_address(address);
+    }
+
+    DisassemblyView::HeaderDrag DisassemblyView::boundary_at(const QPoint& position) const
+    {
+        if (position.y() >= kMargin + header_height_)
+        {
+            return HeaderDrag::none;
+        }
+        const int address_boundary = kMargin + address_width_;
+        const int bytes_boundary   = address_boundary + kColumnGap + bytes_width_;
+        if (std::abs(position.x() - address_boundary) <= kColumnGap)
+        {
+            return HeaderDrag::address;
+        }
+        if (std::abs(position.x() - bytes_boundary) <= kColumnGap)
+        {
+            return HeaderDrag::bytes;
+        }
+        return HeaderDrag::none;
+    }
+
+    void DisassemblyView::apply_drag(const QPoint& position)
+    {
+        if (header_drag_ == HeaderDrag::none)
+        {
+            return;
+        }
+        const int width = std::max(1, drag_origin_width_ + position.x() - drag_origin_x_);
+        if (header_drag_ == HeaderDrag::address)
+        {
+            address_width_user_ = width;
+        }
+        else
+        {
+            bytes_width_user_ = width;
+        }
+        recompute_layout();
+        viewport()->update();
     }
 
     void DisassemblyView::copy_row(std::size_t row, CopyFormat format)
@@ -575,6 +686,14 @@ namespace slopkit::ui::components
             const std::size_t lines            = std::max<std::size_t>(1, document_.line_count(index, bytes_per_line_));
             const int         row_height       = static_cast<int>(lines) * line_height_;
 
+            // The selected instruction carries a subtle band, so the target of
+            // `Toggle Breakpoint` is obvious; the address, not a pixel,
+            // remembers it across scrolls.
+            if (selected_address_.has_value() && *selected_address_ == row.address)
+            {
+                painter.fillRect(QRect(0, y, viewport()->width(), row_height), theme.surface_hover);
+            }
+
             painter.setPen(theme.text_muted);
             painter.drawText(QRect(address_left, y, address_width_, line_height_),
                              Qt::AlignLeft | Qt::AlignVCenter,
@@ -650,6 +769,71 @@ namespace slopkit::ui::components
         event->accept();
     }
 
+    void DisassemblyView::mousePressEvent(QMouseEvent* event)
+    {
+        const Qt::MouseButton button = event->button();
+        if (button == Qt::LeftButton || button == Qt::RightButton)
+        {
+            const QPoint position = event->position().toPoint();
+            if (button == Qt::LeftButton)
+            {
+                const HeaderDrag boundary = boundary_at(position);
+                if (boundary != HeaderDrag::none)
+                {
+                    header_drag_       = boundary;
+                    drag_origin_x_     = position.x();
+                    drag_origin_width_ = boundary == HeaderDrag::address ? address_width_ : bytes_width_;
+                    event->accept();
+                    return;
+                }
+            }
+            // A left or right press targets the row underneath; a right press
+            // selects it so the menu and the toggle agree even before the menu
+            // opens.
+            select_row_at(position);
+            event->accept();
+            return;
+        }
+        QAbstractScrollArea::mousePressEvent(event);
+    }
+
+    void DisassemblyView::mouseMoveEvent(QMouseEvent* event)
+    {
+        const QPoint position = event->position().toPoint();
+        if (header_drag_ != HeaderDrag::none)
+        {
+            apply_drag(position);
+            event->accept();
+            return;
+        }
+
+        const HeaderDrag boundary = boundary_at(position);
+        if (boundary != hover_boundary_)
+        {
+            hover_boundary_ = boundary;
+            if (boundary == HeaderDrag::none)
+            {
+                viewport()->unsetCursor();
+            }
+            else
+            {
+                viewport()->setCursor(Qt::SplitHCursor);
+            }
+        }
+        QAbstractScrollArea::mouseMoveEvent(event);
+    }
+
+    void DisassemblyView::mouseReleaseEvent(QMouseEvent* event)
+    {
+        if (header_drag_ != HeaderDrag::none && event->button() == Qt::LeftButton)
+        {
+            header_drag_ = HeaderDrag::none;
+            event->accept();
+            return;
+        }
+        QAbstractScrollArea::mouseReleaseEvent(event);
+    }
+
     void DisassemblyView::mouseDoubleClickEvent(QMouseEvent* event)
     {
         if (event->button() == Qt::LeftButton)
@@ -665,10 +849,20 @@ namespace slopkit::ui::components
         QAbstractScrollArea::mouseDoubleClickEvent(event);
     }
 
+    void DisassemblyView::leaveEvent(QEvent* event)
+    {
+        hover_boundary_ = HeaderDrag::none;
+        viewport()->unsetCursor();
+        QAbstractScrollArea::leaveEvent(event);
+    }
+
     void DisassemblyView::contextMenuEvent(QContextMenuEvent* event)
     {
         const QPoint position = viewport()->mapFromGlobal(event->globalPos());
-        QMenu        menu(this);
+        // The menu acts on the row it targets, so selecting it first keeps the
+        // menu and the control bar's toggle in agreement.
+        select_row_at(position);
+        QMenu menu(this);
         populate_menu(menu, row_at_position(position));
         menu.exec(event->globalPos());
     }
