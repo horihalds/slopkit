@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -63,6 +64,21 @@ namespace slopkit::ui
 
     // "0x…": upper-case hex, no leading zeros, no padding.
     [[nodiscard]] QString format_absolute(std::uint64_t address);
+
+    // "0x…": upper-case hex zero-padded to `digits`, for the fixed-width panes
+    // where addresses must line up (docs/UI_DESIGN.md section 5).
+    [[nodiscard]] QString format_padded_hex(std::uint64_t value, int digits = 16);
+
+    // A fixed-width pane row's address: module-relative where the mode and spans
+    // allow it, otherwise `format_padded_hex`.
+    [[nodiscard]] QString format_pane_address(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
+
+    // A value/cell address: module-relative where the mode and spans allow it,
+    // otherwise `format_absolute`.
+    [[nodiscard]] QString format_cell_address(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
+
+    // How a model renders an address, so it needs no controller of its own.
+    using AddressText = std::function<QString(std::uint64_t)>;
 
     // The module-relative text, or nullopt in absolute mode / outside every span.
     [[nodiscard]] std::optional<QString>

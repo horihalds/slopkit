@@ -10,23 +10,10 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "platform/linux/proc_text.hpp"
 
 namespace slopkit::platform
 {
-
-    namespace
-    {
-        std::string_view trim(std::string_view value)
-        {
-            const auto first = value.find_first_not_of(" \t\r\n");
-            if (first == std::string_view::npos)
-            {
-                return {};
-            }
-            const auto last = value.find_last_not_of(" \t\r\n");
-            return value.substr(first, last - first + 1);
-        }
-    } // namespace
 
     std::optional<DesktopEntry> parse_desktop_entry(std::string_view text)
     {

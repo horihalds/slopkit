@@ -20,8 +20,7 @@ namespace slopkit::ui::models
         absolute_.reserve(frames.size());
         for (const slopkit::debug::Frame& frame : frames)
         {
-            const auto relative = ui::module_relative_text(mode, spans, frame.pc);
-            address_.push_back(relative ? *relative : ui::format_absolute(frame.pc));
+            address_.push_back(ui::format_cell_address(mode, spans, frame.pc));
             absolute_.push_back(ui::format_absolute(frame.pc));
         }
         endResetModel();

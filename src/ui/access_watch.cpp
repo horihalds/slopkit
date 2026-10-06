@@ -1,4 +1,5 @@
 #include "ui/access_watch.hpp"
+#include "ui/address_format.hpp"
 
 #include <array>
 #include <optional>
@@ -65,20 +66,13 @@ namespace slopkit::ui
             return std::nullopt;
         }
 
-        // Upper-case hex with the `0x` prefix, zero-padded to `minimum_digits`.
-        [[nodiscard]] QString hex(std::uint64_t value, int minimum_digits)
-        {
-            const QString digits = QStringLiteral("%1").arg(value, minimum_digits, 16, QLatin1Char('0')).toUpper();
-            return QStringLiteral("0x") + digits;
-        }
-
         // The operand exactly as Zydis prints it: a rip-relative or absolute
         // operand shows its 16-digit address, a register operand its sum.
         [[nodiscard]] QString operand_text(const disasm::MemoryRef& ref, std::uint64_t address)
         {
             if (ref.rip_relative || (ref.base.empty() && ref.index.empty()))
             {
-                return QLatin1Char('[') + hex(address, 16) + QLatin1Char(']');
+                return QLatin1Char('[') + format_padded_hex(address, 16) + QLatin1Char(']');
             }
 
             QString text = QStringLiteral("[");
@@ -104,7 +98,7 @@ namespace slopkit::ui
                 const std::uint64_t magnitude = ref.displacement > 0
                                                   ? static_cast<std::uint64_t>(ref.displacement)
                                                   : static_cast<std::uint64_t>(-(ref.displacement + 1)) + 1;
-                text += hex(magnitude, 2);
+                text += format_padded_hex(magnitude, 2);
             }
             text += QLatin1Char(']');
             return text;

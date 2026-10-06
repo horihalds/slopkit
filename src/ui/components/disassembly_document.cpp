@@ -165,11 +165,7 @@ namespace slopkit::ui::components
 
     QString DisassemblyDocument::address_text(std::uint64_t address) const
     {
-        if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, address); relative.has_value())
-        {
-            return *relative;
-        }
-        return QStringLiteral("0x") + QString::number(address, 16).rightJustified(16, QLatin1Char('0')).toUpper();
+        return ui::format_pane_address(address_mode_, module_spans_, address);
     }
 
     const ui::ModuleSpans& DisassemblyDocument::module_spans() const
@@ -188,13 +184,7 @@ namespace slopkit::ui::components
         switch (format)
         {
         case CopyFormat::module_relative:
-            if (const auto relative =
-                    ui::module_relative_text(ui::AddressMode::module_relative, module_spans_, value.address);
-                relative.has_value())
-            {
-                return *relative;
-            }
-            return ui::format_absolute(value.address);
+            return ui::format_cell_address(ui::AddressMode::module_relative, module_spans_, value.address);
         case CopyFormat::absolute:
             return ui::format_absolute(value.address);
         case CopyFormat::bytes:

@@ -147,20 +147,12 @@ namespace slopkit::ui::components
 
     QString MemoryViewDocument::address_text(std::uint64_t address) const
     {
-        if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, address); relative.has_value())
-        {
-            return *relative;
-        }
-        return QStringLiteral("0x") + QString::number(address, 16).rightJustified(16, QLatin1Char('0')).toUpper();
+        return ui::format_pane_address(address_mode_, module_spans_, address);
     }
 
     QString MemoryViewDocument::display_text(std::uint64_t address) const
     {
-        if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, address); relative.has_value())
-        {
-            return *relative;
-        }
-        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
+        return ui::format_cell_address(address_mode_, module_spans_, address);
     }
 
     const ui::ModuleSpans& MemoryViewDocument::module_spans() const

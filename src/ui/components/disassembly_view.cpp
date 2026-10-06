@@ -5,6 +5,7 @@
 
 #include "scan/types.hpp"
 #include "ui/address_format.hpp"
+#include "ui/components/row_menu.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
 
@@ -390,6 +391,8 @@ namespace slopkit::ui::components
 
     void DisassemblyView::populate_menu(QMenu& menu, std::size_t row)
     {
+        widgets::show_explanations(menu);
+
         menu.addAction(goto_action_);
 
         // A row whose instruction references an address can be followed: to the
@@ -431,9 +434,9 @@ namespace slopkit::ui::components
         menu.addSeparator();
         if (const CodePatch* replaced = document_.patch_at(row); replaced != nullptr)
         {
-            QAction* restore =
-                menu.addAction(tr("Restore Original Instruction at %1").arg(document_.address_text(replaced->begin)));
-            restore->setToolTip(
+            QAction* restore = widgets::described_action(
+                menu,
+                tr("Restore Original Instruction at %1").arg(document_.address_text(replaced->begin)),
                 tr("Write the instruction this session replaced (%1) back.").arg(replaced->original_text));
             connect(restore,
                     &QAction::triggered,
@@ -445,11 +448,13 @@ namespace slopkit::ui::components
         }
         else
         {
-            QAction*   nop       = menu.addAction(tr("NOP Instruction"));
             const bool decodable = row < document_.row_count() && !is_muted(document_.row(row));
-            nop->setEnabled(decodable);
-            nop->setToolTip(decodable ? tr("Replace this instruction with NOP bytes.")
-                                      : tr("Only a decoded instruction can be replaced."));
+
+            QAction* nop = decodable ? widgets::described_action(
+                                           menu, tr("NOP Instruction"), tr("Replace this instruction with NOP bytes."))
+                                     : widgets::disabled_action(menu,
+                                                                tr("NOP Instruction"),
+                                                                tr("Only a decoded instruction can be replaced."));
             connect(nop,
                     &QAction::triggered,
                     this,
@@ -458,10 +463,11 @@ namespace slopkit::ui::components
                         emit nopRequested(row);
                     });
 
-            QAction* edit = menu.addAction(tr("Edit Instruction..."));
-            edit->setEnabled(decodable);
-            edit->setToolTip(decodable ? tr("Rewrite this instruction with assembler text.")
-                                       : tr("Only a decoded instruction can be edited."));
+            QAction* edit =
+                decodable ? widgets::described_action(
+                                menu, tr("Edit Instruction..."), tr("Rewrite this instruction with assembler text."))
+                          : widgets::disabled_action(
+                                menu, tr("Edit Instruction..."), tr("Only a decoded instruction can be edited."));
             connect(edit,
                     &QAction::triggered,
                     this,
@@ -492,14 +498,19 @@ namespace slopkit::ui::components
         add_copy(tr("Address + instruction"), CopyFormat::address_and_instruction);
         add_copy(tr("Address + bytes + instruction"), CopyFormat::address_bytes_instruction);
 
-        // Resolving the operands needs the register context of a stop: the
-        // debug session is attached on demand (after a confirmation) and the
-        // registers are captured from one invisible stop when it is already up.
         menu.addSeparator();
-        QAction* accesses = menu.addAction(tr("Find out what addresses this instruction accesses"));
-        accesses->setEnabled(!document_.row_memory(row).empty());
-        accesses->setToolTip(tr("Resolve this instruction's memory operands from live registers; the debugger is "
-                                "attached first (after a confirmation) when no session is running."));
+        const bool resolvable = !document_.row_memory(row).empty();
+        QAction*   accesses =
+            resolvable
+                ? widgets::described_action(menu,
+                                            tr("Find out what addresses this instruction accesses"),
+                                            tr("Resolve this instruction's memory operands from live registers; the "
+                                               "debugger is attached first (after a confirmation) when no session is "
+                                               "running."))
+                : widgets::disabled_action(menu,
+                                           tr("Find out what addresses this instruction accesses"),
+                                           tr("Only an instruction with a memory operand can be "
+                                              "resolved."));
         connect(accesses,
                 &QAction::triggered,
                 this,

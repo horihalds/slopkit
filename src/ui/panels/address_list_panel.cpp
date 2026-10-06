@@ -23,24 +23,13 @@
 #include "scan/types.hpp"
 #include "table/serializer.hpp"
 #include "ui/components/message_box.hpp"
+#include "ui/components/row_menu.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/table_file.hpp"
 #include "ui/text.hpp"
 
 namespace slopkit::ui::panels
 {
-
-    namespace
-    {
-        // A menu entry that stays visible but explains why it is unavailable.
-        QAction* disabled_action(QMenu& menu, const QString& text, const QString& reason)
-        {
-            QAction* action = menu.addAction(text);
-            action->setEnabled(false);
-            action->setToolTip(reason);
-            return action;
-        }
-    } // namespace
 
     AddressListPanel::AddressListPanel(table::AddressTable&     table,
                                        process::AccessWorker&   worker,
@@ -465,7 +454,7 @@ namespace slopkit::ui::panels
         }
         auto& entry = table_.entries()[row];
 
-        menu.setToolTipsVisible(true);
+        widgets::show_explanations(menu);
 
         QAction* change_value = menu.addAction(tr("Change value"));
         connect(change_value,
@@ -524,48 +513,23 @@ namespace slopkit::ui::panels
                     }
                 });
 
-        menu.addSeparator();
         // The watch entries arm a hardware slot, so they need a target.
         const std::size_t width =
             entry.bytes.empty() ? scan::value_size(entry.type) : static_cast<std::size_t>(entry.bytes.size());
-        if (target_.valid())
-        {
-            QAction* writes = menu.addAction(tr("Find out what writes this address"));
-            writes->setToolTip(tr("Record every instruction that writes this address. The debugger is attached "
-                                  "first (after a confirmation) when no session is running."));
-            connect(writes,
-                    &QAction::triggered,
-                    this,
-                    [this, row, width]
-                    {
-                        if (table_.valid_index(row))
-                        {
-                            emit accessWatchRequested(
-                                table_.entries()[row].address, width, debug::Kind::hardware_write);
-                        }
-                    });
-
-            QAction* accesses = menu.addAction(tr("Find out what accesses this address"));
-            accesses->setToolTip(tr("Record every instruction that reads or writes this address. The debugger is "
-                                    "attached first (after a confirmation) when no session is running."));
-            connect(accesses,
-                    &QAction::triggered,
-                    this,
-                    [this, row, width]
-                    {
-                        if (table_.valid_index(row))
-                        {
-                            emit accessWatchRequested(
-                                table_.entries()[row].address, width, debug::Kind::hardware_read_write);
-                        }
-                    });
-        }
-        else
-        {
-            disabled_action(menu, tr("Find out what writes this address"), tr("Attach to a target first."));
-            disabled_action(menu, tr("Find out what accesses this address"), tr("Attach to a target first."));
-        }
-        disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
+        widgets::add_watch_commands(menu,
+                                    target_.valid(),
+                                    [this, row, width](widgets::WatchCommand command)
+                                    {
+                                        if (!table_.valid_index(row))
+                                        {
+                                            return;
+                                        }
+                                        const debug::Kind kind = command == widgets::WatchCommand::writes
+                                                                   ? debug::Kind::hardware_write
+                                                                   : debug::Kind::hardware_read_write;
+                                        emit accessWatchRequested(table_.entries()[row].address, width, kind);
+                                    });
+        (void)widgets::disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
 
         menu.addSeparator();
         QAction* remove = menu.addAction(tr("Delete"));

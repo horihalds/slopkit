@@ -11,6 +11,7 @@
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
+#include "ui/models/live_cells.hpp"
 
 #include <QAbstractTableModel>
 
@@ -75,23 +76,6 @@ namespace slopkit::ui::models
         void statusChanged(const QString& message, bool is_error);
 
     private:
-        // The live reading of one row; invalidated when the entry at that row
-        // changes identity.
-        struct LiveCell
-        {
-            bool                                  has_reading {false};
-            bool                                  readable {false};
-            std::optional<std::vector<std::byte>> bytes; // the last successful reading
-            bool                                  changed {false};
-        };
-
-        // The row and entry id of one in-flight request, in request order.
-        struct LivePending
-        {
-            std::size_t   row {};
-            std::uint64_t entry_id {};
-        };
-
         bool                          write_value_at(int row, const QString& text);
         bool                          same_as_last() const;
         void                          note_table_changed();
@@ -110,8 +94,9 @@ namespace slopkit::ui::models
         std::optional<process::JobId> write_pending_;
         std::optional<std::uint64_t>  writing_entry_;
 
-        std::vector<LiveCell>    live_;         // parallel to the table rows
-        std::vector<LivePending> live_pending_; // in-flight request identity, in order
+        // The per-row live readings, parallel to the table rows; the in-flight
+        // request identity lives inside it too.
+        LiveCells cells_;
     };
 
 } // namespace slopkit::ui::models

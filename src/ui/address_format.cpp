@@ -136,6 +136,29 @@ namespace slopkit::ui
         return QStringLiteral("0x") + QString::number(address, 16).toUpper();
     }
 
+    QString format_padded_hex(std::uint64_t value, int digits)
+    {
+        return QStringLiteral("0x") + QString::number(value, 16).toUpper().rightJustified(digits, QLatin1Char('0'));
+    }
+
+    QString format_pane_address(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)
+    {
+        if (const auto relative = module_relative_text(mode, spans, address); relative.has_value())
+        {
+            return *relative;
+        }
+        return format_padded_hex(address);
+    }
+
+    QString format_cell_address(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)
+    {
+        if (const auto relative = module_relative_text(mode, spans, address); relative.has_value())
+        {
+            return *relative;
+        }
+        return format_absolute(address);
+    }
+
     std::optional<QString> module_relative_text(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)
     {
         if (mode != AddressMode::module_relative)

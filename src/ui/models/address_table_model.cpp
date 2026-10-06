@@ -127,7 +127,9 @@ namespace slopkit::ui::models
             }
             if (index.column() == address && !entry.expression.empty())
             {
-                return QStringLiteral("0x") + QString::number(entry.address, 16).toUpper();
+                // The compact absolute form, even in module-relative mode: the
+                // tooltip is where the full address stays visible.
+                return ui::format_absolute(entry.address);
             }
             if (index.column() == value)
             {
@@ -241,8 +243,7 @@ namespace slopkit::ui::models
         if (last_entries_.size() != entries.size())
         {
             beginResetModel();
-            live_.assign(entries.size(), LiveCell {});
-            live_pending_.clear();
+            cells_.reset(entries.size());
             note_table_changed();
             endResetModel();
             return;
@@ -253,9 +254,9 @@ namespace slopkit::ui::models
         // completion cannot land on the recycled row either.
         for (std::size_t row = 0; row < entries.size(); ++row)
         {
-            if (last_entries_[row].id != entries[row].id && row < live_.size())
+            if (last_entries_[row].id != entries[row].id && row < cells_.size())
             {
-                live_[row] = LiveCell {};
+                cells_.cell(row) = LiveCell {};
             }
         }
 
@@ -294,119 +295,51 @@ namespace slopkit::ui::models
     std::vector<LiveRequest> AddressTableModel::next_live_request()
     {
         const auto& entries = table_.entries();
-        if (live_.size() != entries.size())
-        {
-            live_.assign(entries.size(), LiveCell {});
-        }
-        live_pending_.clear();
-
-        std::vector<LiveRequest> requests;
-        requests.reserve(entries.size());
-        live_pending_.reserve(entries.size());
-
-        for (std::size_t row = 0; row < entries.size(); ++row)
-        {
-            const auto& entry = entries[row];
-            if (entry.bytes.empty())
-            {
-                continue; // A zero-width entry has nothing to read.
-            }
-            if (writing_entry_.has_value() && *writing_entry_ == entry.id)
-            {
-                continue; // Keep the placeholder until the write completes.
-            }
-            requests.push_back(LiveRequest {.id = row, .address = entry.address, .size = entry.bytes.size()});
-            live_pending_.push_back(LivePending {.row = row, .entry_id = entry.id});
-        }
-        return requests;
+        return cells_.request(entries.size(),
+                              [this, &entries](std::size_t row)
+                              {
+                                  const auto& entry    = entries[row];
+                                  const bool  readable = !entry.bytes.empty()
+                                                      && !(writing_entry_.has_value() && *writing_entry_ == entry.id);
+                                  return LiveCandidate {.address  = entry.address,
+                                                        .size     = entry.bytes.size(),
+                                                        .identity = entry.id,
+                                                        .readable = readable};
+                              });
     }
 
     void AddressTableModel::apply_live_readings(std::span<const LiveReading> readings)
     {
-        const std::size_t count   = std::min(readings.size(), live_pending_.size());
-        const auto&       entries = table_.entries();
-
-        std::optional<std::size_t> run_start;
-        std::optional<std::size_t> run_end;
-        const auto                 flush = [&]()
-        {
-            if (run_start.has_value())
+        const auto& entries = table_.entries();
+        cells_.apply(
+            readings,
+            [&entries](std::size_t row, std::uint64_t identity)
             {
-                emit dataChanged(index(static_cast<int>(*run_start), value),
-                                 index(static_cast<int>(*run_end), value),
+                return row < entries.size() && entries[row].id == identity;
+            },
+            [this](std::size_t first, std::size_t last)
+            {
+                emit dataChanged(index(static_cast<int>(first), value),
+                                 index(static_cast<int>(last), value),
                                  {Qt::DisplayRole, Qt::ForegroundRole});
-                run_start.reset();
-                run_end.reset();
-            }
-        };
-
-        for (std::size_t i = 0; i < count; ++i)
-        {
-            const LivePending& pending = live_pending_[i];
-            const LiveReading& reading = readings[i];
-            const std::size_t  row     = pending.row;
-            if (reading.id != row || row >= entries.size() || row >= live_.size())
-            {
-                continue; // Out of range; leave the row alone.
-            }
-            if (entries[row].id != pending.entry_id)
-            {
-                continue; // The row changed identity since the request.
-            }
-
-            LiveCell&  cell      = live_[row];
-            const bool was_state = cell.has_reading;
-            const bool was_read  = cell.readable;
-            const bool was_chg   = cell.changed;
-            const auto was_bytes = cell.bytes;
-
-            const bool readable = reading.readable && !reading.bytes.empty();
-            if (readable)
-            {
-                cell.changed = cell.bytes.has_value() && *cell.bytes != reading.bytes;
-                cell.bytes   = reading.bytes;
-            }
-            else
-            {
-                cell.changed = false;
-            }
-            cell.has_reading = true;
-            cell.readable    = readable;
-
-            if (was_state != cell.has_reading || was_read != cell.readable || was_chg != cell.changed
-                || was_bytes != cell.bytes)
-            {
-                if (!run_start.has_value())
-                {
-                    run_start = row;
-                }
-                run_end = row;
-            }
-            else
-            {
-                flush();
-            }
-        }
-        flush();
-
-        live_pending_.clear();
+            });
     }
 
-    const AddressTableModel::LiveCell* AddressTableModel::live_cell_at(std::size_t row) const
+    const LiveCell* AddressTableModel::live_cell_at(std::size_t row) const
     {
-        return row < live_.size() ? &live_[row] : nullptr;
+        return cells_.at(row);
     }
 
     void AddressTableModel::seed_live_write(std::uint64_t entry_id)
     {
         const auto& entries = table_.entries();
-        for (std::size_t row = 0; row < entries.size() && row < live_.size(); ++row)
+        for (std::size_t row = 0; row < entries.size() && row < cells_.size(); ++row)
         {
             if (entries[row].id != entry_id)
             {
                 continue;
             }
-            LiveCell& cell   = live_[row];
+            LiveCell& cell   = cells_.cell(row);
             cell.has_reading = true;
             cell.readable    = true;
             cell.bytes       = entries[row].bytes;
@@ -417,11 +350,7 @@ namespace slopkit::ui::models
 
     QString AddressTableModel::address_text(std::uint64_t address) const
     {
-        if (const auto relative = ui::module_relative_text(address_mode_, module_spans_, address); relative.has_value())
-        {
-            return *relative;
-        }
-        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
+        return ui::format_cell_address(address_mode_, module_spans_, address);
     }
 
     bool AddressTableModel::write_value_at(int row, const QString& text)

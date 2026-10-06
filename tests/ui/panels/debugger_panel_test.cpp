@@ -10,6 +10,7 @@
 #include "process/attachment.hpp"
 #include "support/fake_debug.hpp"
 #include "support/fake_process.hpp"
+#include "ui/fonts.hpp"
 #include "ui/models/register_model.hpp"
 #include "ui/panels/debugger_panel.hpp"
 
@@ -134,4 +135,32 @@ TEST_CASE("debugger pane explains the missing target", "[ui][panels][debugger]")
     CHECK_FALSE(pane.start_button()->isEnabled());
     pane.start_button()->click();
     CHECK(controller.state() == Controller::State::idle);
+}
+
+TEST_CASE("debugger pane renders its tables in the embedded mono font", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    backend.register_file = slopkit::tests::default_registers(0x1234);
+    Controller controller(backend);
+
+    const slopkit::process::AttachedTarget target = attached_target();
+    DebuggerPanel                          pane(controller, target);
+
+    const QString family = slopkit::ui::mono_font().family();
+    CHECK(pane.register_table()->font().family() == family);
+    CHECK(pane.call_stack_table()->font().family() == family);
+
+    // The registers keep the padded hex form the pane renders.
+    controller.start(target.pid, target.plugin_id);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.registers().size() == 18;
+                       }));
+    CHECK(pane.register_model()
+              ->data(pane.register_model()->index(16, slopkit::ui::models::RegisterModel::value), Qt::DisplayRole)
+              .toString()
+          == QStringLiteral("0x0000000000001234"));
 }

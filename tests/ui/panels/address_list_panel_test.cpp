@@ -357,6 +357,7 @@ TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
     QMenu                                 detached_menu;
     detached_panel.populate_row_menu(detached_menu, 0);
     find_watch_actions(detached_menu);
+    CHECK(detached_menu.toolTipsVisible());
     REQUIRE(watch_writes != nullptr);
     REQUIRE(watch_accesses != nullptr);
     CHECK_FALSE(watch_writes->isEnabled());
@@ -386,6 +387,7 @@ TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
     QMenu menu;
     panel.populate_row_menu(menu, 0);
     find_watch_actions(menu);
+    CHECK(menu.toolTipsVisible());
     REQUIRE(watch_writes != nullptr);
     REQUIRE(watch_accesses != nullptr);
     CHECK(watch_writes->isEnabled());

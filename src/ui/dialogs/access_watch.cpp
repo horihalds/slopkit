@@ -80,329 +80,6 @@ namespace slopkit::ui::dialogs
         }
     } // namespace
 
-    // One instruction that touched the watched address, coalesced from the
-    // controller's rows.
-    class AccessWatchDialog::HitsModel : public QAbstractTableModel
-    {
-    public:
-        enum Column
-        {
-            instruction,
-            text,
-            thread,
-            count,
-            column_count,
-        };
-
-        explicit HitsModel(AccessWatchDialog* dialog) : QAbstractTableModel(dialog), dialog_(dialog) {}
-
-        void sync(const debug::AccessWatch& watch)
-        {
-            // A new watch (a different address, or a fresh start at the same one)
-            // replaces every row.
-            if (address_ != watch.address() || (watch.state() == debug::WatchState::watching && !watching_))
-            {
-                beginResetModel();
-                address_ = watch.address();
-                rows_.clear();
-                for (const debug::WatchHit& hit : watch.hits())
-                {
-                    rows_.push_back(HitRow {hit.instruction, 0, QString(), hit.tid, hit.count});
-                }
-                endResetModel();
-                watching_ = watch.state() == debug::WatchState::watching;
-                return;
-            }
-            watching_ = watch.state() == debug::WatchState::watching;
-
-            if (watch.hits().empty())
-            {
-                if (!rows_.empty())
-                {
-                    beginResetModel();
-                    rows_.clear();
-                    endResetModel();
-                }
-                return;
-            }
-
-            for (const debug::WatchHit& hit : watch.hits())
-            {
-                const auto found = std::find_if(rows_.begin(),
-                                                rows_.end(),
-                                                [&hit](const HitRow& row)
-                                                {
-                                                    return row.instruction == hit.instruction;
-                                                });
-                if (found != rows_.end())
-                {
-                    if (found->count != hit.count || found->tid != hit.tid)
-                    {
-                        found->count  = hit.count;
-                        found->tid    = hit.tid;
-                        const int row = static_cast<int>(std::distance(rows_.begin(), found));
-                        emit      dataChanged(index(row, thread), index(row, count), {Qt::DisplayRole});
-                    }
-                    continue;
-                }
-
-                const int row = static_cast<int>(rows_.size());
-                beginInsertRows(QModelIndex(), row, row);
-                rows_.push_back(HitRow {hit.instruction, 0, QString(), hit.tid, hit.count});
-                endInsertRows();
-            }
-        }
-
-        [[nodiscard]] bool needs_text(int row) const
-        {
-            return row >= 0 && static_cast<std::size_t>(row) < rows_.size()
-                && rows_[static_cast<std::size_t>(row)].text.isEmpty();
-        }
-
-        [[nodiscard]] std::uint64_t instruction_at(int row) const
-        {
-            return row >= 0 && static_cast<std::size_t>(row) < rows_.size()
-                     ? rows_[static_cast<std::size_t>(row)].instruction
-                     : 0;
-        }
-
-        [[nodiscard]] std::uint64_t display_instruction_at(int row) const
-        {
-            if (row < 0 || static_cast<std::size_t>(row) >= rows_.size())
-            {
-                return 0;
-            }
-            const HitRow& hit = rows_[static_cast<std::size_t>(row)];
-            return hit.recovered != 0 ? hit.recovered : hit.instruction;
-        }
-
-        [[nodiscard]] std::uint64_t count_at(int row) const
-        {
-            return row >= 0 && static_cast<std::size_t>(row) < rows_.size() ? rows_[static_cast<std::size_t>(row)].count
-                                                                            : 0;
-        }
-
-        [[nodiscard]] QString text_at(int row) const
-        {
-            if (row < 0 || static_cast<std::size_t>(row) >= rows_.size())
-            {
-                return {};
-            }
-            const HitRow& hit = rows_[static_cast<std::size_t>(row)];
-            return hit.text.isEmpty() ? QStringLiteral("??") : hit.text;
-        }
-
-        void set_text(int row, std::uint64_t recovered, QString instruction_text)
-        {
-            if (row < 0 || static_cast<std::size_t>(row) >= rows_.size())
-            {
-                return;
-            }
-            HitRow& hit   = rows_[static_cast<std::size_t>(row)];
-            hit.recovered = recovered;
-            hit.text      = std::move(instruction_text);
-            emit dataChanged(index(row, instruction), index(row, text), {Qt::DisplayRole, Qt::ToolTipRole});
-        }
-
-        int rowCount(const QModelIndex& parent = QModelIndex()) const override
-        {
-            return parent.isValid() ? 0 : static_cast<int>(rows_.size());
-        }
-
-        int columnCount(const QModelIndex& parent = QModelIndex()) const override
-        {
-            return parent.isValid() ? 0 : column_count;
-        }
-
-        QVariant data(const QModelIndex& index, int role) const override
-        {
-            if (!index.isValid() || index.row() >= static_cast<int>(rows_.size()))
-            {
-                return {};
-            }
-            const HitRow& hit = rows_[static_cast<std::size_t>(index.row())];
-
-            if (role == Qt::ToolTipRole && index.column() == instruction)
-            {
-                return hit.recovered != 0 ? dialog_->display_address(hit.recovered) : QString();
-            }
-            if (role != Qt::DisplayRole)
-            {
-                return {};
-            }
-
-            switch (index.column())
-            {
-            case instruction:
-                return dialog_->display_address(hit.recovered != 0 ? hit.recovered : hit.instruction);
-            case text:
-                return hit.text.isEmpty() ? QStringLiteral("??") : hit.text;
-            case thread:
-                return QString::number(hit.tid);
-            case count:
-                return QString::number(hit.count);
-            default:
-                return {};
-            }
-        }
-
-        QVariant headerData(int section, Qt::Orientation orientation, int role) const override
-        {
-            if (orientation != Qt::Horizontal || role != Qt::DisplayRole)
-            {
-                return {};
-            }
-            switch (section)
-            {
-            case instruction:
-                return tr("Instruction");
-            case text:
-                return tr("Code");
-            case thread:
-                return tr("Thread");
-            case count:
-                return tr("Count");
-            default:
-                return {};
-            }
-        }
-
-    private:
-        AccessWatchDialog*  dialog_ {};
-        std::uint64_t       address_ {};
-        bool                watching_ {false};
-        std::vector<HitRow> rows_;
-    };
-
-    // The resolved operands of the instruction the user picked in the listing.
-    class AccessWatchDialog::InstructionModel : public QAbstractTableModel
-    {
-    public:
-        enum Column
-        {
-            address,
-            operand,
-            width,
-            access,
-            column_count,
-        };
-
-        explicit InstructionModel(AccessWatchDialog* dialog) : QAbstractTableModel(dialog), dialog_(dialog) {}
-
-        void set(std::vector<ui::ResolvedAccess> accesses)
-        {
-            beginResetModel();
-            rows_.clear();
-            for (const ui::ResolvedAccess& access : accesses)
-            {
-                rows_.push_back(
-                    AccessRow {access.address, access.operand, access.width, access.writes, access.resolved});
-            }
-            endResetModel();
-        }
-
-        [[nodiscard]] int row_count() const
-        {
-            return static_cast<int>(rows_.size());
-        }
-
-        [[nodiscard]] std::uint64_t address_at(int row) const
-        {
-            return row >= 0 && static_cast<std::size_t>(row) < rows_.size()
-                     ? rows_[static_cast<std::size_t>(row)].address
-                     : 0;
-        }
-
-        [[nodiscard]] std::size_t width_at(int row) const
-        {
-            return row >= 0 && static_cast<std::size_t>(row) < rows_.size() ? rows_[static_cast<std::size_t>(row)].width
-                                                                            : 0;
-        }
-
-        [[nodiscard]] bool resolved_at(int row) const
-        {
-            return row >= 0 && static_cast<std::size_t>(row) < rows_.size()
-                && rows_[static_cast<std::size_t>(row)].resolved;
-        }
-
-        [[nodiscard]] bool any_resolved() const
-        {
-            return std::any_of(rows_.begin(),
-                               rows_.end(),
-                               [](const AccessRow& row)
-                               {
-                                   return row.resolved;
-                               });
-        }
-
-        int rowCount(const QModelIndex& parent = QModelIndex()) const override
-        {
-            return parent.isValid() ? 0 : static_cast<int>(rows_.size());
-        }
-
-        int columnCount(const QModelIndex& parent = QModelIndex()) const override
-        {
-            return parent.isValid() ? 0 : column_count;
-        }
-
-        QVariant data(const QModelIndex& index, int role) const override
-        {
-            if (!index.isValid() || index.row() >= static_cast<int>(rows_.size()))
-            {
-                return {};
-            }
-            const AccessRow& row = rows_[static_cast<std::size_t>(index.row())];
-
-            if (role == Qt::ToolTipRole && index.column() == address && !row.resolved)
-            {
-                return tr("The register it needs is not available yet.");
-            }
-            if (role != Qt::DisplayRole)
-            {
-                return {};
-            }
-
-            switch (index.column())
-            {
-            case address:
-                return row.resolved ? dialog_->display_address(row.address) : QStringLiteral("?");
-            case operand:
-                return row.operand;
-            case width:
-                return QString::number(row.width);
-            case access:
-                return row.writes ? tr("write") : tr("read");
-            default:
-                return {};
-            }
-        }
-
-        QVariant headerData(int section, Qt::Orientation orientation, int role) const override
-        {
-            if (orientation != Qt::Horizontal || role != Qt::DisplayRole)
-            {
-                return {};
-            }
-            switch (section)
-            {
-            case address:
-                return tr("Address");
-            case operand:
-                return tr("Operand");
-            case width:
-                return tr("Width");
-            case access:
-                return tr("Access");
-            default:
-                return {};
-            }
-        }
-
-    private:
-        AccessWatchDialog*     dialog_ {};
-        std::vector<AccessRow> rows_;
-    };
-
     AccessWatchDialog::AccessWatchDialog(debug::Controller&       controller,
                                          process::AccessWorker&   worker,
                                          process::AttachedTarget& target,
@@ -440,6 +117,13 @@ namespace slopkit::ui::dialogs
         layout->setContentsMargins(6, 6, 6, 6);
         layout->setSpacing(6);
 
+        // Both tables render their addresses through the same formatter the
+        // window's header and hint strings use.
+        const ui::AddressText address_text = [this](std::uint64_t address)
+        {
+            return display_address(address);
+        };
+
         header_ = new QLabel(this);
         header_->setObjectName(QStringLiteral("access_watch_header"));
         header_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -451,7 +135,7 @@ namespace slopkit::ui::dialogs
 
         // The recorded accesses: one row per instruction, with its hit count.
         layout->addWidget(widgets::section_header(tr("Recorded accesses"), this));
-        hits_model_     = new HitsModel(this);
+        hits_model_     = new models::WatchHitsModel(this, address_text);
         recorded_table_ = new QTableView(this);
         recorded_table_->setObjectName(QStringLiteral("access_watch_hits"));
         recorded_table_->setModel(hits_model_);
@@ -479,7 +163,7 @@ namespace slopkit::ui::dialogs
         // The resolved operands of one listing row, each of which can become the
         // next watch.
         layout->addWidget(widgets::section_header(tr("Instruction accesses"), this));
-        instruction_model_ = new InstructionModel(this);
+        instruction_model_ = new models::InstructionAccessModel(this, address_text);
         instruction_table_ = new QTableView(this);
         instruction_table_->setObjectName(QStringLiteral("access_watch_instructions"));
         instruction_table_->setModel(instruction_model_);
@@ -548,11 +232,7 @@ namespace slopkit::ui::dialogs
 
     QString AccessWatchDialog::display_address(std::uint64_t address) const
     {
-        if (const auto relative = ui::module_relative_text(controller_.address_mode(), controller_.modules(), address))
-        {
-            return *relative;
-        }
-        return ui::format_absolute(address);
+        return ui::format_cell_address(controller_.address_mode(), controller_.modules(), address);
     }
 
     QString AccessWatchDialog::header_text() const

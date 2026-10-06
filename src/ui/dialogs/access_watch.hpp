@@ -10,6 +10,8 @@
 #include "process/attachment.hpp"
 #include "ui/access_watch.hpp"
 #include "ui/debug_session.hpp"
+#include "ui/models/instruction_access_model.hpp"
+#include "ui/models/watch_hits_model.hpp"
 
 #include <QDialog>
 #include <QString>
@@ -84,9 +86,6 @@ namespace slopkit::ui::dialogs
         void followRequested(std::uint64_t address);
 
     private:
-        class HitsModel;
-        class InstructionModel;
-
         // A watch the context-menu command asked for while the session was not up
         // yet; armed the moment the session runs.
         struct PendingWatch
@@ -110,19 +109,19 @@ namespace slopkit::ui::dialogs
         process::AccessWorker& worker_;
         DebugSessionGate       gate_;
 
-        QLabel*               header_ {};
-        widgets::StatusLabel* status_ {};
-        QTableView*           recorded_table_ {};
-        QTableView*           instruction_table_ {};
-        widgets::StatusLabel* hint_ {};
-        QPushButton*          follow_ {};
-        QPushButton*          stop_ {};
-        QPushButton*          clear_ {};
-        QPushButton*          close_ {};
-        QPushButton*          watch_writes_ {};
-        QPushButton*          watch_accesses_ {};
-        HitsModel*            hits_model_ {};
-        InstructionModel*     instruction_model_ {};
+        QLabel*                         header_ {};
+        widgets::StatusLabel*           status_ {};
+        QTableView*                     recorded_table_ {};
+        QTableView*                     instruction_table_ {};
+        widgets::StatusLabel*           hint_ {};
+        QPushButton*                    follow_ {};
+        QPushButton*                    stop_ {};
+        QPushButton*                    clear_ {};
+        QPushButton*                    close_ {};
+        QPushButton*                    watch_writes_ {};
+        QPushButton*                    watch_accesses_ {};
+        models::WatchHitsModel*         hits_model_ {};
+        models::InstructionAccessModel* instruction_model_ {};
 
         std::uint64_t instruction_ {};
         std::size_t   instruction_length_ {};

@@ -553,6 +553,7 @@ TEST_CASE("the disassembly view offers the instruction accesses command", "[ui]"
 
     QMenu menu;
     view.populate_menu(menu, 0);
+    CHECK(menu.toolTipsVisible());
     QAction* accesses = action(menu, QStringLiteral("Find out what addresses this instruction accesses"));
     REQUIRE(accesses != nullptr);
     CHECK(accesses->isEnabled());
@@ -574,6 +575,8 @@ TEST_CASE("the disassembly view offers the instruction accesses command", "[ui]"
     QAction* plain_accesses = action(plain, QStringLiteral("Find out what addresses this instruction accesses"));
     REQUIRE(plain_accesses != nullptr);
     CHECK_FALSE(plain_accesses->isEnabled());
+    CHECK(plain.toolTipsVisible());
+    CHECK(plain_accesses->toolTip() == QStringLiteral("Only an instruction with a memory operand can be resolved."));
 
     view.hide();
 }

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 
+#include "ui/address_format.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::models
@@ -100,10 +101,7 @@ namespace slopkit::ui::models
         case Qt::ToolTipRole:
             if (index.column() == address)
             {
-                return QStringLiteral("0x")
-                     + QString::number(static_cast<qulonglong>(entry.address), 16)
-                           .toUpper()
-                           .rightJustified(16, QLatin1Char('0'));
+                return ui::format_padded_hex(entry.address);
             }
             if (index.column() == enabled && !entry.armed && entry.enabled)
             {

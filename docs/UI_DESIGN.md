@@ -157,8 +157,10 @@ Both the address list and the scan results offer `Find out what writes this
 address` and `Find out what accesses this address` after a separator in their row
 menus (disabled with `Attach to a target first.` while no target is attached),
 and the listing adds `Find out what addresses this instruction accesses` to its
-row menu for any row with a memory operand. Those three commands attach the
-session on demand; the listing command additionally stops the running target
+row menu for any row with a memory operand (a row without one keeps the entry
+disabled with `Only an instruction with a memory operand can be resolved.`).
+Those three commands attach the session on demand; the listing command
+additionally stops the running target
 once, invisibly, reads the register file, resolves the operands against it and
 puts the target back running, so the hint reads "Resolved from the registers at
 <instruction>" for that capture and warns only when the registers could not be

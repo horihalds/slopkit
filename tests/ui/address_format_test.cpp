@@ -111,6 +111,43 @@ TEST_CASE("absolute addresses render as 0xHEX", "[ui]")
     CHECK(slopkit::ui::format_absolute(0xabcdef) == QStringLiteral("0xABCDEF"));
 }
 
+TEST_CASE("padded hex zero-fills to the requested width", "[ui]")
+{
+    CHECK(slopkit::ui::format_padded_hex(0) == QStringLiteral("0x0000000000000000"));
+    CHECK(slopkit::ui::format_padded_hex(0x41) == QStringLiteral("0x0000000000000041"));
+    CHECK(slopkit::ui::format_padded_hex(0xFFFFFFFFFFFFFFFF) == QStringLiteral("0xFFFFFFFFFFFFFFFF"));
+    // A value wider than the asked-for width keeps all of its digits.
+    CHECK(slopkit::ui::format_padded_hex(0x12345, 2) == QStringLiteral("0x12345"));
+    // The Access Watch operand's 2-digit byte and displacement widths.
+    CHECK(slopkit::ui::format_padded_hex(0x41, 2) == QStringLiteral("0x41"));
+    CHECK(slopkit::ui::format_padded_hex(0x9, 2) == QStringLiteral("0x09"));
+}
+
+TEST_CASE("the pane and cell address helpers pick their fallback", "[ui]")
+{
+    const std::vector<slopkit::process::ModuleInfo> modules {module_image("app", 0x1000, 0x1000)};
+    slopkit::ui::ModuleSpans                        spans;
+    spans.set_modules(modules);
+
+    // Inside a span both forms are module-relative.
+    CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x1040)
+          == QStringLiteral("app+40"));
+    CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x1040)
+          == QStringLiteral("app+40"));
+
+    // Outside every span the pane keeps the fixed width, the cell stays compact.
+    CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
+          == QStringLiteral("0x0000000005000000"));
+    CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
+          == QStringLiteral("0x5000000"));
+
+    // Absolute mode never goes module-relative.
+    CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
+          == QStringLiteral("0x0000000000001040"));
+    CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
+          == QStringLiteral("0x1040"));
+}
+
 TEST_CASE("module-relative text falls back in absolute mode and outside spans", "[ui]")
 {
     const std::vector<slopkit::process::ModuleInfo> modules {module_image("app", 0x1000, 0x1000)};

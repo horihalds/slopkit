@@ -14,6 +14,7 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
@@ -32,12 +33,6 @@ namespace slopkit::ui::panels
             }
             const int keep = (max_chars - 3) / 2;
             return name.left(keep) + QStringLiteral("...") + name.right(max_chars - 3 - keep);
-        }
-
-        // Renders an address as "0x" plus exactly 16 upper-case hex digits.
-        QString hex16(std::uint64_t value)
-        {
-            return QStringLiteral("0x") + QString::number(value, 16).toUpper().rightJustified(16, QLatin1Char('0'));
         }
 
         // The alignment the fast scan uses when the field is left blank.
@@ -489,8 +484,8 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::apply_range(std::uint64_t start, std::uint64_t end)
     {
-        start_edit_->setText(hex16(start));
-        stop_edit_->setText(hex16(end));
+        start_edit_->setText(ui::format_padded_hex(start));
+        stop_edit_->setText(ui::format_padded_hex(end));
     }
 
     void ScannerPanel::clear_memory_map()
@@ -517,7 +512,7 @@ namespace slopkit::ui::panels
     {
         const auto range_text = [](std::uint64_t start, std::uint64_t end)
         {
-            return hex16(start) + QStringLiteral("-") + hex16(end);
+            return ui::format_padded_hex(start) + QStringLiteral("-") + ui::format_padded_hex(end);
         };
 
         range_updating_ = true;

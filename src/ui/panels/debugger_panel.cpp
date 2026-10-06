@@ -3,14 +3,15 @@
 #include <cstdint>
 #include <vector>
 
-#include <QFontDatabase>
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QPushButton>
 #include <QTableView>
 #include <QVBoxLayout>
 
+#include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/fonts.hpp"
 #include "ui/models/call_stack_model.hpp"
 #include "ui/models/register_model.hpp"
 
@@ -35,14 +36,9 @@ namespace slopkit::ui::panels
             }
         }
 
-        QString format_register(std::uint64_t value)
-        {
-            return QStringLiteral("0x") + QString::number(value, 16).toUpper().rightJustified(16, QLatin1Char('0'));
-        }
-
         void apply_fixed_font(QTableView* table)
         {
-            table->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+            table->setFont(mono_font());
         }
     } // namespace
 
@@ -212,7 +208,7 @@ namespace slopkit::ui::panels
         {
             values.push_back(models::RegisterValue {
                 .name  = value.name,
-                .value = format_register(value.value),
+                .value = ui::format_padded_hex(value.value),
                 .read  = true,
             });
         }

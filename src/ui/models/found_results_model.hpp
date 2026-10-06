@@ -10,6 +10,7 @@
 #include "scan/engine.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
+#include "ui/models/live_cells.hpp"
 
 #include <QAbstractTableModel>
 
@@ -85,24 +86,6 @@ namespace slopkit::ui::models
         [[nodiscard]] const scan::ScanHit* hit_at(int row) const;
 
     private:
-        // The live reading of one shown row; cleared whenever the window is
-        // rebuilt.
-        struct LiveCell
-        {
-            bool                                  has_reading {false};
-            bool                                  readable {false};
-            std::optional<std::vector<std::byte>> bytes;
-            bool                                  changed {false};
-        };
-
-        // The identity of one in-flight request, in request order.
-        struct LivePending
-        {
-            std::size_t   row {};
-            int           hit_index {};
-            std::uint64_t address {};
-        };
-
         void                          rebuild_window();
         void                          refresh_static_flags();
         [[nodiscard]] const LiveCell* live_cell_at(int row) const;
@@ -117,8 +100,7 @@ namespace slopkit::ui::models
         // Parallel to `order_`, not to `hits_`.
         std::vector<bool>                                 static_hits_;
         // Parallel to `order_`; the live reading of each shown row.
-        std::vector<LiveCell>                             live_;
-        std::vector<LivePending>                          live_pending_;
+        LiveCells                                         cells_;
         ui::ModuleSpans                                   module_spans_;
         ui::AddressMode                                   address_mode_ {ui::AddressMode::module_relative};
         int                                               sort_column_ {address};

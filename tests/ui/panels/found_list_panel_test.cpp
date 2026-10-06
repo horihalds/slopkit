@@ -230,6 +230,7 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     // An empty model still builds the row menu, so a stale row cannot break it.
     QMenu menu;
     panel.populate_row_menu(menu, 0);
+    CHECK(menu.toolTipsVisible());
 
     CHECK(action_texts(menu.actions())
           == QList<QString> {QStringLiteral("Add to address table"),
