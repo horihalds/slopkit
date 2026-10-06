@@ -40,8 +40,8 @@ namespace slopkit::ui::panels
             widgets::show_explanations(*menu);
         }
 
-        // File: the viewer closes like any other window; its hideEvent persists
-        // the geometry and the panes keep their history.
+        // File: the viewer closes like any other window; hiding it lets the
+        // window geometry keeper persist its frame, and the panes keep their history.
         close_action_ = file_menu_->addAction(tr("Close"));
         close_action_->setShortcut(QKeySequence::Close);
         close_action_->setShortcutContext(Qt::WindowShortcut);

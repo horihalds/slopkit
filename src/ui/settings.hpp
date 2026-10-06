@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <memory>
 
 #include <QByteArray>
@@ -11,27 +12,40 @@
 
 namespace slopkit::ui
 {
+    // One rememberable top-level window; each keeps its own saved geometry.
+    enum class WindowId
+    {
+        main,
+        process_list,
+        add_address,
+        table_settings,
+        log,
+        breakpoints,
+        access_watch,
+        settings,
+        memory_viewer
+    };
 
     // The persisted application settings: the appearance, the address display
     // mode and the table/file-dialog memory, with the defaults applied when the
     // file is missing.
     struct Settings
     {
-        bool        dark_theme {true};
-        AddressMode address_mode {AddressMode::module_relative};
+        bool                           dark_theme {true};
+        AddressMode                    address_mode {AddressMode::module_relative};
         // Whether the last table is loaded again at the next start.
-        bool        auto_load_last_table {false};
+        bool                           auto_load_last_table {false};
         // The table slopkit last loaded or saved.
-        QString     last_table_path;
+        QString                        last_table_path;
         // The directory the file dialogs last used.
-        QString     last_directory;
+        QString                        last_directory;
         // Whether the Value columns follow the attached target's live memory.
-        bool        live_update_enabled {true};
+        bool                           live_update_enabled {true};
         // The live refresh cadence in milliseconds, clamped to [50, 5000].
-        int         live_update_interval_ms {250};
-        // The detached Memory Viewer's saved window geometry
-        // (QWidget::saveGeometry); empty until the window has been hidden once.
-        QByteArray  memory_view_geometry;
+        int                            live_update_interval_ms {250};
+        // The saved window geometries (QWidget::saveGeometry), one per WindowId;
+        // a missing entry means that window has never been hidden.
+        std::map<WindowId, QByteArray> window_geometry;
 
         bool operator==(const Settings&) const = default;
     };
@@ -57,7 +71,9 @@ namespace slopkit::ui
         void set_last_directory(const QString& directory);
         void set_live_update_enabled(bool enabled);
         void set_live_update_interval_ms(int interval_ms);
-        void set_memory_view_geometry(const QByteArray& geometry);
+
+        [[nodiscard]] QByteArray window_geometry(WindowId id) const;
+        void                     set_window_geometry(WindowId id, const QByteArray& geometry);
 
     signals:
         void darkThemeChanged(bool dark);

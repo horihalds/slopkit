@@ -1,5 +1,9 @@
 #include <catch2/catch.hpp>
 
+#include <fstream>
+#include <string>
+#include <vector>
+
 #include "support/ui_helpers.hpp"
 #include "ui/panels/debug_controls.hpp"
 
@@ -454,4 +458,80 @@ TEST_CASE("closing the main window ends the session", "[ui]")
         }
     }
     CHECK(lifetime_owners == 0);
+}
+
+TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
+{
+    application();
+
+    const QString path = scratch_settings_file("main_geometry.ini");
+    QSize         saved_size;
+    {
+        slopkit::plugin::PluginHost      host;
+        slopkit::process::PluginAccess   access {host};
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target;
+        slopkit::ui::SettingsController  settings {path};
+        slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+        window.resize(700, 700);
+        window.show();
+        QCoreApplication::processEvents();
+        // The offscreen platform may clamp an over-wide request, so the size to
+        // restore is whatever the window actually holds when it is hidden.
+        saved_size = window.size();
+        CHECK(saved_size != QSize(748, 768));
+        window.hide();
+        QCoreApplication::processEvents();
+
+        CHECK_FALSE(settings.window_geometry(slopkit::ui::WindowId::main).isEmpty());
+    }
+
+    {
+        slopkit::plugin::PluginHost      host;
+        slopkit::process::PluginAccess   access {host};
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target;
+        slopkit::ui::SettingsController  settings {path};
+        slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+        CHECK(window.size() == saved_size);
+    }
+}
+
+TEST_CASE("a corrupt main-window geometry leaves the default size", "[ui]")
+{
+    application();
+
+    const QString path = scratch_settings_file("main_geometry_junk.ini");
+    {
+        std::ofstream file(path.toStdString(), std::ios::binary | std::ios::trunc);
+        file << "[windows]\nmain_geometry=not-a-blob\n";
+    }
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {path};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    CHECK(window.size() == QSize(748, 768));
+
+    int warnings = 0;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.level == slopkit::log::Level::warning
+            && record.message.find("malformed windows/main_geometry value") != std::string::npos)
+        {
+            ++warnings;
+        }
+    }
+    CHECK(warnings == 1);
 }

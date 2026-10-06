@@ -683,12 +683,12 @@ TEST_CASE("the memory viewer restores its size across a restart", "[ui]")
         viewer->hide();
         QCoreApplication::processEvents();
 
-        REQUIRE_FALSE(settings.values().memory_view_geometry.isEmpty());
+        REQUIRE_FALSE(settings.window_geometry(slopkit::ui::WindowId::memory_viewer).isEmpty());
     }
 
     {
         slopkit::ui::SettingsController settings {settings_path};
-        REQUIRE_FALSE(settings.values().memory_view_geometry.isEmpty());
+        REQUIRE_FALSE(settings.window_geometry(slopkit::ui::WindowId::memory_viewer).isEmpty());
         slopkit::ui::MainWindow window {worker, target, host, settings, shared_debug_controller()};
         auto*                   viewer = window.memory_viewer();
         REQUIRE(viewer != nullptr);

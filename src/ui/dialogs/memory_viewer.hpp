@@ -23,7 +23,6 @@
 #include <QDialog>
 #include <QString>
 
-class QHideEvent;
 class QSplitter;
 
 namespace slopkit::ui::components
@@ -114,9 +113,6 @@ namespace slopkit::ui::dialogs
     signals:
         // Asks the window's live coordinator for an immediate pass (Go To / show).
         void liveRefreshRequested();
-        // The window's saved geometry (QWidget::saveGeometry), emitted whenever
-        // it is hidden so MainWindow can persist it for the next run.
-        void geometryChanged(QByteArray geometry);
 
         // The resolved operands of a listing row, for the Access Watch window.
         void instructionAccessesResolved(std::uint64_t                   instruction,
@@ -127,9 +123,6 @@ namespace slopkit::ui::dialogs
 
     protected:
         void showEvent(QShowEvent* event) override;
-        // Hide is what a close becomes, so this single hook covers the menu,
-        // Ctrl+W and the window manager's close button; a minimise is not a hide.
-        void hideEvent(QHideEvent* event) override;
 
     private:
         // Which pane a Go To aimed at: the listing when the focus is inside it,

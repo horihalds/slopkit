@@ -16,6 +16,7 @@ namespace
 {
     using slopkit::ui::AddressMode;
     using slopkit::ui::SettingsController;
+    using slopkit::ui::WindowId;
 
     QString scratch_file(std::string_view name)
     {
@@ -130,22 +131,22 @@ TEST_CASE("The live-update values survive a manual INI", "[settings]")
     REQUIRE(controller.values().live_update_interval_ms == 1000);
 }
 
-TEST_CASE("The memory view geometry survives a round-trip through the INI file", "[settings]")
+TEST_CASE("A window geometry survives a round-trip through the INI file", "[settings]")
 {
     const QString    path = scratch_file("geometry.ini");
     const QByteArray blob = QByteArray::fromHex("00010203040506070809");
     {
         SettingsController controller(path);
-        REQUIRE(controller.values().memory_view_geometry.isEmpty());
-        controller.set_memory_view_geometry(blob);
-        REQUIRE(controller.values().memory_view_geometry == blob);
+        REQUIRE(controller.window_geometry(WindowId::memory_viewer).isEmpty());
+        controller.set_window_geometry(WindowId::memory_viewer, blob);
+        REQUIRE(controller.window_geometry(WindowId::memory_viewer) == blob);
     }
 
     SettingsController reloaded(path);
-    REQUIRE(reloaded.values().memory_view_geometry == blob);
+    REQUIRE(reloaded.window_geometry(WindowId::memory_viewer) == blob);
 }
 
-TEST_CASE("A malformed memory view geometry falls back to the default", "[settings]")
+TEST_CASE("A malformed window geometry falls back to the default", "[settings]")
 {
     const QString path = scratch_file("geometry_junk.ini");
     write_text(path, "[windows]\nmemory_view_geometry=not-a-blob\n");
@@ -157,7 +158,7 @@ TEST_CASE("A malformed memory view geometry falls back to the default", "[settin
                                             }};
 
     SettingsController controller(path);
-    CHECK(controller.values().memory_view_geometry.isEmpty());
+    CHECK(controller.window_geometry(WindowId::memory_viewer).isEmpty());
 
     bool warned = false;
     for (const slopkit::log::Record& record : records)
@@ -169,6 +170,32 @@ TEST_CASE("A malformed memory view geometry falls back to the default", "[settin
         }
     }
     CHECK(warned);
+}
+
+TEST_CASE("A malformed per-window geometry logs exactly one warning", "[settings]")
+{
+    const QString path = scratch_file("geometry_log_junk.ini");
+    write_text(path, "[windows]\nlog_geometry=not-a-blob\n");
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    SettingsController controller(path);
+    CHECK(controller.window_geometry(WindowId::log).isEmpty());
+
+    int warnings = 0;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.level == slopkit::log::Level::warning
+            && record.message.find("malformed windows/log_geometry value") != std::string::npos)
+        {
+            ++warnings;
+        }
+    }
+    CHECK(warnings == 1);
 }
 
 TEST_CASE("Settings signals fire once per real change", "[settings]")

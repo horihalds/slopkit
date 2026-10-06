@@ -10,7 +10,6 @@
 
 #include <QApplication>
 #include <QHeaderView>
-#include <QHideEvent>
 #include <QMenu>
 #include <QShowEvent>
 #include <QSplitter>
@@ -448,12 +447,6 @@ namespace slopkit::ui::dialogs
         disassembly_document_.set_visible(true);
         apply_ratios();
         request_page();
-    }
-
-    void MemoryViewerDialog::hideEvent(QHideEvent* event)
-    {
-        QDialog::hideEvent(event);
-        emit geometryChanged(saveGeometry());
     }
 
     void MemoryViewerDialog::set_address(std::uint64_t address)

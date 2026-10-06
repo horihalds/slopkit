@@ -27,6 +27,7 @@
 #include "debug/controller.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/components/window_geometry.hpp"
 #include "ui/dialogs/access_watch.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/breakpoints.hpp"
@@ -91,6 +92,11 @@ namespace slopkit::ui
         build_status_bar();
         build_central();
         build_dialogs();
+
+        // Remember the window's own frame: the stored blob overrides the default
+        // size while an absent one keeps it, and hiding (including on quit) writes
+        // the current frame back. The keeper is a child, so no member is needed.
+        new WindowGeometryKeeper(*this, settings_, WindowId::main, this);
 
         // A table path handed over on the command line is opened in preference to
         // the remembered auto-load table.
@@ -364,6 +370,9 @@ namespace slopkit::ui
     void MainWindow::build_dialogs()
     {
         process_list_ = new dialogs::ProcessListDialog(worker_, target_, this);
+        // The picker locks its 600x440 size in its constructor, so only the saved
+        // position takes effect when the blob is restored.
+        new WindowGeometryKeeper(*process_list_, settings_, WindowId::process_list, process_list_);
         connect(process_list_,
                 &dialogs::ProcessListDialog::targetChanged,
                 this,
@@ -374,25 +383,13 @@ namespace slopkit::ui
                 });
 
         add_address_ = new dialogs::AddAddressDialog(address_table_, worker_, this);
+        new WindowGeometryKeeper(*add_address_, settings_, WindowId::add_address, add_address_);
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
+        new WindowGeometryKeeper(*table_settings_, settings_, WindowId::table_settings, table_settings_);
 
         memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_);
-
-        // The stored window geometry is restored before the window is ever
-        // shown; a rejected blob simply leaves the dialog's default size.
-        const QByteArray& saved_geometry = settings_.values().memory_view_geometry;
-        if (!saved_geometry.isEmpty() && !memory_view_->restoreGeometry(saved_geometry))
-        {
-            log::warning(log::category::ui, "memory viewer geometry could not be restored; using the default size");
-        }
-        connect(memory_view_.get(),
-                &dialogs::MemoryViewerDialog::geometryChanged,
-                this,
-                [this](const QByteArray& geometry)
-                {
-                    settings_.set_memory_view_geometry(geometry);
-                });
+        new WindowGeometryKeeper(*memory_view_, settings_, WindowId::memory_viewer, memory_view_.get());
 
         // The one live cadence, driven by the window's tick; surfaces register
         // here so a single poll submits a single batched read.
@@ -411,13 +408,16 @@ namespace slopkit::ui
                 &MainWindow::show_breakpoints);
 
         log_ = new dialogs::LogDialog(this);
+        new WindowGeometryKeeper(*log_, settings_, WindowId::log, log_);
 
         breakpoints_ = new dialogs::BreakpointsDialog(debug_, this);
+        new WindowGeometryKeeper(*breakpoints_, settings_, WindowId::breakpoints, breakpoints_);
 
         // The Access Watch window is a view over the controller's one watch and
         // over the resolved listing operands; it also routes its own Follow
         // requests into the Memory Viewer.
         access_watch_ = new dialogs::AccessWatchDialog(debug_, worker_, target_, this);
+        new WindowGeometryKeeper(*access_watch_, settings_, WindowId::access_watch, access_watch_);
         connect(access_watch_,
                 &dialogs::AccessWatchDialog::followRequested,
                 this,
@@ -457,6 +457,7 @@ namespace slopkit::ui
         // The dialog is a view over the shared controller; the window is the only
         // component that applies the persisted values to the live views.
         settings_dialog_ = new dialogs::SettingsDialog(host_, scanner_->engine(), settings_, this);
+        new WindowGeometryKeeper(*settings_dialog_, settings_, WindowId::settings, settings_dialog_);
         connect(settings_dialog_,
                 &dialogs::SettingsDialog::alignmentChanged,
                 this,

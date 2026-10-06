@@ -1,8 +1,11 @@
 #include "ui/settings.hpp"
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <optional>
+#include <string_view>
+#include <utility>
 
 #include <QDir>
 #include <QStandardPaths>
@@ -22,9 +25,24 @@ namespace slopkit::ui
         constexpr auto kLastDirectoryKey = "files/last_directory";
         constexpr auto kLiveEnabledKey   = "liveUpdateEnabled";
         constexpr auto kLiveIntervalKey  = "liveUpdateIntervalMs";
-        constexpr auto kViewGeometryKey  = "windows/memory_view_geometry";
         constexpr auto kModuleRelative   = "module_relative";
         constexpr auto kAbsolute         = "absolute";
+
+        // The INI key of each rememberable window's geometry; the Memory Viewer
+        // keeps its historical key so an installed config still finds it.
+        constexpr std::array<std::pair<WindowId, std::string_view>, 9> kWindowKeys {
+            {
+             {WindowId::main, "windows/main_geometry"},
+             {WindowId::process_list, "windows/process_list_geometry"},
+             {WindowId::add_address, "windows/add_address_geometry"},
+             {WindowId::table_settings, "windows/table_settings_geometry"},
+             {WindowId::log, "windows/log_geometry"},
+             {WindowId::breakpoints, "windows/breakpoints_geometry"},
+             {WindowId::access_watch, "windows/access_watch_geometry"},
+             {WindowId::settings, "windows/settings_geometry"},
+             {WindowId::memory_viewer, "windows/memory_view_geometry"},
+             }
+        };
 
         constexpr int kMinLiveIntervalMs     = 50;
         constexpr int kMaxLiveIntervalMs     = 5000;
@@ -171,13 +189,21 @@ namespace slopkit::ui
         emit liveUpdateIntervalChanged(clamped);
     }
 
-    void SettingsController::set_memory_view_geometry(const QByteArray& geometry)
+    QByteArray SettingsController::window_geometry(WindowId id) const
     {
-        if (values_.memory_view_geometry == geometry)
+        const auto it = values_.window_geometry.find(id);
+        return it == values_.window_geometry.end() ? QByteArray {} : it->second;
+    }
+
+    void SettingsController::set_window_geometry(WindowId id, const QByteArray& geometry)
+    {
+        const auto it                = values_.window_geometry.find(id);
+        const auto existing_geometry = it == values_.window_geometry.end() ? QByteArray {} : it->second;
+        if (existing_geometry == geometry)
         {
             return;
         }
-        values_.memory_view_geometry = geometry;
+        values_.window_geometry[id] = geometry;
         store();
     }
 
@@ -257,15 +283,17 @@ namespace slopkit::ui
                          std::format("settings file {}: malformed {} value", file_path, kLiveIntervalKey));
         }
 
-        const auto geometry_key = QString::fromLatin1(kViewGeometryKey);
-        if (const auto geometry = parse_geometry(store_->value(geometry_key)); geometry.has_value())
+        for (const auto& [id, key] : kWindowKeys)
         {
-            values_.memory_view_geometry = *geometry;
-        }
-        else if (store_->contains(geometry_key))
-        {
-            log::warning(log::category::app,
-                         std::format("settings file {}: malformed {} value", file_path, kViewGeometryKey));
+            const auto geometry_key = QString::fromLatin1(key);
+            if (const auto geometry = parse_geometry(store_->value(geometry_key)); geometry.has_value())
+            {
+                values_.window_geometry[id] = *geometry;
+            }
+            else if (store_->contains(geometry_key))
+            {
+                log::warning(log::category::app, std::format("settings file {}: malformed {} value", file_path, key));
+            }
         }
 
         values_.last_table_path = store_->value(QString::fromLatin1(kLastTableKey)).toString();
@@ -274,7 +302,7 @@ namespace slopkit::ui
         log::debug(log::category::app,
                    std::format("settings loaded: dark_theme={}, address_mode={}, auto_load_last={}, "
                                "last_table={}, last_directory={}, live_update={}, live_interval_ms={}, "
-                               "memory_view_geometry_bytes={}",
+                               "saved_window_geometries={}",
                                values_.dark_theme,
                                values_.address_mode == AddressMode::absolute ? "absolute" : "module_relative",
                                values_.auto_load_last_table,
@@ -282,7 +310,7 @@ namespace slopkit::ui
                                values_.last_directory.toStdString(),
                                values_.live_update_enabled,
                                values_.live_update_interval_ms,
-                               values_.memory_view_geometry.size()));
+                               values_.window_geometry.size()));
     }
 
     void SettingsController::store()
@@ -298,7 +326,12 @@ namespace slopkit::ui
         store_->setValue(QString::fromLatin1(kLastDirectoryKey), values_.last_directory);
         store_->setValue(QString::fromLatin1(kLiveEnabledKey), values_.live_update_enabled);
         store_->setValue(QString::fromLatin1(kLiveIntervalKey), values_.live_update_interval_ms);
-        store_->setValue(QString::fromLatin1(kViewGeometryKey), values_.memory_view_geometry);
+        for (const auto& [id, key] : kWindowKeys)
+        {
+            const auto it = values_.window_geometry.find(id);
+            store_->setValue(QString::fromLatin1(key),
+                             it == values_.window_geometry.end() ? QVariant {} : QVariant {it->second});
+        }
         store_->sync();
     }
 
