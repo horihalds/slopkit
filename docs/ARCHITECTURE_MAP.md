@@ -25,6 +25,7 @@ uses `ptrace` through the debug worker. The bundled plugins are `linux-proc` and
 | Single test | `ctest --test-dir build -R "<Catch2 name>" --output-on-failure` |
 | Single test (direct) | `QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "<name>"` |
 | Full suite | `ctest --test-dir build --output-on-failure` |
+| Full suite, no crash popups | `./test.sh` — builds, then runs the suite with KDE's DrKonqi crash launcher parked |
 | Format check only | `ctest --test-dir build -R clang-format-check --output-on-failure` |
 | Install build | `./install.sh` (needed when `src/**`, `CMakeLists.txt`, `cmake/**`, `assets/**` or `data/**` change) |
 

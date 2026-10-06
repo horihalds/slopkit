@@ -3,7 +3,6 @@
 #include <functional>
 
 #include <QApplication>
-#include <QCoreApplication>
 #include <QFont>
 #include <QFontMetrics>
 #include <QGuiApplication>
@@ -17,20 +16,16 @@
 #include "ui/components/widgets.hpp"
 #include "ui/theme.hpp"
 
+// Defined in test_main.cpp; the single QApplication every widget suite shares.
+QApplication& slopkit_test_application();
+
 namespace
 {
-    // A QApplication may only exist once per process; Catch2 normally runs each
-    // case in its own process, but the binary accepts several.
+    // A QApplication may only exist once per process, so every case uses the one
+    // instance the whole test binary shares.
     void ensure_application()
     {
-        if (QCoreApplication::instance() != nullptr)
-        {
-            return;
-        }
-        static int          argc      = 1;
-        static char         program[] = "slopkit_tests";
-        static char*        argv[]    = {program, nullptr};
-        static QApplication instance(argc, argv);
+        static_cast<void>(slopkit_test_application());
     }
 
     using slopkit::ui::widgets::MessageBox;

@@ -41,6 +41,7 @@
 #include "scan/engine.hpp"
 #include "scan/source.hpp"
 #include "scan/types.hpp"
+#include "support/fake_process.hpp"
 
 namespace
 {
@@ -52,17 +53,7 @@ namespace
     using slopkit::scan::ScanState;
     using slopkit::scan::ScanType;
     using slopkit::scan::ValueType;
-
-    // A QApplication may only exist once per process; Catch2 normally runs each
-    // case in its own process, but the binary accepts several.
-    [[maybe_unused]] QApplication& application()
-    {
-        static int          argc      = 1;
-        static char         program[] = "slopkit_tests";
-        static char*        argv[]    = {program, nullptr};
-        static QApplication instance(argc, argv);
-        return instance;
-    }
+    using slopkit::test::application;
 
     [[maybe_unused]] ScanSnapshot wait(ScanEngine& engine)
     {

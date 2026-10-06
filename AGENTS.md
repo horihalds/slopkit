@@ -46,11 +46,12 @@ them for every task in this repository.
   (`-march=native -mtune=native`); pass `-DSLOPKIT_NATIVE=OFF` to CMake for a
   portable build targeting the compiler's default baseline.
 
-- Three convenience scripts at the repository root work from any directory:
+- Four convenience scripts at the repository root work from any directory:
   `./configure.sh` runs the configure step, `./build.sh` builds (configuring
-  first when `build/` does not exist yet), and `./install.sh` configures, builds
-  and installs into `PREFIX` (default `~/.local`), including the desktop entry
-  and hicolor icons.
+  first when `build/` does not exist yet), `./install.sh` configures, builds and
+  installs into `PREFIX` (default `~/.local`), including the desktop entry and
+  hicolor icons, and `./test.sh` builds and runs the test suite with KDE's crash
+  notifications parked (see "Run the tests" below).
 
 - When a completed plan changes anything that ships in the installed build —
   `src/**`, `CMakeLists.txt`, `cmake/**`, `assets/**` or `data/**` — run
@@ -62,8 +63,19 @@ them for every task in this repository.
 - Run the tests (Catch2 suites, wired into CTest):
 
   ```sh
+  ./test.sh
   ctest --test-dir build --output-on-failure
   ```
+
+- KDE notifies about every crash of a process the user owns: `systemd-coredump`
+  hands the dump to `drkonqi-coredump-processor`, which starts
+  `drkonqi-coredump-launcher` on its user socket and that shows the popup. The
+  launcher has no per-process opt-out (`KDE_DEBUG` only skips the DrKonqi dialog,
+  `KDE_COREDUMP_NOTIFY=1` only switches to the developer notification, and
+  `ulimit -c 0` does not stop the dump), so run the suite through `./test.sh`,
+  which parks that socket for the run and restores it afterwards; the crashes
+  still land in the journal and in `coredumpctl`. Set `SLOPKIT_TEST_NOTIFY=1` to
+  keep the notifications while debugging a crash. A bare `ctest` parks nothing.
 
 - One CTest test, `clang-format-check`, verifies that every `src/**/*.hpp`,
   `src/**/*.cpp`, `tests/**/*.hpp` and `tests/**/*.cpp` file is formatted with
