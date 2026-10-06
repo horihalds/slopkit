@@ -1762,3 +1762,37 @@ TEST_CASE("the menu bar's viewer commands act on the panes", "[ui]")
     menu->close_action()->trigger();
     CHECK_FALSE(viewer.isVisible());
 }
+
+TEST_CASE("the viewer re-gates its Start/Stop surfaces when the attached target changes", "[ui]")
+{
+    application();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+
+    // Built before any attach: both Start/Stop surfaces read Start and are off.
+    slopkit::process::AttachedTarget         target;
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    auto*                                    controls = viewer.debug_controls();
+    auto*                                    menu     = viewer.viewer_menu();
+    REQUIRE(controls != nullptr);
+    REQUIRE(menu != nullptr);
+    CHECK(controls->start_stop_button()->text() == QStringLiteral("Start Debugging"));
+    CHECK_FALSE(controls->start_stop_button()->isEnabled());
+    CHECK_FALSE(menu->start_stop_action()->isEnabled());
+
+    // A fresh attach makes the target valid; no controller signal announces it,
+    // so the explicit refresh is what lights both surfaces up.
+    target.pid          = 4242;
+    target.plugin_id    = "linux-proc";
+    target.session_live = true;
+    viewer.refresh_target_state();
+    CHECK(controls->start_stop_button()->isEnabled());
+    CHECK(menu->start_stop_action()->isEnabled());
+
+    // Detaching again turns them off, matching the window's own label.
+    target.clear();
+    viewer.refresh_target_state();
+    CHECK_FALSE(controls->start_stop_button()->isEnabled());
+    CHECK_FALSE(menu->start_stop_action()->isEnabled());
+}

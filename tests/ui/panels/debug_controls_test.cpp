@@ -133,6 +133,31 @@ TEST_CASE("the debug control bar's disabled toggle attaches nothing", "[ui][pane
     CHECK(backend.count("attach") == 0);
 }
 
+TEST_CASE("the debug control bar re-gates the toggle when the attached target changes", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+
+    // Built before any attach: the toggle reads Start and is disabled.
+    slopkit::process::AttachedTarget target;
+    DebugControls                    bar(controller, target);
+    CHECK_FALSE(bar.start_stop_button()->isEnabled());
+
+    // Attaching later makes the target valid, but no controller signal announces
+    // it; the explicit refresh is what lights the toggle up.
+    target.pid          = 4242;
+    target.plugin_id    = "linux-proc";
+    target.session_live = true;
+    bar.refresh_target_state();
+    CHECK(bar.start_stop_button()->isEnabled());
+
+    // Detaching again disables it.
+    target.clear();
+    bar.refresh_target_state();
+    CHECK_FALSE(bar.start_stop_button()->isEnabled());
+}
+
 TEST_CASE("the debug control bar keeps Step Out disabled", "[ui][panels][debugger]")
 {
     slopkit::test::application();

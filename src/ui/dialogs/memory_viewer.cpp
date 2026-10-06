@@ -705,6 +705,12 @@ namespace slopkit::ui::dialogs
         return menu_;
     }
 
+    void MemoryViewerDialog::refresh_target_state()
+    {
+        controls_->refresh_target_state();
+        menu_->refresh_target_state();
+    }
+
     QString MemoryViewerDialog::status_text() const
     {
         return status_->text();

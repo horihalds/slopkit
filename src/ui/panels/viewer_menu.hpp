@@ -54,6 +54,11 @@ namespace slopkit::ui::panels
         // change and before the View/Tools menus open.
         void set_command_state(const CommandState& state);
 
+        // Re-applies the Debug menu's gating after the attached target changed;
+        // the Start/Stop entry depends on target validity, which no controller
+        // signal announces.
+        void refresh_target_state();
+
         [[nodiscard]] QMenu* file_menu() const noexcept;
         [[nodiscard]] QMenu* view_menu() const noexcept;
         [[nodiscard]] QMenu* tools_menu() const noexcept;

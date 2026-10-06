@@ -43,6 +43,21 @@ regression: debug it, do not add it just to make a run green.
 - **Status:** accepted flake, not yet fixed. The real fix is to synchronize the
   fake backend's recorded state (or wait on the recorded call).
 
+### `the debug session gate dispatches queued work in arrival order`
+
+- **Source:** `tests/ui/debug_session_test.cpp`, CTest tag `[ui][debug_session]`.
+- **Symptom:** intermittent `CHECK(backend.count("attach") == 1)` failure
+  (`0 == 1`) in a load-heavy full run; the preceding
+  `REQUIRE(pump_debug(... order.size() == 2))` and the order `CHECK` already
+  passed, and the same test passes alone (~0.02 s observed).
+- **Cause:** the same unsynchronized `FakeDebugBackend` root cause as the two
+  flakes above — the backend records its `calls` on the debug worker thread while
+  the test reads them on its own thread, so under load the read can miss the
+  recorded `"attach"` call.
+- **Lone-run check:** `ctest --test-dir build -R "the debug session gate dispatches queued work in arrival order" --output-on-failure`
+- **Status:** accepted flake, not yet fixed. The real fix is to synchronize the
+  fake backend's recorded state (or wait on the recorded call).
+
 ### `controller captures the registers of a running target invisibly`
 
 - **Source:** `tests/debug/controller_test.cpp`, CTest tag `[debug][controller]`.

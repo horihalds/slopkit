@@ -103,6 +103,11 @@ namespace slopkit::ui::panels
         }
     }
 
+    void DebugControls::refresh_target_state()
+    {
+        apply_state();
+    }
+
     void DebugControls::apply_state()
     {
         const auto state = controller_.state();

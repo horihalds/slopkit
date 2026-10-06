@@ -852,6 +852,10 @@ namespace slopkit::ui
         process_label_->setText(to_qstring(target_.label()));
         found_list_->set_target_attached(target_.valid());
         table_settings_->refresh_target();
+        // The debug gating depends on the attached target, so a fresh attach or
+        // detach must update the viewer's Start/Stop surfaces, not only the
+        // controller's own state signals.
+        memory_view_->refresh_target_state();
     }
 
     void MainWindow::run_freeze_pass()

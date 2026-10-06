@@ -31,6 +31,11 @@ namespace slopkit::ui::panels
         // following the listing's own rendering so the two never disagree.
         void set_selected_instruction(std::optional<std::uint64_t> address, const QString& expression);
 
+        // Re-applies the session gating after the attached target changed; the
+        // Start/Stop toggle depends on target validity, which no controller
+        // signal announces.
+        void refresh_target_state();
+
         [[nodiscard]] QPushButton* toggle_breakpoint_button() const noexcept;
         [[nodiscard]] QPushButton* start_stop_button() const noexcept;
         [[nodiscard]] QPushButton* resume_button() const noexcept;

@@ -77,6 +77,11 @@ namespace slopkit::ui::dialogs
         // The Memory Viewer's own menu bar, above the panes.
         [[nodiscard]] panels::ViewerMenu* viewer_menu() const noexcept;
 
+        // Re-applies the debug gating after the attached target changed: the
+        // Start/Stop toggle in the control bar and the Debug menu depend on the
+        // target being valid, which no controller signal announces.
+        void refresh_target_state();
+
         // The debugger read-out on the dialog's bottom status line.
         [[nodiscard]] QString status_text() const;
 

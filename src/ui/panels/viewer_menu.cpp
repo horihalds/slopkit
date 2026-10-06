@@ -139,6 +139,11 @@ namespace slopkit::ui::panels
         }
     }
 
+    void ViewerMenu::refresh_target_state()
+    {
+        apply_debug_state();
+    }
+
     void ViewerMenu::apply_debug_state()
     {
         const auto state    = controller_.state();
