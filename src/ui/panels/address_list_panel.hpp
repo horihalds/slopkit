@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -53,6 +54,19 @@ namespace slopkit::ui::panels
         // nullopt when the dialog was cancelled. Split out of load_table() so
         // tests can drive a load without the native file dialog.
         [[nodiscard]] std::optional<QString> choose_table_path();
+
+        // The start path of the Save Table As dialog: the current table file
+        // when the table has one (only its directory can change), otherwise
+        // `<target name>.skt` in the remembered directory, or in the default
+        // table directory when nothing is remembered. Pure: it never touches the
+        // filesystem.
+        [[nodiscard]] QString suggested_table_path() const;
+
+        // Replaces the file chooser save_table_as() runs, so a test can answer
+        // without the native dialog; `suggested` is what the dialog would be
+        // prefilled with.
+        using SavePathPrompt = std::function<std::optional<QString>(QWidget* parent, const QString& suggested)>;
+        void set_save_path_prompt(SavePathPrompt prompt);
 
         // Parses a table file into a scratch table without touching the panel
         // state; reports a failure the same way load_table() does.
@@ -126,12 +140,14 @@ namespace slopkit::ui::panels
         void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
 
     private:
-        void show_context_menu(const QPoint& position);
-        void set_status(const QString& message, bool is_error);
-        void save_to_path(const QString& path);
+        void                          show_context_menu(const QPoint& position);
+        void                          set_status(const QString& message, bool is_error);
+        void                          save_to_path(const QString& path);
+        // The production save chooser; it runs the native file dialog.
+        static std::optional<QString> default_save_path_prompt(QWidget* parent, const QString& suggested);
         // Re-resolves every entry that carries an expression, at most once per
         // interval unless the expression set or the module map changed.
-        void maybe_resolve_expressions();
+        void                          maybe_resolve_expressions();
 
         table::AddressTable&                  table_;
         process::AccessWorker&                worker_;
@@ -148,12 +164,14 @@ namespace slopkit::ui::panels
         std::string                           expression_signature_;
 
         // The pre-filled path of the open/save dialogs.
-        QString table_path_;
+        QString        table_path_;
         // The directory the file dialogs start in.
-        QString dialog_directory_;
+        QString        dialog_directory_;
+        // The save chooser; the default runs the native dialog.
+        SavePathPrompt save_path_prompt_ {&AddressListPanel::default_save_path_prompt};
         // The last status emitted, so a repeated report is not re-emitted.
-        QString status_;
-        bool    status_is_error_ {false};
+        QString        status_;
+        bool           status_is_error_ {false};
     };
 
 } // namespace slopkit::ui::panels

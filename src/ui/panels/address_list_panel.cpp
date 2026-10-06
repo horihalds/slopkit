@@ -280,6 +280,36 @@ namespace slopkit::ui::panels
         dialog_directory_ = directory;
     }
 
+    QString AddressListPanel::suggested_table_path() const
+    {
+        // An existing table keeps its file name; only the directory can change.
+        if (!table_path_.isEmpty())
+        {
+            const QString name = QFileInfo(table_path_).fileName();
+            return dialog_directory_.isEmpty() ? table_path_ : QDir(dialog_directory_).filePath(name);
+        }
+
+        const std::string_view target_name = target_.valid() ? std::string_view(target_.name) : std::string_view {};
+        const QString          directory = dialog_directory_.isEmpty() ? default_table_directory() : dialog_directory_;
+        return QDir(directory).filePath(table_name_for_target(target_name));
+    }
+
+    void AddressListPanel::set_save_path_prompt(SavePathPrompt prompt)
+    {
+        save_path_prompt_ = std::move(prompt);
+    }
+
+    std::optional<QString> AddressListPanel::default_save_path_prompt(QWidget* parent, const QString& suggested)
+    {
+        const QString chosen = QFileDialog::getSaveFileName(
+            parent, tr("Save Table As"), suggested, tr("Address tables (*.skt);;All files (*)"));
+        if (chosen.isEmpty())
+        {
+            return std::nullopt;
+        }
+        return chosen;
+    }
+
     std::optional<QString> AddressListPanel::choose_table_path()
     {
         log::debug(log::category::ui, "open table requested");
@@ -352,18 +382,24 @@ namespace slopkit::ui::panels
     void AddressListPanel::save_table_as()
     {
         log::debug(log::category::ui, "save table as requested");
-        QString suggested = table_path_.isEmpty() ? default_table_path() : table_path_;
-        if (!dialog_directory_.isEmpty())
+        // Only the first save of a never-saved table with no remembered
+        // directory creates the default folder, so the chooser can start there.
+        if (table_path_.isEmpty() && dialog_directory_.isEmpty())
         {
-            suggested = QDir(dialog_directory_).filePath(QFileInfo(suggested).fileName());
+            const QString directory = default_table_directory();
+            if (!ensure_table_directory(directory))
+            {
+                log::warning(log::category::ui,
+                             std::format("table directory could not be created: {}", directory.toStdString()));
+                set_status(tr("Could not create %1.").arg(directory), true);
+            }
         }
-        const QString chosen = QFileDialog::getSaveFileName(
-            this, tr("Save Table As"), suggested, tr("Address tables (*.skt);;All files (*)"));
-        if (chosen.isEmpty())
+        const std::optional<QString> chosen = save_path_prompt_(this, suggested_table_path());
+        if (!chosen.has_value() || chosen->isEmpty())
         {
             return;
         }
-        save_to_path(table_file_path(chosen));
+        save_to_path(table_file_path(*chosen));
     }
 
     void AddressListPanel::save_to_path(const QString& path)

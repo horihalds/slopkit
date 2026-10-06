@@ -1,6 +1,9 @@
 #include <catch2/catch.hpp>
 
+#include <QDir>
+
 #include "support/ui_helpers.hpp"
+#include "ui/table_file.hpp"
 
 TEST_CASE("loading a table reports the entry count and emits tableLoaded", "[ui]")
 {
@@ -493,4 +496,207 @@ TEST_CASE("a failed auto-load reports and keeps the remembered path", "[ui]")
     CHECK(address_status->text().contains(QStringLiteral("Open failed")));
 
     CHECK(settings.values().last_table_path == missing);
+}
+
+TEST_CASE("a never-saved table is offered as the attached process name", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    target.pid          = 42;
+    target.name         = "firefox";
+    target.session_live = true;
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    // No remembered directory: the default table directory is proposed.
+    CHECK(panel.suggested_table_path()
+          == QDir(slopkit::ui::default_table_directory()).filePath(QStringLiteral("firefox.skt")));
+
+    // A remembered directory wins over the default location.
+    const QString remembered = QFileInfo(scratch_settings_file("save_prefill_dir.ini")).absolutePath();
+    panel.set_dialog_directory(remembered);
+    CHECK(panel.suggested_table_path() == QDir(remembered).filePath(QStringLiteral("firefox.skt")));
+}
+
+TEST_CASE("a never-saved table with a detached target falls back to untitled", "[ui]")
+{
+    application();
+
+    FakeAccess                            access;
+    slopkit::process::AccessWorker        worker {access};
+    slopkit::process::AttachedTarget      target; // detached: no session, no pid
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    CHECK(panel.suggested_table_path()
+          == QDir(slopkit::ui::default_table_directory()).filePath(QStringLiteral("untitled.skt")));
+}
+
+TEST_CASE("an existing table keeps its file name in the suggested save path", "[ui]")
+{
+    application();
+
+    FakeAccess                            access;
+    slopkit::process::AccessWorker        worker {access};
+    slopkit::process::AttachedTarget      target;
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    const QString path = scratch_settings_file("existing_save_path.skt");
+    panel.set_table_path(path);
+    CHECK(panel.suggested_table_path() == path);
+
+    // Only the directory may change; the file name survives.
+    const QString remembered = QFileInfo(path).absolutePath();
+    panel.set_dialog_directory(remembered);
+    CHECK(panel.suggested_table_path() == QDir(remembered).filePath(QStringLiteral("existing_save_path.skt")));
+}
+
+TEST_CASE("saving a never-saved table proposes the target name and creates the default folder", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    target.pid          = 42;
+    target.name         = "firefox";
+    target.session_live = true;
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    const QString directory = slopkit::ui::default_table_directory();
+    const bool    existed   = QDir(directory).exists();
+
+    const QString chosen = scratch_settings_file("default_dir_save.skt");
+    QString       captured;
+    panel.set_save_path_prompt(
+        [&](QWidget*, const QString& suggested)
+        {
+            captured = suggested;
+            return std::optional<QString> {chosen};
+        });
+    panel.save_table_as();
+
+    CHECK(captured == QDir(directory).filePath(QStringLiteral("firefox.skt")));
+    CHECK(QDir(directory).exists()); // the first save can start in the default folder
+    CHECK(QFileInfo::exists(chosen));
+    CHECK(panel.table_path() == chosen);
+
+    // Leave the user's home as we found it: drop the scratch file and remove the
+    // default folder only when this case had to create it.
+    std::error_code error;
+    std::filesystem::remove(chosen.toStdString(), error);
+    if (!existed)
+    {
+        QDir().rmdir(directory);
+    }
+}
+
+TEST_CASE("a cancelled save chooser writes nothing and leaves the settings", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    target.pid          = 42;
+    target.name         = "firefox";
+    target.session_live = true;
+    slopkit::plugin::PluginHost     host;
+    slopkit::ui::SettingsController settings {scratch_settings_file("save_cancel.ini")};
+    const QString                   remembered = QFileInfo(scratch_settings_file("save_cancel_dir.ini")).absolutePath();
+    settings.set_last_directory(remembered);
+    slopkit::ui::MainWindow window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    address_list->set_save_path_prompt(
+        [](QWidget*, const QString&)
+        {
+            return std::nullopt;
+        });
+    address_list->save_table(); // a cancelled chooser must not create the table file
+
+    CHECK(address_list->table_path().isEmpty());
+    CHECK(settings.values().last_table_path.isEmpty());
+    CHECK(settings.values().last_directory == remembered);
+}
+
+TEST_CASE("saving into a missing directory reports a failure", "[ui]")
+{
+    application();
+
+    FakeAccess                            access;
+    slopkit::process::AccessWorker        worker {access};
+    slopkit::process::AttachedTarget      target;
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    // A remembered directory keeps the default folder out of the flow.
+    const QString remembered = QFileInfo(scratch_settings_file("save_missing_dir.ini")).absolutePath();
+    panel.set_dialog_directory(remembered);
+
+    QString message;
+    bool    is_error = false;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     [&](const QString& text, bool error)
+                     {
+                         message  = text;
+                         is_error = error;
+                     });
+
+    const QString missing = QDir(remembered).filePath(QStringLiteral("no_such_dir/table.skt"));
+    panel.set_save_path_prompt(
+        [&](QWidget*, const QString&)
+        {
+            return std::optional<QString> {missing};
+        });
+    panel.save_table_as();
+
+    CHECK(is_error);
+    CHECK(message.contains(QStringLiteral("Save failed")));
+}
+
+TEST_CASE("a never-saved table saved through the window is remembered in the settings", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    target.pid          = 42;
+    target.name         = "firefox";
+    target.session_live = true;
+    slopkit::plugin::PluginHost     host;
+    slopkit::ui::SettingsController settings {scratch_settings_file("save_new_table.ini")};
+    // A remembered directory keeps the default location out of the flow.
+    const QString                   remembered = QFileInfo(scratch_settings_file("save_new_dir.ini")).absolutePath();
+    settings.set_last_directory(remembered);
+    slopkit::ui::MainWindow window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    const QString chosen = scratch_settings_file("save_new_table.skt");
+    QString       captured;
+    address_list->set_save_path_prompt(
+        [&](QWidget*, const QString& suggested)
+        {
+            captured = suggested;
+            return std::optional<QString> {chosen};
+        });
+
+    address_list->save_table(); // Ctrl+S on a table that was never saved
+
+    CHECK(captured == QDir(remembered).filePath(QStringLiteral("firefox.skt")));
+    CHECK(QFileInfo::exists(chosen));
+    CHECK(address_list->table_path() == chosen);
+    CHECK(settings.values().last_table_path == chosen);
+    CHECK(settings.values().last_directory == QFileInfo(chosen).absolutePath());
 }
