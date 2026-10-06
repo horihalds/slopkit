@@ -3,8 +3,8 @@
 Fast-lookup map of the repo: where components live and
 the rules a newcomer would otherwise get wrong. Read this before a task and only
 search the codebase broadly when it does not answer where something is. Deeper
-prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.md`
-and `docs/LOGGING.md`.
+prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.md`,
+`docs/LOGGING.md` and the accepted flakes in `docs/KNOWN_ISSUES.md`.
 
 ## 1. Directory map
 
