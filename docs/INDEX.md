@@ -282,6 +282,7 @@ One line per project file; the path alone where the filename explains the file, 
 - `tests/ui/panels/debugger_panel_test.cpp`
 - `tests/ui/panels/found_list_panel_test.cpp`
 - `tests/ui/panels/scanner_panel_test.cpp`
+- `tests/ui/sandbox_attach_test.cpp` — practice-target launch/attach tests.
 - `tests/ui/settings_test.cpp`
 - `tests/ui/table_file_test.cpp`
 - `tests/ui/table_open_test.cpp` — open/merge/adopt table-flow tests.

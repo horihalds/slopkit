@@ -2,9 +2,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "debug/breakpoints.hpp"
@@ -93,6 +97,16 @@ namespace slopkit::ui
         // dialog.
         void set_table_conflict_prompt(TableConflictPrompt prompt);
 
+        // The launch and the attach question of Help > Launch Practice Target;
+        // production uses app::launch_sandbox and the themed Yes/No prompt.
+        using SandboxLauncher     = std::function<std::expected<std::int64_t, std::string>()>;
+        using SandboxAttachPrompt = std::function<bool(QWidget* parent, process::ProcessId pid)>;
+
+        // Replace the launch and the attach question, so a test can drive the
+        // flow without spawning a process or showing a dialog.
+        void set_sandbox_launcher(SandboxLauncher launcher);
+        void set_sandbox_attach_prompt(SandboxAttachPrompt prompt);
+
         // The detached Memory Viewer, or nullptr before build_dialogs(); it is a
         // top-level window with no parent widget, so the compositor stacks it
         // like any other window instead of keeping it above this one.
@@ -122,6 +136,21 @@ namespace slopkit::ui
         void on_memory_view_requested(quint64 address);
         void on_add_address_requested();
         void on_table_loaded();
+
+        // A predicate that picks the target out of one process listing.
+        using ProcessMatcher =
+            std::function<const process::ProcessInfo*(std::span<const process::ProcessInfo> processes)>;
+
+        // Runs one listing and attaches to the process `match` picks. `context`
+        // ("Table auto", "Practice target") prefixes the status lines and
+        // `missing` is reported when nothing matches. Shared by the table auto
+        // attach and the practice-target launch.
+        void lookup_and_attach(ProcessMatcher match, std::string_view context, std::string missing);
+
+        // Submits the app attach for a process found in a listing and applies the
+        // result to the shared target.
+        void submit_process_attach(const process::ProcessInfo& info, std::string_view context);
+
         void show_process_list();
         void show_add_address();
         void show_table_settings();
@@ -153,6 +182,11 @@ namespace slopkit::ui
         {
             return dialogs::ask_table_conflict(parent, info);
         };
+
+        // The practice-target launch and its attach question; the constructor
+        // installs the production values.
+        SandboxLauncher     sandbox_launcher_;
+        SandboxAttachPrompt sandbox_attach_prompt_;
 
         table::AddressTable address_table_;
 
@@ -194,8 +228,9 @@ namespace slopkit::ui
         // In-flight freeze job, if any; one at a time.
         std::optional<process::JobId> freeze_pending_;
 
-        // The two stages of a table-driven auto attach: the process listing and
-        // then the attach itself.
+        // The two stages of a listing-driven attach: the process listing and
+        // then the attach itself. A table load and a practice-target launch
+        // share them, so only one attach runs at a time.
         std::optional<process::JobId> target_lookup_pending_;
         std::optional<process::JobId> auto_attach_pending_;
     };

@@ -1,7 +1,10 @@
 #include "ui/main_window.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <format>
+#include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -22,6 +25,7 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "debug/controller.hpp"
+#include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/dialogs/access_watch.hpp"
 #include "ui/dialogs/add_address.hpp"
@@ -49,6 +53,18 @@ namespace slopkit::ui
         {
             return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
         }
+
+        // The production attach question of a practice-target launch: themed,
+        // question icon, Yes/No with Yes as the default, since the user has just
+        // asked for a target to practise on.
+        bool ask_sandbox_attach(QWidget* parent, process::ProcessId pid)
+        {
+            return widgets::confirm(
+                parent,
+                QStringLiteral("Attach to the practice target?"),
+                QStringLiteral("Attach to the practice target (pid %1)?").arg(static_cast<qulonglong>(pid)),
+                widgets::MessageBoxButton::yes);
+        }
     } // namespace
 
     MainWindow::MainWindow(process::AccessWorker&   worker,
@@ -61,6 +77,16 @@ namespace slopkit::ui
         : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings), debug_(debug),
           initial_table_path_(initial_table_path)
     {
+        // The production launch and attach question; a test swaps them out.
+        sandbox_launcher_ = []
+        {
+            return app::launch_sandbox();
+        };
+        sandbox_attach_prompt_ = [](QWidget* parent, process::ProcessId pid)
+        {
+            return ask_sandbox_attach(parent, pid);
+        };
+
         setWindowTitle(QStringLiteral("slopkit"));
         setWindowIcon(widgets::application_icon());
         resize(748, 768);
@@ -127,6 +153,16 @@ namespace slopkit::ui
     void MainWindow::set_table_conflict_prompt(TableConflictPrompt prompt)
     {
         table_conflict_prompt_ = std::move(prompt);
+    }
+
+    void MainWindow::set_sandbox_launcher(SandboxLauncher launcher)
+    {
+        sandbox_launcher_ = std::move(launcher);
+    }
+
+    void MainWindow::set_sandbox_attach_prompt(SandboxAttachPrompt prompt)
+    {
+        sandbox_attach_prompt_ = std::move(prompt);
     }
 
     dialogs::MemoryViewerDialog* MainWindow::memory_viewer() const noexcept
@@ -569,7 +605,7 @@ namespace slopkit::ui
 
     void MainWindow::on_launch_sandbox_requested()
     {
-        const auto result = app::launch_sandbox();
+        const auto result = sandbox_launcher_();
         if (!result)
         {
             log::warning(log::category::ui, std::format("launch practice target failed: {}", result.error()));
@@ -578,6 +614,22 @@ namespace slopkit::ui
         }
         log::info(log::category::ui, std::format("practice target started (pid {})", *result));
         address_list_->report_status(std::format("Practice target started (pid {}).", *result), false);
+
+        // Ask before taking the still-running target over; a declined question
+        // keeps the launch and leaves any current target untouched.
+        const auto pid = static_cast<process::ProcessId>(*result);
+        if (!sandbox_attach_prompt_(this, pid))
+        {
+            return;
+        }
+        lookup_and_attach(
+            [pid](std::span<const process::ProcessInfo> processes)
+            {
+                const auto found = std::ranges::find(processes, pid, &process::ProcessInfo::pid);
+                return found == processes.end() ? nullptr : &*found;
+            },
+            "Practice target",
+            std::string {"Practice target attach: the launched process was not found."});
     }
 
     void MainWindow::remember_table_path(const QString& path)
@@ -652,24 +704,41 @@ namespace slopkit::ui
             return;
         }
 
-        // One listing at a time; a newer load supersedes whatever is in flight.
+        const std::string identifier     = use_path ? settings.exe_path : settings.target_process;
+        const bool        match_exe_path = settings.match_exe_path;
+
+        // The listing picks the process; the shared step attaches to it.
+        lookup_and_attach(
+            [use_path, match_exe_path, identifier](std::span<const process::ProcessInfo> processes)
+            {
+                // A ticked toggle without a path falls back to the old
+                // name-or-executable-basename match.
+                return use_path ? process::match_process_by_exe_path(processes, identifier)
+                                : process::match_process_by_name(processes, identifier, match_exe_path);
+            },
+            "Table auto",
+            std::format("Table auto attach: no process matching {} '{}'.",
+                        use_path ? "executable path" : "process name",
+                        identifier));
+    }
+
+    void MainWindow::lookup_and_attach(ProcessMatcher match, std::string_view context, std::string missing)
+    {
+        // One listing at a time; a newer request supersedes whatever is in flight.
         if (target_lookup_pending_.has_value())
         {
             return;
         }
 
-        const std::string    identifier     = use_path ? settings.exe_path : settings.target_process;
-        const bool           match_exe_path = settings.match_exe_path;
-        const process::JobId job_id         = worker_.next_job_id();
-        target_lookup_pending_              = job_id;
+        const std::string    context_text = std::string(context);
+        const process::JobId job_id       = worker_.next_job_id();
+        target_lookup_pending_            = job_id;
 
-        log::debug(
-            log::category::ui,
-            std::format("auto attach: looking up {} '{}'", use_path ? "executable path" : "process name", identifier));
+        log::debug(log::category::ui, std::format("{} attach: listing processes", context_text));
 
         const bool submitted = worker_.submit_list(
             job_id,
-            [this, job_id, identifier, use_path, match_exe_path](process::JobResult&& result)
+            [this, job_id, context_text, missing, match = std::move(match)](process::JobResult&& result)
             {
                 if (target_lookup_pending_ != job_id)
                 {
@@ -681,106 +750,105 @@ namespace slopkit::ui
                 if (listed.error)
                 {
                     log::warning(log::category::ui,
-                                 std::format("auto attach listing failed: {}", process::describe(*listed.error)));
+                                 std::format("{} attach failed: {}", context_text, process::describe(*listed.error)));
                     address_list_->report_status(
-                        std::format("Table auto attach failed: {}", process::describe(*listed.error)), true);
+                        std::format("{} attach failed: {}", context_text, process::describe(*listed.error)), true);
                     return;
                 }
 
-                // A ticked toggle without a path falls back to the old
-                // name-or-executable-basename match.
-                const process::ProcessInfo* match =
-                    use_path ? process::match_process_by_exe_path(listed.processes, identifier)
-                             : process::match_process_by_name(listed.processes, identifier, match_exe_path);
-                if (match == nullptr)
+                const process::ProcessInfo* found = match(listed.processes);
+                if (found == nullptr)
                 {
-                    const std::string_view field = use_path ? "executable path" : "process name";
-                    log::warning(log::category::ui,
-                                 std::format("auto attach: no process matching {} '{}'", field, identifier));
-                    address_list_->report_status(
-                        std::format("Table auto attach: no process matching {} '{}'.", field, identifier), true);
+                    log::warning(log::category::ui, missing);
+                    address_list_->report_status(missing, true);
                     return;
                 }
-
-                // Keep the process identity before the listing result goes away.
-                const process::ProcessId pid      = match->pid;
-                const std::string        pname    = match->name;
-                const std::string        exe_path = match->exe_path;
-                const std::string        plugin   = match->plugin_id;
-
-                if (auto_attach_pending_.has_value())
-                {
-                    return; // Another attach already runs.
-                }
-                const process::JobId attach_job = worker_.next_job_id();
-                auto_attach_pending_            = attach_job;
-
-                log::debug(log::category::ui, std::format("auto attach: attaching to pid {} via {}", pid, plugin));
-
-                const bool attach_submitted = worker_.submit_attach_app(
-                    attach_job,
-                    pid,
-                    plugin,
-                    [this, attach_job, pid, pname, exe_path](process::JobResult&& attach_result)
-                    {
-                        if (auto_attach_pending_ != attach_job)
-                        {
-                            return; // Superseded or shut down.
-                        }
-                        auto_attach_pending_.reset();
-
-                        const auto& attached = std::get<process::AttachResult>(attach_result);
-                        if (attached.error)
-                        {
-                            target_.clear();
-                            log::warning(log::category::ui,
-                                         std::format("auto attach to pid {} failed: {}",
-                                                     pid,
-                                                     process::describe(*attached.error)));
-                            address_list_->report_status(
-                                std::format("Table auto attach failed: {}", process::describe(*attached.error)), true);
-                            refresh_target_label();
-                            return;
-                        }
-
-                        target_.clear();
-                        target_.pid          = pid;
-                        target_.name         = pname;
-                        target_.exe_path     = exe_path;
-                        target_.plugin_id    = attached.info->plugin_id;
-                        target_.method       = attached.info->method;
-                        target_.session_live = true;
-                        log::info(log::category::ui,
-                                  std::format("auto attached to pid {} via {}", pid, attached.info->plugin_id));
-                        refresh_target_label();
-                        if (attached.info->read_error)
-                        {
-                            log::warning(log::category::ui,
-                                         std::format("auto attach to pid {} cannot read memory: {}",
-                                                     pid,
-                                                     process::describe(*attached.info->read_error)));
-                            address_list_->report_status(std::format("Attached to {}; memory not readable ({}).",
-                                                                     pname,
-                                                                     process::describe(*attached.info->read_error)),
-                                                         true);
-                        }
-                        else
-                        {
-                            address_list_->report_status(std::format("Attached to {}.", pname), false);
-                        }
-                    });
-                if (!attach_submitted)
-                {
-                    auto_attach_pending_.reset();
-                    log::warning(log::category::ui, "auto attach unavailable");
-                    address_list_->report_status("Table auto attach unavailable.", true);
-                }
+                submit_process_attach(*found, context_text);
             });
         if (!submitted)
         {
             target_lookup_pending_.reset();
-            log::warning(log::category::ui, "auto attach listing unavailable");
-            address_list_->report_status("Table auto attach unavailable.", true);
+            log::warning(log::category::ui, std::format("{} attach unavailable", context_text));
+            address_list_->report_status(std::format("{} attach unavailable.", context_text), true);
+        }
+    }
+
+    void MainWindow::submit_process_attach(const process::ProcessInfo& info, std::string_view context)
+    {
+        if (auto_attach_pending_.has_value())
+        {
+            return; // Another attach already runs.
+        }
+
+        // Keep the process identity before the listing result goes away.
+        const process::ProcessId pid      = info.pid;
+        const std::string        pname    = info.name;
+        const std::string        exe_path = info.exe_path;
+        const std::string        plugin   = info.plugin_id;
+        const std::string        prefix(context);
+
+        const process::JobId attach_job = worker_.next_job_id();
+        auto_attach_pending_            = attach_job;
+
+        log::debug(log::category::ui, std::format("{} attach: pid {} via {}", prefix, pid, plugin));
+
+        const bool submitted = worker_.submit_attach_app(
+            attach_job,
+            pid,
+            plugin,
+            [this, attach_job, pid, pname, exe_path, prefix](process::JobResult&& attach_result)
+            {
+                if (auto_attach_pending_ != attach_job)
+                {
+                    return; // Superseded or shut down.
+                }
+                auto_attach_pending_.reset();
+
+                const auto& attached = std::get<process::AttachResult>(attach_result);
+                if (attached.error)
+                {
+                    target_.clear();
+                    log::warning(
+                        log::category::ui,
+                        std::format("{} attach to pid {} failed: {}", prefix, pid, process::describe(*attached.error)));
+                    address_list_->report_status(
+                        std::format("{} attach failed: {}", prefix, process::describe(*attached.error)), true);
+                    refresh_target_label();
+                    return;
+                }
+
+                target_.clear();
+                target_.pid          = pid;
+                target_.name         = pname;
+                target_.exe_path     = exe_path;
+                target_.plugin_id    = attached.info->plugin_id;
+                target_.method       = attached.info->method;
+                target_.session_live = true;
+                log::info(log::category::ui,
+                          std::format("{} attached to pid {} via {}", prefix, pid, attached.info->plugin_id));
+                refresh_target_label();
+                if (attached.info->read_error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("{} attach to pid {} cannot read memory: {}",
+                                             prefix,
+                                             pid,
+                                             process::describe(*attached.info->read_error)));
+                    address_list_->report_status(std::format("Attached to {}; memory not readable ({}).",
+                                                             pname,
+                                                             process::describe(*attached.info->read_error)),
+                                                 true);
+                }
+                else
+                {
+                    address_list_->report_status(std::format("Attached to {}.", pname), false);
+                }
+            });
+        if (!submitted)
+        {
+            auto_attach_pending_.reset();
+            log::warning(log::category::ui, std::format("{} attach unavailable", prefix));
+            address_list_->report_status(std::format("{} attach unavailable.", prefix), true);
         }
     }
 
