@@ -15,19 +15,9 @@ regression: debug it, do not add it just to make a run green.
 
 ## Known flaky tests
 
-### `the memory viewer resolves an instruction's memory operands`
-
-- **Source:** `tests/ui/dialogs/memory_viewer_test.cpp`, CTest tag `[ui]`.
-- **Symptom:** intermittent failure in a full or otherwise load-heavy run; the
-  same test passes alone, well inside the 60 s timeout (~0.06 s observed).
-- **Cause:** the test waits for the asynchronous access worker to deliver the
-  listing's live pass by pumping the Qt event loop a fixed number of times
-  (`QCoreApplication::processEvents()` in a loop of 8) instead of waiting on the
-  reading. Under CPU load the worker has not delivered when the test reads the
-  request, so the seeded listing has no code base and the operand `CHECK`s fail.
-- **Lone-run check:** `ctest --test-dir build -R "the memory viewer resolves an instruction's memory operands" --output-on-failure`
-- **Status:** accepted flake, not yet fixed. The real fix is to wait on the live
-  reading instead of pumping a fixed number of times.
+No accepted flakes right now. When one appears, add it here in the same commit
+with its source, symptom, cause and lone-run check, following the procedure
+above.
 
 ## Not a flake
 

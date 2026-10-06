@@ -17,6 +17,46 @@
 #include "ui/panels/debug_controls.hpp"
 #include "ui/panels/viewer_menu.hpp"
 
+namespace
+{
+    // Whether two live passes request exactly the same blocks.
+    bool same_requests(const std::vector<slopkit::ui::LiveRequest>& left,
+                       const std::vector<slopkit::ui::LiveRequest>& right)
+    {
+        if (left.size() != right.size())
+        {
+            return false;
+        }
+        for (std::size_t index = 0; index < left.size(); ++index)
+        {
+            if (left[index].id != right[index].id || left[index].address != right[index].address
+                || left[index].size != right[index].size)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Waits until the dialog's live request set is identical on two consecutive
+    // turns, i.e. until the show/layout pass has settled. The dialog may still
+    // grow once after show(), and a slow layout that has not been delivered yet
+    // must not be mistaken for a stable one.
+    void settle_panes(slopkit::process::AccessWorker& worker, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    {
+        std::vector<slopkit::ui::LiveRequest> previous = viewer.next_live_request();
+        const bool                            settled  = pump_ui(worker,
+                                                                 [&]
+                                                                 {
+                                         std::vector<slopkit::ui::LiveRequest> current = viewer.next_live_request();
+                                         const bool                            same = same_requests(previous, current);
+                                         previous                                   = std::move(current);
+                                         return same;
+                                                                 });
+        REQUIRE(settled);
+    }
+} // namespace
+
 TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 {
     application();
@@ -197,15 +237,7 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
     // blocks the live pass will actually request.
     viewer.set_address(0x1000);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        const std::size_t before = view->visible_rows();
-        QCoreApplication::processEvents();
-        if (view->visible_rows() == before)
-        {
-            break;
-        }
-    }
+    settle_panes(worker, viewer);
     const auto requests = seed_window(std::byte {0xAB});
     // The byte view's three blocks come first, the listing's code window last.
     REQUIRE(requests.size() == 4);
@@ -297,15 +329,7 @@ TEST_CASE("the memory viewer keeps the top address when its dialog is resized", 
     // An address that is not a multiple of the fitted row width.
     viewer.set_address(0x1010);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        const std::size_t before = view->visible_rows();
-        QCoreApplication::processEvents();
-        if (view->visible_rows() == before)
-        {
-            break;
-        }
-    }
+    settle_panes(worker, viewer);
 
     slopkit::ui::LiveValues live {worker, target, settings};
     live.add_surface(&viewer);
@@ -603,15 +627,22 @@ TEST_CASE("the memory viewer splits the window into the three panes", "[ui]")
     CHECK(viewer.minimumSize() == QSize(720, 480));
 
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
 
     // The vertical split puts the upper zone (70 units) above the hex view (30).
     auto* split = viewer.findChild<QSplitter*>(QStringLiteral("viewer_split"));
     REQUIRE(split != nullptr);
     REQUIRE(split->count() == 2);
+    // The panes get their final sizes in the show/layout pass; wait until the
+    // geometry stops changing instead of pumping a fixed number of turns.
+    int previous_height = -1;
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        const int  height  = split->widget(0)->height();
+                        const bool settled = height > 0 && height == previous_height;
+                        previous_height    = height;
+                        return settled;
+                    }));
     const double upper_share =
         static_cast<double>(split->widget(0)->height()) / (split->widget(0)->height() + split->widget(1)->height());
     CHECK(upper_share > 0.63);
@@ -890,11 +921,51 @@ namespace
 {
     using slopkit::tests::pump_until;
 
+    // The dialog's live requests once its panes are up. A pane asks for its
+    // window only while the dialog is shown, and the show/layout pass is not
+    // synchronous with show(), so wait on the request itself: a fixed number of
+    // processEvents() turns cannot guarantee it and the seeding pass below would
+    // then be empty.
+    std::vector<slopkit::ui::LiveRequest> wait_for_panes(slopkit::process::AccessWorker&           worker,
+                                                         slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    {
+        std::vector<slopkit::ui::LiveRequest> requests;
+        const auto                            shown = [&]
+        {
+            requests = viewer.next_live_request();
+            for (const slopkit::ui::LiveRequest& request : requests)
+            {
+                if (request.id == slopkit::ui::components::DisassemblyDocument::kIdBase)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+        REQUIRE(pump_ui(worker, shown));
+        return requests;
+    }
+
+    // Waits until the listing has decoded its first row, i.e. until the pass the
+    // seeding helper applied has landed: `row_text(0)` is empty while it has none.
+    void wait_for_listing_row(slopkit::process::AccessWorker& worker, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    {
+        auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+        REQUIRE(listing != nullptr);
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return !listing->row_text(0).isEmpty();
+                        }));
+    }
+
     // Puts `MOV EAX, [RBX+0x10]` at the front of the listing's code window and
     // applies one live pass, so row 0 is that instruction.
-    std::uint64_t seed_listing_operand(FakeAccess& access, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    std::uint64_t seed_listing_operand(FakeAccess&                               access,
+                                       slopkit::process::AccessWorker&           worker,
+                                       slopkit::ui::dialogs::MemoryViewerDialog& viewer)
     {
-        const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+        const std::vector<slopkit::ui::LiveRequest> requests = wait_for_panes(worker, viewer);
         std::vector<slopkit::ui::LiveReading>       readings;
         std::uint64_t                               code_base = 0;
         readings.reserve(requests.size());
@@ -912,15 +983,18 @@ namespace
             readings.push_back(slopkit::ui::LiveReading {request.id, true, std::move(bytes)});
         }
         viewer.apply_live_readings(readings);
+        wait_for_listing_row(worker, viewer);
         return code_base;
     }
 
     // Puts `PUSH RBP; MOV RBP, RSP; RET` at the front of the listing's code
     // window and applies one live pass, so rows 0..2 are those instructions. The
     // fake serves the bytes sparsely, because a window-only fake is read-only.
-    std::uint64_t seed_listing_code(FakeAccess& access, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    std::uint64_t seed_listing_code(FakeAccess&                               access,
+                                    slopkit::process::AccessWorker&           worker,
+                                    slopkit::ui::dialogs::MemoryViewerDialog& viewer)
     {
-        const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+        const std::vector<slopkit::ui::LiveRequest> requests = wait_for_panes(worker, viewer);
         const std::vector<std::byte>                code {
             std::byte {0x55}, std::byte {0x48}, std::byte {0x89}, std::byte {0xE5}, std::byte {0xC3}};
         std::vector<slopkit::ui::LiveReading> readings;
@@ -941,14 +1015,17 @@ namespace
             readings.push_back(slopkit::ui::LiveReading {request.id, true, std::move(bytes)});
         }
         viewer.apply_live_readings(readings);
+        wait_for_listing_row(worker, viewer);
         return code_base;
     }
 
     // Puts `JMP <+7>` at the front of the listing's code window and applies one
     // live pass, so row 0 is a branch that references an address.
-    std::uint64_t seed_listing_jump(FakeAccess& access, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    std::uint64_t seed_listing_jump(FakeAccess&                               access,
+                                    slopkit::process::AccessWorker&           worker,
+                                    slopkit::ui::dialogs::MemoryViewerDialog& viewer)
     {
-        const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+        const std::vector<slopkit::ui::LiveRequest> requests = wait_for_panes(worker, viewer);
         const std::vector<std::byte>                code {std::byte {0xEB},
                                                           std::byte {0x05},
                                                           std::byte {0x90},
@@ -974,6 +1051,7 @@ namespace
             readings.push_back(slopkit::ui::LiveReading {request.id, true, std::move(bytes)});
         }
         viewer.apply_live_readings(readings);
+        wait_for_listing_row(worker, viewer);
         return code_base;
     }
 } // namespace
@@ -1002,17 +1080,7 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
     viewer.set_address(0x1000);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    const std::uint64_t code_base = seed_listing_operand(access, viewer);
-    // Applying the readings only invalidates the document; the view decodes the
-    // rows when it paints, so pump the event loop once more.
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
+    const std::uint64_t code_base = seed_listing_operand(access, worker, viewer);
 
     std::uint64_t                            instruction = 0;
     std::size_t                              length      = 0;
@@ -1058,11 +1126,7 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     slopkit::ui::dialogs::MemoryViewerDialog plain {worker, target, plain_controller};
     plain.set_address(0x1000);
     plain.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    seed_listing_operand(access, plain);
+    seed_listing_operand(access, worker, plain);
 
     int warnings = 0;
     resolved.clear();
@@ -1126,11 +1190,7 @@ TEST_CASE("the memory viewer attaches the debugger on demand for the operands", 
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
     viewer.set_address(0x1000);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    const std::uint64_t code_base = seed_listing_operand(access, viewer);
+    const std::uint64_t code_base = seed_listing_operand(access, worker, viewer);
 
     int prompts = 0;
     viewer.debug_gate().set_attach_prompt(
@@ -1172,11 +1232,7 @@ TEST_CASE("the memory viewer attaches the debugger on demand for the operands", 
     slopkit::ui::dialogs::MemoryViewerDialog denied {worker, target, denied_controller};
     denied.set_address(0x1000);
     denied.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    seed_listing_operand(access, denied);
+    seed_listing_operand(access, worker, denied);
     denied.debug_gate().set_attach_prompt(
         [](const slopkit::process::AttachedTarget&, const QString&)
         {
@@ -1279,15 +1335,7 @@ TEST_CASE("the memory viewer listing NOPs and restores an instruction", "[ui]")
 
     viewer.set_address(0x2000);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    const std::uint64_t code_base = seed_listing_code(access, viewer);
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
+    const std::uint64_t code_base = seed_listing_code(access, worker, viewer);
     REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
     REQUIRE(listing->row_text(1) == QStringLiteral("MOV RBP, RSP"));
 
@@ -1367,15 +1415,7 @@ TEST_CASE("the toggle breakpoint button sets and clears a breakpoint", "[ui]")
 
     viewer.set_address(0x2000);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    const std::uint64_t code_base = seed_listing_code(access, viewer);
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
+    const std::uint64_t code_base = seed_listing_code(access, worker, viewer);
     REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
 
     // The toggle needs a live session: start one and wait for the stop.
@@ -1539,15 +1579,7 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
 
     viewer.set_address(0x2000);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    const std::uint64_t code_base = seed_listing_code(access, viewer);
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
+    const std::uint64_t code_base = seed_listing_code(access, worker, viewer);
     REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
     const QString selected_text = QStringLiteral("%1").arg(code_base, 16, 16, QLatin1Char('0')).toUpper();
 
@@ -1652,15 +1684,7 @@ TEST_CASE("the menu bar's Tools entries track the selected instruction", "[ui]")
 
     viewer.set_address(0x2000);
     viewer.show();
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
-    const std::uint64_t code_base = seed_listing_operand(access, viewer);
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
+    const std::uint64_t code_base = seed_listing_operand(access, worker, viewer);
     REQUIRE_FALSE(listing->row_text(0).isEmpty());
     CHECK(listing->row_text(0).startsWith(QStringLiteral("MOV EAX")));
 
@@ -1740,11 +1764,7 @@ TEST_CASE("the menu bar's viewer commands act on the panes", "[ui]")
 
     // A selected row that references an address enables Follow: it moves the
     // byte view and, separately, the listing.
-    const std::uint64_t jump_base = seed_listing_jump(access, viewer);
-    for (std::size_t guard = 0; guard < 8; ++guard)
-    {
-        QCoreApplication::processEvents();
-    }
+    const std::uint64_t jump_base = seed_listing_jump(access, worker, viewer);
     listing->set_selected_address(jump_base);
     menu->view_menu()->aboutToShow();
     REQUIRE(menu->follow_in_memory_view_action()->isEnabled());
