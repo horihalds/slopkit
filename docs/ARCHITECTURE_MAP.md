@@ -1,38 +1,12 @@
 # Architecture Map
 
-Fast-lookup map of the repo: where components live, how to build and test, and
+Fast-lookup map of the repo: where components live and
 the rules a newcomer would otherwise get wrong. Read this before a task and only
 search the codebase broadly when it does not answer where something is. Deeper
 prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.md`
 and `docs/LOGGING.md`.
 
-## 1. Project summary
-
-slopkit is a plugin-first memory scanner, address-table editor and opt-in
-debugger for Linux (and Wine/Proton) processes, with a Qt 6 Widgets GUI. The
-host never touches another process directly: normal access goes through the
-`process::ProcessAccess` plugin seam on an `AccessWorker`, and only debugging
-uses `ptrace` through the debug worker. The bundled plugins are `linux-proc` and
-`wine-proton`.
-
-## 2. Build and test commands
-
-| Task | Command |
-| --- | --- |
-| Configure | `cmake -G Ninja -B build` (or `./configure.sh`) |
-| Incremental build | `cmake --build build` (or `./build.sh`) |
-| Single target | `cmake --build build --target slopkit_tests` — targets: `slopkit`, `slopkit-sandbox`, `slopkit_tests`, `slopkit-linux_proc`, `slopkit-wine_proton` |
-| Single test | `ctest --test-dir build -R "<Catch2 name>" --output-on-failure` |
-| Single test (direct) | `QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "<name>"` |
-| Full suite | `ctest --test-dir build --output-on-failure` |
-| Full suite, no crash popups | `./test.sh` — builds, then runs the suite with KDE's DrKonqi crash launcher parked |
-| Format check only | `ctest --test-dir build -R clang-format-check --output-on-failure` |
-| Install build | `./install.sh` (needed when `src/**`, `CMakeLists.txt`, `cmake/**`, `assets/**` or `data/**` change) |
-
-For small edits prefer `cmake --build build --target slopkit_tests` followed by
-one filtered `ctest -R`. `-R` matches Catch2 `TEST_CASE` names, not file names.
-
-## 3. Directory map
+## 1. Directory map
 
 | Directory | Responsibility |
 | --- | --- |
@@ -72,7 +46,7 @@ one filtered `ctest -R`. `-R` matches Catch2 `TEST_CASE` names, not file names.
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 
-## 4. Module / component table
+## 2. Module / component table
 
 | Component | Purpose | Key headers / classes | Tests | Depends on |
 | --- | --- | --- | --- | --- |
@@ -96,7 +70,7 @@ one filtered `ctest -R`. `-R` matches Catch2 `TEST_CASE` names, not file names.
 | plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
 | plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) | `plugins/wine_proton/wine_proton_plugin.cpp` | `tests/plugin/wine_proton*` | plugin, support, platform |
 
-## 5. Entry points and data flow
+## 3. Entry points and data flow
 
 - `src/main.cpp` → `slopkit::app::run()` (`src/app/cli.cpp`) handles argv: headless commands (`--version`, `--list-plugins`, `--list-processes`, scan), otherwise it hands a table path to a running instance (`src/app/instance*`) or builds `ui::App` / `MainWindow`.
 - Plugin discovery: `PluginHost::discover()` over `app::plugin_search_directories()`.
@@ -106,7 +80,7 @@ one filtered `ctest -R`. `-R` matches Catch2 `TEST_CASE` names, not file names.
 - Debug: `debug::Controller` → `debug::Worker` job thread → `debug::PluginBackend` → plugin `debug_*` → `platform::DebugSession`/`ptrace`; `drain()` applies results; start is gated by `ui::DebugSessionGate`.
 - Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; `.skt` I/O in `table/serializer.cpp`, opened via `MainWindow::open_table_request()`.
 
-## 6. Conventions
+## 4. Conventions
 
 - C++23, namespaces `slopkit::<module>` mirroring `src/<module>`; `#pragma once`.
 - Each `.hpp` sits next to its same-named `.cpp`; CMake globs sources with
@@ -122,7 +96,7 @@ one filtered `ctest -R`. `-R` matches Catch2 `TEST_CASE` names, not file names.
 - System dependencies only: Zydis (pkg-config), Qt 6 Widgets, ImageMagick
   (build-time), Catch2; never add a dependency without asking the owner.
 
-## 7. Gotchas
+## 5. Gotchas
 
 - Generated/build-time files: icons and action glyphs (`cmake/EmbedIcon.cmake`),
   embedded fonts (`cmake/EmbedFont.cmake`), Qt resources, and
@@ -139,10 +113,9 @@ one filtered `ctest -R`. `-R` matches Catch2 `TEST_CASE` names, not file names.
 - Configure fails without ImageMagick, Zydis dev packages and `pkg-config`.
 - `tmp/` is the project scratch dir; empty it when a plan completes.
 
-## Maintaining this map
+## 6. Maintaining this map
 - When you add, remove, rename, or move a file or component, or change a
   component's responsibility, update this map in the same task.
 - Update only the affected entries. Use `git diff --stat` or the files you
   just touched to decide what changed; do not re-explore the whole project.
-- Keep it under 150 lines. If it grows past that, shorten older entries rather
-  than adding detail.
+- Keep prose to a minimum

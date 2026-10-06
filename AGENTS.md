@@ -7,9 +7,9 @@ them for every task in this repository.
 ## Architecture map
 
 - Read [`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md) before starting any
-  task. It lists where components live, the build/test commands and the project
-  conventions, so you can find the right files without searching the codebase
-  broadly; only search widely when the map does not answer where something is.
+  task. It lists where components live and the project conventions, so you can 
+  find the right files without searching the codebase broadly; 
+  only search widely when the map does not answer where something is.
 - Keep the map up to date in the same task whenever you add, remove, rename or
   move files or components, or change a component's responsibility (see
   "Maintaining this map" inside it).
@@ -83,6 +83,17 @@ them for every task in this repository.
   registered only when `clang-format` is on the `PATH`, so a missing formatter
   skips the check instead of failing the build.
 
+## Running tests (verified recipes)
+- Preferred: `ctest --test-dir build -R "<exact or partial TEST_CASE name>" --output-on-failure`
+  (ctest sets QT_QPA_PLATFORM=offscreen and the 60 s timeout for you).
+- Direct binary: ALWAYS `QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "name1,name2,*glob*"`.
+  Multiple names are comma-separated, never space-separated.
+- Never run broad tags like `[ui]` directly: it exceeds the tool timeout. Use `./test.sh`.
+- Build errors only: `cmake --build build --target slopkit_tests 2>&1 | grep -E "error:|FAILED|warning:"`
+- Format touched files before building: `clang-format -i <files>`.
+- A failing test: rerun it alone with `ctest -R`. If it passes alone, check KNOWN_ISSUES
+  before debugging.
+  
 ## Dependencies
 
 - Never add any other dependency without consulting the owner first.
@@ -129,11 +140,17 @@ them for every task in this repository.
   per-user abstract socket in `src/app/instance*`; the running window then runs
   the same open flow as File > Open Table.
 
-## Maintaining this file
-
-- Treat this file as a living document: update it whenever future work changes the project's rules, conventions, or toolchain.
-
 ## Version control
 
 - When any plan is completed, automatically create a git commit for the changes.
 - If the current branch has an upstream, also push the commit.
+
+## Definition of done
+1. `clang-format-check`, build with zero warnings, `./test.sh` all green.
+2. A flaky failure is acceptable only if it is listed in docs/KNOWN_ISSUES.md AND the
+   test passes alone under `ctest -R`. Add new flakes to that file in the same commit.
+3. Docs/map updated; `tmp/` emptied; then commit (and push if upstream exists).
+
+## Maintaining this file
+
+- Treat this file as a living document: update it whenever future work changes the project's rules, conventions, or toolchain.
