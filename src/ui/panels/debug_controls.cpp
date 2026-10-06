@@ -5,6 +5,7 @@
 
 #include "ui/address_format.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/panels/debug_enablement.hpp"
 
 namespace slopkit::ui::panels
 {
@@ -104,18 +105,17 @@ namespace slopkit::ui::panels
 
     void DebugControls::apply_state()
     {
-        const auto state    = controller_.state();
-        const bool idle     = state == debug::Controller::State::idle;
-        const bool stopped  = state == debug::Controller::State::stopped;
-        const bool running  = state == debug::Controller::State::running;
-        const bool starting = state == debug::Controller::State::starting;
+        const auto state = controller_.state();
+        const bool idle  = state == debug::Controller::State::idle;
+
+        const DebugEnablement enablement = debug_enablement(state, target_.valid(), false, false);
 
         start_stop_button_->setText(idle ? tr("Start Debugging") : tr("Stop Debugging"));
-        start_stop_button_->setEnabled(idle ? target_.valid() : !starting);
-        resume_button_->setEnabled(stopped);
-        break_button_->setEnabled(running);
-        step_into_button_->setEnabled(stopped);
-        step_over_button_->setEnabled(stopped);
+        start_stop_button_->setEnabled(enablement.start_stop);
+        resume_button_->setEnabled(enablement.resume);
+        break_button_->setEnabled(enablement.interrupt);
+        step_into_button_->setEnabled(enablement.step_into);
+        step_over_button_->setEnabled(enablement.step_over);
 
         update_toggle_state();
     }
@@ -124,7 +124,9 @@ namespace slopkit::ui::panels
     {
         const bool session       = controller_.state() != debug::Controller::State::idle;
         const bool has_selection = selected_address_.has_value();
-        toggle_breakpoint_button_->setEnabled(session && has_selection);
+
+        const DebugEnablement enablement = debug_enablement(controller_.state(), target_.valid(), has_selection, false);
+        toggle_breakpoint_button_->setEnabled(enablement.toggle_breakpoint);
 
         if (!session)
         {

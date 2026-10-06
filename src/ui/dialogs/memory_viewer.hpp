@@ -36,6 +36,7 @@ namespace slopkit::ui::panels
 {
     class DebugControls;
     class DebuggerPanel;
+    class ViewerMenu;
 } // namespace slopkit::ui::panels
 
 namespace slopkit::ui::widgets
@@ -72,6 +73,9 @@ namespace slopkit::ui::dialogs
         // The one-line debug control bar above the listing, so the window can
         // open the Breakpoints dialog from its button.
         [[nodiscard]] panels::DebugControls* debug_controls() const noexcept;
+
+        // The Memory Viewer's own menu bar, above the panes.
+        [[nodiscard]] panels::ViewerMenu* viewer_menu() const noexcept;
 
         // The debugger read-out on the dialog's bottom status line.
         [[nodiscard]] QString status_text() const;
@@ -161,6 +165,26 @@ namespace slopkit::ui::dialogs
         // After a stop, jumps the listing to RIP and asks for a fresh live pass.
         void follow_stop();
 
+        // The listing's row commands, shared by its context menu and the menu
+        // bar's Tools menu: replace/restore/edit the selected instruction.
+        void nop_instruction_row(std::size_t row);
+        void restore_instruction_row(std::size_t row);
+        void prompt_edit_instruction(std::size_t row);
+
+        // The decoded listing row the viewer commands act on, or null when
+        // nothing is selected.
+        [[nodiscard]] std::optional<std::size_t>   selected_row() const;
+        // The first address the selected instruction references, for Follow.
+        [[nodiscard]] std::optional<std::uint64_t> selected_reference() const;
+        // `View > Back`: returns the listing when the focus is inside it, the
+        // byte view otherwise.
+        void                                       back_focused_pane();
+        void                                       follow_selected_instruction();
+        void                                       follow_selected_in_memory_view();
+        // Pushes the selection and the panes' history onto the menu bar's own
+        // View/Tools enablement.
+        void                                       refresh_menu_command_state();
+
         // Adds a software breakpoint at `address` when none is set there, and
         // removes the existing one otherwise. `expression` is the listing's own
         // rendered text for the row, which the controller resolves.
@@ -184,6 +208,7 @@ namespace slopkit::ui::dialogs
         components::DisassemblyDocument disassembly_document_;
         components::DisassemblyView*    disassembly_ {};
         panels::DebugControls*          controls_ {};
+        panels::ViewerMenu*             menu_ {};
         panels::DebuggerPanel*          debugger_ {};
         widgets::StatusLabel*           status_ {};
         QSplitter*                      split_ {};

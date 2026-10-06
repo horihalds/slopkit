@@ -559,7 +559,7 @@ namespace slopkit::ui::components
         }
         else
         {
-            const bool decodable = row < document_.row_count() && !is_muted(document_.row(row));
+            const bool decodable = document_.editable(row);
 
             QAction* nop = decodable ? widgets::described_action(
                                            menu, tr("NOP Instruction"), tr("Replace this instruction with NOP bytes."))
@@ -839,7 +839,7 @@ namespace slopkit::ui::components
         if (event->button() == Qt::LeftButton)
         {
             const std::size_t row = row_at_position(event->position().toPoint());
-            if (row < document_.row_count() && document_.patch_at(row) == nullptr && !is_muted(document_.row(row)))
+            if (document_.editable(row))
             {
                 emit editRequested(row);
                 event->accept();

@@ -2,15 +2,20 @@
 
 #include <cmath>
 
+#include <QAction>
+#include <QMenu>
+#include <QSplitter>
 #include <QWindow>
 
 #include <QPushButton>
 
 #include "support/ui_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
+#include "ui/components/memory_view.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/register_model.hpp"
 #include "ui/panels/debug_controls.hpp"
+#include "ui/panels/viewer_menu.hpp"
 
 TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 {
@@ -938,6 +943,39 @@ namespace
         viewer.apply_live_readings(readings);
         return code_base;
     }
+
+    // Puts `JMP <+7>` at the front of the listing's code window and applies one
+    // live pass, so row 0 is a branch that references an address.
+    std::uint64_t seed_listing_jump(FakeAccess& access, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
+    {
+        const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+        const std::vector<std::byte>                code {std::byte {0xEB},
+                                                          std::byte {0x05},
+                                                          std::byte {0x90},
+                                                          std::byte {0x90},
+                                                          std::byte {0x90},
+                                                          std::byte {0x90},
+                                                          std::byte {0x90}};
+        std::vector<slopkit::ui::LiveReading>       readings;
+        std::uint64_t                               code_base = 0;
+        readings.reserve(requests.size());
+        for (const slopkit::ui::LiveRequest& request : requests)
+        {
+            std::vector<std::byte> bytes(request.size, std::byte {0x90});
+            if (request.id == slopkit::ui::components::DisassemblyDocument::kIdBase)
+            {
+                code_base = request.address;
+                for (std::size_t index = 0; index < code.size(); ++index)
+                {
+                    bytes[index]                                  = code[index];
+                    access.memory->bytes[request.address + index] = code[index];
+                }
+            }
+            readings.push_back(slopkit::ui::LiveReading {request.id, true, std::move(bytes)});
+        }
+        viewer.apply_live_readings(readings);
+        return code_base;
+    }
 } // namespace
 
 TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
@@ -1414,4 +1452,313 @@ TEST_CASE("the memory viewer shows the debugger read-out on its bottom status li
           == slopkit::ui::widgets::status_color(slopkit::ui::widgets::StatusKind::warning));
 
     viewer.hide();
+}
+
+TEST_CASE("the memory viewer shows its own four-menu bar above the panes", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::tests::FakeDebugBackend backend;
+    slopkit::debug::Controller       controller {backend};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
+    auto*                                    menu = viewer.viewer_menu();
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(menu != nullptr);
+    REQUIRE(view != nullptr);
+    CHECK(viewer.findChild<slopkit::ui::panels::ViewerMenu*>() == menu);
+
+    // Exactly the four menus, in the required order.
+    REQUIRE(menu->actions().size() == 4);
+    CHECK(action_texts(menu->actions())
+          == QStringList {
+              QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Tools"), QStringLiteral("Debug")});
+
+    // The Debug menu carries the bar's entries plus Remove All Breakpoints.
+    CHECK(action_texts(menu->debug_menu()->actions())
+          == QStringList {QStringLiteral("Start Debugging"),
+                          QStringLiteral("Toggle Breakpoint"),
+                          QStringLiteral("Resume"),
+                          QStringLiteral("Break"),
+                          QStringLiteral("Step Into"),
+                          QStringLiteral("Step Over"),
+                          QStringLiteral("Step Out"),
+                          QStringLiteral("Breakpoints..."),
+                          QStringLiteral("Remove All Breakpoints")});
+
+    // The byte view's own Go To... action leads the View menu, so its Ctrl+G is
+    // never duplicated.
+    REQUIRE_FALSE(menu->view_menu()->actions().isEmpty());
+    CHECK(menu->view_menu()->actions().first() == view->goto_action());
+
+    // The bar sits above the panes.
+    viewer.resize(900, 600);
+    viewer.show();
+    QCoreApplication::processEvents();
+    auto* split = viewer.findChild<QSplitter*>();
+    REQUIRE(split != nullptr);
+    CHECK(menu->y() < split->y());
+    viewer.hide();
+}
+
+TEST_CASE("the debug menu mirrors the control bar across the session states", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::tests::FakeDebugBackend backend;
+    backend.block_continue = true;
+    slopkit::debug::Controller controller {backend};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
+    auto*                                    listing  = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    auto*                                    controls = viewer.debug_controls();
+    auto*                                    menu     = viewer.viewer_menu();
+    REQUIRE(listing != nullptr);
+    REQUIRE(controls != nullptr);
+    REQUIRE(menu != nullptr);
+
+    // Idle with a valid target: Start is live, the run entries are not.
+    CHECK(menu->start_stop_action()->text() == QStringLiteral("Start Debugging"));
+    CHECK(menu->start_stop_action()->isEnabled());
+    CHECK_FALSE(menu->resume_action()->isEnabled());
+    CHECK_FALSE(menu->break_action()->isEnabled());
+    CHECK_FALSE(menu->step_into_action()->isEnabled());
+    CHECK_FALSE(menu->step_over_action()->isEnabled());
+    CHECK_FALSE(menu->step_out_action()->isEnabled());
+    CHECK(menu->step_out_action()->toolTip() == QStringLiteral("Stepping out is not supported yet."));
+
+    viewer.set_address(0x2000);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    const std::uint64_t code_base = seed_listing_code(access, viewer);
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
+    const QString selected_text = QStringLiteral("%1").arg(code_base, 16, 16, QLatin1Char('0')).toUpper();
+
+    // Every debug entry agrees with its bar button in every state.
+    const auto parity = [&]
+    {
+        CHECK(menu->resume_action()->isEnabled() == controls->resume_button()->isEnabled());
+        CHECK(menu->break_action()->isEnabled() == controls->break_button()->isEnabled());
+        CHECK(menu->step_into_action()->isEnabled() == controls->step_into_button()->isEnabled());
+        CHECK(menu->step_over_action()->isEnabled() == controls->step_over_button()->isEnabled());
+        CHECK(menu->toggle_breakpoint_action()->isEnabled() == controls->toggle_breakpoint_button()->isEnabled());
+    };
+
+    // No session: the toggle explains it cannot set breakpoints yet.
+    CHECK_FALSE(menu->toggle_breakpoint_action()->isEnabled());
+    CHECK(menu->toggle_breakpoint_action()->toolTip() == QStringLiteral("Start the debugger to set breakpoints."));
+    parity();
+
+    // Starting through the menu entry flips it to Stop and lights Break.
+    menu->start_stop_action()->trigger();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == slopkit::debug::Controller::State::running;
+                       }));
+    CHECK(menu->start_stop_action()->text() == QStringLiteral("Stop Debugging"));
+    CHECK(menu->start_stop_action()->isEnabled());
+    CHECK(menu->break_action()->isEnabled());
+    CHECK_FALSE(menu->resume_action()->isEnabled());
+    CHECK(menu->toggle_breakpoint_action()->toolTip() == QStringLiteral("Select an instruction in the listing first."));
+    parity();
+
+    // Break through the menu stops the target and lights the step entries.
+    menu->break_action()->trigger();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == slopkit::debug::Controller::State::stopped;
+                       }));
+    CHECK(menu->resume_action()->isEnabled());
+    CHECK(menu->step_into_action()->isEnabled());
+    CHECK(menu->step_over_action()->isEnabled());
+    CHECK_FALSE(menu->break_action()->isEnabled());
+    parity();
+
+    // Selecting an instruction lights the toggle on both surfaces.
+    listing->set_selected_address(code_base);
+    CHECK(menu->toggle_breakpoint_action()->isEnabled());
+    CHECK(menu->toggle_breakpoint_action()->toolTip() == QStringLiteral("Set a breakpoint at %1.").arg(selected_text));
+    parity();
+
+    // Toggling through the menu arms the same address the bar would.
+    menu->toggle_breakpoint_action()->trigger();
+    REQUIRE(controller.table().software_at(code_base) != nullptr);
+    CHECK(menu->toggle_breakpoint_action()->toolTip()
+          == QStringLiteral("Remove the breakpoint at %1.").arg(selected_text));
+
+    // A second breakpoint on the next row: Remove All clears both at once.
+    listing->set_selected_address(code_base + 1);
+    menu->toggle_breakpoint_action()->trigger();
+    REQUIRE(controller.breakpoints().size() == 2);
+    CHECK(menu->remove_all_breakpoints_action()->isEnabled());
+    menu->remove_all_breakpoints_action()->trigger();
+    CHECK(controller.table().software_at(code_base) == nullptr);
+    CHECK(controller.table().software_at(code_base + 1) == nullptr);
+    CHECK(controller.breakpoints().empty());
+    CHECK_FALSE(menu->remove_all_breakpoints_action()->isEnabled());
+    CHECK(menu->remove_all_breakpoints_action()->toolTip() == QStringLiteral("No breakpoints to remove."));
+
+    // Breakpoints... reaches the same request the bar's button emits.
+    int requests = 0;
+    QObject::connect(controls,
+                     &slopkit::ui::panels::DebugControls::breakpointsRequested,
+                     controls,
+                     [&requests]
+                     {
+                         ++requests;
+                     });
+    menu->breakpoints_action()->trigger();
+    CHECK(requests == 1);
+
+    viewer.hide();
+}
+
+TEST_CASE("the menu bar's Tools entries track the selected instruction", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::tests::FakeDebugBackend backend;
+    slopkit::debug::Controller       controller {backend};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
+    auto*                                    listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    auto*                                    menu    = viewer.viewer_menu();
+    REQUIRE(listing != nullptr);
+    REQUIRE(menu != nullptr);
+
+    viewer.set_address(0x2000);
+    viewer.show();
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    const std::uint64_t code_base = seed_listing_operand(access, viewer);
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    REQUIRE_FALSE(listing->row_text(0).isEmpty());
+    CHECK(listing->row_text(0).startsWith(QStringLiteral("MOV EAX")));
+
+    // Nothing selected: every Tools entry is off and explains itself.
+    CHECK_FALSE(menu->nop_action()->isEnabled());
+    CHECK_FALSE(menu->restore_action()->isEnabled());
+    CHECK_FALSE(menu->edit_action()->isEnabled());
+    CHECK_FALSE(menu->instruction_accesses_action()->isEnabled());
+    CHECK_FALSE(menu->nop_action()->toolTip().isEmpty());
+    CHECK_FALSE(menu->edit_action()->toolTip().isEmpty());
+    CHECK_FALSE(menu->instruction_accesses_action()->toolTip().isEmpty());
+
+    // A decoded instruction with a memory operand can be NOPed, edited and its
+    // operands resolved.
+    listing->set_selected_address(code_base);
+    CHECK(menu->nop_action()->isEnabled());
+    CHECK(menu->edit_action()->isEnabled());
+    CHECK_FALSE(menu->restore_action()->isEnabled());
+    CHECK(menu->instruction_accesses_action()->isEnabled());
+
+    // NOPing it makes the row restorable and no longer editable. The selection
+    // is dropped and re-made because reselecting the same row emits nothing.
+    menu->nop_action()->trigger();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return listing->row_text(0) == QStringLiteral("NOP");
+                    }));
+    listing->set_selected_address(std::nullopt);
+    listing->set_selected_address(code_base);
+    CHECK_FALSE(menu->nop_action()->isEnabled());
+    CHECK_FALSE(menu->edit_action()->isEnabled());
+    CHECK(menu->restore_action()->isEnabled());
+    CHECK(menu->restore_action()->toolTip().contains(QStringLiteral("MOV EAX")));
+
+    viewer.hide();
+}
+
+TEST_CASE("the menu bar's viewer commands act on the panes", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    auto*                                    view    = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    auto*                                    listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    auto*                                    menu    = viewer.viewer_menu();
+    REQUIRE(view != nullptr);
+    REQUIRE(listing != nullptr);
+    REQUIRE(menu != nullptr);
+
+    viewer.set_address(0x1000);
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    // Neither pane has anywhere to go back to yet.
+    CHECK_FALSE(menu->back_action()->isEnabled());
+    CHECK_FALSE(menu->back_action()->toolTip().isEmpty());
+
+    // With nothing selected the Follow entries are off and explain why.
+    CHECK_FALSE(menu->follow_action()->isEnabled());
+    CHECK_FALSE(menu->follow_in_memory_view_action()->isEnabled());
+    CHECK(menu->follow_action()->toolTip() == QStringLiteral("Select an instruction that references an address."));
+
+    // The byte view's own Back moves only the focused byte view.
+    view->navigate_to(0x2000);
+    REQUIRE(view->can_go_back());
+    menu->view_menu()->aboutToShow();
+    REQUIRE(menu->back_action()->isEnabled());
+    menu->back_action()->trigger();
+    CHECK(view->first_byte() == 0x1000);
+    CHECK(listing->first_address() == 0x1000);
+
+    // A selected row that references an address enables Follow: it moves the
+    // byte view and, separately, the listing.
+    const std::uint64_t jump_base = seed_listing_jump(access, viewer);
+    for (std::size_t guard = 0; guard < 8; ++guard)
+    {
+        QCoreApplication::processEvents();
+    }
+    listing->set_selected_address(jump_base);
+    menu->view_menu()->aboutToShow();
+    REQUIRE(menu->follow_in_memory_view_action()->isEnabled());
+    menu->follow_in_memory_view_action()->trigger();
+    CHECK(view->first_byte() == jump_base + 7);
+
+    listing->set_selected_address(jump_base);
+    menu->view_menu()->aboutToShow();
+    REQUIRE(menu->follow_action()->isEnabled());
+    menu->follow_action()->trigger();
+    CHECK(listing->can_go_back());
+
+    // File > Close hides the viewer.
+    CHECK(viewer.isVisible());
+    menu->close_action()->trigger();
+    CHECK_FALSE(viewer.isVisible());
 }

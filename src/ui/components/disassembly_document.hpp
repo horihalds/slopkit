@@ -128,6 +128,11 @@ namespace slopkit::ui::components
         // The applied code patch covering the decoded row `index` (a click anywhere in
         // the replaced instruction reaches it); null when the row is not inside one.
         [[nodiscard]] const CodePatch* patch_at(std::size_t index) const;
+        // True when the decoded row `index` is an instruction this session can still
+        // rewrite: valid, fully cached and not already covered by a session patch. The
+        // listing's menu and the Memory Viewer's Tools menu both gate their NOP/Edit
+        // commands on it, so the two surfaces cannot disagree about a row.
+        [[nodiscard]] bool             editable(std::size_t index) const;
         // The paint annotation for row `index`: "NOPed: MOV RBP, RSP" or "Edited: MOV
         // RBP, RSP" on the patch's own first row, empty everywhere else.
         [[nodiscard]] QString          row_annotation(std::size_t index) const;
@@ -171,9 +176,6 @@ namespace slopkit::ui::components
         [[nodiscard]] QString       instruction_bytes(const disasm::Instruction& instruction) const;
         [[nodiscard]] QString       instruction_text(const disasm::Instruction& instruction) const;
         [[nodiscard]] std::size_t   byte_tokens(std::size_t index) const noexcept;
-        // The row is a decoded instruction whose whole length is cached and that no
-        // patch already covers, so it can be replaced.
-        [[nodiscard]] bool          editable(std::size_t index) const;
         // The bytes `text` assembles to for row `index`, using the instruction's memory
         // operands as the rip-relative template; the error when it does not assemble.
         [[nodiscard]] std::expected<std::vector<std::byte>, std::string> replacement_for(std::size_t      index,

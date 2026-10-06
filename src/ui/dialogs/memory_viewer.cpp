@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QHeaderView>
 #include <QHideEvent>
+#include <QMenu>
 #include <QShowEvent>
 #include <QSplitter>
 #include <QTableView>
@@ -25,6 +26,7 @@
 #include "ui/fonts.hpp"
 #include "ui/panels/debug_controls.hpp"
 #include "ui/panels/debugger_panel.hpp"
+#include "ui/panels/viewer_menu.hpp"
 
 namespace slopkit::ui::dialogs
 {
@@ -103,6 +105,12 @@ namespace slopkit::ui::dialogs
         code_pane_layout->addWidget(controls_);
         code_pane_layout->addWidget(build_code_pane(), 1);
 
+        // The viewer's own menu bar sits above the split: File, View and Tools
+        // carry the viewer's commands, Debug mirrors the one-line control bar
+        // below it.
+        menu_ = new panels::ViewerMenu(debug_, target_, *view_, this);
+        layout->setMenuBar(menu_);
+
         code_split_->addWidget(code_pane);
         code_split_->addWidget(build_stats_pane());
         code_split_->setStretchFactor(0, 70);
@@ -113,7 +121,8 @@ namespace slopkit::ui::dialogs
             {controls_->breakpoints_button(), debugger_->register_table(), debugger_->call_stack_table()});
 
         // The toggle acts on the selected listing row: the controller resolves
-        // the row's own rendered address text, so the two never disagree.
+        // the row's own rendered address text, so the two never disagree. The
+        // menu bar's toggle reads the same pair.
         connect(
             controls_, &panels::DebugControls::toggleBreakpointRequested, this, &MemoryViewerDialog::toggle_breakpoint);
         connect(disassembly_,
@@ -121,9 +130,71 @@ namespace slopkit::ui::dialogs
                 this,
                 [this](std::optional<std::uint64_t> address)
                 {
-                    controls_->set_selected_instruction(
-                        address, address.has_value() ? disassembly_document_.address_text(*address) : QString());
+                    const QString text = address.has_value() ? disassembly_document_.address_text(*address) : QString();
+                    controls_->set_selected_instruction(address, text);
+                    menu_->set_selected_instruction(address, text);
+                    refresh_menu_command_state();
                 });
+
+        // The menu bar's debug side drives the same controller calls as the bar,
+        // and Breakpoints... is relayed into the bar's own request so
+        // MainWindow's single wiring covers both surfaces.
+        connect(menu_, &panels::ViewerMenu::toggleBreakpointRequested, this, &MemoryViewerDialog::toggle_breakpoint);
+        connect(
+            menu_, &panels::ViewerMenu::breakpointsRequested, controls_, &panels::DebugControls::breakpointsRequested);
+
+        // View/Tools act on the dialog's own selection, focus and panes.
+        connect(menu_, &panels::ViewerMenu::closeRequested, this, &MemoryViewerDialog::close);
+        connect(menu_, &panels::ViewerMenu::backRequested, this, &MemoryViewerDialog::back_focused_pane);
+        connect(menu_, &panels::ViewerMenu::followRequested, this, &MemoryViewerDialog::follow_selected_instruction);
+        connect(menu_,
+                &panels::ViewerMenu::followInMemoryViewRequested,
+                this,
+                &MemoryViewerDialog::follow_selected_in_memory_view);
+        connect(menu_,
+                &panels::ViewerMenu::nopRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        nop_instruction_row(*row);
+                    }
+                });
+        connect(menu_,
+                &panels::ViewerMenu::restoreRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        restore_instruction_row(*row);
+                    }
+                });
+        connect(menu_,
+                &panels::ViewerMenu::editRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        prompt_edit_instruction(*row);
+                    }
+                });
+        connect(menu_,
+                &panels::ViewerMenu::instructionAccessesRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        instruction_accesses(*row);
+                    }
+                });
+        // Back depends on the focused pane's history, which changes without a
+        // selection change, so refresh just before the menus open.
+        connect(menu_->view_menu(), &QMenu::aboutToShow, this, &MemoryViewerDialog::refresh_menu_command_state);
+        connect(menu_->tools_menu(), &QMenu::aboutToShow, this, &MemoryViewerDialog::refresh_menu_command_state);
 
         split_->addWidget(code_split_);
         split_->addWidget(view_);
@@ -199,63 +270,144 @@ namespace slopkit::ui::dialogs
                 &MemoryViewerDialog::instruction_accesses);
         // Rewriting the attached target's code: the document applies the write
         // through the access worker and the byte pane catches up on a fresh pass
-        // once it is submitted.
-        connect(disassembly_,
-                &components::DisassemblyView::nopRequested,
-                this,
-                [this](std::size_t row)
-                {
-                    if (disassembly_document_.nop_instruction(row))
-                    {
-                        request_page();
-                    }
-                });
+        // once it is submitted. The same handlers back the menu bar's Tools menu.
+        connect(
+            disassembly_, &components::DisassemblyView::nopRequested, this, &MemoryViewerDialog::nop_instruction_row);
         connect(disassembly_,
                 &components::DisassemblyView::restoreRequested,
                 this,
-                [this](std::size_t row)
-                {
-                    if (const components::CodePatch* patch = disassembly_document_.patch_at(row);
-                        patch != nullptr && disassembly_document_.restore_instruction(patch->begin))
-                    {
-                        request_page();
-                    }
-                });
-        // Editing assembles the text first (the box validates every keystroke)
-        // and refuses anything longer than the instruction it replaces.
+                &MemoryViewerDialog::restore_instruction_row);
         connect(disassembly_,
                 &components::DisassemblyView::editRequested,
                 this,
-                [this](std::size_t row)
-                {
-                    const auto source = disassembly_document_.edit_source(row);
-                    if (!source.has_value())
-                    {
-                        return;
-                    }
-
-                    widgets::InputBoxOptions options;
-                    options.title       = tr("Edit Instruction");
-                    options.label       = tr("Assembler (addresses are absolute):");
-                    options.initial     = *source;
-                    options.placeholder = QStringLiteral("MOV RBP, RSP");
-                    options.monospace   = true;
-                    options.validate    = [this, row](const QString& text)
-                    {
-                        return QString::fromStdString(disassembly_document_.edit_error(row, text.toStdString()));
-                    };
-
-                    const auto accepted = widgets::get_text(options, this);
-                    if (!accepted || accepted->isEmpty())
-                    {
-                        return;
-                    }
-                    if (disassembly_document_.edit_instruction(row, accepted->toStdString()))
-                    {
-                        request_page();
-                    }
-                });
+                &MemoryViewerDialog::prompt_edit_instruction);
         return panel;
+    }
+
+    void MemoryViewerDialog::nop_instruction_row(std::size_t row)
+    {
+        if (disassembly_document_.nop_instruction(row))
+        {
+            request_page();
+        }
+    }
+
+    void MemoryViewerDialog::restore_instruction_row(std::size_t row)
+    {
+        if (const components::CodePatch* patch = disassembly_document_.patch_at(row);
+            patch != nullptr && disassembly_document_.restore_instruction(patch->begin))
+        {
+            request_page();
+        }
+    }
+
+    // Editing assembles the text first (the box validates every keystroke) and
+    // refuses anything longer than the instruction it replaces.
+    void MemoryViewerDialog::prompt_edit_instruction(std::size_t row)
+    {
+        const auto source = disassembly_document_.edit_source(row);
+        if (!source.has_value())
+        {
+            return;
+        }
+
+        widgets::InputBoxOptions options;
+        options.title       = tr("Edit Instruction");
+        options.label       = tr("Assembler (addresses are absolute):");
+        options.initial     = *source;
+        options.placeholder = QStringLiteral("MOV RBP, RSP");
+        options.monospace   = true;
+        options.validate    = [this, row](const QString& text)
+        {
+            return QString::fromStdString(disassembly_document_.edit_error(row, text.toStdString()));
+        };
+
+        const auto accepted = widgets::get_text(options, this);
+        if (!accepted || accepted->isEmpty())
+        {
+            return;
+        }
+        if (disassembly_document_.edit_instruction(row, accepted->toStdString()))
+        {
+            request_page();
+        }
+    }
+
+    std::optional<std::size_t> MemoryViewerDialog::selected_row() const
+    {
+        const auto address = disassembly_->selected_address();
+        if (!address.has_value())
+        {
+            return std::nullopt;
+        }
+        return disassembly_document_.row_at(*address);
+    }
+
+    std::optional<std::uint64_t> MemoryViewerDialog::selected_reference() const
+    {
+        const auto row = selected_row();
+        if (!row.has_value())
+        {
+            return std::nullopt;
+        }
+        const auto references = disassembly_document_.row_addresses(*row);
+        if (references.empty())
+        {
+            return std::nullopt;
+        }
+        return references.front().address;
+    }
+
+    void MemoryViewerDialog::back_focused_pane()
+    {
+        if (go_to_target() == GoToTarget::disassembly)
+        {
+            disassembly_->back();
+        }
+        else
+        {
+            view_->back();
+        }
+    }
+
+    void MemoryViewerDialog::follow_selected_instruction()
+    {
+        if (const auto reference = selected_reference(); reference.has_value())
+        {
+            disassembly_->navigate_to(*reference);
+        }
+    }
+
+    void MemoryViewerDialog::follow_selected_in_memory_view()
+    {
+        if (const auto reference = selected_reference(); reference.has_value())
+        {
+            view_->navigate_to(*reference);
+        }
+    }
+
+    void MemoryViewerDialog::refresh_menu_command_state()
+    {
+        panels::ViewerMenu::CommandState state;
+
+        if (const auto row = selected_row(); row.has_value())
+        {
+            state.selected_is_instruction     = disassembly_document_.editable(*row);
+            state.selected_has_memory_operand = !disassembly_document_.row_memory(*row).empty();
+            state.can_follow                  = !disassembly_document_.row_addresses(*row).empty();
+            if (const components::CodePatch* patch = disassembly_document_.patch_at(*row); patch != nullptr)
+            {
+                state.selected_is_patched = true;
+                state.restore_description =
+                    tr("Write the instruction this session replaced at %1 (%2) back.")
+                        .arg(disassembly_document_.address_text(patch->begin), patch->original_text);
+            }
+        }
+
+        const bool listing_focused = go_to_target() == GoToTarget::disassembly;
+        state.can_go_back          = listing_focused ? disassembly_->can_go_back() : view_->can_go_back();
+
+        menu_->set_command_state(state);
     }
 
     QWidget* MemoryViewerDialog::build_stats_pane()
@@ -546,6 +698,11 @@ namespace slopkit::ui::dialogs
     panels::DebugControls* MemoryViewerDialog::debug_controls() const noexcept
     {
         return controls_;
+    }
+
+    panels::ViewerMenu* MemoryViewerDialog::viewer_menu() const noexcept
+    {
+        return menu_;
     }
 
     QString MemoryViewerDialog::status_text() const

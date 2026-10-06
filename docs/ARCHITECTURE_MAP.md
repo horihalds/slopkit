@@ -27,7 +27,7 @@ docs that hold the detail behind this map.
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, input boxes, message box) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
 | `src/ui/models` | Qt item models for tables and lists |
-| `src/ui/panels` | Docked panes (address list, found list, scanner, debugger) and the one-line debug control bar |
+| `src/ui/panels` | Docked panes (address list, found list, scanner, debugger), the one-line debug control bar, the Memory Viewer's menu bar and the shared debugger command enablement |
 | `tests/app` | Tests for `src/app` |
 | `tests/core` | Tests for `src/core` |
 | `tests/debug` | Tests for `src/debug` (incl. the practice target) |
@@ -71,7 +71,7 @@ docs that hold the detail behind this map.
 | ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `widgets.hpp` (`ActionIcon`), `code_patch.hpp`, `elided_tooltip_delegate.hpp`, `row_menu.hpp` | `tests/ui/components/*` | ui, disasm |
 | ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`) | `tests/ui/dialogs/*` | ui, process, debug |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug |
-| ui/panels | Docked panes | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp` | `tests/ui/panels/*` | ui/models, ui/components |
+| ui/panels | Docked panes | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
 | plugins/support | Shared bundled-plugin ABI plumbing | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp` | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
 | plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
 | plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) | `plugins/wine_proton/wine_proton_plugin.cpp` | `tests/plugin/wine_proton*` | plugin, support, platform |
