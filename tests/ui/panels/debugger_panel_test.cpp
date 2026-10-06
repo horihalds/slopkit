@@ -10,6 +10,7 @@
 #include "process/attachment.hpp"
 #include "support/fake_debug.hpp"
 #include "support/fake_process.hpp"
+#include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/register_model.hpp"
 #include "ui/panels/debugger_panel.hpp"
@@ -150,6 +151,7 @@ TEST_CASE("debugger pane renders its tables in the embedded mono font", "[ui][pa
     const QString family = slopkit::ui::mono_font().family();
     CHECK(pane.register_table()->font().family() == family);
     CHECK(pane.call_stack_table()->font().family() == family);
+    CHECK(pane.status_label()->font().family() == family);
 
     // The registers keep the padded hex form the pane renders.
     controller.start(target.pid, target.plugin_id);

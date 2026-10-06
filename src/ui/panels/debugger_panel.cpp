@@ -104,6 +104,9 @@ namespace slopkit::ui::panels
         layout->addLayout(controls);
 
         status_ = new widgets::StatusLabel(this);
+        // The state line reads "Stopped at 0x… (breakpoint N)", so it is a mono
+        // read-out like the tables below it.
+        status_->setFont(mono_font());
         layout->addWidget(status_);
 
         layout->addWidget(widgets::section_header(tr("Registers"), this));

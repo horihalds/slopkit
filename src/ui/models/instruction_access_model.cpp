@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "ui/fonts.hpp"
+
 namespace slopkit::ui::models
 {
 
@@ -76,6 +78,16 @@ namespace slopkit::ui::models
         if (role == Qt::ToolTipRole && index.column() == address && !row.resolved)
         {
             return tr("The register it needs is not available yet.");
+        }
+        // Address, operand and width are machine data; the access word column
+        // keeps the UI font.
+        if (role == Qt::FontRole)
+        {
+            if (index.column() == access)
+            {
+                return {};
+            }
+            return QVariant::fromValue(mono_font());
         }
         if (role != Qt::DisplayRole)
         {

@@ -8,6 +8,7 @@
 
 #include "support/ui_helpers.hpp"
 #include "ui/dialogs/access_watch.hpp"
+#include "ui/fonts.hpp"
 
 using slopkit::debug::Controller;
 using slopkit::debug::Kind;
@@ -314,4 +315,25 @@ TEST_CASE("a live session arms the access watch without prompting", "[ui][access
                            return entry != nullptr && entry->armed;
                        }));
     CHECK(controller.watch().address() == 0x4100);
+}
+
+TEST_CASE("the access watch window renders its address lines in the embedded mono font", "[ui][access_watch]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::tests::FakeDebugBackend backend;
+    Controller                       controller {backend};
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
+
+    auto* header = dialog.findChild<QLabel*>(QStringLiteral("access_watch_header"));
+    auto* hint   = dialog.findChild<QLabel*>(QStringLiteral("access_watch_hint"));
+    REQUIRE(header != nullptr);
+    REQUIRE(hint != nullptr);
+
+    const QString family = slopkit::ui::mono_font().family();
+    CHECK(header->font().family() == family);
+    CHECK(hint->font().family() == family);
 }

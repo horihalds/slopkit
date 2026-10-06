@@ -2,6 +2,7 @@
 
 #include "support/ui_helpers.hpp"
 
+#include "ui/fonts.hpp"
 #include "ui/models/instruction_access_model.hpp"
 
 namespace
@@ -47,6 +48,24 @@ TEST_CASE("instruction accesses render through the injected formatter", "[ui][mo
     CHECK_FALSE(model.data(model.index(1, slopkit::ui::models::InstructionAccessModel::address), Qt::ToolTipRole)
                     .toString()
                     .isEmpty());
+}
+
+TEST_CASE("instruction accesses render in the embedded mono font", "[ui][models]")
+{
+    application();
+
+    slopkit::ui::models::InstructionAccessModel model(nullptr, format);
+    model.set({access(0x1040, 4, false)});
+    REQUIRE(model.row_count() == 1);
+
+    const QString family = slopkit::ui::mono_font().family();
+    using slopkit::ui::models::InstructionAccessModel;
+    CHECK(model.data(model.index(0, InstructionAccessModel::address), Qt::FontRole).value<QFont>().family() == family);
+    CHECK(model.data(model.index(0, InstructionAccessModel::operand), Qt::FontRole).value<QFont>().family() == family);
+    CHECK(model.data(model.index(0, InstructionAccessModel::width), Qt::FontRole).value<QFont>().family() == family);
+
+    // The access word column keeps the UI font.
+    CHECK_FALSE(model.data(model.index(0, InstructionAccessModel::access), Qt::FontRole).isValid());
 }
 
 TEST_CASE("instruction accesses clear to an empty table", "[ui][models]")

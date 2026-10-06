@@ -50,6 +50,8 @@ These rules apply to all user interface work in this project; this file owns the
 
 - Use **Noto Sans** as the UI font. Embed it in the binary rather than loading it from disk at runtime, so the app has no external font file dependency.
 - Use **Noto Sans Mono** as the companion monospace font for text that must line up (addresses, hex dumps, paths, sized fields) and apply it only to those widgets.
+- Every machine read-out uses the mono face: the Memory Viewer's hex dump and instruction listing, the Address List and scan-hit tables, the register and call-stack tables, the scanner's address and value fields, the Process List PID, and the Debugger's read-outs — the Breakpoints window's `Size`, `Address` and `Hits` columns, both Access Watch tables (`Recorded accesses` and `Instruction accesses`), the Debugger pane's state line, and the Access Watch header and hint lines.
+- Word and prose-only read-outs keep the UI font even inside those surfaces: the Breakpoints window's `Kind` column, the Access Watch `Access` column, the Access Watch status line and the Breakpoints hint line.
 - Embedding happens at build time through a CMake script that converts the `.ttf` into a generated C++ header. Do not commit generated headers or paste font byte arrays into source files.
 - Keep the source font under `assets/fonts/` (e.g. `NotoSans-Regular.ttf`) and track it in version control together with its license (OFL).
 - The CMake script (e.g. `cmake/EmbedFont.cmake`) should:

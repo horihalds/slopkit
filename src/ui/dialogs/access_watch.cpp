@@ -20,6 +20,7 @@
 #include "core/log_categories.hpp"
 #include "disasm/decoder.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/fonts.hpp"
 #include "ui/text.hpp"
 
 namespace slopkit::ui::dialogs
@@ -127,6 +128,8 @@ namespace slopkit::ui::dialogs
         header_ = new QLabel(this);
         header_->setObjectName(QStringLiteral("access_watch_header"));
         header_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        // The header quotes the watch address, so it lines up with the tables.
+        header_->setFont(mono_font());
         layout->addWidget(header_);
 
         status_ = new widgets::StatusLabel(this);
@@ -186,6 +189,8 @@ namespace slopkit::ui::dialogs
 
         hint_ = new widgets::StatusLabel(this);
         hint_->setObjectName(QStringLiteral("access_watch_hint"));
+        // The hint quotes the resolved address, so it is mono like the header.
+        hint_->setFont(mono_font());
         layout->addWidget(hint_);
 
         connect(follow_, &QPushButton::clicked, this, &AccessWatchDialog::follow_selected);

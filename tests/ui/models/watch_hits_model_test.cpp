@@ -3,6 +3,7 @@
 #include "support/ui_helpers.hpp"
 
 #include "debug/access_watch.hpp"
+#include "ui/fonts.hpp"
 #include "ui/models/watch_hits_model.hpp"
 
 namespace
@@ -58,6 +59,25 @@ TEST_CASE("watch hits coalesce one row per instruction", "[ui][models]")
     model.sync(watch);
     REQUIRE(model.rowCount() == 1);
     CHECK(model.instruction_at(0) == 0x3030);
+}
+
+TEST_CASE("watch hits render in the embedded mono font", "[ui][models]")
+{
+    application();
+
+    slopkit::debug::AccessWatch watch = watching(0xABC);
+    watch.record(11, 0x1010);
+
+    slopkit::ui::models::WatchHitsModel model(nullptr, format);
+    model.sync(watch);
+    REQUIRE(model.rowCount() == 1);
+
+    const QString family = slopkit::ui::mono_font().family();
+    using slopkit::ui::models::WatchHitsModel;
+    CHECK(model.data(model.index(0, WatchHitsModel::instruction), Qt::FontRole).value<QFont>().family() == family);
+    CHECK(model.data(model.index(0, WatchHitsModel::text), Qt::FontRole).value<QFont>().family() == family);
+    CHECK(model.data(model.index(0, WatchHitsModel::thread), Qt::FontRole).value<QFont>().family() == family);
+    CHECK(model.data(model.index(0, WatchHitsModel::count), Qt::FontRole).value<QFont>().family() == family);
 }
 
 TEST_CASE("watch hits fill in the decoded text on demand", "[ui][models]")

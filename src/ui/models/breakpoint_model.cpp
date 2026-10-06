@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include "ui/address_format.hpp"
+#include "ui/fonts.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::models
@@ -106,6 +107,14 @@ namespace slopkit::ui::models
             if (index.column() == enabled && !entry.armed && entry.enabled)
             {
                 return tr("Not armed");
+            }
+            return {};
+        case Qt::FontRole:
+            // Only the machine columns line up; the kind text and the enable
+            // checkbox keep the UI font.
+            if (index.column() == size || index.column() == address || index.column() == hits)
+            {
+                return QVariant::fromValue(mono_font());
             }
             return {};
         case Qt::ForegroundRole:

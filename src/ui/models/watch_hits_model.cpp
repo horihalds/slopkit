@@ -4,6 +4,8 @@
 #include <iterator>
 #include <utility>
 
+#include "ui/fonts.hpp"
+
 namespace slopkit::ui::models
 {
 
@@ -141,6 +143,12 @@ namespace slopkit::ui::models
         if (role == Qt::ToolTipRole && index.column() == instruction)
         {
             return hit.recovered != 0 ? format_(hit.recovered) : QString();
+        }
+        // Every column holds machine data (addresses, decoded text, thread and
+        // count), so the whole table lines up in the mono family.
+        if (role == Qt::FontRole)
+        {
+            return QVariant::fromValue(mono_font());
         }
         if (role != Qt::DisplayRole)
         {

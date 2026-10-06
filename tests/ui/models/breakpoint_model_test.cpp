@@ -4,6 +4,8 @@
 
 #include "debug/controller.hpp"
 #include "support/fake_debug.hpp"
+#include "support/ui_helpers.hpp"
+#include "ui/fonts.hpp"
 #include "ui/models/breakpoint_model.hpp"
 
 using slopkit::debug::Controller;
@@ -49,6 +51,28 @@ TEST_CASE("breakpoint model mirrors the controller table", "[ui][models][breakpo
 
     CHECK(model.headerData(BreakpointModel::enabled, Qt::Horizontal, Qt::DisplayRole).toString()
           == QStringLiteral("Enabled"));
+}
+
+TEST_CASE("breakpoint model renders its machine columns in the embedded mono font", "[ui][models][breakpoint]")
+{
+    application();
+
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    BreakpointModel  model(controller);
+
+    REQUIRE(controller.add_breakpoint("0x1000", Kind::software, 1).has_value());
+    model.refresh();
+    REQUIRE(model.rowCount() == 1);
+
+    const QString family = slopkit::ui::mono_font().family();
+    CHECK(model.data(model.index(0, BreakpointModel::size), Qt::FontRole).value<QFont>().family() == family);
+    CHECK(model.data(model.index(0, BreakpointModel::address), Qt::FontRole).value<QFont>().family() == family);
+    CHECK(model.data(model.index(0, BreakpointModel::hits), Qt::FontRole).value<QFont>().family() == family);
+
+    // The kind word column and the enable checkbox keep the UI font.
+    CHECK_FALSE(model.data(model.index(0, BreakpointModel::kind), Qt::FontRole).isValid());
+    CHECK_FALSE(model.data(model.index(0, BreakpointModel::enabled), Qt::FontRole).isValid());
 }
 
 TEST_CASE("breakpoint model hides the access watch entry", "[ui][models][breakpoint]")
