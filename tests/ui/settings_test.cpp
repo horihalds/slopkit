@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -196,6 +197,57 @@ TEST_CASE("A malformed per-window geometry logs exactly one warning", "[settings
         }
     }
     CHECK(warnings == 1);
+}
+
+TEST_CASE("Obsolete per-window geometry keys are inert", "[settings]")
+{
+    const QString path = scratch_file("geometry_obsolete.ini");
+    write_text(path,
+               "[windows]\n"
+               "process_list_geometry=not-a-blob\n"
+               "add_address_geometry=not-a-blob\n"
+               "table_settings_geometry=not-a-blob\n"
+               "settings_geometry=not-a-blob\n"
+               "log_geometry=not-a-blob\n");
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    SettingsController controller(path);
+
+    // The four dropped windows have no slot at all; only the live `log_geometry`
+    // key still warns about its malformed value.
+    CHECK(controller.values().window_geometry.empty());
+    CHECK(controller.window_geometry(WindowId::log).isEmpty());
+
+    int warnings = 0;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.level != slopkit::log::Level::warning)
+        {
+            continue;
+        }
+        ++warnings;
+        for (const char* key : {"windows/process_list_geometry",
+                                "windows/add_address_geometry",
+                                "windows/table_settings_geometry",
+                                "windows/settings_geometry"})
+        {
+            CHECK(record.message.find(key) == std::string::npos);
+        }
+    }
+    CHECK(warnings == 1);
+
+    // Nothing is rewritten: the obsolete values sit in the file verbatim.
+    std::ifstream     file(path.toStdString(), std::ios::binary);
+    const std::string text {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+    CHECK(text.find("process_list_geometry=not-a-blob") != std::string::npos);
+    CHECK(text.find("add_address_geometry=not-a-blob") != std::string::npos);
+    CHECK(text.find("table_settings_geometry=not-a-blob") != std::string::npos);
+    CHECK(text.find("\nsettings_geometry=not-a-blob") != std::string::npos);
 }
 
 TEST_CASE("Settings signals fire once per real change", "[settings]")

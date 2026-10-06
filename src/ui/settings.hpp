@@ -16,13 +16,9 @@ namespace slopkit::ui
     enum class WindowId
     {
         main,
-        process_list,
-        add_address,
-        table_settings,
         log,
         breakpoints,
         access_watch,
-        settings,
         memory_viewer
     };
 

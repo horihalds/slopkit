@@ -26,6 +26,7 @@
 #include "debug/controller.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/components/window_centerer.hpp"
 #include "ui/components/window_geometry.hpp"
 #include "ui/dialogs/access_watch.hpp"
 #include "ui/dialogs/add_address.hpp"
@@ -371,9 +372,9 @@ namespace slopkit::ui
     void MainWindow::build_dialogs()
     {
         process_list_ = new dialogs::ProcessListDialog(worker_, target_, this);
-        // The picker locks its 600x440 size in its constructor, so only the saved
-        // position takes effect when the blob is restored.
-        new WindowGeometryKeeper(*process_list_, settings_, WindowId::process_list, process_list_);
+        // The picker spawns centred over the main window and does not remember its
+        // frame; its 600x440 size is locked in the dialog's constructor.
+        new WindowCenterer(*process_list_);
         connect(process_list_,
                 &dialogs::ProcessListDialog::targetChanged,
                 this,
@@ -384,10 +385,10 @@ namespace slopkit::ui
                 });
 
         add_address_ = new dialogs::AddAddressDialog(address_table_, worker_, this);
-        new WindowGeometryKeeper(*add_address_, settings_, WindowId::add_address, add_address_);
+        new WindowCenterer(*add_address_);
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
-        new WindowGeometryKeeper(*table_settings_, settings_, WindowId::table_settings, table_settings_);
+        new WindowCenterer(*table_settings_);
 
         memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_);
         new WindowGeometryKeeper(*memory_view_, settings_, WindowId::memory_viewer, memory_view_.get());
@@ -458,7 +459,7 @@ namespace slopkit::ui
         // The dialog is a view over the shared controller; the window is the only
         // component that applies the persisted values to the live views.
         settings_dialog_ = new dialogs::SettingsDialog(host_, scanner_->engine(), settings_, this);
-        new WindowGeometryKeeper(*settings_dialog_, settings_, WindowId::settings, settings_dialog_);
+        new WindowCenterer(*settings_dialog_);
         connect(settings_dialog_,
                 &dialogs::SettingsDialog::alignmentChanged,
                 this,

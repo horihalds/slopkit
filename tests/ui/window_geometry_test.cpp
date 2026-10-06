@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <QCoreApplication>
+#include <QSettings>
 #include <QWidget>
 
 #include "support/ui_helpers.hpp"
@@ -31,6 +32,27 @@ namespace
             ++count;
         }
         return count;
+    }
+
+    // Writes a geometry blob under `key` into the scratch INI with the raw
+    // QSettings API, so the seed does not go through SettingsController.
+    QByteArray seed_window_geometry(const QString& path, const char* key)
+    {
+        QWidget seed;
+        seed.resize(360, 260);
+        const QByteArray blob = seed.saveGeometry();
+        REQUIRE_FALSE(blob.isEmpty());
+        QSettings writer {path, QSettings::IniFormat};
+        writer.setValue(QString::fromLatin1(key), blob);
+        writer.sync();
+        return blob;
+    }
+
+    // Where a window of `window`'s size lands when centred on `parent`'s frame.
+    QPoint centred_on(const QWidget& parent, const QWidget& window)
+    {
+        const QSize own = window.size();
+        return parent.frameGeometry().center() - QPoint(own.width() / 2, own.height() / 2);
     }
 } // namespace
 
@@ -184,54 +206,123 @@ TEST_CASE("the Log dialog reopens at its remembered size", "[window_geometry]")
     }
 }
 
-TEST_CASE("the Process List keeps its locked size across a restart", "[window_geometry]")
+TEST_CASE("the Process List spawns centred and is never remembered", "[window_geometry]")
 {
     application();
 
-    const QString path = scratch_settings_file("process_list_geometry.ini");
-    QPoint        saved_position;
+    const QString    path   = scratch_settings_file("process_list_geometry.ini");
+    const QByteArray seeded = seed_window_geometry(path, "windows/process_list_geometry");
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {path};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    QAction* open_process = window.menuBar()->actions().first()->menu()->actions().first();
+    REQUIRE(open_process->text() == QStringLiteral("Open Process"));
+    open_process->trigger();
+    auto* picker = window.findChild<slopkit::ui::dialogs::ProcessListDialog*>();
+    REQUIRE(picker != nullptr);
+    QCoreApplication::processEvents();
+
+    // The picker opens centred on the main window's frame, not at the seeded
+    // position, and keeps its locked 600x440 size.
+    CHECK(picker->pos() == centred_on(window, *picker));
+    QWidget probe;
+    REQUIRE(probe.restoreGeometry(seeded));
+    CHECK(picker->pos() != probe.pos());
+    CHECK(picker->size() == QSize(600, 440));
+    CHECK(picker->minimumSize() == picker->maximumSize());
+
+    picker->move(120, 80);
+    QCoreApplication::processEvents();
+    picker->hide();
+    QCoreApplication::processEvents();
+
+    // No keeper writes a fresh frame: the seeded value is untouched and the
+    // settings store holds no geometry for the picker.
+    CHECK(settings.values().window_geometry.empty());
+    const std::string text = read_file(path);
+    CHECK(count_occurrences(text, "process_list_geometry=") == 1);
+    QSettings reader {path, QSettings::IniFormat};
+    CHECK(reader.value(QStringLiteral("windows/process_list_geometry")).toByteArray() == seeded);
+}
+
+TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not remembered", "[window_geometry]")
+{
+    application();
+
+    const QString    path            = scratch_settings_file("three_dialogs_geometry.ini");
+    const QByteArray seeded_add      = seed_window_geometry(path, "windows/add_address_geometry");
+    const QByteArray seeded_table    = seed_window_geometry(path, "windows/table_settings_geometry");
+    const QByteArray seeded_settings = seed_window_geometry(path, "windows/settings_geometry");
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {path};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+    // The offscreen screen is 800x800; size the main window so every centred
+    // dialog lands fully on-screen and the platform leaves the position alone.
+    window.resize(780, 780);
+
+    // Add Address, through the scanner's footer button.
+    QPushButton* add_button = button_labelled(window, QStringLiteral("Add Address Manually"));
+    REQUIRE(add_button != nullptr);
+    add_button->click();
+    auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
+    REQUIRE(add_dialog != nullptr);
+    QCoreApplication::processEvents();
+    CHECK(add_dialog->isVisible());
+    CHECK(add_dialog->pos() == centred_on(window, *add_dialog));
+    add_dialog->hide();
+    QCoreApplication::processEvents();
+
+    // Table Settings, through the scanner's footer button.
+    QPushButton* table_button = button_labelled(window, QStringLiteral("Table Settings"));
+    REQUIRE(table_button != nullptr);
+    table_button->click();
+    auto* table_dialog = window.findChild<slopkit::ui::dialogs::TableSettingsDialog*>();
+    REQUIRE(table_dialog != nullptr);
+    QCoreApplication::processEvents();
+    CHECK(table_dialog->isVisible());
+    CHECK(table_dialog->pos() == centred_on(window, *table_dialog));
+    table_dialog->hide();
+    QCoreApplication::processEvents();
+
+    // Settings, through the View menu.
+    QAction* settings_action = nullptr;
+    for (QAction* action : window.menuBar()->actions().at(1)->menu()->actions())
     {
-        slopkit::plugin::PluginHost      host;
-        slopkit::process::PluginAccess   access {host};
-        slopkit::process::AccessWorker   worker {access};
-        slopkit::process::AttachedTarget target;
-        slopkit::ui::SettingsController  settings {path};
-        slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
-
-        QAction* open_process = window.menuBar()->actions().first()->menu()->actions().first();
-        REQUIRE(open_process->text() == QStringLiteral("Open Process"));
-        open_process->trigger();
-        auto* picker = window.findChild<slopkit::ui::dialogs::ProcessListDialog*>();
-        REQUIRE(picker != nullptr);
-        CHECK(picker->size() == QSize(600, 440));
-
-        picker->move(120, 80);
-        QCoreApplication::processEvents();
-        saved_position = picker->pos();
-        picker->hide();
-        QCoreApplication::processEvents();
-
-        // The locked size makes the stored size part inert; the position is what
-        // the keeper restores.
-        CHECK_FALSE(settings.window_geometry(WindowId::process_list).isEmpty());
+        if (action->text() == QStringLiteral("Settings"))
+        {
+            settings_action = action;
+        }
     }
+    REQUIRE(settings_action != nullptr);
+    settings_action->trigger();
+    auto* settings_dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
+    REQUIRE(settings_dialog != nullptr);
+    QCoreApplication::processEvents();
+    CHECK(settings_dialog->isVisible());
+    CHECK(settings_dialog->pos() == centred_on(window, *settings_dialog));
+    settings_dialog->hide();
+    QCoreApplication::processEvents();
 
-    {
-        slopkit::plugin::PluginHost      host;
-        slopkit::process::PluginAccess   access {host};
-        slopkit::process::AccessWorker   worker {access};
-        slopkit::process::AttachedTarget target;
-        slopkit::ui::SettingsController  settings {path};
-        slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
-
-        QAction* open_process = window.menuBar()->actions().first()->menu()->actions().first();
-        open_process->trigger();
-        auto* picker = window.findChild<slopkit::ui::dialogs::ProcessListDialog*>();
-        REQUIRE(picker != nullptr);
-        CHECK(picker->size() == QSize(600, 440));
-        CHECK(picker->pos() == saved_position);
-        CHECK(picker->minimumSize() == picker->maximumSize());
-    }
+    // None of the seeded frames was applied or rewritten.
+    CHECK(settings.values().window_geometry.empty());
+    const std::string text = read_file(path);
+    CHECK(count_occurrences(text, "add_address_geometry=") == 1);
+    CHECK(count_occurrences(text, "table_settings_geometry=") == 1);
+    // Anchored so `settings_geometry=` is not matched inside `table_settings_geometry=`.
+    CHECK(count_occurrences(text, "\nsettings_geometry=") == 1);
+    QSettings reader {path, QSettings::IniFormat};
+    CHECK(reader.value(QStringLiteral("windows/add_address_geometry")).toByteArray() == seeded_add);
+    CHECK(reader.value(QStringLiteral("windows/table_settings_geometry")).toByteArray() == seeded_table);
+    CHECK(reader.value(QStringLiteral("windows/settings_geometry")).toByteArray() == seeded_settings);
 }
 
 TEST_CASE("input and message boxes are never remembered", "[window_geometry]")
