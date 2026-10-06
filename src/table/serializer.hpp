@@ -13,7 +13,7 @@ namespace slopkit::table
     // format is one entry per line:
     //
     //   slopkit-table 2
-    //   entry description="health" address=0x1234 type=i32 frozen=1 hex=0 value=64000000 expr="module+50"
+    //   entry description="health" address=1234 type=i32 frozen=1 hex=0 value=64000000 expr="module+50"
     //
     // `value` is the entry's raw bytes as hex, so every value type round-trips.
     // `expr` is optional and carries the expression an entry re-resolves from; a

@@ -52,7 +52,7 @@ namespace slopkit::scan
             text += std::format(" alignment={}", config.filter.alignment);
             if (config.filter.start != 0 || config.filter.stop != 0)
             {
-                text += std::format(" range=0x{:X}-0x{:X}", config.filter.start, config.filter.stop);
+                text += std::format(" range={:X}-{:X}", config.filter.start, config.filter.stop);
             }
             if (config.filter.writable)
             {

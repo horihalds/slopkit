@@ -35,7 +35,8 @@ namespace slopkit::disasm
         }
 
         // One Intel-style formatter shared by every call. It is stateless per
-        // format, so decoding stays on a single (the UI) thread.
+        // format, so decoding stays on a single (the UI) thread. Hex output is
+        // bare uppercase digits, matching the rest of the app's read-outs.
         [[nodiscard]] const ZydisFormatter& formatter() noexcept
         {
             static const ZydisFormatter instance = []
@@ -46,7 +47,7 @@ namespace slopkit::disasm
                 ZydisFormatterSetProperty(&formatter, ZYDIS_FORMATTER_PROP_UPPERCASE_REGISTERS, ZYAN_TRUE);
                 ZydisFormatterSetProperty(&formatter, ZYDIS_FORMATTER_PROP_HEX_UPPERCASE, ZYAN_TRUE);
                 ZydisFormatterSetProperty(
-                    &formatter, ZYDIS_FORMATTER_PROP_HEX_PREFIX, reinterpret_cast<ZyanUPointer>("0x"));
+                    &formatter, ZYDIS_FORMATTER_PROP_HEX_PREFIX, reinterpret_cast<ZyanUPointer>(""));
                 return formatter;
             }();
             return instance;
@@ -54,7 +55,7 @@ namespace slopkit::disasm
 
         [[nodiscard]] std::string byte_text(std::byte value)
         {
-            return std::format(".byte 0x{:02X}", static_cast<unsigned>(value));
+            return std::format(".byte {:02X}", static_cast<unsigned>(value));
         }
 
         // Zydis reports register names lower-case; the listing and the debugger

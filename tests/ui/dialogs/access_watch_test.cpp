@@ -64,7 +64,7 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
                        }));
     CHECK(controller.watch().address() == 0x4000);
     CHECK(dialog.status_text().isEmpty());
-    CHECK(dialog.header_text().startsWith(QStringLiteral("Watching 0x4000")));
+    CHECK(dialog.header_text().startsWith(QStringLiteral("Watching 4000")));
     CHECK(dialog.header_text().contains(QStringLiteral("writes")));
     CHECK(dialog.header_text().contains(QStringLiteral("4 bytes")));
 
@@ -100,7 +100,7 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return dialog.recorded_text_at(0) == QStringLiteral("MOV EAX, [RBX+0x10]");
+                        return dialog.recorded_text_at(0) == QStringLiteral("MOV EAX, [RBX+10]");
                     }));
 
     // Follow asks for the recovered instruction address.
@@ -157,7 +157,7 @@ TEST_CASE("the access watch window shows the resolved instruction operands", "[u
 
     dialog.show_instruction_accesses(0x1000, 3, std::move(accesses));
     REQUIRE(dialog.instruction_row_count() == 2);
-    CHECK(dialog.hint_text().contains(QStringLiteral("Resolved from the registers at 0x1000")));
+    CHECK(dialog.hint_text().contains(QStringLiteral("Resolved from the registers at 1000")));
 
     // A resolved row can start a watch for its address.
     dialog.select_instruction_row(0);
@@ -250,7 +250,7 @@ TEST_CASE("the access watch attaches the debugger on demand before arming", "[ui
     CHECK(controller.watch().address() == 0x4000);
     CHECK_FALSE(dialog.watch_pending());
     CHECK(dialog.isVisible());
-    CHECK(dialog.header_text().startsWith(QStringLiteral("Watching 0x4000")));
+    CHECK(dialog.header_text().startsWith(QStringLiteral("Watching 4000")));
 }
 
 TEST_CASE("a declined attach leaves the access watch unarmed", "[ui][access_watch]")

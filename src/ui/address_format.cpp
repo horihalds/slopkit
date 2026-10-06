@@ -133,12 +133,12 @@ namespace slopkit::ui
 
     QString format_absolute(std::uint64_t address)
     {
-        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
+        return QString::number(address, 16).toUpper();
     }
 
     QString format_padded_hex(std::uint64_t value, int digits)
     {
-        return QStringLiteral("0x") + QString::number(value, 16).toUpper().rightJustified(digits, QLatin1Char('0'));
+        return QString::number(value, 16).toUpper().rightJustified(digits, QLatin1Char('0'));
     }
 
     QString format_pane_address(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)
@@ -178,12 +178,13 @@ namespace slopkit::ui
         if (text.find('+') == std::string_view::npos)
         {
             // A bare module name jumps to the module base; the lookup is
-            // case-insensitive and wins over the decimal reading of the text.
+            // case-insensitive and wins over the hex reading of the text.
             if (const ModuleSpan* span = spans.find_by_name(text); span != nullptr)
             {
                 return span->base;
             }
-            // A plain absolute address keeps its historical decimal/0x rules.
+            // A plain absolute address is bare hex; `0x…` is hex and `#…`
+            // is decimal.
             const auto parsed = scan::parse_address(text);
             return parsed.has_value() ? std::optional<std::uint64_t> {*parsed} : std::nullopt;
         }

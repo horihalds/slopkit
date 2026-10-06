@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <string>
 #include <string_view>
 #include <utility>
 
+#include "expr/expression.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::models
@@ -40,19 +40,6 @@ namespace slopkit::ui::models
         QString placeholder()
         {
             return QString(QChar(0x2014));
-        }
-
-        std::string_view trimmed(std::string_view text)
-        {
-            while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
-            {
-                text.remove_prefix(1);
-            }
-            while (!text.empty() && (text.back() == ' ' || text.back() == '\t'))
-            {
-                text.remove_suffix(1);
-            }
-            return text;
         }
     } // namespace
 
@@ -113,34 +100,10 @@ namespace slopkit::ui::models
 
     std::optional<std::uint64_t> RegisterModel::parse_value(std::string_view text)
     {
-        text = trimmed(text);
-        if (text.empty())
-        {
-            return std::nullopt;
-        }
-
-        int base = 10;
-        if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
-        {
-            base = 16;
-            text.remove_prefix(2);
-        }
-        else if (text.find_first_of("abcdefABCDEF") != std::string_view::npos)
-        {
-            base = 16;
-        }
-        if (text.empty())
-        {
-            return std::nullopt;
-        }
-
-        std::uint64_t result    = 0;
-        const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), result, base);
-        if (error != std::errc {} || end != text.data() + text.size())
-        {
-            return std::nullopt;
-        }
-        return result;
+        // Same literal rule as the address fields: bare hex, `#` decimal, `0x`
+        // accepted, so a cell prefilled with format_padded_hex round-trips.
+        const auto parsed = expr::parse_literal(text);
+        return parsed.has_value() ? std::optional<std::uint64_t> {*parsed} : std::nullopt;
     }
 
     int RegisterModel::rowCount(const QModelIndex& parent) const

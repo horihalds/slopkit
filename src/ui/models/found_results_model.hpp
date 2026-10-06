@@ -21,8 +21,8 @@ namespace slopkit::ui::models
     enum class CopyFormat
     {
         module_relative,   // "<module>+<RVA>"; the absolute form outside every module
-        absolute,          // "0x7F3A1B2C"
-        address_and_value, // "<module>+<RVA>: 100" / "0x7F3A1B2C: 100"
+        absolute,          // "7F3A1B2C"
+        address_and_value, // "<module>+<RVA>: 100" / "7F3A1B2C: 100"
     };
 
     // Address / Value / Previous rows over a scan snapshot. The ordering is

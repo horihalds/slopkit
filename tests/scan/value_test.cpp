@@ -38,10 +38,10 @@ TEST_CASE("values format back to text", "[scan]")
     write_int32(bytes, 0, 0x01020304);
 
     CHECK(slopkit::scan::format_value(ValueType::int32, bytes, false) == "16909060");
-    CHECK(slopkit::scan::format_value(ValueType::int32, bytes, true) == "0x01020304");
+    CHECK(slopkit::scan::format_value(ValueType::int32, bytes, true) == "01020304");
 
     std::vector<std::byte> negative(4);
     write_int32(negative, 0, -1);
     CHECK(slopkit::scan::format_value(ValueType::int32, negative, false) == "-1");
-    CHECK(slopkit::scan::format_value(ValueType::int32, negative, true) == "0xFFFFFFFF");
+    CHECK(slopkit::scan::format_value(ValueType::int32, negative, true) == "FFFFFFFF");
 }

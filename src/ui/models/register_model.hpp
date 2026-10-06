@@ -57,8 +57,8 @@ namespace slopkit::ui::models
         void               set_editable(bool editable);
         [[nodiscard]] bool editable() const noexcept;
 
-        // Parses "0x2000" / "2000" (hex when it carries hex digits) / "8192"
-        // (decimal). Nothing when the text is not a number.
+        // Parses "2000" / "0x2000" (hex) / "#8192" (decimal). Nothing when the
+        // text is not a number.
         [[nodiscard]] static std::optional<std::uint64_t> parse_value(std::string_view text);
 
         [[nodiscard]] int           rowCount(const QModelIndex& parent = QModelIndex()) const override;

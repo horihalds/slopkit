@@ -20,7 +20,7 @@ namespace slopkit::ui
     enum class AddressMode
     {
         module_relative, // "libc.so.6+1A2B" (default)
-        absolute,        // "0x7F3A1B2C"
+        absolute,        // "7F3A1B2C"
     };
 
     // One file-backed module image: display name plus its half-open span.
@@ -62,11 +62,11 @@ namespace slopkit::ui
     // "name+RVA": upper-case hex, no 0x, no leading zeros, no padding.
     [[nodiscard]] QString format_module_relative(const ModuleSpan& span, std::uint64_t address);
 
-    // "0x…": upper-case hex, no leading zeros, no padding.
+    // Upper-case hex, no prefix, no leading zeros, no padding.
     [[nodiscard]] QString format_absolute(std::uint64_t address);
 
-    // "0x…": upper-case hex zero-padded to `digits`, for the fixed-width panes
-    // where addresses must line up (docs/UI_DESIGN.md#fonts).
+    // Upper-case hex, no prefix, zero-padded to `digits`, for the fixed-width
+    // panes where addresses must line up (docs/UI_DESIGN.md#fonts).
     [[nodiscard]] QString format_padded_hex(std::uint64_t value, int digits = 16);
 
     // A fixed-width pane row's address: module-relative where the mode and spans
@@ -84,11 +84,11 @@ namespace slopkit::ui
     [[nodiscard]] std::optional<QString>
     module_relative_text(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
 
-    // A deref-free address: an absolute `0x…`/decimal value, a bare module name
-    // (resolved case-insensitively to its base, winning over the decimal
-    // reading), or a `<module>+<RVA>` / `<literal>+<offset>` expression. A
-    // pointer chain (two or more offsets) yields nothing - it must go through
-    // the access worker.
+    // A deref-free address: a bare hex value (`0x…` is also accepted, `#…` is
+    // decimal), a bare module name (resolved case-insensitively to its base,
+    // winning over the hex reading), or a `<module>+<RVA>` /
+    // `<literal>+<offset>` expression. A pointer chain (two or more offsets)
+    // yields nothing - it must go through the access worker.
     [[nodiscard]] std::optional<std::uint64_t> parse_address_text(std::string_view text, const ModuleSpans& spans);
 
     // The module map in the form the expression resolver expects.

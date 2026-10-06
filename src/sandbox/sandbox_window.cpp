@@ -411,7 +411,7 @@ namespace slopkit::sandbox
 
         const std::span<std::byte> marker = heap_marker();
         heap_marker_address_->setText(
-            QString::fromStdString(std::format("0x{:016X}", reinterpret_cast<std::uintptr_t>(marker.data()))));
+            QString::fromStdString(std::format("{:016X}", reinterpret_cast<std::uintptr_t>(marker.data()))));
     }
 
     void SandboxWindow::set_paused(bool paused)

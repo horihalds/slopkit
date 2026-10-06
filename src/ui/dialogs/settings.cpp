@@ -177,7 +177,7 @@ namespace slopkit::ui::dialogs
         absolute_button_        = new QRadioButton(tr("Absolute address"), page);
         module_relative_button_->setChecked(true);
         module_relative_button_->setToolTip(tr("libc.so.6+1A2B"));
-        absolute_button_->setToolTip(tr("0x7F3A1B2C"));
+        absolute_button_->setToolTip(tr("7F3A1B2C"));
         mode_group->addButton(module_relative_button_, 0);
         mode_group->addButton(absolute_button_, 1);
         buttons_row->addWidget(module_relative_button_);

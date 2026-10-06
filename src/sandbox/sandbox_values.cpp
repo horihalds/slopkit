@@ -56,12 +56,12 @@ namespace slopkit::sandbox
             return std::string(banner.begin(), end);
         }
 
-        // One `name address=0x... size=N value=...` line per field. The
+        // One `name address=... size=N value=...` line per field. The
         // labelled shape keeps the headless output easy to parse.
         template<typename T>
         void print_field(std::ostream& out, std::string_view name, const T& field, std::string value)
         {
-            out << std::format("{} address=0x{:016X} size={} value={}\n",
+            out << std::format("{} address={:016X} size={} value={}\n",
                                name,
                                reinterpret_cast<std::uintptr_t>(&field),
                                sizeof(T),
@@ -98,7 +98,7 @@ namespace slopkit::sandbox
     {
         const Values& state = g_values;
 
-        print_field(out, "byte_value", state.byte_value, std::format("0x{:02X}", state.byte_value));
+        print_field(out, "byte_value", state.byte_value, std::format("{:02X}", state.byte_value));
         print_field(out, "small_value", state.small_value, std::format("{}", state.small_value));
         print_field(out, "health", state.health, std::format("{}", state.health));
         print_field(out, "score", state.score, std::format("{}", state.score));
@@ -113,7 +113,7 @@ namespace slopkit::sandbox
         print_field(out, "drift", state.drift, std::format("{:.3f}", state.drift));
 
         const std::span<std::byte> marker = heap_marker();
-        out << std::format("heap_marker address=0x{:016X} size={} value={}\n",
+        out << std::format("heap_marker address={:016X} size={} value={}\n",
                            reinterpret_cast<std::uintptr_t>(marker.data()),
                            marker.size(),
                            format_bytes(marker));

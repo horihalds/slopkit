@@ -18,7 +18,7 @@ namespace slopkit::ui
     struct ResolvedAccess
     {
         std::uint64_t address {};
-        QString       operand; // "[RAX+RCX*4+0x10]", the operand as the decoder prints it
+        QString       operand; // "[RAX+RCX*4+10]", the operand as the decoder prints it
         std::size_t   width {1};
         bool          writes {};
         bool          resolved {true}; // false when a register the operand needs is unknown

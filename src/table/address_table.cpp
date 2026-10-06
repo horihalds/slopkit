@@ -13,9 +13,8 @@ namespace slopkit::table
     void AddressTable::add(AddressEntry entry)
     {
         entry.id = next_id_++;
-        log::info(
-            log::category::table,
-            std::format("entry added: id {} at 0x{:X} ({} byte(s))", entry.id, entry.address, entry.bytes.size()));
+        log::info(log::category::table,
+                  std::format("entry added: id {} at {:X} ({} byte(s))", entry.id, entry.address, entry.bytes.size()));
         entries_.push_back(std::move(entry));
         selected_ = static_cast<int>(entries_.size()) - 1;
     }

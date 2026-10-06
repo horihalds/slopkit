@@ -31,8 +31,8 @@ TEST_CASE("the scanner range is pre-filled with the padded defaults", "[ui]")
         REQUIRE(stop != nullptr);
         REQUIRE(combo != nullptr);
 
-        CHECK(start->text() == QStringLiteral("0x0000000000000000"));
-        CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+        CHECK(start->text() == QStringLiteral("0000000000000000"));
+        CHECK(stop->text() == QStringLiteral("00007FFFFFFFFFFF"));
         CHECK_FALSE(combo->isEnabled());
     }
 
@@ -59,8 +59,8 @@ TEST_CASE("the scanner range is pre-filled with the padded defaults", "[ui]")
                         {
                             return combo->isEnabled();
                         }));
-        CHECK(start->text() == QStringLiteral("0x0000000000000000"));
-        CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+        CHECK(start->text() == QStringLiteral("0000000000000000"));
+        CHECK(stop->text() == QStringLiteral("00007FFFFFFFFFFF"));
     };
 
     SECTION("an empty map")
@@ -631,22 +631,22 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
         CHECK_FALSE(combo->itemText(i).contains(QStringLiteral("0x")));
     }
     // The range moved into the tooltips instead of the entry text.
-    CHECK(combo->itemData(0, Qt::ToolTipRole).toString() == QStringLiteral("0x0000000000000000-0x00007FFFFFFFFFFF"));
+    CHECK(combo->itemData(0, Qt::ToolTipRole).toString() == QStringLiteral("0000000000000000-00007FFFFFFFFFFF"));
     CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("/opt/low"));
 
     // Selecting a module narrows the range to its base and size.
     combo->setCurrentIndex(1);
-    CHECK(start->text() == QStringLiteral("0x0000000000001000"));
-    CHECK(stop->text() == QStringLiteral("0x0000000000001800"));
+    CHECK(start->text() == QStringLiteral("0000000000001000"));
+    CHECK(stop->text() == QStringLiteral("0000000000001800"));
 
     combo->setCurrentIndex(2);
-    CHECK(start->text() == QStringLiteral("0x0000000000002000"));
-    CHECK(stop->text() == QStringLiteral("0x0000000000002100"));
+    CHECK(start->text() == QStringLiteral("0000000000002000"));
+    CHECK(stop->text() == QStringLiteral("0000000000002100"));
 
     // Back to the whole process.
     combo->setCurrentIndex(0);
-    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
-    CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+    CHECK(start->text() == QStringLiteral("0000000000000000"));
+    CHECK(stop->text() == QStringLiteral("00007FFFFFFFFFFF"));
 }
 
 TEST_CASE("the scan range dropdown pins the main image after All memory", "[ui]")
@@ -723,12 +723,12 @@ TEST_CASE("the scan range dropdown pins the main image after All memory", "[ui]"
 
     // Each row still narrows Start/Stop to that image's span.
     combo->setCurrentIndex(1);
-    CHECK(start->text() == QStringLiteral("0x0000000000005000"));
-    CHECK(stop->text() == QStringLiteral("0x0000000000006000"));
+    CHECK(start->text() == QStringLiteral("0000000000005000"));
+    CHECK(stop->text() == QStringLiteral("0000000000006000"));
 
     combo->setCurrentIndex(2);
-    CHECK(start->text() == QStringLiteral("0x0000000000001000"));
-    CHECK(stop->text() == QStringLiteral("0x0000000000001800"));
+    CHECK(start->text() == QStringLiteral("0000000000001000"));
+    CHECK(stop->text() == QStringLiteral("0000000000001800"));
 }
 
 TEST_CASE("a memory map applied to the scanner panel reaches the found list", "[ui]")
@@ -846,7 +846,7 @@ TEST_CASE("manual edits to the scan range survive refresh cycles", "[ui]")
                     {
                         return combo->isEnabled();
                     }));
-    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+    CHECK(start->text() == QStringLiteral("0000000000000000"));
 
     // A hand-typed value must not be rewritten by later ticks.
     start->setText(QStringLiteral("0x2000"));
@@ -889,14 +889,14 @@ TEST_CASE("detaching resets the scan range and re-attaching repopulates it", "[u
                     {
                         return combo->isEnabled();
                     }));
-    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+    CHECK(start->text() == QStringLiteral("0000000000000000"));
 
     // Detach: the boxes return to the padded defaults and the dropdown resets
     // to a disabled entry.
     target.clear();
     panel.refresh();
-    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
-    CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+    CHECK(start->text() == QStringLiteral("0000000000000000"));
+    CHECK(stop->text() == QStringLiteral("00007FFFFFFFFFFF"));
     CHECK_FALSE(combo->isEnabled());
     REQUIRE(combo->count() == 1);
     CHECK(combo->itemText(0) == QStringLiteral("All memory"));
@@ -909,8 +909,8 @@ TEST_CASE("detaching resets the scan range and re-attaching repopulates it", "[u
                     {
                         return combo->isEnabled();
                     }));
-    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
-    CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
+    CHECK(start->text() == QStringLiteral("0000000000000000"));
+    CHECK(stop->text() == QStringLiteral("00007FFFFFFFFFFF"));
 }
 
 TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")
@@ -946,7 +946,7 @@ TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")
     worker.drain();
     QCoreApplication::processEvents();
 
-    CHECK(start->text() == QStringLiteral("0x0000000000000000"));
+    CHECK(start->text() == QStringLiteral("0000000000000000"));
     CHECK_FALSE(combo->isEnabled());
     REQUIRE(combo->count() == 1);
     CHECK(combo->itemText(0) == QStringLiteral("Loading…"));

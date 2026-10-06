@@ -164,5 +164,5 @@ TEST_CASE("debugger pane renders its tables in the embedded mono font", "[ui][pa
     CHECK(pane.register_model()
               ->data(pane.register_model()->index(16, slopkit::ui::models::RegisterModel::value), Qt::DisplayRole)
               .toString()
-          == QStringLiteral("0x0000000000001234"));
+          == QStringLiteral("0000000000001234"));
 }

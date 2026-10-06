@@ -35,7 +35,7 @@ TEST_CASE("a base, index and displacement operand resolves against the registers
     CHECK(accesses[0].address == 0x1000 + 0x10 * 4 + 0x10);
     CHECK(accesses[0].width == 4);
     CHECK(accesses[0].writes);
-    CHECK(accesses[0].operand == QStringLiteral("[RAX+RCX*4+0x10]"));
+    CHECK(accesses[0].operand == QStringLiteral("[RAX+RCX*4+10]"));
 }
 
 TEST_CASE("a rip-relative operand is measured from the end of the instruction", "[ui]")
@@ -49,7 +49,7 @@ TEST_CASE("a rip-relative operand is measured from the end of the instruction", 
     REQUIRE(accesses.size() == 1);
     CHECK(accesses[0].resolved);
     CHECK(accesses[0].address == 0x1027);
-    CHECK(accesses[0].operand == QStringLiteral("[0x0000000000001027]"));
+    CHECK(accesses[0].operand == QStringLiteral("[0000000000001027]"));
 }
 
 TEST_CASE("an absolute operand resolves to its displacement", "[ui]")
@@ -62,7 +62,7 @@ TEST_CASE("an absolute operand resolves to its displacement", "[ui]")
     REQUIRE(accesses.size() == 1);
     CHECK(accesses[0].resolved);
     CHECK(accesses[0].address == 0x402000);
-    CHECK(accesses[0].operand == QStringLiteral("[0x0000000000402000]"));
+    CHECK(accesses[0].operand == QStringLiteral("[0000000000402000]"));
 }
 
 TEST_CASE("an operand naming an unknown register stays unresolved", "[ui]")
@@ -108,7 +108,7 @@ TEST_CASE("a negative displacement is subtracted", "[ui]")
     const auto accesses = resolve_accesses(std::span(&ref, 1), 0x1000, 3, values);
     REQUIRE(accesses.size() == 1);
     CHECK(accesses[0].address == 0xFF8);
-    CHECK(accesses[0].operand == QStringLiteral("[RBX-0x08]"));
+    CHECK(accesses[0].operand == QStringLiteral("[RBX-08]"));
 }
 
 TEST_CASE("no operands resolve to nothing", "[ui]")

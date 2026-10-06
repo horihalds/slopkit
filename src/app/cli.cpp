@@ -234,7 +234,7 @@ namespace slopkit::app
 
         for (const auto& hit : snapshot.hits)
         {
-            out << std::format("0x{:X}\t{}\t{}\n",
+            out << std::format("{:X}\t{}\t{}\n",
                                hit.address,
                                scan::describe(value_type),
                                scan::format_value(value_type, hit.value, false));

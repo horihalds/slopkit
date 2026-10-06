@@ -124,7 +124,7 @@ TEST_CASE("encode_value encodes the parsed bytes", "[table]")
         const auto hexed       = table.encode_value(0, "0x2A");
         REQUIRE(hexed.has_value());
         table.apply_write(table.entries()[0].id, *hexed);
-        CHECK(table.display_value(0) == "0x0000002A");
+        CHECK(table.display_value(0) == "0000002A");
     }
 
     SECTION("rejects malformed input and unknown indices")

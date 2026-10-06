@@ -349,7 +349,7 @@ namespace slopkit::ui::dialogs
         options.title       = tr("Go To");
         options.label       = tr("Address or expression:");
         options.initial     = pane_display_text(target, pane_address(target));
-        options.placeholder = QStringLiteral("module, module+0x10 or module+0d+5d+44");
+        options.placeholder = QStringLiteral("module, module+10 or module+0d+5d+44");
         options.monospace   = true;
         options.validate    = [this, target](const QString& text)
         {

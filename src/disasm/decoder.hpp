@@ -48,7 +48,7 @@ namespace slopkit::disasm
     };
 
     // One decoded instruction. `valid` is false for a byte Zydis rejects, which
-    // is rendered as a one-byte `.byte 0xNN` row so a listing never stalls.
+    // is rendered as a one-byte `.byte NN` row so a listing never stalls.
     struct Instruction
     {
         std::uint64_t           address {};

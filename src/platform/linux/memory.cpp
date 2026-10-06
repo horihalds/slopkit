@@ -112,7 +112,7 @@ namespace slopkit::platform
         if (read_fd_ < 0)
         {
             log::debug(log::category::memory,
-                       std::format("read failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}",
+                       std::format("read failed at {:X} ({} byte(s), pid {}): process_vm errno {}",
                                    address,
                                    buffer.size(),
                                    pid_,
@@ -128,13 +128,12 @@ namespace slopkit::platform
         }
         if (bytes == 0)
         {
-            log::debug(
-                log::category::memory,
-                std::format("read failed at 0x{:X} ({} byte(s), pid {}): unmapped", address, buffer.size(), pid_));
+            log::debug(log::category::memory,
+                       std::format("read failed at {:X} ({} byte(s), pid {}): unmapped", address, buffer.size(), pid_));
             return std::unexpected(MemoryError::unmapped);
         }
         log::debug(log::category::memory,
-                   std::format("read failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}, procfs_mem errno {}",
+                   std::format("read failed at {:X} ({} byte(s), pid {}): process_vm errno {}, procfs_mem errno {}",
                                address,
                                buffer.size(),
                                pid_,
@@ -162,7 +161,7 @@ namespace slopkit::platform
         if (write_fd_ < 0)
         {
             log::debug(log::category::memory,
-                       std::format("write failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}",
+                       std::format("write failed at {:X} ({} byte(s), pid {}): process_vm errno {}",
                                    address,
                                    data.size(),
                                    pid_,
@@ -178,13 +177,12 @@ namespace slopkit::platform
         }
         if (bytes == 0)
         {
-            log::debug(
-                log::category::memory,
-                std::format("write failed at 0x{:X} ({} byte(s), pid {}): unmapped", address, data.size(), pid_));
+            log::debug(log::category::memory,
+                       std::format("write failed at {:X} ({} byte(s), pid {}): unmapped", address, data.size(), pid_));
             return std::unexpected(MemoryError::unmapped);
         }
         log::debug(log::category::memory,
-                   std::format("write failed at 0x{:X} ({} byte(s), pid {}): process_vm errno {}, procfs_mem errno {}",
+                   std::format("write failed at {:X} ({} byte(s), pid {}): process_vm errno {}, procfs_mem errno {}",
                                address,
                                data.size(),
                                pid_,

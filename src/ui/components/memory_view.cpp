@@ -191,7 +191,7 @@ namespace slopkit::ui::components
 
         // The address column follows the widest address on screen, but never
         // narrower than the 16-digit absolute form so it does not jitter.
-        QString       address_sample = QStringLiteral("0x0000000000000000");
+        QString       address_sample = QStringLiteral("0000000000000000");
         const QString top_text       = document_.address_text(first_byte_);
         if (top_text.size() > address_sample.size())
         {

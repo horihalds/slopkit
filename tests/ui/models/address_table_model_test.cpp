@@ -23,7 +23,7 @@ TEST_CASE("the address-table model edits the table", "[ui]")
     CHECK(model.rowCount() == 1);
     CHECK(model.columnCount() == 5);
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("0x1040"));
+          == QStringLiteral("1040"));
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::type), Qt::DisplayRole).toString()
           == QStringLiteral("4 Bytes"));
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::value), Qt::DisplayRole).toString()
@@ -84,18 +84,18 @@ TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui
     };
 
     // Without a module map the address stays absolute even in the default mode.
-    CHECK(address_cell() == QStringLiteral("0x1040"));
+    CHECK(address_cell() == QStringLiteral("1040"));
 
     // Inside a module image the Address column renders name+RVA.
     model.set_modules({module_image("app", 0x1000, 0x1000)});
     CHECK(address_cell() == QStringLiteral("app+40"));
 
     // A heap address is never labelled.
-    CHECK(model.address_text(0x5000000) == QStringLiteral("0x5000000"));
+    CHECK(model.address_text(0x5000000) == QStringLiteral("5000000"));
 
     // Absolute mode restores the raw text.
     model.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(address_cell() == QStringLiteral("0x1040"));
+    CHECK(address_cell() == QStringLiteral("1040"));
 }
 
 TEST_CASE("the address-table model shows an entry's expression and its resolved tooltip", "[ui]")
@@ -119,10 +119,10 @@ TEST_CASE("the address-table model shows an entry's expression and its resolved 
 
     const auto address_index = model.index(0, slopkit::ui::models::AddressTableModel::address);
     CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+40"));
-    CHECK(model.data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x1040"));
+    CHECK(model.data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("1040"));
 
     // A plain entry keeps the resolved address in the cell and carries no tooltip.
     table.entries()[0].expression.clear();
-    CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("0x1040"));
+    CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("1040"));
     CHECK(model.data(address_index, Qt::ToolTipRole).toString().isEmpty());
 }

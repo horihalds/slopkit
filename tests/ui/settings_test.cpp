@@ -295,7 +295,7 @@ TEST_CASE("the window applies the persisted settings at construction", "[ui]")
     auto* document = viewer->findChild<slopkit::ui::components::MemoryViewDocument*>();
     REQUIRE(document != nullptr);
     viewer->set_address(0x1040);
-    CHECK(document->display_text(0x1040) == QStringLiteral("0x1040"));
+    CHECK(document->display_text(0x1040) == QStringLiteral("1040"));
 
     // The Settings dialog reflects both persisted values without user input.
     auto* dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();

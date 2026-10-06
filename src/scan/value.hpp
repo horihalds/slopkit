@@ -24,16 +24,19 @@ namespace slopkit::scan
     };
 
     // Parses `text` for `type`. `hex` selects base 16 for the integer and
-    // byte-array types and is rejected for the real types.
+    // byte-array types and is rejected for the real types. Hex text is bare
+    // uppercase digits (a leading `0x` is still accepted).
     [[nodiscard]] std::expected<ScanValue, ValueError> parse_value(ValueType type, std::string_view text, bool hex);
 
-    // Parses a decimal or `0x`-prefixed unsigned address.
+    // Parses an unsigned address: bare digits and `0x…` are hex, `#…` is
+    // decimal.
     [[nodiscard]] std::expected<std::uint64_t, ValueError> parse_address(std::string_view text);
 
     // Parses a fast-scan alignment: a positive decimal or `0x` value.
     [[nodiscard]] std::expected<std::uint64_t, ValueError> parse_alignment(std::string_view text);
 
-    // Renders `bytes` as the given type.
+    // Renders `bytes` as the given type; the hex form uses bare uppercase
+    // digits with no `0x` prefix.
     [[nodiscard]] std::string format_value(ValueType type, std::span<const std::byte> bytes, bool hex);
 
     // Encodes a parsed value as its little-endian byte representation, using the

@@ -107,7 +107,7 @@ TEST_CASE("print_layout emits one parseable line per field", "[sandbox]")
         const auto at = text.find(name);
         REQUIRE(at != std::string::npos);
         const std::string line = text.substr(at, text.find('\n', at) - at);
-        CHECK(line.find(" address=0x") != std::string::npos);
+        CHECK(line.find(" address=") != std::string::npos);
         CHECK(line.find(" size=") != std::string::npos);
         CHECK(line.find(" value=") != std::string::npos);
     }

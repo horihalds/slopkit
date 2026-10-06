@@ -104,7 +104,7 @@ namespace slopkit::ui::dialogs
         widgets::InputBoxOptions options;
         options.title       = tr("Add Breakpoint");
         options.label       = tr("Address");
-        options.placeholder = tr("0x401000 or module+1A2B");
+        options.placeholder = tr("401000 or module+1A2B");
         options.monospace   = true;
 
         const std::optional<QString> text = widgets::get_text(options, this);

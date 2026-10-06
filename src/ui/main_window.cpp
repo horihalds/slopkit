@@ -663,7 +663,7 @@ namespace slopkit::ui
 
     void MainWindow::on_memory_view_requested(quint64 address)
     {
-        log::debug(log::category::ui, std::format("opening Memory Viewer at 0x{:X}", address));
+        log::debug(log::category::ui, std::format("opening Memory Viewer at {:X}", address));
         memory_view_->set_address(address);
         memory_view_->show();
         memory_view_->raise();

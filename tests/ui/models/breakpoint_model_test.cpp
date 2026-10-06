@@ -32,6 +32,7 @@ TEST_CASE("breakpoint model mirrors the controller table", "[ui][models][breakpo
     CHECK(model.data(model.index(0, BreakpointModel::kind), Qt::DisplayRole).toString() == QStringLiteral("Software"));
     CHECK(model.data(model.index(1, BreakpointModel::kind), Qt::DisplayRole).toString()
           == QStringLiteral("Hardware write"));
+    // The address column echoes the stored expression text verbatim.
     CHECK(model.data(model.index(0, BreakpointModel::address), Qt::DisplayRole).toString() == QStringLiteral("0x1000"));
     CHECK(model.data(model.index(1, BreakpointModel::size), Qt::DisplayRole).toString() == QStringLiteral("4"));
     CHECK(model.data(model.index(0, BreakpointModel::enabled), Qt::CheckStateRole).toInt() == Qt::Checked);

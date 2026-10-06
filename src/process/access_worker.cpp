@@ -565,7 +565,7 @@ namespace slopkit::process
         {
             result.error = AccessError::internal;
             log::warning(log::category::process,
-                         std::format("read at 0x{:X} requested without an attached target", request.address));
+                         std::format("read at {:X} requested without an attached target", request.address));
             return result;
         }
 
@@ -579,7 +579,7 @@ namespace slopkit::process
             log::debug(
                 log::category::process,
                 std::format(
-                    "read of {} byte(s) at 0x{:X} failed: {}", request.size, request.address, describe(*result.error)));
+                    "read of {} byte(s) at {:X} failed: {}", request.size, request.address, describe(*result.error)));
         }
         return result;
     }
@@ -618,11 +618,10 @@ namespace slopkit::process
             {
                 ++failed;
                 result.items.emplace_back(std::unexpected(read.error()));
-                log::debug(log::category::process,
-                           std::format("live read of {} byte(s) at 0x{:X} failed: {}",
-                                       item.size,
-                                       item.address,
-                                       describe(read.error())));
+                log::debug(
+                    log::category::process,
+                    std::format(
+                        "live read of {} byte(s) at {:X} failed: {}", item.size, item.address, describe(read.error())));
             }
         }
 
@@ -683,7 +682,7 @@ namespace slopkit::process
         {
             result.error = written.error();
             log::warning(log::category::process,
-                         std::format("write of {} byte(s) at 0x{:X} failed: {}",
+                         std::format("write of {} byte(s) at {:X} failed: {}",
                                      request.bytes.size(),
                                      request.address,
                                      describe(*result.error)));
@@ -708,7 +707,7 @@ namespace slopkit::process
             {
                 result.error = written.error();
                 log::warning(log::category::process,
-                             std::format("freeze pass failed writing {} byte(s) at 0x{:X}: {}",
+                             std::format("freeze pass failed writing {} byte(s) at {:X}: {}",
                                          item.bytes.size(),
                                          item.address,
                                          describe(*result.error)));

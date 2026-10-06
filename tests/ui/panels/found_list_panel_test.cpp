@@ -536,7 +536,7 @@ TEST_CASE("the results list Value column follows live memory for the shown rows"
     // The row order is the scan's, unchanged by the live readings.
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole)
               .toString()
-              .startsWith(QStringLiteral("0x1000")));
+              .startsWith(QStringLiteral("1000")));
 
     // A changed reading is flagged with the theme's warning colour.
     (*access.memory)[kBase][0] = std::byte {9};

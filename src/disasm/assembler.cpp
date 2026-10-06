@@ -1,7 +1,7 @@
 #include "disasm/assembler.hpp"
+#include "expr/expression.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -91,8 +91,8 @@ namespace slopkit::disasm
             return found == register_table().end() ? std::nullopt : std::optional<ZydisRegister>(found->second);
         }
 
-        // One number the way an instruction prints it: hex (`0x4010`) or decimal,
-        // optionally signed.
+        // One number the way an instruction prints it: bare hex, `0x…`
+        // accepted, `#…` decimal; optionally signed.
         [[nodiscard]] std::optional<std::uint64_t> parse_number(std::string_view text)
         {
             text = trim(text);
@@ -111,25 +111,17 @@ namespace slopkit::disasm
                 negative = true;
                 text.remove_prefix(1);
             }
-
-            int base = 10;
-            if (text.size() > 2 && text.front() == '0' && (text[1] == 'x' || text[1] == 'X'))
-            {
-                base = 16;
-                text.remove_prefix(2);
-            }
             if (text.empty())
             {
                 return std::nullopt;
             }
 
-            std::uint64_t value     = 0;
-            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, base);
-            if (error != std::errc {} || end != text.data() + text.size())
+            const auto value = expr::parse_literal(text);
+            if (!value)
             {
                 return std::nullopt;
             }
-            return negative ? static_cast<std::uint64_t>(0) - value : value;
+            return negative ? static_cast<std::uint64_t>(0) - *value : *value;
         }
 
         // The memory operand sizes the listing prints (`qword ptr`, `xmmword`).
@@ -191,7 +183,7 @@ namespace slopkit::disasm
             unsigned char    size {}; // memory access size, 0 when the text does not say
         };
 
-        // The `[...]` expression: `RBP-0x04`, `RAX+RCX*4+0x10`, `0x22FE`.
+        // The `[...]` expression: `RBP-04`, `RAX+RCX*4+10`, `22FE`.
         [[nodiscard]] std::expected<Operand, std::string> parse_memory(std::string_view expression)
         {
             Operand operand;

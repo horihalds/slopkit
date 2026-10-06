@@ -15,7 +15,7 @@ namespace
 
     slopkit::ui::ResolvedAccess access(std::uint64_t address, std::size_t width, bool writes, bool resolved = true)
     {
-        return slopkit::ui::ResolvedAccess {address, QStringLiteral("[RBX+0x10]"), width, writes, resolved};
+        return slopkit::ui::ResolvedAccess {address, QStringLiteral("[RBX+10]"), width, writes, resolved};
     }
 } // namespace
 

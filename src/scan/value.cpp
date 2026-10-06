@@ -8,6 +8,7 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "expr/expression.hpp"
 
 namespace slopkit::scan
 {
@@ -47,7 +48,12 @@ namespace slopkit::scan
                 literal.negative = text.front() == '-';
                 text.remove_prefix(1);
             }
-            if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+            if (!text.empty() && text.front() == '#')
+            {
+                literal.hex = false;
+                text.remove_prefix(1);
+            }
+            else if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
             {
                 literal.hex = true;
                 text.remove_prefix(2);
@@ -257,8 +263,8 @@ namespace slopkit::scan
             return size == 0 ? 8 : size * 2;
         }
 
-        // Renders a signed value as an unsigned hex literal truncated to the
-        // width of its type.
+        // Renders a signed value as bare uppercase hex truncated to the width
+        // of its type.
         std::string format_hex(std::int64_t value, ValueType type)
         {
             std::uint64_t     magnitude = static_cast<std::uint64_t>(value);
@@ -267,7 +273,7 @@ namespace slopkit::scan
             {
                 magnitude &= (std::uint64_t {1} << bits) - 1;
             }
-            return std::format("0x{:0{}X}", magnitude, format_width(type));
+            return std::format("{:0{}X}", magnitude, format_width(type));
         }
     } // namespace
 
@@ -321,18 +327,27 @@ namespace slopkit::scan
 
     std::expected<std::uint64_t, ValueError> parse_address(std::string_view text)
     {
-        auto literal = parse_integer_literal(text, false);
+        // Bare digits and `0x…` read as hex, `#…` as decimal; a leading sign is
+        // peeled off so a negative address keeps its own rejection message.
+        std::string_view digits   = trim(text);
+        const bool       negative = !digits.empty() && digits.front() == '-';
+        if (!digits.empty() && (digits.front() == '+' || digits.front() == '-'))
+        {
+            digits.remove_prefix(1);
+        }
+
+        const auto literal = expr::parse_literal(digits);
         if (!literal)
         {
             log::debug(log::category::scan, std::format("rejected address '{}': {}", text, literal.error().message));
-            return std::unexpected(literal.error());
+            return std::unexpected(ValueError {literal.error().message});
         }
-        if (literal->negative)
+        if (negative)
         {
             log::debug(log::category::scan, std::format("rejected address '{}': address must not be negative", text));
             return std::unexpected(ValueError {"address must not be negative"});
         }
-        return literal->magnitude;
+        return *literal;
     }
 
     std::expected<std::uint64_t, ValueError> parse_alignment(std::string_view text)

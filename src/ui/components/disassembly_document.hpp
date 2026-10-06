@@ -27,7 +27,7 @@ namespace slopkit::ui::components
     enum class CopyFormat
     {
         module_relative,           // "<module>+<RVA>"; the absolute form outside every module
-        absolute,                  // "0x7F3A1B2C"
+        absolute,                  // "7F3A1B2C"
         bytes,                     // "48 89 E5", or "??" when unreadable
         instruction,               // "MOV RBP, RSP"
         address_and_bytes,         // "app+10: 48 89 E5"

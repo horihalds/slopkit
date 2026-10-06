@@ -56,7 +56,8 @@ TEST_CASE("the sandbox window shows every value with its name and type", "[ui][s
 
     auto* address = window.findChild<QLabel*>(QStringLiteral("heap_marker_address"));
     REQUIRE(address != nullptr);
-    CHECK(address->text().startsWith(QStringLiteral("0x")));
+    CHECK_FALSE(address->text().startsWith(QStringLiteral("0x")));
+    CHECK(address->text().size() == 16);
 }
 
 TEST_CASE("a write through the value store becomes visible after one refresh", "[ui][sandbox]")

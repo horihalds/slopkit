@@ -25,8 +25,8 @@ namespace slopkit::disasm
         std::span<const MemoryRef> memory {}; // the edited instruction's operands; may be empty
     };
 
-    // Assembles one Intel-syntax instruction - `"MOV RBP, RSP"`, `"JZ 0x4010"`,
-    // `"MOV RAX, [0x22FE]"` - at `context.address`. On success the encoded
+    // Assembles one Intel-syntax instruction - `"MOV RBP, RSP"`, `"JZ 4010"`,
+    // `"MOV RAX, [22FE]"` - at `context.address`. On success the encoded
     // bytes; otherwise a message naming what was rejected. Operands are the form
     // the listing prints: registers by name, immediates and memory displacements
     // as numbers, branch targets and memory addresses absolute. A memory operand

@@ -102,25 +102,25 @@ TEST_CASE("module-relative addresses render as name+HEX", "[ui]")
     CHECK_FALSE(slopkit::ui::format_module_relative(span, 0x1040).contains(QStringLiteral("0x")));
 }
 
-TEST_CASE("absolute addresses render as 0xHEX", "[ui]")
+TEST_CASE("absolute addresses render as bare HEX", "[ui]")
 {
-    CHECK(slopkit::ui::format_absolute(0) == QStringLiteral("0x0"));
-    CHECK(slopkit::ui::format_absolute(0x1040) == QStringLiteral("0x1040"));
-    CHECK(slopkit::ui::format_absolute(0x5000000) == QStringLiteral("0x5000000"));
-    // Upper-case hex, no leading zeros.
-    CHECK(slopkit::ui::format_absolute(0xabcdef) == QStringLiteral("0xABCDEF"));
+    CHECK(slopkit::ui::format_absolute(0) == QStringLiteral("0"));
+    CHECK(slopkit::ui::format_absolute(0x1040) == QStringLiteral("1040"));
+    CHECK(slopkit::ui::format_absolute(0x5000000) == QStringLiteral("5000000"));
+    // Upper-case hex, no leading zeros, no 0x prefix.
+    CHECK(slopkit::ui::format_absolute(0xabcdef) == QStringLiteral("ABCDEF"));
 }
 
 TEST_CASE("padded hex zero-fills to the requested width", "[ui]")
 {
-    CHECK(slopkit::ui::format_padded_hex(0) == QStringLiteral("0x0000000000000000"));
-    CHECK(slopkit::ui::format_padded_hex(0x41) == QStringLiteral("0x0000000000000041"));
-    CHECK(slopkit::ui::format_padded_hex(0xFFFFFFFFFFFFFFFF) == QStringLiteral("0xFFFFFFFFFFFFFFFF"));
+    CHECK(slopkit::ui::format_padded_hex(0) == QStringLiteral("0000000000000000"));
+    CHECK(slopkit::ui::format_padded_hex(0x41) == QStringLiteral("0000000000000041"));
+    CHECK(slopkit::ui::format_padded_hex(0xFFFFFFFFFFFFFFFF) == QStringLiteral("FFFFFFFFFFFFFFFF"));
     // A value wider than the asked-for width keeps all of its digits.
-    CHECK(slopkit::ui::format_padded_hex(0x12345, 2) == QStringLiteral("0x12345"));
+    CHECK(slopkit::ui::format_padded_hex(0x12345, 2) == QStringLiteral("12345"));
     // The Access Watch operand's 2-digit byte and displacement widths.
-    CHECK(slopkit::ui::format_padded_hex(0x41, 2) == QStringLiteral("0x41"));
-    CHECK(slopkit::ui::format_padded_hex(0x9, 2) == QStringLiteral("0x09"));
+    CHECK(slopkit::ui::format_padded_hex(0x41, 2) == QStringLiteral("41"));
+    CHECK(slopkit::ui::format_padded_hex(0x9, 2) == QStringLiteral("09"));
 }
 
 TEST_CASE("the pane and cell address helpers pick their fallback", "[ui]")
@@ -137,15 +137,15 @@ TEST_CASE("the pane and cell address helpers pick their fallback", "[ui]")
 
     // Outside every span the pane keeps the fixed width, the cell stays compact.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
-          == QStringLiteral("0x0000000005000000"));
+          == QStringLiteral("0000000005000000"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
-          == QStringLiteral("0x5000000"));
+          == QStringLiteral("5000000"));
 
     // Absolute mode never goes module-relative.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
-          == QStringLiteral("0x0000000000001040"));
+          == QStringLiteral("0000000000001040"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
-          == QStringLiteral("0x1040"));
+          == QStringLiteral("1040"));
 }
 
 TEST_CASE("module-relative text falls back in absolute mode and outside spans", "[ui]")
@@ -175,9 +175,13 @@ TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")
     slopkit::ui::ModuleSpans                        spans;
     spans.set_modules(modules);
 
-    // Absolute forms still go through scan::parse_address.
+    // Absolute forms still go through scan::parse_address: bare digits are hex,
+    // `0x…` is hex and `#…` is decimal.
     CHECK(slopkit::ui::parse_address_text("0x1040", spans) == std::optional<std::uint64_t> {0x1040});
-    CHECK(slopkit::ui::parse_address_text("1040", spans) == std::optional<std::uint64_t> {1040});
+    CHECK(slopkit::ui::parse_address_text("1040", spans) == std::optional<std::uint64_t> {0x1040});
+    CHECK(slopkit::ui::parse_address_text("#1040", spans) == std::optional<std::uint64_t> {1040});
+    // The zero-padded text the panes prefill round-trips as hex.
+    CHECK(slopkit::ui::parse_address_text("0000000000001040", spans) == std::optional<std::uint64_t> {0x1040});
 
     // module+RVA: case-insensitive name, optional 0x on the RVA.
     CHECK(slopkit::ui::parse_address_text("LOW+40", spans) == std::optional<std::uint64_t> {0x1040});

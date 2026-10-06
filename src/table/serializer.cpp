@@ -377,7 +377,7 @@ namespace slopkit::table
         }
         for (const auto& entry : table.entries())
         {
-            file << std::format("entry description=\"{}\" address=0x{:X} type={} frozen={} hex={} value={}",
+            file << std::format("entry description=\"{}\" address={:X} type={} frozen={} hex={} value={}",
                                 escape(entry.description),
                                 entry.address,
                                 type_token(entry.type),

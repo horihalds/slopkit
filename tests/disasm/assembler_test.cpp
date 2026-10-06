@@ -77,6 +77,13 @@ TEST_CASE("an immediate assembles in its shortest form", "[disasm]")
     CHECK(encoded("SUB RSP, 0x20") == bytes({0x48, 0x83, 0xEC, 0x20}));
 }
 
+TEST_CASE("a bare number is hex and `#` selects decimal", "[disasm]")
+{
+    CHECK(encoded("MOV EAX, 10") == bytes({0xB8, 0x10, 0x00, 0x00, 0x00}));
+    CHECK(encoded("MOV EAX, #10") == bytes({0xB8, 0x0A, 0x00, 0x00, 0x00}));
+    CHECK(encoded("MOV EAX, 0x10") == bytes({0xB8, 0x10, 0x00, 0x00, 0x00}));
+}
+
 TEST_CASE("branch targets are assembled as absolute addresses", "[disasm]")
 {
     CHECK(encoded("JZ 0x2017") == bytes({0x74, 0x15}));
@@ -100,8 +107,13 @@ TEST_CASE("unknown text is reported instead of a wrong instruction", "[disasm]")
 
 TEST_CASE("re-assembling a decoded instruction reproduces its bytes", "[disasm]")
 {
-    for (const auto& candidate :
-         {round_trip({0x55}), round_trip({0x48, 0x89, 0xE5}), round_trip({0xC3}), round_trip({0x90})})
+    for (const auto& candidate : {round_trip({0x55}),
+                                  round_trip({0x48, 0x89, 0xE5}),
+                                  round_trip({0xC3}),
+                                  round_trip({0x90}),
+                                  // The listing text of an immediate and a displacement assembles back.
+                                  round_trip({0xB8, 0x2A, 0x00, 0x00, 0x00}),
+                                  round_trip({0x48, 0x8B, 0x45, 0x10})})
     {
         CHECK(candidate.assembled == candidate.original);
     }

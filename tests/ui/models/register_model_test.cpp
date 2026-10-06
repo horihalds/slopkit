@@ -28,7 +28,7 @@ TEST_CASE("register model starts as a muted placeholder table", "[ui][models][re
     CHECK(model.data(model.index(17, RegisterModel::name), Qt::DisplayRole).toString() == QStringLiteral("RFLAGS"));
 
     // Before the first stop the cell shows the em dash and cannot be edited.
-    CHECK(model.data(model.index(0, RegisterModel::value), Qt::DisplayRole).toString() != QStringLiteral("0x0"));
+    CHECK(model.data(model.index(0, RegisterModel::value), Qt::DisplayRole).toString() != QStringLiteral("0"));
     CHECK_FALSE(model.flags(model.index(0, RegisterModel::value)) & Qt::ItemIsEditable);
     CHECK_FALSE(model.editable());
 }
@@ -39,7 +39,11 @@ TEST_CASE("register model parses hex and decimal values", "[ui][models][register
     CHECK(RegisterModel::parse_value("0X2a") == 0x2A);
     CHECK(RegisterModel::parse_value("beef") == 0xBEEF);
     CHECK(RegisterModel::parse_value(" 0x10 ") == 0x10);
-    CHECK(RegisterModel::parse_value("8192") == 8192);
+    CHECK(RegisterModel::parse_value("8192") == 0x8192);
+    // A bare all-digit token is hex; `#…` selects decimal.
+    CHECK(RegisterModel::parse_value("#8192") == 8192);
+    // The 16-digit cell text format_padded_hex prefills round-trips as hex.
+    CHECK(RegisterModel::parse_value("0000000000000042") == 0x42);
 
     CHECK_FALSE(RegisterModel::parse_value("").has_value());
     CHECK_FALSE(RegisterModel::parse_value("0x").has_value());

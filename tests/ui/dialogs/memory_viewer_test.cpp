@@ -988,7 +988,7 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     CHECK(instruction == code_base);
     CHECK(length == 3);
     REQUIRE(resolved.size() == 1);
-    CHECK(resolved[0].operand == QStringLiteral("[RBX+0x10]"));
+    CHECK(resolved[0].operand == QStringLiteral("[RBX+10]"));
     CHECK(resolved[0].width == 4);
     CHECK_FALSE(resolved[0].writes);
     // The fake register file holds zeroes, so the operand resolves to the

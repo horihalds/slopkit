@@ -63,7 +63,7 @@ namespace slopkit::ui::dialogs
         // the pane's button.
         [[nodiscard]] panels::DebuggerPanel* debugger_panel() const noexcept;
 
-        // Jumps the byte view to an address written as absolute ("0x1040"), a
+        // Jumps the byte view to an address written as absolute ("1040"), a
         // bare module name ("libc.so.6"), or module+RVA ("libc.so.6+1A2B");
         // false when the text does not name an address.
         bool go_to(const QString& text);
