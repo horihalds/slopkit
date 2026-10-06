@@ -10,6 +10,7 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 
 | Directory | Responsibility |
 | --- | --- |
+| `(repo root)` | Build entry points: `CMakeLists.txt`, `configure.sh`, `build.sh`, `install.sh`, `test.sh` |
 | `src/app` | Process entry, CLI/headless modes, single-instance handoff, sandbox launch |
 | `src/core` | Shared logging (`log.hpp`, `log_categories.hpp`) and version string |
 | `src/debug` | Debugger core: session controller (split over `controller*.cpp`), worker, backends, breakpoints, step-over, access watch |
@@ -38,13 +39,17 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 | `tests/process` | Tests for `src/process` |
 | `tests/sandbox` | Tests for `src/sandbox` |
 | `tests/scan` | Tests for `src/scan` |
-| `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, UI/scan helpers, `test_main.cpp`) |
+| `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `memory_view_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
 | `tests/table` | Tests for `src/table` |
-| `tests/ui` | Window/flow tests (table open, attach, auto-attach, live values, settings) |
+| `tests/ui` | Window/flow tests (the four subdirectories have their own rows) |
 | `tests/ui/components` | Tests for `src/ui/components` |
 | `tests/ui/dialogs` | Tests for `src/ui/dialogs` |
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
+| `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `fonts/*.ttf` with `OFL.txt` |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs) and `EmbedFont.cmake` (embeds fonts) |
+| `docs/` | Prose: `ARCHITECTURE.md`, this map, `UI_DESIGN.md`, `LOGGING.md`, `KNOWN_ISSUES.md` |
+| `reference/` | Read-only reference material — never modified |
 | `tools` | Repo dev tooling (currently `verify.sh`, the one-shot format check + warning-only build + summarized test run) |
 
 ## 2. Module / component table
@@ -61,13 +66,13 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
 | debug | Debugger core: controller, worker, backends, breakpoints | `debug/controller.hpp` (`Controller`; `controller*.cpp` holds the per-concern definitions), `worker.hpp`, `backend.hpp`, `plugin_backend.hpp`, `breakpoints.hpp`, `step_over.hpp`, `access_watch.hpp` | `tests/debug/*` | process, plugin, platform |
 | platform/linux | Linux primitives shared with plugins | `platform/linux/debug_session.hpp` (`DebugSession`), `ptrace.hpp`, `procfs.hpp`, `memory.hpp`, `module_entry.hpp`, `proc_text.hpp`, `desktop_entry.hpp`, `wine.hpp` | `tests/platform/linux/*` | core |
-| sandbox | Practice-target window and values | `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
+| sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
 | ui | Main window, settings, live values, table file, theme/fonts | `ui/main_window.hpp` (`MainWindow`), `app.hpp`, `settings.hpp`, `text.hpp` (`to_qstring`), `live_values.hpp`, `debug_session.hpp`, `access_watch.hpp`, `completion_notifier.hpp`, `log_notifier.hpp`, `theme.hpp`, `fonts.hpp`, `table_file.hpp`, `address_format.hpp` | `tests/ui/*` | process, plugin, table, scan, debug |
-| ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp`, `disassembly_*.hpp`, `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `widgets.hpp` (`ActionIcon`), `code_patch.hpp`, `elided_tooltip_delegate.hpp`, `row_menu.hpp` | `tests/ui/components/*` | ui, disasm |
+| ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `widgets.hpp` (`ActionIcon`), `code_patch.hpp`, `elided_tooltip_delegate.hpp`, `row_menu.hpp` | `tests/ui/components/*` | ui, disasm |
 | ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`) | `tests/ui/dialogs/*` | ui, process, debug |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug |
 | ui/panels | Docked panes | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp` | `tests/ui/panels/*` | ui/models, ui/components |
-| plugins/support | Shared bundled-plugin ABI plumbing | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp` | via the bundled plugins | plugin, platform |
+| plugins/support | Shared bundled-plugin ABI plumbing | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp` | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
 | plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
 | plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) | `plugins/wine_proton/wine_proton_plugin.cpp` | `tests/plugin/wine_proton*` | plugin, support, platform |
 
@@ -107,8 +112,10 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
   `CMakeLists.txt`; `SLOPKIT_ACTION_ICON_NAMES` with `widgets::ActionIcon`; the
   plugin ABI version in `src/plugin/plugin_api.h` with the host handshake.
 - `reference/` is read-only — never modify anything under it.
-- `slopkit_tests` compiles the whole app (minus `main.cpp`), the sandbox sources
-  and the fixture plugins, so a change anywhere can trigger a large rebuild.
+- `slopkit_tests` compiles every app source except the `main.cpp` entry points
+  (`src/main.cpp`, `src/sandbox/main.cpp`), plus the sandbox sources minus
+  `src/sandbox/main.cpp`; the fixture plugins are separate libraries, so a change
+  anywhere can trigger a large rebuild.
 - Widget tests run headless via `QT_QPA_PLATFORM=offscreen`; set it when running
   `slopkit_tests` directly. CTest enforces a 60s timeout per test.
 - Configure fails without ImageMagick, Zydis dev packages and `pkg-config`.
@@ -119,4 +126,6 @@ prose lives in `docs/ARCHITECTURE.md` (plugin model, debugger), `docs/UI_DESIGN.
   component's responsibility, update this map in the same task.
 - Update only the affected entries. Use `git diff --stat` or the files you
   just touched to decide what changed; do not re-explore the whole project.
+- Re-derive the rows you touch from `git ls-files <dir>` rather than memory, so
+  the listing stays checkable.
 - Keep prose to a minimum

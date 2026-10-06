@@ -37,6 +37,20 @@ When a test fails during a full run:
 - **Status:** accepted flake, not yet fixed. The real fix is to wait on the live
   reading instead of pumping a fixed number of times.
 
+### `the debug session gate attaches after consent and waits for running`
+
+- **Source:** `tests/ui/debug_session_test.cpp`, CTest tag `[ui][debug_session]`.
+- **Symptom:** intermittent `CHECK(backend.count("attach") == 1)` failure
+  (`0 == 1`) in a load-heavy full run, even though the preceding
+  `REQUIRE(backend.attached_pid.has_value())` and pid `CHECK` already passed; the
+  same test passes alone (~0.02 s observed) and the suite went green on re-run.
+- **Cause:** `FakeDebugBackend` records its `calls` and attachment state on the
+  debug worker thread while the test reads them on its own thread without
+  synchronization, so under load the read can miss the recorded `"attach"` call.
+- **Lone-run check:** `ctest --test-dir build -R "the debug session gate attaches after consent and waits for running" --output-on-failure`
+- **Status:** accepted flake, not yet fixed. The real fix is to synchronize the
+  fake backend's recorded state (or wait on the recorded call).
+
 ## Not a flake
 
 A failure that is not listed above — or that also fails alone — is a regression.
