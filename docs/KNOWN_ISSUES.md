@@ -43,6 +43,20 @@ regression: debug it, do not add it just to make a run green.
 - **Status:** accepted flake, not yet fixed. The real fix is to synchronize the
   fake backend's recorded state (or wait on the recorded call).
 
+### `controller captures the registers of a running target invisibly`
+
+- **Source:** `tests/debug/controller_test.cpp`, CTest tag `[debug][controller]`.
+- **Symptom:** one-off `SIGSEGV` in a load-heavy full run (`test #44` in a 534-test
+  run); the same test passes alone (~0.01 s observed) and the next full run went
+  green.
+- **Cause:** the test clears and reads `FakeDebugBackend::calls` on its own thread
+  while the debug worker thread records into the same container without
+  synchronization — the same unsynchronized-fake root cause as the `debug session
+  gate` flake above.
+- **Lone-run check:** `ctest --test-dir build -R "controller captures the registers of a running target invisibly" --output-on-failure`
+- **Status:** accepted flake, not yet fixed. The real fix is to synchronize
+  `FakeDebugBackend`'s recorded calls (or stop clearing them while a session runs).
+
 ## Not a flake
 
 A failure that is not listed above — or that also fails alone — is a regression.

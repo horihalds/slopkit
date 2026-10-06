@@ -38,6 +38,11 @@ namespace slopkit::ui::panels
     class DebuggerPanel;
 } // namespace slopkit::ui::panels
 
+namespace slopkit::ui::widgets
+{
+    class StatusLabel;
+} // namespace slopkit::ui::widgets
+
 namespace slopkit::ui::dialogs
 {
 
@@ -60,13 +65,16 @@ namespace slopkit::ui::dialogs
         // Opens the viewer at `address`, seeding both panes' cursors.
         void set_address(std::uint64_t address);
 
-        // The Debugger pane, so the window can open the Breakpoints dialog from
-        // the pane's button.
+        // The registers/call-stack pane, so the window can open the Breakpoints
+        // dialog from the pane's button.
         [[nodiscard]] panels::DebuggerPanel* debugger_panel() const noexcept;
 
         // The one-line debug control bar above the listing, so the window can
         // open the Breakpoints dialog from its button.
         [[nodiscard]] panels::DebugControls* debug_controls() const noexcept;
+
+        // The debugger read-out on the dialog's bottom status line.
+        [[nodiscard]] QString status_text() const;
 
         // Jumps the byte view to an address written as absolute ("1040"), a
         // bare module name ("libc.so.6"), or module+RVA ("libc.so.6+1A2B");
@@ -158,6 +166,11 @@ namespace slopkit::ui::dialogs
         // rendered text for the row, which the controller resolves.
         void toggle_breakpoint(std::uint64_t address, const QString& expression);
 
+        // Writes an error on the bottom status line, the same read-out the
+        // controller's own failures use (the controller stays silent on a refused
+        // `add_breakpoint`).
+        void report_error(const QString& text);
+
         // Asks the coordinator for an immediate pass.
         void request_page();
 
@@ -172,6 +185,7 @@ namespace slopkit::ui::dialogs
         components::DisassemblyView*    disassembly_ {};
         panels::DebugControls*          controls_ {};
         panels::DebuggerPanel*          debugger_ {};
+        widgets::StatusLabel*           status_ {};
         QSplitter*                      split_ {};
         QSplitter*                      code_split_ {};
         bool                            ratios_applied_ {false};

@@ -22,11 +22,30 @@
 #include "ui/components/input_box.hpp"
 #include "ui/components/memory_view.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/fonts.hpp"
 #include "ui/panels/debug_controls.hpp"
 #include "ui/panels/debugger_panel.hpp"
 
 namespace slopkit::ui::dialogs
 {
+    namespace
+    {
+        widgets::StatusKind status_kind(debug::Controller::MessageKind kind)
+        {
+            switch (kind)
+            {
+            case debug::Controller::MessageKind::success:
+                return widgets::StatusKind::success;
+            case debug::Controller::MessageKind::warning:
+                return widgets::StatusKind::warning;
+            case debug::Controller::MessageKind::error:
+                return widgets::StatusKind::error;
+            case debug::Controller::MessageKind::info:
+            default:
+                return widgets::StatusKind::info;
+            }
+        }
+    } // namespace
 
     MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
@@ -56,8 +75,8 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::build_layout()
     {
-        // Disassembly over debugger stats, above the byte view. No status row:
-        // the viewer reports through the log.
+        // Disassembly over debugger stats, above the byte view, with the
+        // debugger read-out on a status line at the bottom.
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(6, 6, 6, 6);
 
@@ -69,21 +88,25 @@ namespace slopkit::ui::dialogs
         split_->setChildrenCollapsible(false);
         code_split_->setChildrenCollapsible(false);
 
-        code_split_->addWidget(build_code_pane());
+        // The control bar and the listing share the left column of the code
+        // split, so the bar acts on the listing and its width is that column's
+        // width instead of reaching across the registers pane.
+        auto* code_pane        = new QWidget(this);
+        auto* code_pane_layout = new QVBoxLayout(code_pane);
+        code_pane_layout->setContentsMargins(0, 0, 0, 0);
+        code_pane_layout->setSpacing(6);
+        controls_ = new panels::DebugControls(debug_, target_, code_pane);
+        // The bar sits inside the listing column, so it must not raise that
+        // column's minimum width and skew the 70/30 code split: it takes the
+        // column's width and its row shares it.
+        controls_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        code_pane_layout->addWidget(controls_);
+        code_pane_layout->addWidget(build_code_pane(), 1);
+
+        code_split_->addWidget(code_pane);
         code_split_->addWidget(build_stats_pane());
         code_split_->setStretchFactor(0, 70);
         code_split_->setStretchFactor(1, 30);
-
-        // The one-line debug control bar spans the whole width above the split,
-        // so every control and the state line fit without starving a pane and
-        // the 70/30 code split stays exactly as it is.
-        auto* upper        = new QWidget(this);
-        auto* upper_layout = new QVBoxLayout(upper);
-        upper_layout->setContentsMargins(0, 0, 0, 0);
-        upper_layout->setSpacing(6);
-        controls_ = new panels::DebugControls(debug_, target_, upper);
-        upper_layout->addWidget(controls_);
-        upper_layout->addWidget(code_split_, 1);
 
         // The control bar comes first in the tab order, then the pane's tables.
         widgets::chain_tab_order(
@@ -102,12 +125,36 @@ namespace slopkit::ui::dialogs
                         address, address.has_value() ? disassembly_document_.address_text(*address) : QString());
                 });
 
-        split_->addWidget(upper);
+        split_->addWidget(code_split_);
         split_->addWidget(view_);
         split_->setStretchFactor(0, 70); // upper zone
         split_->setStretchFactor(1, 30); // hex byte view
 
         layout->addWidget(split_, 1);
+
+        // The debugger read-out: the controller's state and its messages land on
+        // one status line spanning the window below the split. It prints
+        // addresses, so it is a mono line like the tables.
+        status_ = new widgets::StatusLabel(this);
+        status_->setObjectName(QStringLiteral("viewer_status"));
+        status_->setFont(mono_font());
+        layout->addWidget(status_);
+
+        connect(&debug_,
+                &debug::Controller::stateChanged,
+                this,
+                [this]
+                {
+                    status_->set_status(widgets::StatusKind::info, debug_.state_text());
+                });
+        connect(&debug_,
+                &debug::Controller::message,
+                this,
+                [this](debug::Controller::MessageKind kind, const QString& text)
+                {
+                    status_->set_status(status_kind(kind), text);
+                });
+        status_->set_status(widgets::StatusKind::info, debug_.state_text());
 
         // "Go To..." in the byte view's menu (or Ctrl+G) asks for an address here;
         // the focused pane decides which cursor it moves.
@@ -213,7 +260,9 @@ namespace slopkit::ui::dialogs
 
     QWidget* MemoryViewerDialog::build_stats_pane()
     {
-        auto* panel = new widgets::Panel(tr("Debugger"), this);
+        // No panel title: the pane only holds the register table and the call
+        // stack, and those two carry their own section headers.
+        auto* panel = new widgets::Panel(QString(), this);
         debugger_   = new panels::DebuggerPanel(debug_, panel);
         panel->body()->addWidget(debugger_);
         return panel;
@@ -499,6 +548,11 @@ namespace slopkit::ui::dialogs
         return controls_;
     }
 
+    QString MemoryViewerDialog::status_text() const
+    {
+        return status_->text();
+    }
+
     void MemoryViewerDialog::follow_stop()
     {
         const debug::StopEvent& stop = debug_.last_stop();
@@ -523,9 +577,14 @@ namespace slopkit::ui::dialogs
         if (const auto added = debug_.add_breakpoint(expression.toStdString(), debug::Kind::software, 1); !added)
         {
             // The controller reports success through its signal but stays silent
-            // on a refusal, so surface the reason in the state line here.
-            controls_->report_error(QString::fromStdString(added.error()));
+            // on a refusal, so surface the reason on the status line here.
+            report_error(QString::fromStdString(added.error()));
         }
+    }
+
+    void MemoryViewerDialog::report_error(const QString& text)
+    {
+        status_->set_status(widgets::StatusKind::error, text);
     }
 
     void MemoryViewerDialog::request_page()

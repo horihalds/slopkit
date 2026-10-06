@@ -8,6 +8,7 @@
 
 #include "support/ui_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
+#include "ui/fonts.hpp"
 #include "ui/models/register_model.hpp"
 #include "ui/panels/debug_controls.hpp"
 
@@ -865,8 +866,11 @@ TEST_CASE("the memory viewer shows a read-only register placeholder", "[ui]")
     CHECK_FALSE(model->flags(model->index(0, RegisterModel::value)) & Qt::ItemIsEditable);
     CHECK_FALSE(model->flags(model->index(0, RegisterModel::name)) & Qt::ItemIsEditable);
 
-    // The pane is titled and carries the muted note.
-    CHECK(panel_has_title(ancestor_panel(table), QStringLiteral("Debugger")));
+    // The pane carries no `Debugger` title, while its two section headers still
+    // name the tables inside it.
+    CHECK_FALSE(panel_has_title(ancestor_panel(table), QStringLiteral("Debugger")));
+    CHECK(panel_has_title(ancestor_panel(table), QStringLiteral("Registers")));
+    CHECK(panel_has_title(ancestor_panel(table), QStringLiteral("Call stack")));
 
     // The set_values seam the debugger will fill.
     const std::vector<slopkit::ui::models::RegisterValue> values {
@@ -1157,7 +1161,7 @@ TEST_CASE("the memory viewer attaches the debugger on demand for the operands", 
     denied.hide();
 }
 
-TEST_CASE("the memory viewer puts the debug controls above the split", "[ui]")
+TEST_CASE("the memory viewer puts the debug controls in the listing column", "[ui]")
 {
     application();
 
@@ -1173,30 +1177,37 @@ TEST_CASE("the memory viewer puts the debug controls above the split", "[ui]")
     auto* split = viewer.findChild<QSplitter*>(QStringLiteral("viewer_split"));
     REQUIRE(split != nullptr);
     REQUIRE(split->count() == 2);
-    QWidget* upper = split->widget(0);
 
     auto* code_split = viewer.findChild<QSplitter*>(QStringLiteral("code_split"));
     REQUIRE(code_split != nullptr);
     REQUIRE(code_split->count() == 2);
+    REQUIRE(split->widget(0) == code_split);
+    QWidget* code_pane  = code_split->widget(0);
     QWidget* stats_pane = code_split->widget(1);
 
-    // The bar spans the whole width above the split, inside neither pane.
+    // The bar belongs to the listing column: it is a child of that column and
+    // shares its width, and it never reaches over the registers pane.
     auto* controls = viewer.findChild<slopkit::ui::panels::DebugControls*>();
     REQUIRE(controls != nullptr);
-    CHECK(upper->isAncestorOf(controls));
-    CHECK_FALSE(code_split->isAncestorOf(controls));
+    CHECK(code_pane->isAncestorOf(controls));
+    CHECK(controls->parentWidget() == code_pane);
     CHECK_FALSE(stats_pane->isAncestorOf(controls));
+    CHECK(controls->width() == code_pane->width());
 
-    // It sits above the code split and reaches across the full pane width, so
-    // all nine controls and the state line fit.
-    CHECK(controls->parentWidget() == upper);
-    CHECK(controls->y() < code_split->y());
-    CHECK(controls->width() == code_split->width());
+    // Its right edge stays left of the stats pane's left edge.
+    const int controls_right = controls->mapTo(&viewer, QPoint(controls->width(), 0)).x();
+    const int stats_left     = stats_pane->mapTo(&viewer, QPoint(0, 0)).x();
+    CHECK(controls_right <= stats_left);
+
+    // It sits above the Disassembly panel inside that column.
+    auto* listing_panel = code_pane->findChild<slopkit::ui::widgets::Panel*>();
+    REQUIRE(listing_panel != nullptr);
+    CHECK(listing_panel->isAncestorOf(code_pane->findChild<slopkit::ui::components::DisassemblyView*>()));
+    CHECK(controls->y() < listing_panel->y());
 
     // The bar carries all nine controls, with Step Out disabled.
     CHECK(controls->toggle_breakpoint_button() != nullptr);
-    CHECK(controls->start_button() != nullptr);
-    CHECK(controls->stop_button() != nullptr);
+    CHECK(controls->start_stop_button() != nullptr);
     CHECK(controls->resume_button() != nullptr);
     CHECK(controls->break_button() != nullptr);
     CHECK(controls->step_into_button() != nullptr);
@@ -1330,7 +1341,7 @@ TEST_CASE("the toggle breakpoint button sets and clears a breakpoint", "[ui]")
     REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
 
     // The toggle needs a live session: start one and wait for the stop.
-    controls->start_button()->click();
+    controls->start_stop_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
                        {
@@ -1350,6 +1361,57 @@ TEST_CASE("the toggle breakpoint button sets and clears a breakpoint", "[ui]")
     controls->toggle_breakpoint_button()->click();
     CHECK(controller.table().software_at(code_base) == nullptr);
     CHECK(controller.breakpoints().empty());
+
+    viewer.hide();
+}
+
+TEST_CASE("the memory viewer shows the debugger read-out on its bottom status line", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::tests::FakeDebugBackend backend;
+    backend.block_continue = true;
+    slopkit::debug::Controller controller {backend};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, controller};
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    auto* status = viewer.findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("viewer_status"));
+    REQUIRE(status != nullptr);
+
+    // The line is the mono read-out and starts at the controller's idle text.
+    CHECK(status->font().family() == slopkit::ui::mono_font().family());
+    CHECK(viewer.status_text() == QStringLiteral("Not debugging"));
+
+    // Starting the session updates the line through the controller's signal.
+    controller.start(target.pid, target.plugin_id);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == slopkit::debug::Controller::State::running;
+                       }));
+    CHECK(viewer.status_text() == QStringLiteral("Running..."));
+
+    // A deliberate stop shows where the target stopped.
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == slopkit::debug::Controller::State::stopped;
+                       }));
+    CHECK(viewer.status_text().startsWith(QStringLiteral("Stopped at")));
+
+    // A controller message replaces it and is coloured by its kind.
+    controller.start(target.pid, target.plugin_id);
+    CHECK(viewer.status_text() == QStringLiteral("A debug session is already open."));
+    CHECK(status->palette().color(QPalette::WindowText)
+          == slopkit::ui::widgets::status_color(slopkit::ui::widgets::StatusKind::warning));
 
     viewer.hide();
 }

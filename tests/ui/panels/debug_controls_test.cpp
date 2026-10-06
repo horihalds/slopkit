@@ -8,8 +8,6 @@
 #include "process/attachment.hpp"
 #include "support/fake_debug.hpp"
 #include "support/fake_process.hpp"
-#include "ui/components/widgets.hpp"
-#include "ui/fonts.hpp"
 #include "ui/panels/debug_controls.hpp"
 
 using slopkit::debug::Controller;
@@ -38,15 +36,15 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     const slopkit::process::AttachedTarget target = attached_target();
     DebugControls                          bar(controller, target);
 
-    // Idle with an attached target: only Start and Breakpoints are live.
-    CHECK(bar.start_button()->isEnabled());
-    CHECK_FALSE(bar.stop_button()->isEnabled());
+    // Idle with an attached target: the toggle reads Start and is live, while
+    // the run controls wait for a session.
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
+    CHECK(bar.start_stop_button()->isEnabled());
     CHECK_FALSE(bar.resume_button()->isEnabled());
     CHECK_FALSE(bar.break_button()->isEnabled());
     CHECK_FALSE(bar.step_into_button()->isEnabled());
     CHECK_FALSE(bar.step_over_button()->isEnabled());
     CHECK(bar.breakpoints_button()->isEnabled());
-    CHECK(bar.status_label()->text() == QStringLiteral("Not debugging"));
 
     // The Breakpoints button only asks the window to open the dialog.
     int requests = 0;
@@ -60,23 +58,22 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     bar.breakpoints_button()->click();
     CHECK(requests == 1);
 
-    // Starting the session attaches and leaves the target running: the run
-    // controls flip to the running set.
+    // One click starts the session, attaching and leaving the target running:
+    // the toggle flips to Stop and the run controls to the running set.
     backend.block_continue = true;
-    controller.start(target.pid, target.plugin_id);
+    bar.start_stop_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
                        {
                            return controller.state() == Controller::State::running;
                        }));
 
-    CHECK_FALSE(bar.start_button()->isEnabled());
-    CHECK(bar.stop_button()->isEnabled());
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Stop Debugging"));
+    CHECK(bar.start_stop_button()->isEnabled());
     CHECK_FALSE(bar.resume_button()->isEnabled());
     CHECK_FALSE(bar.step_into_button()->isEnabled());
     CHECK_FALSE(bar.step_over_button()->isEnabled());
     CHECK(bar.break_button()->isEnabled());
-    CHECK(bar.status_label()->text() == QStringLiteral("Running..."));
 
     // Break stops the target deliberately and re-enables the step controls.
     controller.interrupt();
@@ -89,7 +86,7 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     CHECK(bar.step_into_button()->isEnabled());
     CHECK(bar.step_over_button()->isEnabled());
     CHECK_FALSE(bar.break_button()->isEnabled());
-    CHECK(bar.status_label()->text().startsWith(QStringLiteral("Stopped at")));
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Stop Debugging"));
 
     // Resume blocks in the fake until Break releases it; the bar follows.
     backend.continue_released = false;
@@ -106,18 +103,19 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     CHECK(bar.resume_button()->isEnabled());
     CHECK_FALSE(bar.break_button()->isEnabled());
 
-    // Stopping the session returns the bar to idle.
-    controller.stop();
+    // The next click on the toggle stops the session and returns the bar to
+    // idle.
+    bar.start_stop_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
                        {
                            return controller.state() == Controller::State::idle;
                        }));
-    CHECK(bar.start_button()->isEnabled());
-    CHECK_FALSE(bar.stop_button()->isEnabled());
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
+    CHECK(bar.start_stop_button()->isEnabled());
 }
 
-TEST_CASE("the debug control bar explains the missing target", "[ui][panels][debugger]")
+TEST_CASE("the debug control bar's disabled toggle attaches nothing", "[ui][panels][debugger]")
 {
     slopkit::test::application();
     FakeDebugBackend backend;
@@ -126,10 +124,13 @@ TEST_CASE("the debug control bar explains the missing target", "[ui][panels][deb
     const slopkit::process::AttachedTarget detached;
     DebugControls                          bar(controller, detached);
 
-    // No target: Start is disabled and clicking it performs no attach.
-    CHECK_FALSE(bar.start_button()->isEnabled());
-    bar.start_button()->click();
+    // No target: the toggle reads Start and is disabled, so clicking it attaches
+    // nothing.
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
+    CHECK_FALSE(bar.start_stop_button()->isEnabled());
+    bar.start_stop_button()->click();
     CHECK(controller.state() == Controller::State::idle);
+    CHECK(backend.count("attach") == 0);
 }
 
 TEST_CASE("the debug control bar keeps Step Out disabled", "[ui][panels][debugger]")
@@ -225,14 +226,4 @@ TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a sele
                        }));
     bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
     CHECK_FALSE(bar.toggle_breakpoint_button()->isEnabled());
-}
-
-TEST_CASE("the debug control bar renders the state line in the embedded mono font", "[ui][panels][debugger]")
-{
-    slopkit::test::application();
-    FakeDebugBackend backend;
-    Controller       controller(backend);
-
-    DebugControls bar(controller, attached_target());
-    CHECK(bar.status_label()->font().family() == slopkit::ui::mono_font().family());
 }
