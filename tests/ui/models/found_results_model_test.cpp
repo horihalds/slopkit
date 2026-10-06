@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "support/ui_helpers.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 
 TEST_CASE("the found-results model mirrors a snapshot", "[ui]")
 {
@@ -87,6 +88,19 @@ TEST_CASE("the found-results model renders the clipboard texts", "[ui]")
     model.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+40"));
     CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("1040: 10"));
+
+    // A long module name shortens the display but keeps the full spelling for
+    // Copy and for the hover role.
+    model.set_address_mode(slopkit::ui::AddressMode::module_relative);
+    model.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x10000)});
+    CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("DyingL..._rwdi.exe+40"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative)
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+40"));
+    CHECK(
+        model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), slopkit::ui::widgets::kFullTextRole)
+            .toString()
+        == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+40"));
 
     // An out-of-range row and a cleared model yield nothing.
     CHECK(model.copy_text(2, slopkit::ui::models::CopyFormat::absolute).isEmpty());

@@ -11,6 +11,7 @@
 #include <QBrush>
 
 #include "scan/value.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
 #include "ui/theme.hpp"
@@ -133,6 +134,12 @@ namespace slopkit::ui::models
                 }
             }
             break;
+        case widgets::kFullTextRole:
+            if (index.column() == address)
+            {
+                return ui::format_cell_address_full(address_mode_, module_spans_, hit.address);
+            }
+            break;
         default:
             break;
         }
@@ -245,9 +252,10 @@ namespace slopkit::ui::models
         }
         if (format == CopyFormat::module_relative)
         {
-            return ui::format_cell_address(ui::AddressMode::module_relative, module_spans_, hit->address);
+            return ui::format_cell_address_full(ui::AddressMode::module_relative, module_spans_, hit->address);
         }
-        return address_text(hit->address) + QStringLiteral(": ")
+        // Copy keeps the untruncated name so a pasted address still resolves.
+        return ui::format_cell_address_full(address_mode_, module_spans_, hit->address) + QStringLiteral(": ")
              + to_qstring(scan::format_value(config_.value_type, hit->value, config_.hex));
     }
 

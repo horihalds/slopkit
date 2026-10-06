@@ -2,6 +2,7 @@
 
 #include "support/ui_helpers.hpp"
 
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/instruction_access_model.hpp"
 
@@ -66,6 +67,35 @@ TEST_CASE("instruction accesses render in the embedded mono font", "[ui][models]
 
     // The access word column keeps the UI font.
     CHECK_FALSE(model.data(model.index(0, InstructionAccessModel::access), Qt::FontRole).isValid());
+}
+
+TEST_CASE("instruction accesses answer the full-text role with the untruncated address", "[ui][models]")
+{
+    application();
+
+    slopkit::ui::models::InstructionAccessModel model(
+        nullptr,
+        [](std::uint64_t address)
+        {
+            return QStringLiteral("short+") + QString::number(address, 16);
+        },
+        [](std::uint64_t address)
+        {
+            return QStringLiteral("a-long-module-name.exe+") + QString::number(address, 16);
+        });
+    model.set({access(0x1040, 4, false)});
+    REQUIRE(model.row_count() == 1);
+
+    const QModelIndex address = model.index(0, slopkit::ui::models::InstructionAccessModel::address);
+    CHECK(model.data(address, Qt::DisplayRole).toString() == QStringLiteral("short+1040"));
+    CHECK(model.data(address, slopkit::ui::widgets::kFullTextRole).toString()
+          == QStringLiteral("a-long-module-name.exe+1040"));
+
+    // A resolved-only role: an unresolved row keeps its explanatory tooltip and
+    // offers no full text to reveal.
+    model.set({access(0, 8, true, false)});
+    CHECK_FALSE(model.data(address, slopkit::ui::widgets::kFullTextRole).isValid());
+    CHECK_FALSE(model.data(address, Qt::ToolTipRole).toString().isEmpty());
 }
 
 TEST_CASE("instruction accesses clear to an empty table", "[ui][models]")

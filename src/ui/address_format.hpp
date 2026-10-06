@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -23,13 +24,33 @@ namespace slopkit::ui
         absolute,        // "7F3A1B2C"
     };
 
-    // One file-backed module image: display name plus its half-open span.
+    // A module's display name is shortened once the part before its file
+    // extension exceeds this budget; the extension itself is always kept. See
+    // `elide_module_name` and docs/UI_DESIGN.md.
+    inline constexpr std::size_t kModuleNameBudget = 16;
+    inline constexpr std::size_t kModuleNameHead   = 6;
+    inline constexpr std::size_t kModuleNameTail   = 5;
+
+    // The name a module is displayed with: its name, or the file name of its
+    // path when the name is empty, shortened to the module-name budget. Within
+    // the budget the text is unchanged, otherwise the part before the extension
+    // keeps its first 6 and last 5 characters around "...". The extension is
+    // never cut, and a leading dot is part of the name, not an extension.
+    [[nodiscard]] QString elide_module_name(std::string_view name);
+
+    // One file-backed module image: the full name plus the shortened label the
+    // surfaces paint and its half-open span.
     struct ModuleSpan
     {
-        std::string   name;
+        std::string   name;    // the full name: the lookup and clipboard spelling
+        std::string   display; // the shortened label the surfaces paint
         std::uint64_t base {};
         std::uint64_t end {};
         bool          is_main {};
+
+        // The label a surface paints: `display`, or `name` for a span built by
+        // hand that never went through the shortening rule.
+        [[nodiscard]] std::string_view label() const;
 
         bool operator==(const ModuleSpan&) const = default;
     };
@@ -59,8 +80,13 @@ namespace slopkit::ui
         std::size_t             main_index_ {};
     };
 
-    // "name+RVA": upper-case hex, no 0x, no leading zeros, no padding.
+    // "name+RVA" with the module's shortened label: upper-case hex, no 0x, no
+    // leading zeros, no padding.
     [[nodiscard]] QString format_module_relative(const ModuleSpan& span, std::uint64_t address);
+
+    // The untruncated "<name>+<RVA>"; what Copy keeps so a pasted address
+    // still resolves.
+    [[nodiscard]] QString format_module_relative_full(const ModuleSpan& span, std::uint64_t address);
 
     // Upper-case hex, no prefix, no leading zeros, no padding.
     [[nodiscard]] QString format_absolute(std::uint64_t address);
@@ -76,6 +102,10 @@ namespace slopkit::ui
     // A value/cell address: module-relative where the mode and spans allow it,
     // otherwise `format_absolute`.
     [[nodiscard]] QString format_cell_address(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
+
+    // The untruncated forms of the two above, for Copy and for hovers.
+    [[nodiscard]] QString format_pane_address_full(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
+    [[nodiscard]] QString format_cell_address_full(AddressMode mode, const ModuleSpans& spans, std::uint64_t address);
 
     // How a model renders an address, so it needs no controller of its own.
     using AddressText = std::function<QString(std::uint64_t)>;

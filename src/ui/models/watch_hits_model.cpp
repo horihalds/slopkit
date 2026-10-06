@@ -4,13 +4,14 @@
 #include <iterator>
 #include <utility>
 
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 
 namespace slopkit::ui::models
 {
 
-    WatchHitsModel::WatchHitsModel(QObject* parent, AddressText format)
-        : QAbstractTableModel(parent), format_(std::move(format))
+    WatchHitsModel::WatchHitsModel(QObject* parent, AddressText format, AddressText full_format)
+        : QAbstractTableModel(parent), format_(std::move(format)), full_format_(std::move(full_format))
     {
     }
 
@@ -143,6 +144,12 @@ namespace slopkit::ui::models
         if (role == Qt::ToolTipRole && index.column() == instruction)
         {
             return hit.recovered != 0 ? format_(hit.recovered) : QString();
+        }
+        if (role == widgets::kFullTextRole && index.column() == instruction)
+        {
+            // Fall back to the display formatter when no fuller one was given.
+            const AddressText& full = full_format_ ? full_format_ : format_;
+            return full(hit.recovered != 0 ? hit.recovered : hit.instruction);
         }
         // Every column holds machine data (addresses, decoded text, thread and
         // count), so the whole table lines up in the mono family.

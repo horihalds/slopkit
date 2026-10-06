@@ -1,6 +1,9 @@
 #include <catch2/catch.hpp>
 
+#include <QFontMetrics>
+
 #include "support/memory_view_helpers.hpp"
+#include "ui/fonts.hpp"
 
 TEST_CASE("the memory view auto-fits its rows to the widget", "[ui]")
 {
@@ -391,6 +394,35 @@ TEST_CASE("the memory view header labels each column with its offset", "[ui]")
     CHECK(view.column_offset_text(0) == QStringLiteral("00"));
     CHECK(view.column_offset_text(1) == QStringLiteral("04"));
     CHECK(view.column_offset_text(2) == QStringLiteral("08"));
+
+    view.hide();
+}
+
+TEST_CASE("the memory view reveals the full address on hover over a shortened module", "[ui]")
+{
+    application();
+    Fixture    fixture;
+    MemoryView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_byte(kBase);
+
+    fixture.document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", kBase, kExtent)});
+
+    // The first painted row's y and a point inside the address column.
+    const QFontMetrics metrics(slopkit::ui::mono_font());
+    const QPoint       address_hover(5, 4 + (metrics.height() + 4) + 2);
+
+    CHECK(view.hover_full_text(address_hover) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0"));
+    // The value cells hold values, not addresses, so a hover there reveals nothing.
+    CHECK(view.hover_full_text(QPoint(500, address_hover.y())).isEmpty());
+    // The header band and a point below every row reveal nothing.
+    CHECK(view.hover_full_text(QPoint(5, 2)).isEmpty());
+    CHECK(view.hover_full_text(QPoint(5, 6000)).isEmpty());
+
+    // A module name that fits shows nothing new.
+    fixture.document.set_modules({module_image("app", kBase, kExtent)});
+    CHECK(view.hover_full_text(address_hover).isEmpty());
 
     view.hide();
 }

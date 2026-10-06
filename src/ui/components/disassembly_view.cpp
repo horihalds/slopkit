@@ -23,6 +23,7 @@
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QShowEvent>
+#include <QToolTip>
 #include <QWheelEvent>
 
 namespace slopkit::ui::components
@@ -150,9 +151,68 @@ namespace slopkit::ui::components
         painted.reserve(row.segments.size());
         for (const RowSegment& segment : row.segments)
         {
-            painted.push_back({segment.text, syntax_colour(segment.kind, theme, base)});
+            painted.push_back({segment.text, syntax_colour(segment.kind, theme, base), segment.full});
         }
         return painted;
+    }
+
+    QString DisassemblyView::hover_full_text(const QPoint& position) const
+    {
+        if (position.y() < kMargin + header_height_)
+        {
+            return {}; // The header band holds no row.
+        }
+
+        // Mirror paintEvent's column geometry.
+        const int address_left = kMargin;
+        const int bytes_left   = address_left + address_width_ + kColumnGap;
+        const int text_left    = bytes_left + bytes_width_ + kColumnGap;
+        const int text_width   = std::max(0, viewport()->width() - text_left - kMargin);
+
+        int y = kMargin + header_height_;
+        for (std::size_t visible = 0; visible < visible_rows_; ++visible)
+        {
+            const std::size_t index = first_row_ + visible;
+            if (index >= document_.row_count())
+            {
+                break;
+            }
+            const std::size_t lines      = std::max<std::size_t>(1, document_.line_count(index, bytes_per_line_));
+            const int         row_height = static_cast<int>(lines) * line_height_;
+            if (position.y() >= y + row_height)
+            {
+                y += row_height;
+                continue;
+            }
+
+            const DisassemblyDocument::Row row = document_.row(index);
+            // The address column: the full text only when it shortened.
+            if (position.x() >= address_left && position.x() < address_left + address_width_)
+            {
+                const QString full = document_.full_address_text(row.address);
+                return full != document_.address_text(row.address) ? full : QString {};
+            }
+            // The instruction column: the run printed under the cursor.
+            if (position.x() >= text_left && position.x() < text_left + text_width)
+            {
+                const QFontMetrics metrics(mono_font());
+                int                x = text_left;
+                for (const RowSegment& run : row.segments)
+                {
+                    if (x >= text_left + text_width)
+                    {
+                        break;
+                    }
+                    if (position.x() < x + metrics.horizontalAdvance(run.text))
+                    {
+                        return run.full;
+                    }
+                    x += metrics.horizontalAdvance(run.text);
+                }
+            }
+            return {};
+        }
+        return {}; // Below every painted row.
     }
 
     std::size_t DisassemblyView::bytes_per_line() const noexcept
@@ -303,6 +363,7 @@ namespace slopkit::ui::components
         {
             return;
         }
+        QToolTip::hideText(); // The row under the cursor is about to move.
 
         const long long last   = static_cast<long long>(document_.row_count()) - 1;
         long long       target = static_cast<long long>(first_row_) + delta;
@@ -368,6 +429,7 @@ namespace slopkit::ui::components
         }
         first_row_     = std::min(index, document_.row_count() - 1);
         first_address_ = document_.row(first_row_).address;
+        QToolTip::hideText();
         scroller_.recenter();
         ensure_cursor_decoded();
         update_columns();
@@ -877,6 +939,17 @@ namespace slopkit::ui::components
                 viewport()->setCursor(Qt::SplitHCursor);
             }
         }
+
+        // Reveal the untruncated address a shortened run or address hides;
+        // hide the tooltip everywhere else, so it cannot outlive the row.
+        if (const QString full = hover_full_text(position); !full.isEmpty())
+        {
+            QToolTip::showText(event->globalPosition().toPoint(), full, viewport());
+        }
+        else
+        {
+            QToolTip::hideText();
+        }
         QAbstractScrollArea::mouseMoveEvent(event);
     }
 
@@ -910,6 +983,7 @@ namespace slopkit::ui::components
     {
         hover_boundary_ = HeaderDrag::none;
         viewport()->unsetCursor();
+        QToolTip::hideText();
         QAbstractScrollArea::leaveEvent(event);
     }
 

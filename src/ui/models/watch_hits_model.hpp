@@ -28,7 +28,10 @@ namespace slopkit::ui::models
             column_count,
         };
 
-        WatchHitsModel(QObject* parent, AddressText format);
+        // `full_format` supplies the untruncated text for the hover; when it is
+        // empty the display formatter is used, so a caller that only has one
+        // formatter keeps working.
+        WatchHitsModel(QObject* parent, AddressText format, AddressText full_format = {});
 
         void sync(const debug::AccessWatch& watch);
 
@@ -55,6 +58,7 @@ namespace slopkit::ui::models
         };
 
         AddressText      format_;
+        AddressText      full_format_;
         std::uint64_t    address_ {};
         bool             watching_ {false};
         std::vector<Row> rows_;

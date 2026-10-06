@@ -322,4 +322,10 @@ TEST_CASE("the memory view document renders static rows as module+RVA", "[ui]")
     // An address outside every span stays absolute in both modes.
     document.set_address_mode(slopkit::ui::AddressMode::module_relative);
     CHECK(document.address_text(0x5000010) == QStringLiteral("0000000005000010"));
+
+    // A long module name is shortened in the pane address, while the full
+    // accessor keeps the untruncated spelling for hovers.
+    document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x1000)});
+    CHECK(document.address_text(0x1010) == QStringLiteral("DyingL..._rwdi.exe+10"));
+    CHECK(document.full_address_text(0x1010) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+10"));
 }

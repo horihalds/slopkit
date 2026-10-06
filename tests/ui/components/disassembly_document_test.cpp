@@ -486,6 +486,8 @@ TEST_CASE("the disassembly document splits a module-relative line into coloured 
     CHECK(jump.segments[2].kind == SegmentKind::plain);
     CHECK(jump.segments[3].text == QStringLiteral("17"));
     CHECK(jump.segments[3].kind == SegmentKind::immediate);
+    // A module name that fits carries no hover text.
+    CHECK(jump.segments[1].full.isEmpty());
 
     QString joined;
     for (const RowSegment& segment : jump.segments)
@@ -493,6 +495,32 @@ TEST_CASE("the disassembly document splits a module-relative line into coloured 
         joined += segment.text;
     }
     CHECK(joined == jump.text);
+}
+
+TEST_CASE("the disassembly document attaches the full address to a shortened module run", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15}); // JZ +0x15 -> kCode + 0x17
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", kCode, 0x1000)});
+
+    const auto jump = fixture.document.row(0);
+    REQUIRE(jump.segments.size() == 4);
+    CHECK(jump.segments[1].text == QStringLiteral("DyingL..._rwdi.exe"));
+    CHECK(jump.segments[1].kind == SegmentKind::module);
+    // The module run carries the untruncated address for the hover.
+    CHECK(jump.segments[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+17"));
+    // The `+RVA` runs are never shortened, so they carry no hover text.
+    CHECK(jump.segments[2].full.isEmpty());
+    CHECK(jump.segments[3].full.isEmpty());
+    CHECK(jump.text == QStringLiteral("JZ DyingL..._rwdi.exe+17"));
+    // Copy keeps the full spelling of the row's own address so a pasted
+    // address still resolves.
+    CHECK(fixture.document.copy_text(0, CopyFormat::module_relative)
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0"));
 }
 
 TEST_CASE("the disassembly document colours a decoded address as an immediate", "[ui]")

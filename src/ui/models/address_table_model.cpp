@@ -12,6 +12,7 @@
 #include "core/log_categories.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
 #include "ui/theme.hpp"
@@ -138,6 +139,12 @@ namespace slopkit::ui::models
                 {
                     return tr("Not readable");
                 }
+            }
+            break;
+        case widgets::kFullTextRole:
+            if (index.column() == address && entry.expression.empty())
+            {
+                return ui::format_cell_address_full(address_mode_, module_spans_, entry.address);
             }
             break;
         default:

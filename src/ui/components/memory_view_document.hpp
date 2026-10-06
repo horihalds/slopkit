@@ -85,6 +85,8 @@ namespace slopkit::ui::components
         void                                 set_modules(std::vector<process::ModuleInfo> modules);
         void                                 set_address_mode(ui::AddressMode mode);
         [[nodiscard]] QString                address_text(std::uint64_t address) const;
+        // The same, untruncated: the module name as stored, for hovers.
+        [[nodiscard]] QString                full_address_text(std::uint64_t address) const;
         [[nodiscard]] QString                display_text(std::uint64_t address) const;
         [[nodiscard]] const ui::ModuleSpans& module_spans() const;
 

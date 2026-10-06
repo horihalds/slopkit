@@ -169,6 +169,11 @@ namespace slopkit::ui::components
         return ui::format_pane_address(address_mode_, module_spans_, address);
     }
 
+    QString DisassemblyDocument::full_address_text(std::uint64_t address) const
+    {
+        return ui::format_pane_address_full(address_mode_, module_spans_, address);
+    }
+
     const ui::ModuleSpans& DisassemblyDocument::module_spans() const
     {
         return module_spans_;
@@ -185,7 +190,7 @@ namespace slopkit::ui::components
         switch (format)
         {
         case CopyFormat::module_relative:
-            return ui::format_cell_address(ui::AddressMode::module_relative, module_spans_, value.address);
+            return ui::format_cell_address_full(ui::AddressMode::module_relative, module_spans_, value.address);
         case CopyFormat::absolute:
             return ui::format_absolute(value.address);
         case CopyFormat::bytes:
@@ -864,10 +869,15 @@ namespace slopkit::ui::components
             }
 
             const ui::ModuleSpan*   span        = module_spans_.containing(ref.address);
-            const qsizetype         name_length = static_cast<qsizetype>(span != nullptr ? span->name.size() : 0);
-            const QString           offset_text = relative->mid(name_length); // "+RVA"
+            // The module run paints the shortened label; it carries the full
+            // `<module>+<RVA>` for the hover only when the label was shortened.
+            const QString           module_name = span != nullptr ? to_qstring(span->label()) : QString {};
+            const QString           full        = span != nullptr && span->label() != span->name
+                                                    ? ui::format_module_relative_full(*span, ref.address)
+                                                    : QString {};
+            const QString           offset_text = relative->mid(module_name.size()); // "+RVA"
             std::vector<RowSegment> runs;
-            runs.push_back({relative->left(name_length), SegmentKind::module});
+            runs.push_back({module_name, SegmentKind::module, full});
             if (!offset_text.isEmpty())
             {
                 // The separator stays in the row's own colour and the RVA prints
@@ -884,18 +894,18 @@ namespace slopkit::ui::components
         std::ranges::sort(marks, {}, &Mark::offset);
 
         std::vector<RowSegment> segments;
-        const auto              append = [&segments](QString text, SegmentKind kind)
+        const auto              append = [&segments](RowSegment run)
         {
-            if (text.isEmpty())
+            if (run.text.isEmpty())
             {
                 return;
             }
-            if (kind == SegmentKind::plain && !segments.empty() && segments.back().kind == SegmentKind::plain)
+            if (run.kind == SegmentKind::plain && !segments.empty() && segments.back().kind == SegmentKind::plain)
             {
-                segments.back().text += text;
+                segments.back().text += run.text;
                 return;
             }
-            segments.push_back({std::move(text), kind});
+            segments.push_back(std::move(run));
         };
 
         const std::string_view raw    = instruction.text;
@@ -908,17 +918,17 @@ namespace slopkit::ui::components
             }
             if (mark.offset > cursor)
             {
-                append(to_qstring(raw.substr(cursor, mark.offset - cursor)), SegmentKind::plain);
+                append(RowSegment {to_qstring(raw.substr(cursor, mark.offset - cursor)), SegmentKind::plain});
             }
             for (const RowSegment& run : mark.runs)
             {
-                append(run.text, run.kind);
+                append(run);
             }
             cursor = mark.offset + mark.length;
         }
         if (cursor < raw.size())
         {
-            append(to_qstring(raw.substr(cursor)), SegmentKind::plain);
+            append(RowSegment {to_qstring(raw.substr(cursor)), SegmentKind::plain});
         }
         return segments;
     }

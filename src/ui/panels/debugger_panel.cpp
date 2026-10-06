@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 
 #include "ui/address_format.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/call_stack_model.hpp"
@@ -84,6 +85,7 @@ namespace slopkit::ui::panels
         call_stack_table_ = new QTableView(this);
         call_stack_table_->setObjectName(QStringLiteral("call_stack_table"));
         call_stack_table_->setModel(call_stack_model_);
+        call_stack_table_->setItemDelegate(new widgets::ElidedTooltipDelegate(call_stack_table_));
         call_stack_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         call_stack_table_->setSelectionMode(QAbstractItemView::NoSelection);
         call_stack_table_->setShowGrid(false);

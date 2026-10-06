@@ -215,6 +215,50 @@ TEST_CASE("the disassembly view colours a module-relative rva as an immediate", 
     view.hide();
 }
 
+TEST_CASE("the disassembly view reveals the full address on hover over a shortened module", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    ViewFixture fixture;
+    fixture.put(kCode, {0x74, 0x15, 0xC3}); // JZ +0x15 -> kCode + 0x17; RET
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", kCode, 0x1000)});
+
+    const auto jump = view.row_segments(0);
+    REQUIRE(jump.size() == 4);
+    CHECK(jump[1].text == QStringLiteral("DyingL..._rwdi.exe"));
+    CHECK(jump[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+17"));
+    // The non-module runs carry no hover text.
+    CHECK(jump[0].full.isEmpty());
+    CHECK(jump[2].full.isEmpty());
+    CHECK(jump[3].full.isEmpty());
+
+    const QFontMetrics metrics(slopkit::ui::mono_font());
+    const int          top       = 4 + (metrics.height() + 4); // the first row's top edge
+    const int          text_left = 4 + view.address_width() + 6 + view.bytes_width() + 6;
+
+    // The address column reveals the full address of the row it points at.
+    CHECK(view.hover_full_text(QPoint(6, top + 2)) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0"));
+    // The module run inside the instruction column reveals the branch target.
+    const int module_x = text_left + metrics.horizontalAdvance(QStringLiteral("JZ ")) + 1;
+    CHECK(view.hover_full_text(QPoint(module_x, top + 2)) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+17"));
+    // A run that was not shortened (the RVA) reveals nothing.
+    const int rva_x = text_left + metrics.horizontalAdvance(QStringLiteral("JZ DyingL..._rwdi.exe+1"));
+    CHECK(view.hover_full_text(QPoint(rva_x, top + 2)).isEmpty());
+    // The header band and a point below every row reveal nothing.
+    CHECK(view.hover_full_text(QPoint(6, 2)).isEmpty());
+    CHECK(view.hover_full_text(QPoint(6, 6000)).isEmpty());
+
+    view.hide();
+}
+
 TEST_CASE("a patched row keeps the warning colour on its plain runs", "[ui]")
 {
     application();

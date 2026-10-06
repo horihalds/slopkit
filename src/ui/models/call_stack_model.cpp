@@ -2,6 +2,7 @@
 
 #include <cstddef>
 
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::models
@@ -15,12 +16,15 @@ namespace slopkit::ui::models
     {
         beginResetModel();
         address_.clear();
+        full_.clear();
         absolute_.clear();
         address_.reserve(frames.size());
+        full_.reserve(frames.size());
         absolute_.reserve(frames.size());
         for (const slopkit::debug::Frame& frame : frames)
         {
             address_.push_back(ui::format_cell_address(mode, spans, frame.pc));
+            full_.push_back(ui::format_cell_address_full(mode, spans, frame.pc));
             absolute_.push_back(ui::format_absolute(frame.pc));
         }
         endResetModel();
@@ -30,6 +34,7 @@ namespace slopkit::ui::models
     {
         beginResetModel();
         address_.clear();
+        full_.clear();
         absolute_.clear();
         endResetModel();
     }
@@ -67,6 +72,8 @@ namespace slopkit::ui::models
             default:
                 return {};
             }
+        case widgets::kFullTextRole:
+            return model_index.column() == address ? QVariant(full_[row]) : QVariant {};
         case Qt::ForegroundRole:
             return model_index.column() == frame ? QVariant(active_theme().text_muted) : QVariant {};
         case Qt::TextAlignmentRole:

@@ -3,6 +3,7 @@
 #include "support/ui_helpers.hpp"
 
 #include "debug/access_watch.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/watch_hits_model.hpp"
 
@@ -112,4 +113,39 @@ TEST_CASE("watch hits fill in the decoded text on demand", "[ui][models]")
     CHECK(model.text_at(9).isEmpty());
     CHECK(model.instruction_at(9) == 0);
     CHECK(model.count_at(9) == 0);
+}
+
+TEST_CASE("watch hits answer the full-text role with the untruncated address", "[ui][models]")
+{
+    application();
+
+    slopkit::debug::AccessWatch watch = watching(0xABC);
+    watch.record(11, 0x1010);
+
+    slopkit::ui::models::WatchHitsModel model(
+        nullptr,
+        [](std::uint64_t address)
+        {
+            return QStringLiteral("short+") + QString::number(address, 16);
+        },
+        [](std::uint64_t address)
+        {
+            return QStringLiteral("a-long-module-name.exe+") + QString::number(address, 16);
+        });
+    model.sync(watch);
+    REQUIRE(model.rowCount() == 1);
+
+    const QModelIndex instruction = model.index(0, slopkit::ui::models::WatchHitsModel::instruction);
+    CHECK(model.data(instruction, Qt::DisplayRole).toString() == QStringLiteral("short+1010"));
+    CHECK(model.data(instruction, slopkit::ui::widgets::kFullTextRole).toString()
+          == QStringLiteral("a-long-module-name.exe+1010"));
+
+    // Without a full formatter the display text is answered, so nothing changes.
+    slopkit::ui::models::WatchHitsModel plain(nullptr, format);
+    plain.sync(watch);
+    CHECK(
+        plain
+            .data(plain.index(0, slopkit::ui::models::WatchHitsModel::instruction), slopkit::ui::widgets::kFullTextRole)
+            .toString()
+        == QStringLiteral("#1010"));
 }

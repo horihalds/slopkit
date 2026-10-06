@@ -19,6 +19,7 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "disasm/decoder.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
@@ -124,6 +125,12 @@ namespace slopkit::ui::dialogs
         {
             return display_address(address);
         };
+        // The untruncated address the table hovers reveal when a module name
+        // was shortened to fit its column.
+        const ui::AddressText full_address_text = [this](std::uint64_t address)
+        {
+            return ui::format_cell_address_full(controller_.address_mode(), controller_.modules(), address);
+        };
 
         header_ = new QLabel(this);
         header_->setObjectName(QStringLiteral("access_watch_header"));
@@ -138,10 +145,11 @@ namespace slopkit::ui::dialogs
 
         // The recorded accesses: one row per instruction, with its hit count.
         layout->addWidget(widgets::section_header(tr("Recorded accesses"), this));
-        hits_model_     = new models::WatchHitsModel(this, address_text);
+        hits_model_     = new models::WatchHitsModel(this, address_text, full_address_text);
         recorded_table_ = new QTableView(this);
         recorded_table_->setObjectName(QStringLiteral("access_watch_hits"));
         recorded_table_->setModel(hits_model_);
+        recorded_table_->setItemDelegate(new widgets::ElidedTooltipDelegate(recorded_table_));
         recorded_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         recorded_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
         recorded_table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -166,8 +174,9 @@ namespace slopkit::ui::dialogs
         // The resolved operands of one listing row, each of which can become the
         // next watch.
         layout->addWidget(widgets::section_header(tr("Instruction accesses"), this));
-        instruction_model_ = new models::InstructionAccessModel(this, address_text);
+        instruction_model_ = new models::InstructionAccessModel(this, address_text, full_address_text);
         instruction_table_ = new QTableView(this);
+        instruction_table_->setItemDelegate(new widgets::ElidedTooltipDelegate(instruction_table_));
         instruction_table_->setObjectName(QStringLiteral("access_watch_instructions"));
         instruction_table_->setModel(instruction_model_);
         instruction_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);

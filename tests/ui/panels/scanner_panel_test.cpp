@@ -630,23 +630,63 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     {
         CHECK_FALSE(combo->itemText(i).contains(QStringLiteral("0x")));
     }
-    // The range moved into the tooltips instead of the entry text.
+    // The range moved into the tooltips instead of the entry text; a module
+    // entry carries its full name.
     CHECK(combo->itemData(0, Qt::ToolTipRole).toString() == QStringLiteral("0000000000000000-00007FFFFFFFFFFF"));
-    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("/opt/low"));
+    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("low"));
 
     // Selecting a module narrows the range to its base and size.
     combo->setCurrentIndex(1);
     CHECK(start->text() == QStringLiteral("0000000000001000"));
     CHECK(stop->text() == QStringLiteral("0000000000001800"));
+    CHECK(combo->toolTip() == QStringLiteral("low"));
 
     combo->setCurrentIndex(2);
     CHECK(start->text() == QStringLiteral("0000000000002000"));
     CHECK(stop->text() == QStringLiteral("0000000000002100"));
 
-    // Back to the whole process.
+    // Back to the whole process: the generic hint returns.
     combo->setCurrentIndex(0);
     CHECK(start->text() == QStringLiteral("0000000000000000"));
     CHECK(stop->text() == QStringLiteral("00007FFFFFFFFFFF"));
+    CHECK(combo->toolTip() == QStringLiteral("Whole process or a single loaded module"));
+}
+
+TEST_CASE("the scan range dropdown shortens long module names", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+
+    slopkit::process::ModuleInfo long_module;
+    long_module.base = 0x1000;
+    long_module.size = 0x800;
+    long_module.kind = slopkit::process::ModuleKind::elf;
+    long_module.name = "DyingLightGame_TheBeast_x64_rwdi.exe";
+    access.modules   = {long_module};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* combo = range_combo(panel);
+    REQUIRE(combo != nullptr);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return combo->isEnabled();
+                    }));
+
+    REQUIRE(combo->count() == 2);
+    CHECK(combo->itemText(1) == QStringLiteral("DyingL..._rwdi.exe"));
+    // The entry tooltip and the collapsed box reveal the full name.
+    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe"));
+
+    combo->setCurrentIndex(1);
+    CHECK(combo->toolTip() == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe"));
 }
 
 TEST_CASE("the scan range dropdown pins the main image after All memory", "[ui]")
@@ -719,7 +759,7 @@ TEST_CASE("the scan range dropdown pins the main image after All memory", "[ui]"
     CHECK(combo->itemText(1) == QStringLiteral("game"));
     CHECK(combo->itemText(2) == QStringLiteral("low"));
     CHECK(combo->itemText(3) == QStringLiteral("lib"));
-    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("/opt/game"));
+    CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("game"));
 
     // Each row still narrows Start/Stop to that image's span.
     combo->setCurrentIndex(1);

@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "support/ui_helpers.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 
 TEST_CASE("the address-table model edits the table", "[ui]")
 {
@@ -96,6 +97,16 @@ TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui
     // Absolute mode restores the raw text.
     model.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(address_cell() == QStringLiteral("1040"));
+
+    // A long module name shortens the display but keeps the full spelling for
+    // the hover role.
+    model.set_address_mode(slopkit::ui::AddressMode::module_relative);
+    model.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x10000)});
+    CHECK(address_cell() == QStringLiteral("DyingL..._rwdi.exe+40"));
+    CHECK(
+        model.data(model.index(0, slopkit::ui::models::AddressTableModel::address), slopkit::ui::widgets::kFullTextRole)
+            .toString()
+        == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+40"));
 }
 
 TEST_CASE("the address-table model shows an entry's expression and its resolved tooltip", "[ui]")

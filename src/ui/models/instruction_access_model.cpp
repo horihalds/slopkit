@@ -3,13 +3,14 @@
 #include <algorithm>
 #include <utility>
 
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 
 namespace slopkit::ui::models
 {
 
-    InstructionAccessModel::InstructionAccessModel(QObject* parent, AddressText format)
-        : QAbstractTableModel(parent), format_(std::move(format))
+    InstructionAccessModel::InstructionAccessModel(QObject* parent, AddressText format, AddressText full_format)
+        : QAbstractTableModel(parent), format_(std::move(format)), full_format_(std::move(full_format))
     {
     }
 
@@ -78,6 +79,12 @@ namespace slopkit::ui::models
         if (role == Qt::ToolTipRole && index.column() == address && !row.resolved)
         {
             return tr("The register it needs is not available yet.");
+        }
+        if (role == widgets::kFullTextRole && index.column() == address && row.resolved)
+        {
+            // Fall back to the display formatter when no fuller one was given.
+            const AddressText& full = full_format_ ? full_format_ : format_;
+            return full(row.address);
         }
         // Address, operand and width are machine data; the access word column
         // keeps the UI font.

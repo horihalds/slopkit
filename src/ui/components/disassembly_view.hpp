@@ -27,6 +27,10 @@ namespace slopkit::ui::components
     {
         QString text;
         QColor  colour;
+        // The untruncated `<module>+<RVA>` when the run is a shortened module
+        // label; empty otherwise, so a run that was not shortened reveals
+        // nothing on hover.
+        QString full {};
     };
 
     // The colour one run is painted with: the syntax role for a classified run
@@ -80,6 +84,11 @@ namespace slopkit::ui::components
         // The coloured runs the listing paints on the visible row `index`
         // (0 = the top row), for tests.
         [[nodiscard]] std::vector<PaintedSegment> row_segments(std::size_t index) const;
+        // The untruncated `<module>+<RVA>` a hover at viewport `position` should
+        // reveal, or an empty string when the surface there was not shortened
+        // (or no row is under the cursor). Public for tests, like
+        // `row_segments`.
+        [[nodiscard]] QString                     hover_full_text(const QPoint& position) const;
         // How many byte tokens the wrapped bytes column shows per line.
         [[nodiscard]] std::size_t                 bytes_per_line() const noexcept;
         // The wrapped line count of the visible row `index` (0 = the top row).

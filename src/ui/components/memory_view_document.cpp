@@ -150,6 +150,11 @@ namespace slopkit::ui::components
         return ui::format_pane_address(address_mode_, module_spans_, address);
     }
 
+    QString MemoryViewDocument::full_address_text(std::uint64_t address) const
+    {
+        return ui::format_pane_address_full(address_mode_, module_spans_, address);
+    }
+
     QString MemoryViewDocument::display_text(std::uint64_t address) const
     {
         return ui::format_cell_address(address_mode_, module_spans_, address);

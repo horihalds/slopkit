@@ -49,6 +49,10 @@ namespace slopkit::ui::components
     {
         QString     text;
         SegmentKind kind {SegmentKind::plain};
+        // The untruncated `<module>+<RVA>` when this run is a shortened module
+        // label; empty otherwise, so a surface that did not shorten shows
+        // nothing new on hover.
+        QString     full {};
     };
 
     // The live state behind the disassembly listing: one aligned code window and
@@ -89,6 +93,8 @@ namespace slopkit::ui::components
         void                                 set_machine_mode(disasm::MachineMode mode);
         [[nodiscard]] disasm::MachineMode    machine_mode() const noexcept;
         [[nodiscard]] QString                address_text(std::uint64_t address) const;
+        // The same, untruncated: the module name as stored, for hovers.
+        [[nodiscard]] QString                full_address_text(std::uint64_t address) const;
         [[nodiscard]] const ui::ModuleSpans& module_spans() const; // Go To validation
 
         // The clipboard text for the decoded row `index` in `format`; empty when

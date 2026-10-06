@@ -22,6 +22,7 @@
 #include "core/log_categories.hpp"
 #include "scan/types.hpp"
 #include "table/serializer.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/row_menu.hpp"
 #include "ui/models/address_table_model.hpp"
@@ -44,6 +45,7 @@ namespace slopkit::ui::panels
         model_      = new models::AddressTableModel(table_, worker, target, this);
         table_view_ = new QTableView(this);
         table_view_->setModel(model_);
+        table_view_->setItemDelegate(new widgets::ElidedTooltipDelegate(table_view_));
         table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
         table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
         table_view_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);

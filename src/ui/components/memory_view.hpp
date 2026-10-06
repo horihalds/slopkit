@@ -15,6 +15,7 @@
 class QAction;
 class QLineEdit;
 class QMenu;
+class QMouseEvent;
 
 namespace slopkit::ui::components
 {
@@ -62,6 +63,10 @@ namespace slopkit::ui::components
         [[nodiscard]] QString              cell_text(std::uint64_t address) const;
         // The hex offset text painted in the column header for `column` (no `0x`).
         [[nodiscard]] QString              column_offset_text(std::size_t column) const;
+        // The untruncated `<module>+<RVA>` a hover at viewport `position` should
+        // reveal, or an empty string when the address there was not shortened
+        // (or no row is under the cursor). Public for tests.
+        [[nodiscard]] QString              hover_full_text(const QPoint& position) const;
 
         // Fills `menu` with the value formats, the text encodings and the
         // text-column toggle, checked against the document's state, and wires
@@ -87,7 +92,9 @@ namespace slopkit::ui::components
         void paintEvent(QPaintEvent* event) override;
         void wheelEvent(QWheelEvent* event) override;
         void keyPressEvent(QKeyEvent* event) override;
+        void mouseMoveEvent(QMouseEvent* event) override;
         void mouseDoubleClickEvent(QMouseEvent* event) override;
+        void leaveEvent(QEvent* event) override;
         void contextMenuEvent(QContextMenuEvent* event) override;
         void showEvent(QShowEvent* event) override;
         void hideEvent(QHideEvent* event) override;

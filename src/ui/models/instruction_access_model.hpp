@@ -29,7 +29,10 @@ namespace slopkit::ui::models
             column_count,
         };
 
-        InstructionAccessModel(QObject* parent, AddressText format);
+        // `full_format` supplies the untruncated text for the hover; when it is
+        // empty the display formatter is used, so a caller that only has one
+        // formatter keeps working.
+        InstructionAccessModel(QObject* parent, AddressText format, AddressText full_format = {});
 
         void set(std::vector<ui::ResolvedAccess> accesses);
 
@@ -55,6 +58,7 @@ namespace slopkit::ui::models
         };
 
         AddressText      format_;
+        AddressText      full_format_;
         std::vector<Row> rows_;
     };
 

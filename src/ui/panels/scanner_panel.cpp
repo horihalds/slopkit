@@ -24,17 +24,6 @@ namespace slopkit::ui::panels
 
     namespace
     {
-        // Shortens a long module name, keeping its head and tail readable.
-        QString elide_name(const QString& name, int max_chars)
-        {
-            if (name.size() <= max_chars)
-            {
-                return name;
-            }
-            const int keep = (max_chars - 3) / 2;
-            return name.left(keep) + QStringLiteral("...") + name.right(max_chars - 3 - keep);
-        }
-
         // The alignment the fast scan uses when the field is left blank.
         std::size_t default_alignment(scan::ValueType type) noexcept
         {
@@ -519,6 +508,7 @@ namespace slopkit::ui::panels
         module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(scan::kMaxUserAddress), Qt::UserRole + 1);
         module_combo_->setCurrentIndex(0);
         module_combo_->setEnabled(false);
+        module_combo_->setToolTip(tr("Whole process or a single loaded module"));
         range_updating_ = false;
 
         emit memoryMapApplied({});
@@ -568,15 +558,18 @@ namespace slopkit::ui::panels
         {
             const std::uint64_t start = module->base;
             const std::uint64_t end   = module->base + module->size;
-            module_combo_->addItem(elide_name(to_qstring(module->name), 48));
+            // The shared shortening rule (docs/UI_DESIGN.md): the entry paints
+            // the label, its tooltip carries the full name.
+            module_combo_->addItem(ui::elide_module_name(module->name));
             const int row = module_combo_->count() - 1;
             module_combo_->setItemData(row, QVariant::fromValue<qulonglong>(start), Qt::UserRole);
             module_combo_->setItemData(row, QVariant::fromValue<qulonglong>(end), Qt::UserRole + 1);
-            module_combo_->setItemData(row, to_qstring(module->path), Qt::ToolTipRole);
+            module_combo_->setItemData(row, to_qstring(module->name), Qt::ToolTipRole);
         }
 
         module_combo_->setCurrentIndex(0);
         module_combo_->setEnabled(true);
+        module_combo_->setToolTip(tr("Whole process or a single loaded module"));
         range_updating_ = false;
     }
 
@@ -592,6 +585,17 @@ namespace slopkit::ui::panels
         if (!start.isValid() || !end.isValid())
         {
             return;
+        }
+
+        // The collapsed box reveals the selected module's full name on hover;
+        // "All memory" keeps the generic hint.
+        if (index == 0)
+        {
+            module_combo_->setToolTip(tr("Whole process or a single loaded module"));
+        }
+        else
+        {
+            module_combo_->setToolTip(module_combo_->itemData(index, Qt::ToolTipRole).toString());
         }
         apply_range(start.toULongLong(), end.toULongLong());
     }

@@ -5,6 +5,7 @@
 #include <iterator>
 
 #include "scan/value.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui
 {
@@ -44,6 +45,33 @@ namespace slopkit::ui
         }
     } // namespace
 
+    QString elide_module_name(std::string_view name)
+    {
+        // Split at the last '.' that is not the first character; a leading dot
+        // is part of the name, so `.hidden` has no extension.
+        const std::size_t      dot           = name.rfind('.');
+        const bool             has_extension = dot != std::string_view::npos && dot != 0;
+        const std::string_view stem          = has_extension ? name.substr(0, dot) : name;
+        if (stem.size() <= kModuleNameBudget)
+        {
+            return to_qstring(name);
+        }
+
+        QString label = to_qstring(stem.substr(0, kModuleNameHead));
+        label += QStringLiteral("...");
+        label += to_qstring(stem.substr(stem.size() - kModuleNameTail));
+        if (has_extension)
+        {
+            label += to_qstring(name.substr(dot));
+        }
+        return label;
+    }
+
+    std::string_view ModuleSpan::label() const
+    {
+        return display.empty() ? std::string_view(name) : std::string_view(display);
+    }
+
     void ModuleSpans::set_modules(std::span<const process::ModuleInfo> modules)
     {
         spans_.clear();
@@ -56,8 +84,12 @@ namespace slopkit::ui
             {
                 continue;
             }
-            spans_.push_back(
-                ModuleSpan {module_label(module), module.base, module.base + module.size, &module == main});
+            const std::string label = module_label(module);
+            spans_.push_back(ModuleSpan {label,
+                                         elide_module_name(label).toStdString(),
+                                         module.base,
+                                         module.base + module.size,
+                                         &module == main});
         }
         std::ranges::sort(spans_, {}, &ModuleSpan::base);
         for (std::size_t index = 0; index < spans_.size(); ++index)
@@ -127,8 +159,13 @@ namespace slopkit::ui
     QString format_module_relative(const ModuleSpan& span, std::uint64_t address)
     {
         const std::uint64_t rva = address >= span.base ? address - span.base : 0;
-        return QString::fromUtf8(span.name.data(), static_cast<qsizetype>(span.name.size())) + QLatin1Char('+')
-             + QString::number(rva, 16).toUpper();
+        return to_qstring(span.label()) + QLatin1Char('+') + QString::number(rva, 16).toUpper();
+    }
+
+    QString format_module_relative_full(const ModuleSpan& span, std::uint64_t address)
+    {
+        const std::uint64_t rva = address >= span.base ? address - span.base : 0;
+        return to_qstring(span.name) + QLatin1Char('+') + QString::number(rva, 16).toUpper();
     }
 
     QString format_absolute(std::uint64_t address)
@@ -155,6 +192,30 @@ namespace slopkit::ui
         if (const auto relative = module_relative_text(mode, spans, address); relative.has_value())
         {
             return *relative;
+        }
+        return format_absolute(address);
+    }
+
+    QString format_pane_address_full(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)
+    {
+        if (mode == AddressMode::module_relative)
+        {
+            if (const ModuleSpan* span = spans.containing(address); span != nullptr)
+            {
+                return format_module_relative_full(*span, address);
+            }
+        }
+        return format_padded_hex(address);
+    }
+
+    QString format_cell_address_full(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)
+    {
+        if (mode == AddressMode::module_relative)
+        {
+            if (const ModuleSpan* span = spans.containing(address); span != nullptr)
+            {
+                return format_module_relative_full(*span, address);
+            }
         }
         return format_absolute(address);
     }

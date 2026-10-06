@@ -91,9 +91,28 @@ TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
     }
 }
 
+TEST_CASE("long module names are shortened before the extension", "[ui]")
+{
+    using slopkit::ui::elide_module_name;
+
+    // The acceptance example: first 6 and last 5 of the stem, extension kept.
+    CHECK(elide_module_name("DyingLightGame_TheBeast_x64_rwdi.exe") == QStringLiteral("DyingL..._rwdi.exe"));
+    // At the 16-character budget exactly the name is unchanged; 17 is shortened.
+    CHECK(elide_module_name("SixteenCharsHere.dll") == QStringLiteral("SixteenCharsHere.dll"));
+    CHECK(elide_module_name("SeventeenCharsHerr.dll") == QStringLiteral("Sevent...sHerr.dll"));
+    // No dot at all: the whole name is the stem.
+    CHECK(elide_module_name("a_very_long_module_name_without_dot") == QStringLiteral("a_very...t_dot"));
+    // A leading dot is part of the name, not an extension.
+    CHECK(elide_module_name(".hidden") == QStringLiteral(".hidden"));
+    CHECK(elide_module_name(".a_very_long_hidden_file") == QStringLiteral(".a_ver..._file"));
+    // A short name keeps its extension unchanged.
+    CHECK(elide_module_name("libc.so.6") == QStringLiteral("libc.so.6"));
+    CHECK(elide_module_name("") == QString());
+}
+
 TEST_CASE("module-relative addresses render as name+HEX", "[ui]")
 {
-    const slopkit::ui::ModuleSpan span {"app", 0x1000, 0x2000};
+    const slopkit::ui::ModuleSpan span {"app", {}, 0x1000, 0x2000};
 
     CHECK(slopkit::ui::format_module_relative(span, 0x1000) == QStringLiteral("app+0"));
     CHECK(slopkit::ui::format_module_relative(span, 0x1040) == QStringLiteral("app+40"));
@@ -167,6 +186,48 @@ TEST_CASE("module-relative text falls back in absolute mode and outside spans", 
     slopkit::ui::ModuleSpans empty;
     CHECK_FALSE(
         slopkit::ui::module_relative_text(slopkit::ui::AddressMode::module_relative, empty, 0x1040).has_value());
+}
+
+TEST_CASE("a shortened module label still has an untruncated spelling", "[ui]")
+{
+    const std::string                               long_name = "DyingLightGame_TheBeast_x64_rwdi.exe";
+    const std::vector<slopkit::process::ModuleInfo> modules {module_image(long_name, 0x1000, 0x10000)};
+    slopkit::ui::ModuleSpans                        spans;
+    spans.set_modules(modules);
+
+    const slopkit::ui::ModuleSpan* span = spans.containing(0x1000 + 0x1A2B);
+    REQUIRE(span != nullptr);
+    // The stored name is untouched, only the label is shortened.
+    CHECK(span->name == long_name);
+    CHECK(span->label() == "DyingL..._rwdi.exe");
+
+    // Every rendered form shorts the name; the full forms keep it.
+    CHECK(slopkit::ui::format_module_relative(*span, 0x1000 + 0x1A2B) == QStringLiteral("DyingL..._rwdi.exe+1A2B"));
+    CHECK(slopkit::ui::format_module_relative_full(*span, 0x1000 + 0x1A2B)
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+1A2B"));
+    CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
+          == QStringLiteral("DyingL..._rwdi.exe+1A2B"));
+    CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
+          == QStringLiteral("DyingL..._rwdi.exe+1A2B"));
+    CHECK(slopkit::ui::format_pane_address_full(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+1A2B"));
+    CHECK(slopkit::ui::format_cell_address_full(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+1A2B"));
+}
+
+TEST_CASE("a full module address still resolves when pasted back", "[ui]")
+{
+    const std::vector<slopkit::process::ModuleInfo> modules {
+        module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x10000)};
+    slopkit::ui::ModuleSpans spans;
+    spans.set_modules(modules);
+
+    const QString full =
+        slopkit::ui::format_cell_address_full(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B);
+    const std::string text = full.toStdString();
+    CHECK(slopkit::ui::parse_address_text(text, spans) == std::optional<std::uint64_t> {0x1000 + 0x1A2B});
+    // The shortened spelling is display-only and never resolves.
+    CHECK_FALSE(slopkit::ui::parse_address_text("DyingL..._rwdi.exe+1A2B", spans).has_value());
 }
 
 TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")

@@ -4,6 +4,8 @@
 #include <vector>
 
 #include "debug/backend.hpp"
+#include "support/fake_process.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/models/call_stack_model.hpp"
 
 using slopkit::debug::Frame;
@@ -36,6 +38,29 @@ TEST_CASE("call stack model renders frames in the current mode", "[ui][models][c
 
     model.clear();
     CHECK(model.rowCount() == 0);
+}
+
+TEST_CASE("call stack model answers the full-text role with the untruncated address", "[ui][models][call_stack]")
+{
+    CallStackModel                                  model;
+    slopkit::ui::ModuleSpans                        spans;
+    const std::vector<slopkit::process::ModuleInfo> modules {
+        slopkit::test::module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x10000)};
+    spans.set_modules(modules);
+
+    model.set_frames(
+        std::vector {
+            Frame {0x1010, 0}
+    },
+        spans,
+        slopkit::ui::AddressMode::module_relative);
+
+    const QModelIndex address = model.index(0, CallStackModel::address);
+    CHECK(model.data(address, Qt::DisplayRole).toString() == QStringLiteral("DyingL..._rwdi.exe+10"));
+    CHECK(model.data(address, slopkit::ui::widgets::kFullTextRole).toString()
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+10"));
+    // Only the address column carries the full text.
+    CHECK(model.data(model.index(0, CallStackModel::frame), slopkit::ui::widgets::kFullTextRole).toString().isEmpty());
 }
 
 TEST_CASE("call stack model keeps only the top frame of an empty stack", "[ui][models][call_stack]")

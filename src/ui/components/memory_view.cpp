@@ -19,6 +19,7 @@
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QShowEvent>
+#include <QToolTip>
 #include <QWheelEvent>
 
 #include "scan/types.hpp"
@@ -74,6 +75,7 @@ namespace slopkit::ui::components
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
         viewport()->setFont(mono_font());
+        viewport()->setMouseTracking(true);
 
         recompute_layout();
 
@@ -159,6 +161,27 @@ namespace slopkit::ui::components
     QString MemoryView::cell_text(std::uint64_t address) const
     {
         return document_.cell(address).text;
+    }
+
+    QString MemoryView::hover_full_text(const QPoint& position) const
+    {
+        if (row_height_ <= 0 || position.y() < kMargin + header_height_)
+        {
+            return {}; // The header band holds no row.
+        }
+        const int row = (position.y() - kMargin - header_height_) / row_height_;
+        if (row < 0 || static_cast<std::size_t>(row) >= visible_rows_)
+        {
+            return {}; // Below every painted row.
+        }
+        // Only the address column shortens; the cells are values, not addresses.
+        if (position.x() < kMargin || position.x() >= kMargin + address_width_)
+        {
+            return {};
+        }
+        const std::uint64_t row_address = first_byte_ + static_cast<std::uint64_t>(row) * bytes_per_row_;
+        const QString       full        = document_.full_address_text(row_address);
+        return full != document_.address_text(row_address) ? full : QString {};
     }
 
     QString MemoryView::column_offset_text(std::size_t column) const
@@ -255,6 +278,7 @@ namespace slopkit::ui::components
             // Saturate at the top of the user address space so the add cannot wrap.
             first_byte_ = scan::kMaxUserAddress - first_byte_ < step ? scan::kMaxUserAddress : first_byte_ + step;
         }
+        QToolTip::hideText(); // The row under the cursor is about to move.
         close_editor();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
         viewport()->update();
@@ -264,6 +288,7 @@ namespace slopkit::ui::components
     {
         // The top address is kept exactly as requested, clamped to the ceiling.
         first_byte_ = std::min(address, scan::kMaxUserAddress);
+        QToolTip::hideText();
         close_editor();
         scroller_.recenter();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
@@ -345,6 +370,26 @@ namespace slopkit::ui::components
         QAbstractScrollArea::hideEvent(event);
         document_.set_visible(false);
         close_editor();
+    }
+
+    void MemoryView::mouseMoveEvent(QMouseEvent* event)
+    {
+        const QPoint position = event->position().toPoint();
+        if (const QString full = hover_full_text(position); !full.isEmpty())
+        {
+            QToolTip::showText(event->globalPosition().toPoint(), full, viewport());
+        }
+        else
+        {
+            QToolTip::hideText();
+        }
+        QAbstractScrollArea::mouseMoveEvent(event);
+    }
+
+    void MemoryView::leaveEvent(QEvent* event)
+    {
+        QToolTip::hideText();
+        QAbstractScrollArea::leaveEvent(event);
     }
 
     std::optional<MemoryView::Hit> MemoryView::hit_test(const QPoint& position) const

@@ -41,6 +41,7 @@ namespace slopkit::ui::models
 
     private:
         std::vector<QString> address_;
+        std::vector<QString> full_; // the untruncated module+RVA, for hovers
         std::vector<QString> absolute_;
     };
 
