@@ -477,13 +477,15 @@ TEST_CASE("the disassembly document splits a module-relative line into coloured 
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
 
     const auto jump = fixture.document.row(0);
-    REQUIRE(jump.segments.size() == 3);
+    REQUIRE(jump.segments.size() == 4);
     CHECK(jump.segments[0].text == QStringLiteral("JZ "));
     CHECK(jump.segments[0].kind == SegmentKind::plain);
     CHECK(jump.segments[1].text == QStringLiteral("app"));
     CHECK(jump.segments[1].kind == SegmentKind::module);
-    CHECK(jump.segments[2].text == QStringLiteral("+17"));
+    CHECK(jump.segments[2].text == QStringLiteral("+"));
     CHECK(jump.segments[2].kind == SegmentKind::plain);
+    CHECK(jump.segments[3].text == QStringLiteral("17"));
+    CHECK(jump.segments[3].kind == SegmentKind::immediate);
 
     QString joined;
     for (const RowSegment& segment : jump.segments)
@@ -585,7 +587,23 @@ TEST_CASE("the disassembly document renders a memory operand's address through t
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
 
     // kCode + 7 + 0x2F7 = kCode + 0x2FE.
-    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [app+2FE]"));
+    const auto load = fixture.document.row(0);
+    CHECK(load.text == QStringLiteral("MOV RAX, [app+2FE]"));
+    REQUIRE(load.segments.size() == 7);
+    CHECK(load.segments[0].text == QStringLiteral("MOV "));
+    CHECK(load.segments[0].kind == SegmentKind::plain);
+    CHECK(load.segments[1].text == QStringLiteral("RAX"));
+    CHECK(load.segments[1].kind == SegmentKind::cpu_register);
+    CHECK(load.segments[2].text == QStringLiteral(", ["));
+    CHECK(load.segments[2].kind == SegmentKind::plain);
+    CHECK(load.segments[3].text == QStringLiteral("app"));
+    CHECK(load.segments[3].kind == SegmentKind::module);
+    CHECK(load.segments[4].text == QStringLiteral("+"));
+    CHECK(load.segments[4].kind == SegmentKind::plain);
+    CHECK(load.segments[5].text == QStringLiteral("2FE"));
+    CHECK(load.segments[5].kind == SegmentKind::immediate);
+    CHECK(load.segments[6].text == QStringLiteral("]"));
+    CHECK(load.segments[6].kind == SegmentKind::plain);
 
     fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [00000000000022FE]"));

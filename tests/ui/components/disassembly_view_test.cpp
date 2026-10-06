@@ -184,6 +184,37 @@ TEST_CASE("the disassembly view colours instruction runs from the theme", "[ui]"
     view.hide();
 }
 
+TEST_CASE("the disassembly view colours a module-relative rva as an immediate", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    ViewFixture fixture;
+    fixture.put(kCode, {0x74, 0x15, 0xC3}); // JZ +0x15 -> kCode + 0x17; RET
+
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const auto jump = view.row_segments(0);
+    REQUIRE(jump.size() == 4);
+    CHECK(jump[0].text == QStringLiteral("JZ "));
+    CHECK(jump[0].colour == slopkit::ui::dark_theme().text);
+    CHECK(jump[1].text == QStringLiteral("app"));
+    CHECK(jump[1].colour == slopkit::ui::dark_theme().syntax_module);
+    CHECK(jump[2].text == QStringLiteral("+"));
+    CHECK(jump[2].colour == slopkit::ui::dark_theme().text);
+    CHECK(jump[3].text == QStringLiteral("17"));
+    CHECK(jump[3].colour == slopkit::ui::dark_theme().syntax_immediate);
+    CHECK(view.row_text(0) == QStringLiteral("JZ app+17"));
+
+    view.hide();
+}
+
 TEST_CASE("a patched row keeps the warning colour on its plain runs", "[ui]")
 {
     application();

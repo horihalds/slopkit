@@ -826,7 +826,8 @@ namespace slopkit::ui::components
     {
         // One classified slice of `instruction.text`: where it sits in the raw
         // text and the run(s) that replace it. An address inside a module becomes
-        // a module-name run plus a plain `+RVA` run; every other slice is one run.
+        // a module-name run, a plain `+` and an immediate `RVA` run; every other
+        // slice is one run.
         struct Mark
         {
             std::size_t             offset {};
@@ -864,11 +865,18 @@ namespace slopkit::ui::components
 
             const ui::ModuleSpan*   span        = module_spans_.containing(ref.address);
             const qsizetype         name_length = static_cast<qsizetype>(span != nullptr ? span->name.size() : 0);
+            const QString           offset_text = relative->mid(name_length); // "+RVA"
             std::vector<RowSegment> runs;
             runs.push_back({relative->left(name_length), SegmentKind::module});
-            if (const QString offset_text = relative->mid(name_length); !offset_text.isEmpty())
+            if (!offset_text.isEmpty())
             {
-                runs.push_back({offset_text, SegmentKind::plain});
+                // The separator stays in the row's own colour and the RVA prints
+                // as the number it is, matching a memory displacement.
+                runs.push_back({offset_text.left(1), SegmentKind::plain});
+                if (const QString rva = offset_text.mid(1); !rva.isEmpty())
+                {
+                    runs.push_back({rva, SegmentKind::immediate});
+                }
             }
             marks.push_back({ref.offset, ref.length, std::move(runs)});
         }

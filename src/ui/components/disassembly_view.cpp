@@ -755,6 +755,10 @@ namespace slopkit::ui::components
                     x += painter.fontMetrics().horizontalAdvance(run.text);
                 }
             }
+            // The run walk leaves the pen on its last colour; the annotation and
+            // the bytes column are not syntax-highlighted, so restore the row's
+            // own colour before drawing them.
+            painter.setPen(base);
             if (const QString marker = document_.row_annotation(index); !marker.isEmpty())
             {
                 const int used = painter.fontMetrics().horizontalAdvance(row.text) + kMarkerGap;
