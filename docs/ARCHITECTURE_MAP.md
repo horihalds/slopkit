@@ -47,7 +47,7 @@ docs that hold the detail behind this map.
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 | `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `fonts/*.ttf` with `OFL.txt` |
-| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs) and `EmbedFont.cmake` (embeds fonts) |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts) and `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars) |
 | `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
 | `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |

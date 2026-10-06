@@ -28,6 +28,15 @@ Targets compile for the host CPU's full instruction set by default
 (`-march=native -mtune=native`); pass `-DSLOPKIT_NATIVE=OFF` to CMake for a
 portable build targeting the compiler's default baseline.
 
+Debug info is compressed so the artifacts stay small while remaining debuggable:
+`-gz=zstd` is preferred and falls back to `-gz=zlib` when the host debugger
+cannot read zstd. Pass `-DSLOPKIT_COMPRESS_DEBUG=OFF` for uncompressed DWARF.
+`tools/install.sh` additionally strips the installed executables and plugins,
+moving their debug info into sidecars (a sibling `<name>.debug` for the
+executables, a `.debug/` sub-directory for the plugins), so `gdb` on an installed
+binary still resolves source lines. Pass `-DSLOPKIT_STRIP_INSTALL=OFF` to install
+them verbatim.
+
 ## Run the tests
 
 The suite is Catch2, wired into CTest:

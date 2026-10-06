@@ -29,11 +29,87 @@ endif()
 # build targeting the compiler's default baseline.
 option(SLOPKIT_NATIVE "Build for the host CPU with -march/-mtune=native" ON)
 
+# --- debug info ------------------------------------------------------------
+#
+# Default builds use RelWithDebInfo, so every artifact carries full DWARF and
+# debug info dominates its on-disk size (~95%). Compressing the debug sections
+# shrinks each one by roughly 60% while `readelf`/`gdb` read them transparently.
+# zstd compresses best but needs a debugger whose BFD was built with zstd; zlib
+# is the universal fallback, and a compiler that supports neither keeps today's
+# uncompressed sections. `-DSLOPKIT_COMPRESS_DEBUG=OFF` restores them.
+option(SLOPKIT_COMPRESS_DEBUG "Compress DWARF debug sections (-gz)" ON)
+
+set(SLOPKIT_DEBUG_COMPRESS_FLAG "")
+if(SLOPKIT_COMPRESS_DEBUG AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-gz=zstd" SLOPKIT_CXX_HAS_GZ_ZSTD)
+    check_cxx_compiler_flag("-gz=zlib" SLOPKIT_CXX_HAS_GZ_ZLIB)
+    if(SLOPKIT_CXX_HAS_GZ_ZSTD)
+        set(SLOPKIT_DEBUG_COMPRESS_FLAG "-gz=zstd")
+    elseif(SLOPKIT_CXX_HAS_GZ_ZLIB)
+        set(SLOPKIT_DEBUG_COMPRESS_FLAG "-gz=zlib")
+    endif()
+
+    # A compiler accepts `-gz=zstd` even when the debugger's BFD was built
+    # without zstd, and gdb then refuses to read the file at all. Keep zstd only
+    # when the available debugger can actually read it, otherwise fall back to
+    # zlib (or to no compression when even that is unavailable).
+    if(SLOPKIT_DEBUG_COMPRESS_FLAG STREQUAL "-gz=zstd")
+        find_program(SLOPKIT_GDB_EXECUTABLE NAMES gdb)
+        if(SLOPKIT_GDB_EXECUTABLE)
+            set(_slopkit_probe_src "${CMAKE_BINARY_DIR}/CMakeFiles/slopkit_debug_probe.cpp")
+            set(_slopkit_probe_obj "${_slopkit_probe_src}.o")
+            file(WRITE "${_slopkit_probe_src}" "int slopkit_debug_probe;\n")
+            execute_process(
+                COMMAND "${CMAKE_CXX_COMPILER}" -g -gz=zstd -c "${_slopkit_probe_src}" -o "${_slopkit_probe_obj}"
+                RESULT_VARIABLE _slopkit_probe_compiled
+                OUTPUT_QUIET ERROR_QUIET)
+            if(_slopkit_probe_compiled EQUAL 0)
+                execute_process(
+                    COMMAND "${SLOPKIT_GDB_EXECUTABLE}" -batch -ex "file ${_slopkit_probe_obj}" -ex quit
+                    RESULT_VARIABLE _slopkit_probe_read
+                    OUTPUT_QUIET ERROR_VARIABLE _slopkit_probe_err)
+                if(_slopkit_probe_err MATCHES "zstd")
+                    if(SLOPKIT_CXX_HAS_GZ_ZLIB)
+                        set(SLOPKIT_DEBUG_COMPRESS_FLAG "-gz=zlib")
+                    else()
+                        set(SLOPKIT_DEBUG_COMPRESS_FLAG "")
+                    endif()
+                endif()
+            endif()
+            file(REMOVE "${_slopkit_probe_src}" "${_slopkit_probe_obj}")
+        endif()
+    endif()
+endif()
+
+# `slopkit_native` carries the flags every target shares. The compression flag
+# is applied independently of `SLOPKIT_NATIVE`, so a portable build still gets
+# compressed debug info.
 add_library(slopkit_native INTERFACE)
 if(SLOPKIT_NATIVE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(slopkit_native INTERFACE
         $<$<COMPILE_LANGUAGE:CXX>:-march=native;-mtune=native>)
 endif()
+if(SLOPKIT_DEBUG_COMPRESS_FLAG)
+    target_compile_options(slopkit_native INTERFACE
+        $<$<COMPILE_LANGUAGE:CXX>:${SLOPKIT_DEBUG_COMPRESS_FLAG}>)
+    # The linker defaults to uncompressed debug sections, so the flag must be on
+    # the link line too or it would expand the compressed input sections again.
+    target_link_options(slopkit_native INTERFACE ${SLOPKIT_DEBUG_COMPRESS_FLAG})
+endif()
+
+# --- install stripping -----------------------------------------------------
+#
+# `build/` keeps fully debuggable binaries; the install step shrinks them. When
+# `SLOPKIT_STRIP_INSTALL` is ON and `objcopy` (which ships with binutils) is
+# present, `slopkit_install_stripped` moves each installed file's debug info into
+# a sibling `<name>.debug` sidecar and points the file at it, so the installed
+# `slopkit` drops from ~28 MB to a few MB while `gdb` still resolves source lines
+# through the sidecar. `-DSLOPKIT_STRIP_INSTALL=OFF` restores today's unstripped
+# install.
+option(SLOPKIT_STRIP_INSTALL "Strip installed binaries and install .debug sidecars" ON)
+find_program(SLOPKIT_OBJCOPY_EXECUTABLE NAMES objcopy)
+include(${CMAKE_SOURCE_DIR}/cmake/StripDebugInfo.cmake)
 
 # --- install layout --------------------------------------------------------
 #
@@ -367,16 +443,19 @@ catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offsc
 configure_file(${CMAKE_SOURCE_DIR}/assets/slopkit.desktop.in
     ${CMAKE_BINARY_DIR}/slopkit.desktop @ONLY)
 
-install(TARGETS slopkit RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# `slopkit_install_stripped` drops each installed file's debug info into a
+# sibling `.debug` sidecar; see cmake/StripDebugInfo.cmake and
+# `SLOPKIT_STRIP_INSTALL`.
+slopkit_install_stripped(slopkit ${CMAKE_INSTALL_BINDIR} RUNTIME)
 
 # The practice target lands beside slopkit so the Help action resolves it as a
 # sibling binary.
-install(TARGETS slopkit-sandbox RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+slopkit_install_stripped(slopkit-sandbox ${CMAKE_INSTALL_BINDIR} RUNTIME)
 
 # Plugins go under the library dir, where the installed binary looks for them
 # (see SLOPKIT_PLUGIN_RELATIVE_DIR above).
-install(TARGETS slopkit-linux_proc slopkit-wine_proton
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins)
+slopkit_install_stripped(slopkit-linux_proc ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins LIBRARY)
+slopkit_install_stripped(slopkit-wine_proton ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins LIBRARY)
 
 install(FILES ${CMAKE_BINARY_DIR}/slopkit.desktop
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
