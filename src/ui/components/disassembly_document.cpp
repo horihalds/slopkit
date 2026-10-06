@@ -11,17 +11,13 @@
 #include "core/log_categories.hpp"
 #include "disasm/assembler.hpp"
 #include "scan/types.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::components
 {
 
     namespace
     {
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-
         // The requested read may not run past the canonical user-space ceiling.
         std::size_t clamp_size(std::uint64_t address, std::uint64_t size) noexcept
         {

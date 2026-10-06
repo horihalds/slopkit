@@ -27,6 +27,7 @@
 #include "core/version.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::dialogs
 {
@@ -43,10 +44,6 @@ namespace slopkit::ui::dialogs
             return error == std::errc {} && end == text.data() + text.size();
         }
 
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
     } // namespace
 
     SettingsDialog::SettingsDialog(plugin::PluginHost& host,

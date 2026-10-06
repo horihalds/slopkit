@@ -12,6 +12,7 @@
 
 #include "scan/value.hpp"
 #include "ui/fonts.hpp"
+#include "ui/text.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::models
@@ -19,11 +20,6 @@ namespace slopkit::ui::models
 
     namespace
     {
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-
         int compare_bytes(const std::vector<std::byte>& lhs, const std::vector<std::byte>& rhs)
         {
             return lhs < rhs ? -1 : (rhs < lhs ? 1 : 0);

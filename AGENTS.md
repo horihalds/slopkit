@@ -4,6 +4,16 @@ This file is the AI agent's operating guide for this repository. It records the
 rules and conventions the project owner has mandated, and the agent must follow
 them for every task in this repository.
 
+## Architecture map
+
+- Read [`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md) before starting any
+  task. It lists where components live, the build/test commands and the project
+  conventions, so you can find the right files without searching the codebase
+  broadly; only search widely when the map does not answer where something is.
+- Keep the map up to date in the same task whenever you add, remove, rename or
+  move files or components, or change a component's responsibility (see
+  "Maintaining this map" inside it).
+
 ## Project & toolchain
 
 - This project is a C++23 project.

@@ -20,6 +20,7 @@
 #include "core/log_categories.hpp"
 #include "disasm/decoder.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::dialogs
 {
@@ -51,11 +52,6 @@ namespace slopkit::ui::dialogs
         // New rows decoded per update, so a hit storm never queues an unbounded
         // read.
         constexpr std::size_t kMaxRowsPerRead = 32;
-
-        [[nodiscard]] QString to_qstring(const std::string& text)
-        {
-            return QString::fromStdString(text);
-        }
 
         // The hit's RIP is one past the accessing instruction, so the bytes at
         // RIP are read backwards and the longest decode that ends exactly at RIP

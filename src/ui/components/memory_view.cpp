@@ -37,11 +37,6 @@ namespace slopkit::ui::components
         constexpr int kTextGap         = 10;
         constexpr int kTextPadding     = 8;
 
-        // The scrollbar is a relative band: the value is parked at the middle
-        // and each move is read as a row delta, then re-centred, so a 64-bit
-        // address is never squeezed into the scrollbar's int range.
-        constexpr int kScrollNeutral = 1'000'000;
-
         // A worst-case cell text for the current format, so the auto-fitted
         // cells stay wide enough for every value the format can produce.
         QString cell_sample(ValueFormat format)
@@ -68,7 +63,11 @@ namespace slopkit::ui::components
     } // namespace
 
     MemoryView::MemoryView(MemoryViewDocument& document, QWidget* parent)
-        : QAbstractScrollArea(parent), document_(document)
+        : QAbstractScrollArea(parent), document_(document), scroller_(*this,
+                                                                      [this](long long delta)
+                                                                      {
+                                                                          scroll_rows(delta);
+                                                                      })
     {
         setObjectName(QStringLiteral("memory_view"));
         setFocusPolicy(Qt::StrongFocus);
@@ -77,7 +76,6 @@ namespace slopkit::ui::components
         viewport()->setFont(mono_font());
 
         recompute_layout();
-        setup_scrollbar();
 
         connect(&document_,
                 &MemoryViewDocument::repaintRequested,
@@ -235,47 +233,8 @@ namespace slopkit::ui::components
         }
         layout_ready_ = true;
 
-        if (verticalScrollBar() != nullptr)
-        {
-            verticalScrollBar()->setPageStep(static_cast<int>(visible_rows_));
-        }
+        scroller_.note_visible_rows(visible_rows_);
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
-    }
-
-    void MemoryView::setup_scrollbar()
-    {
-        QScrollBar* bar = verticalScrollBar();
-        bar->setRange(0, 2 * kScrollNeutral);
-        bar->setSingleStep(1);
-        bar->setPageStep(static_cast<int>(visible_rows_));
-        bar->setTracking(true);
-        {
-            const QSignalBlocker block(bar);
-            bar->setValue(kScrollNeutral);
-        }
-        connect(bar, &QScrollBar::valueChanged, this, &MemoryView::on_scroll_value);
-    }
-
-    void MemoryView::recenter_scrollbar()
-    {
-        QScrollBar* bar = verticalScrollBar();
-        if (bar == nullptr)
-        {
-            return;
-        }
-        const QSignalBlocker block(bar);
-        bar->setValue(kScrollNeutral);
-    }
-
-    void MemoryView::on_scroll_value(int value)
-    {
-        const int delta = value - kScrollNeutral;
-        if (delta == 0)
-        {
-            return;
-        }
-        recenter_scrollbar();
-        scroll_rows(delta);
     }
 
     void MemoryView::scroll_rows(long long delta)
@@ -306,7 +265,7 @@ namespace slopkit::ui::components
         // The top address is kept exactly as requested, clamped to the ceiling.
         first_byte_ = std::min(address, scan::kMaxUserAddress);
         close_editor();
-        recenter_scrollbar();
+        scroller_.recenter();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
         viewport()->update();
     }
@@ -325,14 +284,9 @@ namespace slopkit::ui::components
     void MemoryView::navigate_to(std::uint64_t address)
     {
         const std::uint64_t target = std::min(address, scan::kMaxUserAddress);
-        if (target == first_byte_)
+        if (!history_.record(first_byte_, target))
         {
             return;
-        }
-        history_.push_back(first_byte_);
-        if (history_.size() > kHistoryLimit)
-        {
-            history_.erase(history_.begin());
         }
         set_first_byte(address);
         emit navigated();
@@ -340,20 +294,19 @@ namespace slopkit::ui::components
 
     bool MemoryView::back()
     {
-        if (history_.empty())
+        const std::optional<std::uint64_t> previous = history_.back();
+        if (!previous.has_value())
         {
             return false;
         }
-        const std::uint64_t previous = history_.back();
-        history_.pop_back();
-        set_first_byte(previous);
+        set_first_byte(*previous);
         emit navigated();
         return true;
     }
 
     bool MemoryView::can_go_back() const noexcept
     {
-        return !history_.empty();
+        return history_.can_go_back();
     }
 
     void MemoryView::clear_history() noexcept

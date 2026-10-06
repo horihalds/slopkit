@@ -13,17 +13,13 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::components
 {
 
     namespace
     {
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-
         bool is_printable(std::byte value)
         {
             const auto character = std::to_integer<unsigned>(value);

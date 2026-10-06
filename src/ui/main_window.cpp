@@ -41,6 +41,7 @@
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
 #include "ui/settings.hpp"
+#include "ui/text.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui
@@ -48,12 +49,6 @@ namespace slopkit::ui
 
     namespace
     {
-        // std::string_view -> QString for the status messages.
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-
         // The production attach question of a practice-target launch: themed,
         // question icon, Yes/No with Yes as the default, since the user has just
         // asked for a target to practise on.

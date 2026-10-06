@@ -216,6 +216,22 @@ target_link_libraries(slopkit PRIVATE slopkit_platform)
 # a dlopen'ed plugin resolve them to this process's single logger.
 set_target_properties(slopkit PROPERTIES ENABLE_EXPORTS ON)
 
+# --- plugin support library ------------------------------------------------
+
+# The ABI plumbing both bundled plugins share: the session set, the string
+# arena, the error mapping, the vtable and all 21 entry functions. It is a static
+# library so each plugin links its own copy; the loader dlopen's plugins with
+# RTLD_LOCAL, so the per-plugin state (host services, string arena, session
+# registry) stays private to each library instance and two plugins never share
+# it. `entry<Profile>()` is the one-liner a plugin's entry point expands to.
+file(GLOB_RECURSE SLOPKIT_PLUGIN_SUPPORT_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_SOURCE_DIR}/src/plugins/support/*.cpp)
+add_library(slopkit_plugin_support STATIC ${SLOPKIT_PLUGIN_SUPPORT_SOURCES})
+target_include_directories(slopkit_plugin_support PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(slopkit_plugin_support PRIVATE -Wall -Wextra -fvisibility=hidden)
+set_target_properties(slopkit_plugin_support PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(slopkit_plugin_support PUBLIC slopkit_platform)
+
 # --- plugins ---------------------------------------------------------------
 
 set(SLOPKIT_PLUGIN_OUTPUT_DIR ${CMAKE_BINARY_DIR}/plugins)
@@ -233,10 +249,10 @@ function(add_slopkit_plugin target)
 endfunction()
 
 add_slopkit_plugin(slopkit-linux_proc ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/linux_proc/linux_proc_plugin.cpp)
-target_link_libraries(slopkit-linux_proc PRIVATE slopkit_platform)
+target_link_libraries(slopkit-linux_proc PRIVATE slopkit_plugin_support)
 
 add_slopkit_plugin(slopkit-wine_proton ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/wine_proton/wine_proton_plugin.cpp)
-target_link_libraries(slopkit-wine_proton PRIVATE slopkit_platform)
+target_link_libraries(slopkit-wine_proton PRIVATE slopkit_plugin_support)
 
 # --- tests -----------------------------------------------------------------
 

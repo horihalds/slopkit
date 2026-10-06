@@ -3,9 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <vector>
 
 #include "ui/components/memory_view_document.hpp"
+#include "ui/components/navigation_history.hpp"
+#include "ui/components/neutral_scroller.hpp"
 
 #include <QAbstractScrollArea>
 #include <QRect>
@@ -93,9 +94,6 @@ namespace slopkit::ui::components
         bool eventFilter(QObject* watched, QEvent* event) override;
 
     private:
-        // How many previous top addresses a pane remembers for Back.
-        static constexpr std::size_t kHistoryLimit = 64;
-
         struct Hit
         {
             std::uint64_t address {};
@@ -111,9 +109,6 @@ namespace slopkit::ui::components
         // address is preserved across the re-fit.
         void recompute_layout();
 
-        void setup_scrollbar();
-        void recenter_scrollbar();
-        void on_scroll_value(int value);
         // Moves the top address by whole rows; positive scrolls down. The
         // anchor offset is preserved across the step.
         void scroll_rows(long long delta);
@@ -123,23 +118,25 @@ namespace slopkit::ui::components
 
         MemoryViewDocument& document_;
 
-        std::uint64_t              first_byte_ {0};
-        // The top addresses visited through navigate_to(), oldest first.
-        std::vector<std::uint64_t> history_;
-        std::size_t                bytes_per_row_ {16};
-        std::size_t                visible_rows_ {1};
-        int                        row_height_ {1};
-        int                        header_height_ {1};
-        int                        address_width_ {0};
-        int                        cell_width_ {1};
-        int                        text_width_ {0};
-        bool                       text_column_visible_ {true};
-        bool                       layout_ready_ {false};
+        std::uint64_t     first_byte_ {0};
+        NavigationHistory history_;
+        std::size_t       bytes_per_row_ {16};
+        std::size_t       visible_rows_ {1};
+        int               row_height_ {1};
+        int               header_height_ {1};
+        int               address_width_ {0};
+        int               cell_width_ {1};
+        int               text_width_ {0};
+        bool              text_column_visible_ {true};
+        bool              layout_ready_ {false};
 
         QAction*      goto_action_ {};
         QLineEdit*    editor_ {};
         bool          editing_ {false};
         std::uint64_t edit_address_ {0};
+
+        // Owns the vertical bar and re-centres it after every jump or re-fit.
+        NeutralScroller scroller_;
     };
 
 } // namespace slopkit::ui::components

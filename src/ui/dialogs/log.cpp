@@ -20,17 +20,13 @@
 #include "core/log_categories.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::dialogs
 {
 
     namespace
     {
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-
         QString record_text(const log::Record& record)
         {
             const auto since_epoch =

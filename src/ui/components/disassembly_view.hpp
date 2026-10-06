@@ -2,9 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 #include "ui/components/disassembly_document.hpp"
+#include "ui/components/navigation_history.hpp"
+#include "ui/components/neutral_scroller.hpp"
 
 #include <QAbstractScrollArea>
 #include <QPoint>
@@ -89,9 +90,6 @@ namespace slopkit::ui::components
         void hideEvent(QHideEvent* event) override;
 
     private:
-        // How many previous top addresses a pane remembers for Back.
-        static constexpr std::size_t kHistoryLimit = 64;
-
         // Re-derives the line height, column widths and the row fit, then
         // re-windows the rows.
         void recompute_layout();
@@ -108,9 +106,6 @@ namespace slopkit::ui::components
         // Moves the cursor to the decoded row `index` (clamped) and repaints.
         void scroll_to_row(std::size_t index);
 
-        void setup_scrollbar();
-        void recenter_scrollbar();
-        void on_scroll_value(int value);
         // Moves the top row by whole instructions; positive scrolls down.
         void scroll_rows(long long delta);
         // Steps the whole aligned window by one page (+1 down, -1 up) and seats
@@ -124,19 +119,21 @@ namespace slopkit::ui::components
 
         DisassemblyDocument& document_;
 
-        std::uint64_t              first_address_ {0};
-        // The top addresses visited through navigate_to(), oldest first.
-        std::vector<std::uint64_t> history_;
-        std::size_t                first_row_ {0};
-        std::size_t                visible_rows_ {1};
-        std::size_t                bytes_per_line_ {1};
-        bool                       seat_last_row_ {false};
-        int                        line_height_ {1};
-        int                        header_height_ {1};
-        int                        address_width_ {0};
-        int                        bytes_width_ {1};
+        std::uint64_t     first_address_ {0};
+        NavigationHistory history_;
+        std::size_t       first_row_ {0};
+        std::size_t       visible_rows_ {1};
+        std::size_t       bytes_per_line_ {1};
+        bool              seat_last_row_ {false};
+        int               line_height_ {1};
+        int               header_height_ {1};
+        int               address_width_ {0};
+        int               bytes_width_ {1};
 
         QAction* goto_action_ {};
+
+        // Owns the vertical bar and re-centres it after every jump or re-window.
+        NeutralScroller scroller_;
     };
 
 } // namespace slopkit::ui::components

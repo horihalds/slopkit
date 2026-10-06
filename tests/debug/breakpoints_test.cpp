@@ -93,3 +93,14 @@ TEST_CASE("breakpoint table counts hits and removes entries", "[debug][breakpoin
     CHECK(table.empty());
     CHECK(table.find(*id) == nullptr);
 }
+
+TEST_CASE("hardware_kind maps each breakpoint kind to a debug register kind", "[debug][breakpoints]")
+{
+    using slopkit::debug::hardware_kind;
+    using slopkit::debug::HardwareKind;
+
+    CHECK(hardware_kind(Kind::software) == HardwareKind::execute);
+    CHECK(hardware_kind(Kind::hardware_execute) == HardwareKind::execute);
+    CHECK(hardware_kind(Kind::hardware_write) == HardwareKind::write);
+    CHECK(hardware_kind(Kind::hardware_read_write) == HardwareKind::read_write);
+}

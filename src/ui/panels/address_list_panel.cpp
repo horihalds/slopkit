@@ -25,17 +25,13 @@
 #include "ui/components/message_box.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/table_file.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::panels
 {
 
     namespace
     {
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-
         // A menu entry that stays visible but explains why it is unavailable.
         QAction* disabled_action(QMenu& menu, const QString& text, const QString& reason)
         {

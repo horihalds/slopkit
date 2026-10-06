@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "debug/backend.hpp"
+
 namespace slopkit::debug
 {
 
@@ -24,6 +26,22 @@ namespace slopkit::debug
     [[nodiscard]] constexpr bool is_hardware(Kind kind) noexcept
     {
         return kind != Kind::software;
+    }
+
+    // The debug-register kind a hardware breakpoint maps onto.
+    [[nodiscard]] constexpr HardwareKind hardware_kind(Kind kind) noexcept
+    {
+        switch (kind)
+        {
+        case Kind::hardware_write:
+            return HardwareKind::write;
+        case Kind::hardware_read_write:
+            return HardwareKind::read_write;
+        case Kind::hardware_execute:
+        case Kind::software:
+        default:
+            return HardwareKind::execute;
+        }
     }
 
     // One session breakpoint. `slot` is a software slot id or a DR slot 0-3.

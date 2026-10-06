@@ -65,6 +65,7 @@ configure time and the docdir carries the `README.md`, `docs/` files and font li
 
 ## Documentation
 
+- [`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md) — fast lookup of where components live, the build/test commands and the conventions.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — host/plugin split, the `ProcessAccess` seam, plugin discovery and writing a plugin.
 - [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — UI and design rules for the project.
 - [`docs/LOGGING.md`](docs/LOGGING.md) — logging conventions.

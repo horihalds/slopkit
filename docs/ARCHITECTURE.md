@@ -30,6 +30,13 @@ an out-of-process transport, with no UI change.
 Lower precedence wins, so `wine-proton` is the default target for a Wine process
 that `linux-proc` also claims; the process picker still shows the alternatives.
 
+Both plugins link the shared ABI plumbing in `src/plugins/support/` — the session
+registry, string arena, error mapping, the vtable and all 21 entry functions — and
+supply only a `PluginProfile` (identity, precedence, access methods, claim policy,
+module shaping and foreign-signal policy), so a fix there lands in both. Each
+plugin still keeps its own state because the host `dlopen`s plugins with
+`RTLD_LOCAL`.
+
 ## Discovery
 
 Plugins are discovered at startup in:
@@ -80,14 +87,17 @@ host calls:
   cannot debug
 
 `src/plugin/plugin_api.h` is the authoritative contract, and the bundled plugins
-under `src/plugins/` are the worked example.
+under `src/plugins/` are the worked example. They do not hand-write the vtable:
+each defines a `plugins::support::PluginProfile` and returns
+`plugins::support::entry<kProfile>(host)`, which fills the vtable from the shared
+`slopkit_plugin_support` library.
 
 
 ## The debugger
 
 The debugger is opt-in and is the only `ptrace` user in the project. It sits
 beside the normal access path rather than in it, so the read/write path stays
-`process_vm_*` / procfs exactly as `docs/ANTI_DETECTION.md` describes:
+`process_vm_*` / procfs and the target sees no `TracerPid` while it is read:
 
 - `platform::ptrace` is the only place that calls `ptrace`. Both bundled plugins
   and the test binary link it through `slopkit_platform`.

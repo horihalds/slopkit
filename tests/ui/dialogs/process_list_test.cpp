@@ -162,7 +162,7 @@ TEST_CASE("double-clicking a process row attaches it", "[ui]")
 
     // Double-click the second row: a press parks the index, the double-click
     // activates it.
-    const QModelIndex second = table->model()->index(1, slopkit::ui::dialogs::ProcessListModel::pid);
+    const QModelIndex second = table->model()->index(1, slopkit::ui::models::ProcessListModel::pid);
     const QRect       rect   = table->visualRect(second);
     REQUIRE_FALSE(rect.isEmpty());
     const QPoint pos = rect.center();
@@ -340,7 +340,7 @@ TEST_CASE("the process model keeps desktop applications in the processes view", 
 {
     application();
 
-    slopkit::ui::dialogs::ProcessListModel model;
+    slopkit::ui::models::ProcessListModel model;
 
     slopkit::process::ProcessInfo mumble;
     mumble.pid      = 100;
@@ -357,18 +357,18 @@ TEST_CASE("the process model keeps desktop applications in the processes view", 
 
     // Only the PID and Name columns survive.
     CHECK(model.columnCount() == 2);
-    CHECK(model.headerData(slopkit::ui::dialogs::ProcessListModel::pid, Qt::Horizontal, Qt::DisplayRole).toString()
+    CHECK(model.headerData(slopkit::ui::models::ProcessListModel::pid, Qt::Horizontal, Qt::DisplayRole).toString()
           == QStringLiteral("PID"));
-    CHECK(model.headerData(slopkit::ui::dialogs::ProcessListModel::name, Qt::Horizontal, Qt::DisplayRole).toString()
+    CHECK(model.headerData(slopkit::ui::models::ProcessListModel::name, Qt::Horizontal, Qt::DisplayRole).toString()
           == QStringLiteral("Name"));
 
     // Sorting by Name still orders the visible rows.
-    model.sort(slopkit::ui::dialogs::ProcessListModel::name, Qt::DescendingOrder);
+    model.sort(slopkit::ui::models::ProcessListModel::name, Qt::DescendingOrder);
     REQUIRE(model.process_at(0) != nullptr);
     CHECK(model.process_at(0)->pid == 200);
 
     // Restore the default PID ordering for the filtering checks below.
-    model.sort(slopkit::ui::dialogs::ProcessListModel::pid, Qt::AscendingOrder);
+    model.sort(slopkit::ui::models::ProcessListModel::pid, Qt::AscendingOrder);
 
     // The Processes view lists everything, desktop application included.
     CHECK(model.rowCount() == 2);
@@ -413,7 +413,7 @@ TEST_CASE("typing in the filter selects the first result", "[ui]")
                     }));
 
     // Park the selection on the second row...
-    table->setCurrentIndex(table->model()->index(1, slopkit::ui::dialogs::ProcessListModel::pid));
+    table->setCurrentIndex(table->model()->index(1, slopkit::ui::models::ProcessListModel::pid));
     REQUIRE(table->currentIndex().row() == 1);
 
     // ...then type a filter that still matches both rows.

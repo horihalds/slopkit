@@ -43,12 +43,6 @@ namespace slopkit::ui::components
         // the bytes column gives up its width first and wraps instead.
         constexpr int kMinInstructionChars = 16;
 
-        // The scrollbar is a relative band: the value is parked at the middle
-        // and each move is read as a row delta, then re-centred, so an
-        // unbounded instruction extent is never squeezed into the scrollbar's
-        // int range.
-        constexpr int kScrollNeutral = 1'000'000;
-
         // A `.byte` row is an undecodable byte and paints muted, like `??`.
         bool is_muted(const DisassemblyDocument::Row& row)
         {
@@ -57,7 +51,11 @@ namespace slopkit::ui::components
     } // namespace
 
     DisassemblyView::DisassemblyView(DisassemblyDocument& document, QWidget* parent)
-        : QAbstractScrollArea(parent), document_(document)
+        : QAbstractScrollArea(parent), document_(document), scroller_(*this,
+                                                                      [this](long long delta)
+                                                                      {
+                                                                          scroll_rows(delta);
+                                                                      })
     {
         setObjectName(QStringLiteral("disassembly_view"));
         setFocusPolicy(Qt::StrongFocus);
@@ -66,7 +64,6 @@ namespace slopkit::ui::components
         viewport()->setFont(mono_font());
 
         recompute_layout();
-        setup_scrollbar();
 
         connect(&document_, &DisassemblyDocument::rowsChanged, this, &DisassemblyView::on_rows_changed);
 
@@ -185,10 +182,7 @@ namespace slopkit::ui::components
         }
         visible_rows_ = std::max<std::size_t>(1, rows);
 
-        if (QScrollBar* bar = verticalScrollBar(); bar != nullptr)
-        {
-            bar->setPageStep(static_cast<int>(visible_rows_));
-        }
+        scroller_.note_visible_rows(visible_rows_);
     }
 
     void DisassemblyView::ensure_cursor_decoded()
@@ -225,42 +219,6 @@ namespace slopkit::ui::components
     {
         recompute_layout();
         viewport()->update();
-    }
-
-    void DisassemblyView::setup_scrollbar()
-    {
-        QScrollBar* bar = verticalScrollBar();
-        bar->setRange(0, 2 * kScrollNeutral);
-        bar->setSingleStep(1);
-        bar->setPageStep(static_cast<int>(visible_rows_));
-        bar->setTracking(true);
-        {
-            const QSignalBlocker block(bar);
-            bar->setValue(kScrollNeutral);
-        }
-        connect(bar, &QScrollBar::valueChanged, this, &DisassemblyView::on_scroll_value);
-    }
-
-    void DisassemblyView::recenter_scrollbar()
-    {
-        QScrollBar* bar = verticalScrollBar();
-        if (bar == nullptr)
-        {
-            return;
-        }
-        const QSignalBlocker block(bar);
-        bar->setValue(kScrollNeutral);
-    }
-
-    void DisassemblyView::on_scroll_value(int value)
-    {
-        const int delta = value - kScrollNeutral;
-        if (delta == 0)
-        {
-            return;
-        }
-        recenter_scrollbar();
-        scroll_rows(delta);
     }
 
     void DisassemblyView::scroll_rows(long long delta)
@@ -321,7 +279,7 @@ namespace slopkit::ui::components
             first_address_ = std::min(base + step, scan::kMaxUserAddress);
         }
 
-        recenter_scrollbar();
+        scroller_.recenter();
         document_.set_view(first_address_, visible_rows_);
         viewport()->update(); // Keep the previous rows painted until the payload lands.
     }
@@ -334,7 +292,7 @@ namespace slopkit::ui::components
         }
         first_row_     = std::min(index, document_.row_count() - 1);
         first_address_ = document_.row(first_row_).address;
-        recenter_scrollbar();
+        scroller_.recenter();
         ensure_cursor_decoded();
         update_columns();
         update_visible_rows();
@@ -344,7 +302,7 @@ namespace slopkit::ui::components
     void DisassemblyView::set_first_address(std::uint64_t address)
     {
         first_address_ = std::min(address, scan::kMaxUserAddress);
-        recenter_scrollbar();
+        scroller_.recenter();
         ensure_cursor_decoded();
         update_columns();
         update_visible_rows();
@@ -365,14 +323,9 @@ namespace slopkit::ui::components
     void DisassemblyView::navigate_to(std::uint64_t address)
     {
         const std::uint64_t target = std::min(address, scan::kMaxUserAddress);
-        if (target == first_address_)
+        if (!history_.record(first_address_, target))
         {
             return;
-        }
-        history_.push_back(first_address_);
-        if (history_.size() > kHistoryLimit)
-        {
-            history_.erase(history_.begin());
         }
         set_first_address(address);
         emit navigated();
@@ -380,20 +333,19 @@ namespace slopkit::ui::components
 
     bool DisassemblyView::back()
     {
-        if (history_.empty())
+        const std::optional<std::uint64_t> previous = history_.back();
+        if (!previous.has_value())
         {
             return false;
         }
-        const std::uint64_t previous = history_.back();
-        history_.pop_back();
-        set_first_address(previous);
+        set_first_address(*previous);
         emit navigated();
         return true;
     }
 
     bool DisassemblyView::can_go_back() const noexcept
     {
-        return !history_.empty();
+        return history_.can_go_back();
     }
 
     void DisassemblyView::clear_history() noexcept

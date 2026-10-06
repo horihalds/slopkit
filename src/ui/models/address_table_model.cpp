@@ -13,18 +13,11 @@
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 #include "ui/fonts.hpp"
+#include "ui/text.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::models
 {
-
-    namespace
-    {
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-    } // namespace
 
     AddressTableModel::AddressTableModel(table::AddressTable&     table,
                                          process::AccessWorker&   worker,

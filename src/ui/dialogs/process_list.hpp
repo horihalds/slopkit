@@ -8,8 +8,8 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
+#include "ui/models/process_list_model.hpp"
 
-#include <QAbstractTableModel>
 #include <QDialog>
 #include <QString>
 
@@ -30,52 +30,6 @@ namespace slopkit::ui::widgets
 
 namespace slopkit::ui::dialogs
 {
-
-    // PID / Name rows for one tab, search text and plugin filter of the
-    // Process List dialog.
-    class ProcessListModel : public QAbstractTableModel
-    {
-        Q_OBJECT
-
-    public:
-        enum Column
-        {
-            pid,
-            name,
-            column_count,
-        };
-
-        explicit ProcessListModel(QObject* parent = nullptr);
-
-        [[nodiscard]] int      rowCount(const QModelIndex& parent = QModelIndex()) const override;
-        [[nodiscard]] int      columnCount(const QModelIndex& parent = QModelIndex()) const override;
-        [[nodiscard]] QVariant data(const QModelIndex& index, int role) const override;
-        [[nodiscard]] QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
-        void                   sort(int column, Qt::SortOrder order = Qt::AscendingOrder) override;
-
-        void set_processes(std::vector<process::ProcessInfo> processes);
-        void set_application_index(std::vector<std::string> executables);
-        void set_applications_only(bool applications_only);
-        void set_search(const QString& text);
-        void set_plugin_filter(const QString& plugin_id);
-
-        [[nodiscard]] const process::ProcessInfo* process_at(int row) const;
-        [[nodiscard]] int                         row_for_pid(process::ProcessId pid) const;
-
-    private:
-        void rebuild();
-        void apply_sort();
-
-        std::vector<process::ProcessInfo> processes_;
-        std::vector<std::string>          application_executables_;
-        std::vector<int>                  visible_;
-
-        bool          applications_only_ {false};
-        QString       search_;
-        QString       plugin_filter_;
-        int           sort_column_ {pid};
-        Qt::SortOrder sort_order_ {Qt::AscendingOrder};
-    };
 
     // The Process List dialog: the Applications / Processes views, the detail
     // pane, attach / detach and the auto-refresh. It writes the app-wide
@@ -125,11 +79,11 @@ namespace slopkit::ui::dialogs
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
 
-        ProcessListModel* model_ {};
-        QTableView*       table_view_ {};
-        QTabBar*          view_tabs_ {};
-        QLineEdit*        search_edit_ {};
-        QComboBox*        plugin_combo_ {};
+        models::ProcessListModel* model_ {};
+        QTableView*               table_view_ {};
+        QTabBar*                  view_tabs_ {};
+        QLineEdit*                search_edit_ {};
+        QComboBox*                plugin_combo_ {};
 
         QLabel*               detail_pid_ {};
         QLabel*               detail_name_ {};

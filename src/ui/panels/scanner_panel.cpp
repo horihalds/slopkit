@@ -16,17 +16,13 @@
 #include "core/log_categories.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::panels
 {
 
     namespace
     {
-        QString to_qstring(std::string_view text)
-        {
-            return QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size()));
-        }
-
         // Shortens a long module name, keeping its head and tail readable.
         QString elide_name(const QString& name, int max_chars)
         {
