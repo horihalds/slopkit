@@ -1,8 +1,8 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -14,6 +14,7 @@
 #include "table/address_table.hpp"
 #include "table/serializer.hpp"
 #include "table/table_settings.hpp"
+#include "table/table_zip.hpp"
 
 namespace
 {
@@ -21,6 +22,7 @@ namespace
     using slopkit::scan::ValueType;
     using slopkit::table::AddressEntry;
     using slopkit::table::AddressTable;
+    using slopkit::table::ArchiveMember;
     using slopkit::table::TableSettings;
 
     constexpr std::uint64_t kBase = 0x1000;
@@ -45,16 +47,18 @@ namespace
         return directory / name;
     }
 
-    std::vector<std::string> read_lines(const std::filesystem::path& path)
+    std::vector<std::string> member_names(const std::filesystem::path& path)
     {
-        std::vector<std::string> lines;
-        std::ifstream            file(path);
-        std::string              line;
-        while (std::getline(file, line))
+        std::vector<std::string> names;
+        const auto               archive = slopkit::table::read_archive(path);
+        if (archive)
         {
-            lines.push_back(line);
+            for (const ArchiveMember& member : *archive)
+            {
+                names.push_back(member.name);
+            }
         }
-        return lines;
+        return names;
     }
 
     ProcessInfo make_process(std::uint32_t pid, std::string name, std::string exe_path)
@@ -117,15 +121,18 @@ TEST_CASE("table settings survive a save/load round-trip", "[table]")
     CHECK(loaded.size() == 1);
 }
 
-TEST_CASE("a settings line without an executable path still loads", "[table]")
+TEST_CASE("a settings member without an executable path still loads", "[table]")
 {
-    const auto path = scratch_file("legacy_settings.skt");
+    const auto path = scratch_file("partial_settings.skt");
     std::filesystem::remove(path);
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "settings target=\"old\" auto_attach=1 match_exe_path=1\n";
-    }
+    REQUIRE(slopkit::table::write_archive(
+                path,
+                std::vector<ArchiveMember> {
+                    { .name = "version.txt",                               .text = "slopkit-table 3\n"},
+                    {.name = "settings.txt", .text = "target=\"old\" auto_attach=1 match_exe_path=1\n"},
+                    {   .name = "index.txt",                                                .text = ""},
+    })
+                .has_value());
 
     AddressTable table;
     REQUIRE(slopkit::table::load(path, table).has_value());
@@ -158,15 +165,14 @@ TEST_CASE("a settings-only table round-trips its settings", "[table]")
     CHECK_FALSE(loaded.settings().match_exe_path);
 }
 
-TEST_CASE("a legacy table without a settings line resets the settings", "[table]")
+TEST_CASE("an archive without a settings member resets the settings", "[table]")
 {
-    const auto path = scratch_file("legacy.skt");
+    AddressTable source;
+    source.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
+
+    const auto path = scratch_file("no_settings.skt");
     std::filesystem::remove(path);
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "entry description=\"x\" address=0x1000 type=i32 frozen=0 hex=0 value=01000000\n";
-    }
+    REQUIRE(slopkit::table::save(path, source).has_value());
 
     AddressTable table;
     table.settings().target_process = "stale";
@@ -179,73 +185,59 @@ TEST_CASE("a legacy table without a settings line resets the settings", "[table]
     CHECK(table.size() == 1);
 }
 
-TEST_CASE("the serializer rejects malformed settings lines", "[table]")
+TEST_CASE("the serializer rejects malformed settings members", "[table]")
 {
-    const auto path = scratch_file("malformed.skt");
+    const auto path = scratch_file("malformed_settings.skt");
 
     SECTION("unknown key")
     {
-        {
-            std::ofstream file(path);
-            file << "slopkit-table 1\n";
-            file << "settings nonsense=1\n";
-        }
+        std::filesystem::remove(path);
+        REQUIRE(slopkit::table::write_archive(path,
+                                              std::vector<ArchiveMember> {
+                                                  { .name = "version.txt", .text = "slopkit-table 3\n"},
+                                                  {.name = "settings.txt",      .text = "nonsense=1\n"},
+                                                  {   .name = "index.txt",                  .text = ""},
+        })
+                    .has_value());
         AddressTable table;
         const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
         REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().find("line 2") != std::string::npos);
+        CHECK(result.error().find("settings.txt") != std::string::npos);
     }
 
     SECTION("invalid boolean")
     {
-        {
-            std::ofstream file(path);
-            file << "slopkit-table 1\n";
-            file << "settings auto_attach=maybe\n";
-        }
+        std::filesystem::remove(path);
+        REQUIRE(slopkit::table::write_archive(path,
+                                              std::vector<ArchiveMember> {
+                                                  { .name = "version.txt",   .text = "slopkit-table 3\n"},
+                                                  {.name = "settings.txt", .text = "auto_attach=maybe\n"},
+                                                  {   .name = "index.txt",                    .text = ""},
+        })
+                    .has_value());
         AddressTable table;
         const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
         REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().find("line 2") != std::string::npos);
+        CHECK(result.error().find("settings.txt") != std::string::npos);
     }
-
-    std::filesystem::remove(path);
 }
 
-TEST_CASE("an empty settings value is not written to the file", "[table]")
+TEST_CASE("an empty settings value produces no settings member", "[table]")
 {
     AddressTable table;
     table.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
 
-    const auto path = scratch_file("no_settings.skt");
+    const auto path = scratch_file("empty_settings.skt");
     std::filesystem::remove(path);
 
     REQUIRE(slopkit::table::save(path, table).has_value());
-    const auto lines = read_lines(path);
+    const auto names = member_names(path);
     std::filesystem::remove(path);
 
-    REQUIRE(lines.size() == 2);
-    CHECK(lines[0] == "slopkit-table 2");
-    CHECK(lines[1].starts_with("entry "));
-}
-
-TEST_CASE("a settings line after entry lines is still parsed", "[table]")
-{
-    const auto path = scratch_file("settings_after_entries.skt");
-    std::filesystem::remove(path);
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "entry description=\"x\" address=0x1000 type=i32 frozen=0 hex=0 value=01000000\n";
-        file << "settings target=\"late\" auto_attach=1 match_exe_path=0\n";
-    }
-
-    AddressTable table;
-    REQUIRE(slopkit::table::load(path, table).has_value());
-    std::filesystem::remove(path);
-
-    CHECK(table.settings().target_process == "late");
-    CHECK(table.settings().auto_attach);
+    CHECK(std::find(names.begin(), names.end(), "settings.txt") == names.end());
+    CHECK(std::find(names.begin(), names.end(), "index.txt") != names.end());
 }
 
 TEST_CASE("processes are matched by name, exe basename and lowest pid", "[process]")

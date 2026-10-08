@@ -37,6 +37,32 @@ Exec=widget-editor --new
         std::ifstream file(path, std::ios::binary);
         return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
     }
+
+    // Decodes the shared-mime-info octal escapes (e.g. `\003` -> 0x03) a magic
+    // value uses, so it can be compared with a file's raw bytes.
+    std::string unescape_magic(std::string_view raw)
+    {
+        std::string result;
+        result.reserve(raw.size());
+        for (std::size_t index = 0; index < raw.size(); ++index)
+        {
+            const bool octal = raw[index] == '\\' && index + 3 < raw.size() && raw[index + 1] >= '0'
+                            && raw[index + 1] <= '7' && raw[index + 2] >= '0' && raw[index + 2] <= '7'
+                            && raw[index + 3] >= '0' && raw[index + 3] <= '7';
+            if (octal)
+            {
+                const auto value = static_cast<unsigned>((raw[index + 1] - '0') * 64 + (raw[index + 2] - '0') * 8
+                                                         + (raw[index + 3] - '0'));
+                result.push_back(static_cast<char>(value));
+                index += 3;
+            }
+            else
+            {
+                result.push_back(raw[index]);
+            }
+        }
+        return result;
+    }
 } // namespace
 
 TEST_CASE("desktop entry parses the main group", "[desktop_entry]")
@@ -117,10 +143,10 @@ TEST_CASE("the .skt MIME package declares the type, the glob and the magic", "[d
 
     CHECK(xml.find("<mime-type type=\"application/x-slopkit-table\">") != std::string::npos);
     CHECK(xml.find("<glob pattern=\"*.skt\"/>") != std::string::npos);
-    CHECK(xml.find("<match value=\"slopkit-table\" type=\"string\" offset=\"0\"/>") != std::string::npos);
+    CHECK(xml.find("<match value=\"PK\\003\\004\" type=\"string\" offset=\"0\"/>") != std::string::npos);
 }
 
-TEST_CASE("the .skt MIME magic matches the serializer's first line", "[desktop_entry]")
+TEST_CASE("the .skt MIME magic matches the archive signature", "[desktop_entry]")
 {
     constexpr std::string_view marker = "<match value=\"";
     const std::string xml = read_file(std::filesystem::path(SLOPKIT_ASSET_DIR) / "application-x-slopkit-table.xml");
@@ -129,18 +155,19 @@ TEST_CASE("the .skt MIME magic matches the serializer's first line", "[desktop_e
     const auto value_at  = marker_at + marker.size();
     const auto value_end = xml.find('\"', value_at);
     REQUIRE(value_end != std::string::npos);
-    const std::string magic = xml.substr(value_at, value_end - value_at);
-    REQUIRE_FALSE(magic.empty());
+    const std::string magic = unescape_magic(xml.substr(value_at, value_end - value_at));
+    REQUIRE(magic.size() == 4);
+    CHECK(std::string_view {magic} == std::string_view {"PK\003\004", 4});
 
     const auto                   path = std::filesystem::temp_directory_path() / "slopkit_mime_magic_test.skt";
     slopkit::table::AddressTable table;
     REQUIRE(slopkit::table::save(path, table).has_value());
     std::ifstream file(path, std::ios::binary);
-    std::string   first_line;
-    std::getline(file, first_line);
+    std::string   header(4, '\0');
+    file.read(header.data(), static_cast<std::streamsize>(header.size()));
     std::filesystem::remove(path);
 
-    CHECK(first_line.starts_with(magic));
+    CHECK(header == magic);
 }
 
 TEST_CASE("the slopkit desktop template advertises the .skt handler", "[desktop_entry]")

@@ -9,9 +9,10 @@ single rule: every interaction with another process goes through a plugin.
 The project is young: the plugin-first process-access ABI and host, two bundled
 plugins and the three-zone scanner shell (scan, address list, memory browser),
 including the Memory Viewer's live disassembler and its opt-in debugger, exist
-today. Address tables are `.skt` files: double-clicking one opens
-slopkit with that table, and a running instance offers to cancel, overwrite the
-open table or merge the file.
+today. Address tables are `.skt` files — ZIP archives holding one readable
+text file per entry plus the row order — and double-clicking one opens slopkit
+with that table, while a running instance offers to cancel, overwrite the open
+table or merge the file.
 
 ## Tools
 
@@ -30,9 +31,10 @@ open table or merge the file.
 ## Quick start
 
 Dependencies (from the system repositories): CMake and Ninja, a C++23 compiler,
-the Zydis development package (e.g. Fedora's `zydis-devel`) with `pkg-config`,
-Catch2, Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick
-(build-time only, for the icon set).
+the Zydis development package (e.g. Fedora's `zydis-devel`) and the libzip
+development package (e.g. Fedora's `libzip-devel`) with `pkg-config`, Catch2,
+Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick (build-time
+only, for the icon set).
 
 ```sh
 ./tools/configure.sh

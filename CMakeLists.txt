@@ -138,10 +138,12 @@ set(CMAKE_AUTOMOC ON)
 # --- system dependencies ---------------------------------------------------
 #
 # Zydis comes from the system repositories (e.g. Fedora `zydis-devel`) and ships
-# a pkg-config file but no CMake package config.
+# a pkg-config file but no CMake package config. libzip backs the `.skt` archive
+# container and is found the same way (e.g. Fedora `libzip-devel`).
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZYDIS REQUIRED IMPORTED_TARGET zydis)
+pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
 
 # --- assets ----------------------------------------------------------------
 
@@ -248,6 +250,7 @@ target_link_libraries(slopkit PRIVATE
     slopkit_native
     Qt6::Widgets
     PkgConfig::ZYDIS
+    PkgConfig::LIBZIP
     ${CMAKE_DL_LIBS})
 
 # Every generated icon size is embedded as :/icons/<N>x<N>/apps/slopkit.png,
@@ -427,6 +430,7 @@ target_link_libraries(slopkit_tests PRIVATE
     slopkit_native
     Qt6::Widgets
     PkgConfig::ZYDIS
+    PkgConfig::LIBZIP
     ${CMAKE_DL_LIBS})
 slopkit_add_icon_resources(slopkit_tests)
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)

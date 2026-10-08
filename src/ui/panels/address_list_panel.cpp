@@ -49,6 +49,9 @@ namespace slopkit::ui::panels
         table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
         table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
         table_view_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
+        table_view_->setDragDropMode(QAbstractItemView::InternalMove);
+        table_view_->setDefaultDropAction(Qt::MoveAction);
+        table_view_->setDropIndicatorShown(true);
         table_view_->setAlternatingRowColors(true);
         table_view_->verticalHeader()->setVisible(false);
         table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::description,

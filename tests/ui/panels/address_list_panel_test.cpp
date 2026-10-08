@@ -1,6 +1,11 @@
 #include <catch2/catch.hpp>
 
 #include "support/ui_helpers.hpp"
+#include "table/table_zip.hpp"
+
+#include <memory>
+
+#include <QMimeData>
 
 TEST_CASE("the address list Value column follows live memory", "[ui]")
 {
@@ -402,4 +407,84 @@ TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
     watch_accesses->trigger();
     REQUIRE(requests == 2);
     CHECK(requested_kind == slopkit::debug::Kind::hardware_read_write);
+}
+
+TEST_CASE("the address list reorders rows by dragging and saves the order", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    // Seed a table file with three named entries.
+    const auto      path = std::filesystem::path(SLOPKIT_TMP_DIR) / "address_list_panel_test" / "reorder.skt";
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    std::filesystem::remove(path);
+
+    slopkit::table::AddressTable seed;
+    const auto                   add = [&seed](const char* description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description;
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        seed.add(entry);
+    };
+    add("health", 0x1000);
+    add("armor", 0x2000);
+    add("mana", 0x3000);
+    REQUIRE(slopkit::table::save(path, seed).has_value());
+
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+
+    // The view accepts an internal move only.
+    CHECK(view->dragDropMode() == QAbstractItemView::InternalMove);
+    CHECK(view->defaultDropAction() == Qt::MoveAction);
+    CHECK(view->showDropIndicator());
+
+    REQUIRE(panel.load_table(QString::fromStdString(path.string())));
+    REQUIRE(table.size() == 3);
+    CHECK(table.entries()[0].description == "health");
+
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    // Move the first row below the last, as the view does on an internal move.
+    std::unique_ptr<QMimeData> payload {model->mimeData({model->index(0, 0)})};
+    REQUIRE(payload != nullptr);
+    REQUIRE(model->dropMimeData(payload.get(), Qt::MoveAction, 3, 0, QModelIndex()));
+    CHECK(table.entries()[0].description == "armor");
+    CHECK(table.entries()[1].description == "mana");
+    CHECK(table.entries()[2].description == "health");
+
+    // Saving writes that row order, and a reopen restores it.
+    panel.save_table();
+
+    const auto archive = slopkit::table::read_archive(path);
+    REQUIRE(archive.has_value());
+    std::string index_text;
+    for (const slopkit::table::ArchiveMember& member : *archive)
+    {
+        if (member.name == "index.txt")
+        {
+            index_text = member.text;
+        }
+    }
+    CHECK(index_text == "entries/armor.txt\nentries/mana.txt\nentries/health.txt\n");
+
+    slopkit::table::AddressTable reloaded;
+    REQUIRE(slopkit::table::load(path, reloaded).has_value());
+    REQUIRE(reloaded.size() == 3);
+    CHECK(reloaded.entries()[0].description == "armor");
+    CHECK(reloaded.entries()[1].description == "mana");
+    CHECK(reloaded.entries()[2].description == "health");
+
+    std::filesystem::remove(path);
 }

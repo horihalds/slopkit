@@ -59,6 +59,35 @@ namespace slopkit::table
         selected_ = entries_.empty() ? -1 : static_cast<int>(entries_.size()) - 1;
     }
 
+    void AddressTable::move(std::size_t from, std::size_t to)
+    {
+        if (from == to || from >= entries_.size() || to >= entries_.size())
+        {
+            return;
+        }
+
+        AddressEntry moving = std::move(entries_[from]);
+        entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(from));
+        entries_.insert(entries_.begin() + static_cast<std::ptrdiff_t>(to), std::move(moving));
+
+        // The selection follows the moved row; the rows it jumped over shift by
+        // one the other way.
+        if (selected_ == static_cast<int>(from))
+        {
+            selected_ = static_cast<int>(to);
+        }
+        else if (from < to && selected_ > static_cast<int>(from) && selected_ <= static_cast<int>(to))
+        {
+            --selected_;
+        }
+        else if (from > to && selected_ >= static_cast<int>(to) && selected_ < static_cast<int>(from))
+        {
+            ++selected_;
+        }
+
+        log::info(log::category::table, std::format("entry moved from {} to {}", from, to));
+    }
+
     MergeSummary AddressTable::merge(std::span<const AddressEntry> incoming)
     {
         MergeSummary summary;

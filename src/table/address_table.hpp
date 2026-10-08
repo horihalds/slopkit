@@ -51,6 +51,12 @@ namespace slopkit::table
         // loading so a file load does not log one record per row.
         void replace(std::vector<AddressEntry> entries);
 
+        // Moves the entry at `from` to the final index `to`, keeping its id and
+        // every field and carrying the selection with the row. An equal or
+        // out-of-range pair is a no-op, so a drag onto the same row changes
+        // nothing and logs nothing.
+        void move(std::size_t from, std::size_t to);
+
         // Appends every incoming entry that is not already present (same address,
         // type and description) with a fresh id. Existing entries, the selection
         // and the settings are left untouched.

@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Shared-mime-info definition for slopkit address tables. The magic token must
-  stay in sync with the first line the serializer writes (src/table/serializer.cpp).
+  Shared-mime-info definition for slopkit address tables. A .skt file is a ZIP
+  archive, so the magic is the ZIP local-file-header signature itself; it must
+  stay in sync with the container in src/table/table_zip.cpp.
 -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-slopkit-table">
     <comment>slopkit address table</comment>
     <glob pattern="*.skt"/>
     <magic priority="50">
-      <match value="slopkit-table" type="string" offset="0"/>
+      <match value="PK\003\004" type="string" offset="0"/>
     </magic>
   </mime-type>
 </mime-info>

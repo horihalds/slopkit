@@ -1,10 +1,11 @@
 #include "table/serializer.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
-#include <fstream>
 #include <optional>
 #include <span>
 #include <string>
@@ -15,12 +16,36 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "expr/expression.hpp"
+#include "expr/resolver.hpp"
+#include "table/entry_name.hpp"
+#include "table/table_zip.hpp"
 
 namespace slopkit::table
 {
 
     namespace
     {
+        constexpr std::string_view kFormatToken   = "slopkit-table 3";
+        constexpr std::string_view kEntriesPrefix = "entries/";
+        constexpr std::string_view kEntrySuffix   = ".txt";
+
+        // The description an entry member name stands for: the stem inside
+        // `entries/`, without the `.txt` suffix. A description the file system
+        // cannot hold comes back sanitised, which is the documented trade-off.
+        std::string member_description(std::string_view member)
+        {
+            if (member.starts_with(kEntriesPrefix))
+            {
+                member.remove_prefix(kEntriesPrefix.size());
+            }
+            if (member.ends_with(kEntrySuffix))
+            {
+                member.remove_suffix(kEntrySuffix.size());
+            }
+            return std::string(member);
+        }
+
         std::string_view trim(std::string_view value)
         {
             const auto first = value.find_first_not_of(" \t\r\n");
@@ -57,53 +82,6 @@ namespace slopkit::table
             return result;
         }
 
-        std::string hex_bytes(std::span<const std::byte> bytes)
-        {
-            std::string result;
-            result.reserve(bytes.size() * 2);
-            for (const std::byte value : bytes)
-            {
-                result += std::format("{:02X}", static_cast<unsigned>(value));
-            }
-            return result;
-        }
-
-        std::optional<std::vector<std::byte>> parse_hex_bytes(std::string_view text)
-        {
-            if (text.size() % 2 != 0)
-            {
-                return std::nullopt;
-            }
-            std::vector<std::byte> bytes;
-            bytes.reserve(text.size() / 2);
-            for (std::size_t i = 0; i < text.size(); i += 2)
-            {
-                unsigned value          = 0;
-                const auto [end, error] = std::from_chars(text.data() + i, text.data() + i + 2, value, 16);
-                if (error != std::errc {} || end != text.data() + i + 2)
-                {
-                    return std::nullopt;
-                }
-                bytes.push_back(static_cast<std::byte>(value));
-            }
-            return bytes;
-        }
-
-        std::optional<std::uint64_t> parse_hex_u64(std::string_view text)
-        {
-            if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
-            {
-                text.remove_prefix(2);
-            }
-            std::uint64_t value     = 0;
-            const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, 16);
-            if (error != std::errc {} || end != text.data() + text.size())
-            {
-                return std::nullopt;
-            }
-            return value;
-        }
-
         std::optional<scan::ValueType> type_from_token(std::string_view token)
         {
             constexpr std::pair<std::string_view, scan::ValueType> kTypes[] = {
@@ -127,11 +105,12 @@ namespace slopkit::table
             return std::nullopt;
         }
 
-        // Runs the key/value token loop over a payload line, calling `visit` for
-        // every token. A broken token returns an error naming the line; the
+        // Runs the key/value token loop over a member body, calling `visit` for
+        // every token. A broken token returns an error naming the member; the
         // visitor may reject a key or a value as well.
         template<typename Visitor>
-        std::expected<void, std::string> parse_key_values(std::string_view text, int line_number, Visitor&& visit)
+        std::expected<void, std::string>
+        parse_key_values(std::string_view text, std::string_view context, Visitor&& visit)
         {
             std::size_t position = 0;
             while (position < text.size())
@@ -148,7 +127,7 @@ namespace slopkit::table
                 const auto equals = text.find('=', position);
                 if (equals == std::string_view::npos)
                 {
-                    return std::unexpected(std::format("line {}: missing '='", line_number));
+                    return std::unexpected(std::format("{}: missing '='", context));
                 }
                 const std::string key(text.substr(position, equals - position));
                 position = equals + 1;
@@ -186,7 +165,7 @@ namespace slopkit::table
                     }
                     if (position >= text.size())
                     {
-                        return std::unexpected(std::format("line {}: unterminated string", line_number));
+                        return std::unexpected(std::format("{}: unterminated string", context));
                     }
                     ++position; // closing quote
                 }
@@ -220,74 +199,93 @@ namespace slopkit::table
             return std::nullopt;
         }
 
-        std::expected<AddressEntry, std::string> parse_entry(std::string_view text, int line_number)
+        // Parses one entry body (`type=… hex=… size=… expr="…"`). The description
+        // is the member name and is not part of the body; the frozen flag and the
+        // cached value bytes are not persisted.
+        std::expected<AddressEntry, std::string> parse_entry_body(std::string_view text, std::string_view member)
         {
             AddressEntry entry;
-            const auto   visit = [&entry, line_number](const std::string& key,
-                                                       std::string        value) -> std::expected<void, std::string>
+            std::size_t  size      = 0;
+            bool         seen_type = false;
+            bool         seen_size = false;
+            bool         seen_hex  = false;
+            bool         seen_expr = false;
+
+            const auto visit = [&](const std::string& key, std::string value) -> std::expected<void, std::string>
             {
-                if (key == "description")
-                {
-                    entry.description = std::move(value);
-                }
-                else if (key == "address")
-                {
-                    const auto address = parse_hex_u64(value);
-                    if (!address)
-                    {
-                        return std::unexpected(std::format("line {}: invalid address '{}'", line_number, value));
-                    }
-                    entry.address = *address;
-                }
-                else if (key == "type")
+                if (key == "type")
                 {
                     const auto type = type_from_token(value);
                     if (!type)
                     {
-                        return std::unexpected(std::format("line {}: unknown type '{}'", line_number, value));
+                        return std::unexpected(std::format("{}: unknown type '{}'", member, value));
                     }
                     entry.type = *type;
+                    seen_type  = true;
                 }
-                else if (key == "frozen")
+                else if (key == "size")
                 {
-                    entry.active = value == "1";
+                    std::size_t parsed      = 0;
+                    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+                    if (error != std::errc {} || end != value.data() + value.size())
+                    {
+                        return std::unexpected(std::format("{}: invalid size '{}'", member, value));
+                    }
+                    size      = parsed;
+                    seen_size = true;
                 }
                 else if (key == "hex")
                 {
-                    entry.hex = value == "1";
-                }
-                else if (key == "value")
-                {
-                    auto bytes = parse_hex_bytes(value);
-                    if (!bytes)
+                    const auto flag = parse_bool(value);
+                    if (!flag)
                     {
-                        return std::unexpected(std::format("line {}: invalid value '{}'", line_number, value));
+                        return std::unexpected(std::format("{}: invalid boolean '{}'", member, value));
                     }
-                    entry.bytes = std::move(*bytes);
+                    entry.hex = *flag;
+                    seen_hex  = true;
                 }
                 else if (key == "expr")
                 {
                     entry.expression = std::move(value);
+                    seen_expr        = true;
                 }
                 else
                 {
-                    return std::unexpected(std::format("line {}: unknown key '{}'", line_number, key));
+                    return std::unexpected(std::format("{}: unknown key '{}'", member, key));
                 }
                 return {};
             };
-            auto parsed = parse_key_values(text, line_number, visit);
+
+            auto parsed = parse_key_values(text, member, visit);
             if (!parsed)
             {
                 return std::unexpected(parsed.error());
             }
+            if (!seen_type)
+            {
+                return std::unexpected(std::format("{}: missing 'type'", member));
+            }
+            if (!seen_size)
+            {
+                return std::unexpected(std::format("{}: missing 'size'", member));
+            }
+            if (!seen_hex)
+            {
+                return std::unexpected(std::format("{}: missing 'hex'", member));
+            }
+            if (!seen_expr)
+            {
+                return std::unexpected(std::format("{}: missing 'expr'", member));
+            }
+
+            entry.bytes.assign(size, std::byte {0});
             return entry;
         }
 
-        std::expected<TableSettings, std::string> parse_settings(std::string_view text, int line_number)
+        std::expected<TableSettings, std::string> parse_settings(std::string_view text, std::string_view member)
         {
             TableSettings settings;
-            const auto    visit = [&settings, line_number](const std::string& key,
-                                                           std::string        value) -> std::expected<void, std::string>
+            const auto    visit = [&](const std::string& key, std::string value) -> std::expected<void, std::string>
             {
                 if (key == "target")
                 {
@@ -302,7 +300,7 @@ namespace slopkit::table
                     const auto flag = parse_bool(value);
                     if (!flag)
                     {
-                        return std::unexpected(std::format("line {}: invalid boolean '{}'", line_number, value));
+                        return std::unexpected(std::format("{}: invalid boolean '{}'", member, value));
                     }
                     settings.auto_attach = *flag;
                 }
@@ -311,22 +309,37 @@ namespace slopkit::table
                     const auto flag = parse_bool(value);
                     if (!flag)
                     {
-                        return std::unexpected(std::format("line {}: invalid boolean '{}'", line_number, value));
+                        return std::unexpected(std::format("{}: invalid boolean '{}'", member, value));
                     }
                     settings.match_exe_path = *flag;
                 }
                 else
                 {
-                    return std::unexpected(std::format("line {}: unknown key '{}'", line_number, key));
+                    return std::unexpected(std::format("{}: unknown key '{}'", member, key));
                 }
                 return {};
             };
-            auto parsed = parse_key_values(text, line_number, visit);
+            auto parsed = parse_key_values(text, member, visit);
             if (!parsed)
             {
                 return std::unexpected(parsed.error());
             }
             return settings;
+        }
+
+        // First member with `name`, or nullptr. The archive is read into memory
+        // first, so the returned pointer stays valid for the caller's scope.
+        const std::string* find_member(const std::vector<ArchiveMember>& members, std::string_view name)
+        {
+            const auto found = std::ranges::find(members, name, &ArchiveMember::name);
+            return found == members.end() ? nullptr : &found->text;
+        }
+
+        // The reader used to evaluate a pointer-free expression without a target;
+        // it is never reached when `pointer_levels()` is 0.
+        std::expected<std::uint64_t, std::string> no_pointer_reader(std::uint64_t)
+        {
+            return std::unexpected(std::string {"a pointer read was required"});
         }
     } // namespace
 
@@ -358,42 +371,60 @@ namespace slopkit::table
 
     std::expected<void, std::string> save(const std::filesystem::path& path, const AddressTable& table)
     {
-        std::ofstream file(path, std::ios::trunc);
-        if (!file)
-        {
-            log::warning(log::category::table, std::format("cannot open {} for writing", path.string()));
-            return std::unexpected("cannot open " + path.string() + " for writing");
-        }
-
-        file << "slopkit-table 2\n";
         const TableSettings& settings = table.settings();
+
+        std::vector<ArchiveMember> members;
+        members.reserve(table.size() + 3);
+        members.push_back(ArchiveMember {.name = "version.txt", .text = std::string(kFormatToken) + "\n"});
         if (!settings.empty())
         {
-            file << std::format("settings target=\"{}\" exe_path=\"{}\" auto_attach={} match_exe_path={}\n",
-                                escape(settings.target_process),
-                                escape(settings.exe_path),
-                                settings.auto_attach ? 1 : 0,
-                                settings.match_exe_path ? 1 : 0);
+            members.push_back(ArchiveMember {
+                .name = "settings.txt",
+                .text = std::format("target=\"{}\" exe_path=\"{}\" auto_attach={} match_exe_path={}\n",
+                                    escape(settings.target_process),
+                                    escape(settings.exe_path),
+                                    settings.auto_attach ? 1 : 0,
+                                    settings.match_exe_path ? 1 : 0),
+            });
         }
-        for (const auto& entry : table.entries())
+
+        std::vector<std::string> taken;
+        std::vector<std::string> order;
+        taken.reserve(table.size());
+        order.reserve(table.size());
+        for (const AddressEntry& entry : table.entries())
         {
-            file << std::format("entry description=\"{}\" address={:X} type={} frozen={} hex={} value={}",
-                                escape(entry.description),
-                                entry.address,
-                                type_token(entry.type),
-                                entry.active ? 1 : 0,
-                                entry.hex ? 1 : 0,
-                                hex_bytes(entry.bytes));
-            if (!entry.expression.empty())
-            {
-                file << std::format(" expr=\"{}\"", escape(entry.expression));
-            }
-            file << '\n';
+            std::string name = entry_member_name(entry.description, taken);
+            taken.push_back(name);
+
+            // An entry that was never given an expression still has to be
+            // reachable; its address is written as the hex literal it already is.
+            const std::string expression =
+                entry.expression.empty() ? std::format("{:X}", entry.address) : entry.expression;
+            members.push_back(ArchiveMember {
+                .name = "entries/" + name,
+                .text = std::format("type={} hex={} size={} expr=\"{}\"\n",
+                                    type_token(entry.type),
+                                    entry.hex ? 1 : 0,
+                                    entry.bytes.size(),
+                                    escape(expression)),
+            });
+            order.push_back("entries/" + name);
         }
-        if (!file)
+
+        std::string index;
+        for (const std::string& line : order)
         {
-            log::warning(log::category::table, std::format("write failed for {}", path.string()));
-            return std::unexpected("write failed for " + path.string());
+            index += line;
+            index += '\n';
+        }
+        members.push_back(ArchiveMember {.name = "index.txt", .text = std::move(index)});
+
+        const auto written = write_archive(path, members);
+        if (!written)
+        {
+            log::warning(log::category::table, std::format("cannot write {}: {}", path.string(), written.error()));
+            return std::unexpected(written.error());
         }
         log::info(log::category::table, std::format("saved {} entry/entries to {}", table.size(), path.string()));
         return {};
@@ -401,61 +432,126 @@ namespace slopkit::table
 
     std::expected<void, std::string> load(const std::filesystem::path& path, AddressTable& table)
     {
-        std::ifstream file(path);
-        if (!file)
+        if (!is_zip_archive(path))
         {
-            log::warning(log::category::table, std::format("cannot open {}", path.string()));
-            return std::unexpected("cannot open " + path.string());
+            const std::string message = std::format("{}: not a slopkit table archive", path.string());
+            log::warning(log::category::table, message);
+            return std::unexpected(message);
         }
 
-        AddressTable              loaded;
-        std::vector<AddressEntry> parsed;
-        std::string               line;
-        int                       line_number = 0;
-        while (std::getline(file, line))
+        auto archive = read_archive(path);
+        if (!archive)
         {
-            ++line_number;
-            const std::string_view view = trim(line);
-            if (view.empty() || view.starts_with('#'))
+            const std::string message = std::format("{}: {}", path.string(), archive.error());
+            log::warning(log::category::table, message);
+            return std::unexpected(archive.error());
+        }
+        const std::vector<ArchiveMember>& members = *archive;
+
+        const std::string* version = find_member(members, "version.txt");
+        if (version == nullptr)
+        {
+            const std::string message = std::format("{}: version.txt: missing", path.string());
+            log::warning(log::category::table, message);
+            return std::unexpected(std::string {"version.txt: missing"});
+        }
+        if (trim(*version) != kFormatToken)
+        {
+            const std::string message =
+                std::format("{}: version.txt: unknown format '{}'", path.string(), trim(*version));
+            log::warning(log::category::table, message);
+            return std::unexpected(std::format("version.txt: unknown format '{}'", trim(*version)));
+        }
+
+        AddressTable loaded;
+        if (const std::string* raw_settings = find_member(members, "settings.txt"); raw_settings != nullptr)
+        {
+            auto settings = parse_settings(trim(*raw_settings), "settings.txt");
+            if (!settings)
             {
-                continue;
+                log::warning(log::category::table, std::format("{}: {}", path.string(), settings.error()));
+                return std::unexpected(settings.error());
             }
-            if (view.starts_with("slopkit-table"))
+            loaded.settings() = std::move(*settings);
+        }
+
+        const std::string* index = find_member(members, "index.txt");
+        if (index == nullptr)
+        {
+            const std::string message = std::format("{}: index.txt: missing", path.string());
+            log::warning(log::category::table, message);
+            return std::unexpected(std::string {"index.txt: missing"});
+        }
+
+        std::vector<AddressEntry> entries;
+        std::vector<std::string>  listed;
+        std::size_t               position = 0;
+        while (position <= index->size())
+        {
+            const auto             newline = index->find('\n', position);
+            const std::string_view raw     = std::string_view {*index}.substr(
+                position, newline == std::string::npos ? std::string::npos : newline - position);
+            const std::string_view line = trim(raw);
+            if (!line.empty())
             {
-                continue;
-            }
-            if (view.starts_with("settings"))
-            {
-                auto settings = parse_settings(view.substr(8), line_number);
-                if (!settings)
+                const std::string  member(line);
+                const std::string* body = find_member(members, member);
+                if (body == nullptr)
                 {
-                    log::warning(log::category::table, std::format("{}: {}", path.string(), settings.error()));
-                    return std::unexpected(settings.error());
+                    const std::string message = std::format("{}: index.txt: missing entry '{}'", path.string(), member);
+                    log::warning(log::category::table, message);
+                    return std::unexpected(std::format("index.txt: missing entry '{}'", member));
                 }
-                loaded.settings() = std::move(*settings);
-                continue;
+
+                auto entry = parse_entry_body(trim(*body), member);
+                if (!entry)
+                {
+                    log::warning(log::category::table, std::format("{}: {}", path.string(), entry.error()));
+                    return std::unexpected(entry.error());
+                }
+                entry->description = member_description(member);
+
+                const auto expression = expr::parse(entry->expression);
+                if (!expression)
+                {
+                    const std::string message = std::format("{}: invalid expr '{}'", member, entry->expression);
+                    log::warning(log::category::table, std::format("{}: {}", path.string(), message));
+                    return std::unexpected(message);
+                }
+                // A literal base resolves without a target; a module or pointer
+                // expression is left at 0 for the panel's resolve pass.
+                if (expression->pointer_levels() == 0)
+                {
+                    const auto resolved = expr::evaluate(*expression, expr::Modules {}, no_pointer_reader);
+                    if (resolved)
+                    {
+                        entry->address = *resolved;
+                    }
+                }
+
+                entries.push_back(std::move(*entry));
+                listed.push_back(member);
             }
-            if (!view.starts_with("entry"))
+            if (newline == std::string::npos)
             {
-                log::warning(log::category::table,
-                             std::format("{}: line {}: expected an entry line", path.string(), line_number));
-                return std::unexpected(std::format("line {}: expected an entry line", line_number));
+                break;
             }
-            auto entry = parse_entry(view.substr(5), line_number);
-            if (!entry)
-            {
-                log::warning(log::category::table, std::format("{}: {}", path.string(), entry.error()));
-                return std::unexpected(entry.error());
-            }
-            parsed.push_back(std::move(*entry));
-        }
-        if (file.bad())
-        {
-            log::warning(log::category::table, std::format("read failed for {}", path.string()));
-            return std::unexpected("read failed for " + path.string());
+            position = newline + 1;
         }
 
-        loaded.replace(std::move(parsed));
+        // An `entries/` member the index does not list is a damaged archive: the
+        // order list is the only source of order, so a stray file is an error.
+        for (const ArchiveMember& member : members)
+        {
+            if (member.name.starts_with("entries/") && std::ranges::find(listed, member.name) == listed.end())
+            {
+                const std::string message = std::format("{}: {}: not listed in index.txt", path.string(), member.name);
+                log::warning(log::category::table, message);
+                return std::unexpected(std::format("{}: not listed in index.txt", member.name));
+            }
+        }
+
+        loaded.replace(std::move(entries));
         table = std::move(loaded);
         log::info(log::category::table, std::format("loaded {} entry/entries from {}", table.size(), path.string()));
         return {};

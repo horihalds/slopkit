@@ -17,8 +17,17 @@
 #include "ui/text.hpp"
 #include "ui/theme.hpp"
 
+#include <QByteArray>
+#include <QMimeData>
+
 namespace slopkit::ui::models
 {
+
+    namespace
+    {
+        // The move-only drag payload: the source row, carried as its index.
+        constexpr char kRowMimeType[] = "application/x-slopkit-address-row";
+    } // namespace
 
     AddressTableModel::AddressTableModel(table::AddressTable&     table,
                                          process::AccessWorker&   worker,
@@ -180,10 +189,11 @@ namespace slopkit::ui::models
     {
         if (!index.isValid())
         {
-            return Qt::NoItemFlags;
+            // The invalid (root) index is where a drop between rows lands.
+            return Qt::ItemIsDropEnabled;
         }
 
-        Qt::ItemFlags item_flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+        Qt::ItemFlags item_flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
         switch (index.column())
         {
         case description:
@@ -197,6 +207,96 @@ namespace slopkit::ui::models
             break;
         }
         return item_flags;
+    }
+
+    Qt::DropActions AddressTableModel::supportedDropActions() const
+    {
+        return Qt::MoveAction;
+    }
+
+    QStringList AddressTableModel::mimeTypes() const
+    {
+        return {QString::fromLatin1(kRowMimeType)};
+    }
+
+    QMimeData* AddressTableModel::mimeData(const QModelIndexList& indexes) const
+    {
+        int row = -1;
+        for (const QModelIndex& index : indexes)
+        {
+            if (index.isValid() && index.row() >= 0 && (row < 0 || index.row() < row))
+            {
+                row = index.row();
+            }
+        }
+        if (row < 0 || row >= rowCount())
+        {
+            return nullptr;
+        }
+
+        auto* data = new QMimeData;
+        data->setData(QString::fromLatin1(kRowMimeType), QByteArray::number(row));
+        return data;
+    }
+
+    bool
+    AddressTableModel::canDropMimeData(const QMimeData* data, Qt::DropAction action, int, int, const QModelIndex&) const
+    {
+        return data != nullptr && action == Qt::MoveAction && data->hasFormat(QString::fromLatin1(kRowMimeType));
+    }
+
+    bool AddressTableModel::dropMimeData(
+        const QMimeData* data, Qt::DropAction action, int row, int, const QModelIndex& parent)
+    {
+        if (data == nullptr || action != Qt::MoveAction || !data->hasFormat(QString::fromLatin1(kRowMimeType)))
+        {
+            return false;
+        }
+
+        bool      ok     = false;
+        const int source = data->data(QString::fromLatin1(kRowMimeType)).toInt(&ok);
+        const int count  = rowCount();
+        if (!ok || source < 0 || source >= count)
+        {
+            return false;
+        }
+
+        // Qt hands the insertion row (the drop lands "before" it); a drop onto an
+        // item arrives as a valid parent with row == -1.
+        int insert_row = parent.isValid() ? parent.row() : (row >= 0 ? row : count);
+        insert_row     = std::clamp(insert_row, 0, count);
+
+        // The rows after the source shift up by one, so a downward move ends at
+        // one index lower than the insertion row.
+        const int destination = source < insert_row ? insert_row - 1 : insert_row;
+        if (destination == source)
+        {
+            return false; // Dropped onto itself.
+        }
+
+        // beginMoveRows wants the destination child in the pre-move numbering:
+        // one past the final index for a downward move.
+        const int destination_child = source < destination ? destination + 1 : destination;
+        if (!beginMoveRows(QModelIndex(), source, source, QModelIndex(), destination_child))
+        {
+            return false;
+        }
+
+        table_.move(static_cast<std::size_t>(source), static_cast<std::size_t>(destination));
+
+        // The moved and shifted rows now stand for different entries, so their
+        // cached readings are dropped; the next live pass refills them.
+        const int first = std::min(source, destination);
+        const int last  = std::max(source, destination);
+        for (int index = first; index <= last && static_cast<std::size_t>(index) < cells_.size(); ++index)
+        {
+            cells_.cell(static_cast<std::size_t>(index)) = LiveCell {};
+        }
+
+        note_table_changed();
+        endMoveRows();
+        emit statusChanged(tr("Row moved."), false);
+        return true;
     }
 
     bool AddressTableModel::setData(const QModelIndex& index, const QVariant& value, int role)

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -16,6 +17,7 @@
 #include "scan/types.hpp"
 #include "table/address_table.hpp"
 #include "table/serializer.hpp"
+#include "table/table_zip.hpp"
 
 namespace
 {
@@ -23,6 +25,9 @@ namespace
     using slopkit::scan::ValueType;
     using slopkit::table::AddressEntry;
     using slopkit::table::AddressTable;
+    using slopkit::table::ArchiveMember;
+    using slopkit::table::read_archive;
+    using slopkit::table::write_archive;
 
     // The base address the fixture entries use; no target is required since the
     // model only encodes and caches.
@@ -38,6 +43,45 @@ namespace
             entry.bytes.push_back(static_cast<std::byte>(value));
         }
         return entry;
+    }
+
+    std::filesystem::path scratch_file(std::string_view name)
+    {
+        const auto      directory = std::filesystem::path(SLOPKIT_TMP_DIR) / "address_table_test";
+        std::error_code error;
+        std::filesystem::create_directories(directory, error);
+        return directory / name;
+    }
+
+    std::optional<std::string> member_text(const std::filesystem::path& path, std::string_view name)
+    {
+        const auto archive = read_archive(path);
+        if (!archive)
+        {
+            return std::nullopt;
+        }
+        for (const ArchiveMember& member : *archive)
+        {
+            if (member.name == name)
+            {
+                return member.text;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::vector<std::string> member_names(const std::filesystem::path& path)
+    {
+        std::vector<std::string> names;
+        const auto               archive = read_archive(path);
+        if (archive)
+        {
+            for (const ArchiveMember& member : *archive)
+            {
+                names.push_back(member.name);
+            }
+        }
+        return names;
     }
 
     // Restores the process-wide log level on scope exit.
@@ -177,21 +221,23 @@ TEST_CASE("freeze_items returns only the active entries and honours the interval
     CHECK(table.freeze_items(0.2, 0.1).size() == 1);
 }
 
-TEST_CASE("an address table round-trips through the serializer", "[table]")
+TEST_CASE("an address table round-trips through the archive", "[table]")
 {
     AddressTable original;
-    original.add(make_entry(0x1234, ValueType::int32, {0x40, 0x00, 0x00, 0x00}));
-    original.entries()[0].description = "player health";
-    original.entries()[0].active      = true;
-    original.entries()[0].expression  = "game+0x10";
+    auto         health = make_entry(0x1234, ValueType::int32, {0x40, 0x00, 0x00, 0x00});
+    health.description  = "health";
+    health.active       = true;
+    health.expression   = "1234";
+    original.add(health);
 
-    original.add(make_entry(0x100000, ValueType::float64, {0, 0, 0, 0, 0, 0, 0x10, 0x40}));
-    original.entries()[1].description = "he said \"hi\"";
-    original.entries()[1].hex         = true;
+    auto armor        = make_entry(0x7FFD1234, ValueType::float64, {0, 0, 0, 0, 0, 0, 0x10, 0x40});
+    armor.description = "armor";
+    armor.hex         = true;
+    armor.expression  = "7FFD1234";
+    original.add(armor);
 
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_roundtrip.skt";
+    const auto path = scratch_file("roundtrip.skt");
     std::filesystem::remove(path);
-
     REQUIRE(slopkit::table::save(path, original).has_value());
 
     AddressTable loaded;
@@ -199,21 +245,23 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     std::filesystem::remove(path);
 
     REQUIRE(loaded.size() == 2);
-    CHECK(loaded.entries()[0].description == "player health");
-    CHECK(loaded.entries()[0].address == 0x1234);
-    CHECK(loaded.entries()[0].type == ValueType::int32);
-    CHECK(loaded.entries()[0].active);
-    CHECK_FALSE(loaded.entries()[0].hex);
-    CHECK(loaded.entries()[0].bytes == original.entries()[0].bytes);
-    CHECK(loaded.entries()[0].expression == "game+0x10");
 
-    CHECK(loaded.entries()[1].description == "he said \"hi\"");
-    CHECK(loaded.entries()[1].address == 0x100000);
+    CHECK(loaded.entries()[0].description == "health");
+    CHECK(loaded.entries()[0].type == ValueType::int32);
+    CHECK_FALSE(loaded.entries()[0].hex);
+    CHECK(loaded.entries()[0].expression == "1234");
+    CHECK(loaded.entries()[0].address == 0x1234);
+    CHECK(loaded.entries()[0].bytes.size() == 4);
+    // The frozen flag and the cached bytes are session-only.
+    CHECK_FALSE(loaded.entries()[0].active);
+    CHECK(loaded.entries()[0].bytes == std::vector<std::byte>(4, std::byte {0}));
+
+    CHECK(loaded.entries()[1].description == "armor");
     CHECK(loaded.entries()[1].type == ValueType::float64);
-    CHECK_FALSE(loaded.entries()[1].active);
     CHECK(loaded.entries()[1].hex);
-    CHECK(loaded.entries()[1].bytes == original.entries()[1].bytes);
-    CHECK(loaded.entries()[1].expression.empty());
+    CHECK(loaded.entries()[1].expression == "7FFD1234");
+    CHECK(loaded.entries()[1].address == 0x7FFD1234);
+    CHECK(loaded.entries()[1].bytes.size() == 8);
 
     // Ids are not persisted; the loader regenerates non-zero, unique ids.
     CHECK(loaded.entries()[0].id != 0);
@@ -221,43 +269,336 @@ TEST_CASE("an address table round-trips through the serializer", "[table]")
     CHECK(loaded.entries()[0].id != loaded.entries()[1].id);
 }
 
-TEST_CASE("a v1 entry line loads without an expression", "[table]")
+TEST_CASE("the archive holds version, index and one member per entry", "[table]")
 {
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_v1.skt";
+    AddressTable table;
+    auto         health = make_entry(0x1234, ValueType::int32, {1, 0, 0, 0});
+    health.description  = "health";
+    health.expression   = "1234";
+    table.add(health);
+
+    auto armor        = make_entry(0x2008, ValueType::int32, {2, 0, 0, 0});
+    armor.description = "armor";
+    armor.expression  = "0x2000+8";
+    table.add(armor);
+
+    const auto path = scratch_file("layout.skt");
     std::filesystem::remove(path);
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "entry description=\"legacy\" address=0xABC type=i32 frozen=0 hex=0 value=01000000\n";
-    }
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    CHECK(member_names(path)
+          == std::vector<std::string> {"version.txt", "entries/health.txt", "entries/armor.txt", "index.txt"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 3\n"});
+    CHECK(member_text(path, "index.txt") == std::optional<std::string> {"entries/health.txt\nentries/armor.txt\n"});
+    CHECK(member_text(path, "entries/health.txt")
+          == std::optional<std::string> {"type=i32 hex=0 size=4 expr=\"1234\"\n"});
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("an entry without an expression is stored as its hex address", "[table]")
+{
+    AddressTable table;
+    table.add(make_entry(0x2A2B, ValueType::int32, {0, 0, 0, 0}));
+
+    const auto path = scratch_file("no_expression.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    CHECK(member_text(path, "entries/unnamed.txt")
+          == std::optional<std::string> {"type=i32 hex=0 size=4 expr=\"2A2B\"\n"});
 
     AddressTable loaded;
     REQUIRE(slopkit::table::load(path, loaded).has_value());
     std::filesystem::remove(path);
 
     REQUIRE(loaded.size() == 1);
-    CHECK(loaded.entries()[0].description == "legacy");
-    CHECK(loaded.entries()[0].address == 0xABC);
-    CHECK(loaded.entries()[0].expression.empty());
+    CHECK(loaded.entries()[0].description == "unnamed");
+    CHECK(loaded.entries()[0].expression == "2A2B");
+    CHECK(loaded.entries()[0].address == 0x2A2B);
+}
+
+TEST_CASE("duplicate descriptions get numbered member names", "[table]")
+{
+    AddressTable table;
+    auto         first = make_entry(0x1000, ValueType::int32, {0, 0, 0, 0});
+    first.expression   = "1000";
+    table.add(first);
+    auto second       = make_entry(0x2000, ValueType::int32, {0, 0, 0, 0});
+    second.expression = "2000";
+    table.add(second);
+
+    const auto path = scratch_file("duplicates.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    CHECK(member_text(path, "index.txt") == std::optional<std::string> {"entries/unnamed.txt\nentries/unnamed2.txt\n"});
+    CHECK(member_text(path, "entries/unnamed2.txt")
+          == std::optional<std::string> {"type=i32 hex=0 size=4 expr=\"2000\"\n"});
+
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(loaded.size() == 2);
+    // The description is the member stem, so the collision-numbered second
+    // member reloads as "unnamed2" rather than the empty description it began
+    // with; another save is stable.
+    CHECK(loaded.entries()[0].description == "unnamed");
+    CHECK(loaded.entries()[1].description == "unnamed2");
+}
+
+TEST_CASE("a custom width survives the round-trip", "[table]")
+{
+    AddressTable table;
+    auto         buffer = make_entry(0x3000, ValueType::string, {});
+    buffer.description  = "buffer";
+    buffer.expression   = "3000";
+    buffer.bytes.assign(64, std::byte {0xAB});
+    table.add(buffer);
+
+    const auto path = scratch_file("width.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    CHECK(member_text(path, "entries/buffer.txt")
+          == std::optional<std::string> {"type=str hex=0 size=64 expr=\"3000\"\n"});
+
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded.entries()[0].type == ValueType::string);
+    CHECK(loaded.entries()[0].bytes.size() == 64);
 }
 
 TEST_CASE("an expression with quotes and spaces round-trips", "[table]")
 {
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_expr.skt";
-    std::filesystem::remove(path);
-
-    AddressTable original;
+    AddressTable table;
     auto         entry = make_entry(0x2000, ValueType::int32, {0x01, 0x00, 0x00, 0x00});
+    entry.description  = "quoted";
     entry.expression   = "my \"module\"+0x10";
-    original.add(entry);
+    table.add(entry);
 
-    REQUIRE(slopkit::table::save(path, original).has_value());
+    const auto path = scratch_file("expression.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
     AddressTable loaded;
     REQUIRE(slopkit::table::load(path, loaded).has_value());
     std::filesystem::remove(path);
 
     REQUIRE(loaded.size() == 1);
     CHECK(loaded.entries()[0].expression == "my \"module\"+0x10");
+    // A module base cannot be resolved without a target, so the address stays 0
+    // for the panel's resolve pass.
+    CHECK(loaded.entries()[0].address == 0);
+}
+
+TEST_CASE("a pointer expression is left for the target resolve pass", "[table]")
+{
+    AddressTable table;
+    auto         entry = make_entry(0x0, ValueType::int32, {0, 0, 0, 0});
+    entry.description  = "pointer";
+    entry.expression   = "app+0+8";
+    table.add(entry);
+
+    const auto path = scratch_file("pointer.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(loaded.size() == 1);
+    CHECK(loaded.entries()[0].address == 0);
+    CHECK(loaded.entries()[0].expression == "app+0+8");
+}
+
+TEST_CASE("a damaged archive is rejected with the member name", "[table]")
+{
+    const auto version = ArchiveMember {.name = "version.txt", .text = "slopkit-table 3\n"};
+    const auto body    = ArchiveMember {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 expr=\"1234\"\n"};
+
+    SECTION("an unknown entry key")
+    {
+        const auto path = scratch_file("unknown_key.skt");
+        std::filesystem::remove(path);
+        REQUIRE(
+            write_archive(path,
+                          std::vector<ArchiveMember> {
+                              version,
+                              {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 frozen=1 expr=\"1234\"\n"},
+                              {         .name = "index.txt",                           .text = "entries/health.txt\n"}
+        })
+                .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("entries/health.txt") != std::string::npos);
+        CHECK(result.error().find("frozen") != std::string::npos);
+    }
+
+    SECTION("a dangling index line")
+    {
+        const auto path = scratch_file("dangling.skt");
+        std::filesystem::remove(path);
+        REQUIRE(
+            write_archive(path,
+                          std::vector<ArchiveMember> {
+                              version, body, {.name = "index.txt", .text = "entries/health.txt\nentries/armor.txt\n"}
+        })
+                .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("index.txt") != std::string::npos);
+        CHECK(result.error().find("entries/armor.txt") != std::string::npos);
+    }
+
+    SECTION("an unlisted entries member")
+    {
+        const auto path = scratch_file("unlisted.skt");
+        std::filesystem::remove(path);
+        REQUIRE(write_archive(path,
+                              std::vector<ArchiveMember> {
+                                  version,
+                                  body,
+                                  {.name = "entries/orphan.txt", .text = "type=i32 hex=0 size=4 expr=\"1\"\n"},
+                                  {         .name = "index.txt",               .text = "entries/health.txt\n"}
+        })
+                    .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("entries/orphan.txt") != std::string::npos);
+    }
+
+    SECTION("an unknown format token")
+    {
+        const auto path = scratch_file("unknown_version.skt");
+        std::filesystem::remove(path);
+        REQUIRE(
+            write_archive(path,
+                          std::vector<ArchiveMember> {
+                              {.name = "version.txt", .text = "slopkit-table 9\n"},
+                              {  .name = "index.txt",                  .text = ""}
+        })
+                .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("version.txt") != std::string::npos);
+    }
+
+    SECTION("a missing version member")
+    {
+        const auto path = scratch_file("no_version.skt");
+        std::filesystem::remove(path);
+        REQUIRE(write_archive(path,
+                              std::vector<ArchiveMember> {
+                                  {.name = "index.txt", .text = ""}
+        })
+                    .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("version.txt") != std::string::npos);
+    }
+
+    SECTION("an unparsable expression")
+    {
+        const auto path = scratch_file("bad_expr.skt");
+        std::filesystem::remove(path);
+        REQUIRE(write_archive(path,
+                              std::vector<ArchiveMember> {
+                                  version,
+                                  {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 expr=\"1+\"\n"},
+                                  {         .name = "index.txt",                .text = "entries/health.txt\n"}
+        })
+                    .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("entries/health.txt") != std::string::npos);
+    }
+
+    SECTION("a file that is not an archive")
+    {
+        const auto path = scratch_file("plain.skt");
+        std::filesystem::remove(path);
+        {
+            std::ofstream file(path);
+            file << "slopkit-table 3\n";
+        }
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("not a slopkit table archive") != std::string::npos);
+    }
+
+    SECTION("a missing path")
+    {
+        AddressTable table;
+        const auto   result = slopkit::table::load(scratch_file("missing.skt"), table);
+        REQUIRE_FALSE(result.has_value());
+    }
+}
+
+TEST_CASE("address entries can be moved with stable ids", "[table]")
+{
+    AddressTable table;
+    const auto   add = [&table](const char* description, std::uint64_t address)
+    {
+        auto entry        = make_entry(address, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        table.add(entry);
+    };
+    add("first", 0x1000);
+    add("second", 0x2000);
+    add("third", 0x3000);
+
+    const std::vector<std::uint64_t> ids {table.entries()[0].id, table.entries()[1].id, table.entries()[2].id};
+
+    table.set_selected(0);
+    table.move(0, 2);
+    CHECK(table.entries()[0].description == "second");
+    CHECK(table.entries()[1].description == "third");
+    CHECK(table.entries()[2].description == "first");
+    // The move keeps the identity and carries the selection with the row.
+    CHECK(table.entries()[2].id == ids[0]);
+    CHECK(table.entries()[0].id == ids[1]);
+    CHECK(table.selected() == 2);
+
+    // An equal, out-of-range from or out-of-range to is a no-op.
+    table.move(1, 1);
+    table.move(5, 0);
+    table.move(0, 9);
+    CHECK(table.entries()[0].description == "second");
+    CHECK(table.entries()[1].description == "third");
+    CHECK(table.entries()[2].description == "first");
+
+    // A single row cannot be moved anywhere and stays put.
+    AddressTable single;
+    single.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
+    single.move(0, 0);
+    REQUIRE(single.size() == 1);
 }
 
 TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")
@@ -322,38 +663,6 @@ TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")
     }
 }
 
-TEST_CASE("the serializer rejects malformed files", "[table]")
-{
-    const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed.skt";
-    std::filesystem::remove(path);
-
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "nonsense line\n";
-    }
-    AddressTable table;
-    CHECK_FALSE(slopkit::table::load(path, table).has_value());
-
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "entry description=\"x\" address=zzz type=i32 value=00\n";
-    }
-    CHECK_FALSE(slopkit::table::load(path, table).has_value());
-
-    {
-        std::ofstream file(path);
-        file << "slopkit-table 1\n";
-        file << "entry type=i32 value=0\n"; // odd hex length
-    }
-    CHECK_FALSE(slopkit::table::load(path, table).has_value());
-
-    std::filesystem::remove(path);
-
-    CHECK_FALSE(slopkit::table::load("/nonexistent/slopkit/table.skt", table).has_value());
-}
-
 TEST_CASE("entry mutations are recorded on the table category", "[table][log]")
 {
     SECTION("entry mutations are recorded on the table category")
@@ -387,18 +696,21 @@ TEST_CASE("entry mutations are recorded on the table category", "[table][log]")
         CHECK(saw_remove);
     }
 
-    SECTION("a malformed table file is recorded with its line number")
+    SECTION("a damaged archive is recorded with its member name")
     {
         LevelGuard level;
         slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::warning);
 
-        const auto path = std::filesystem::temp_directory_path() / "slopkit_table_malformed_log.skt";
+        const auto path = scratch_file("malformed_log.skt");
         std::filesystem::remove(path);
-        {
-            std::ofstream file(path);
-            file << "slopkit-table 1\n";
-            file << "nonsense line\n";
-        }
+        REQUIRE(
+            write_archive(path,
+                          std::vector<ArchiveMember> {
+                              {       .name = "version.txt",                              .text = "slopkit-table 3\n"},
+                              {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 frozen=1 expr=\"1234\"\n"},
+                              {         .name = "index.txt",                           .text = "entries/health.txt\n"}
+        })
+                .has_value());
 
         std::vector<slopkit::log::Record> records;
         SinkGuard                         sink {[&records](const slopkit::log::Record& record)
@@ -414,7 +726,7 @@ TEST_CASE("entry mutations are recorded on the table category", "[table][log]")
         for (const auto& record : records)
         {
             if (record.level == slopkit::log::Level::warning && record.category == "table"
-                && record.message.find("line 2") != std::string::npos)
+                && record.message.find("entries/health.txt") != std::string::npos)
             {
                 saw_warning = true;
             }

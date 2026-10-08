@@ -22,7 +22,7 @@ docs that hold the detail behind this map.
 | `src/process` | Access seam, `AccessWorker`, plugin access, attachment metadata, shared types |
 | `src/sandbox` | Standalone practice-target binary (`slopkit-sandbox`) |
 | `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
-| `src/table` | Address table model, `.skt` serializer, per-table settings |
+| `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
 | `src/ui` | Qt main window and shared UI infrastructure |
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
@@ -61,7 +61,7 @@ docs that hold the detail behind this map.
 | plugin | Plugin C ABI, host facade, loader | `plugin/plugin_api.h`, `plugin.hpp` (`Plugin`), `plugin_host.hpp` (`PluginHost`) | `tests/plugin/*` | process, core |
 | process | Access seam, worker, attachment metadata | `process/access.hpp` (`ProcessAccess`), `access_worker.hpp` (`AccessWorker`), `attachment.hpp` (`AttachedTarget`), `plugin_access.hpp`, `types.hpp` | `tests/process/*` | plugin |
 | scan | Multithreaded value scanner | `scan/engine.hpp` (`ScanEngine`), `matcher.hpp`, `source.hpp`, `value.hpp`, `types.hpp` | `tests/scan/*` | process, expr |
-| table | Address table, `.skt` serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan |
+| table | Address table, `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, libzip |
 | expr | Address expression parsing/resolution | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | process |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
 | debug | Debugger core: controller, worker, backends, breakpoints | `debug/controller.hpp` (`Controller`; `controller*.cpp` holds the per-concern definitions), `worker.hpp`, `backend.hpp`, `plugin_backend.hpp`, `breakpoints.hpp`, `step_over.hpp`, `access_watch.hpp` | `tests/debug/*` | process, plugin, platform |
@@ -85,7 +85,7 @@ docs that hold the detail behind this map.
   With `Pause the game while scanning`, the panel suspends the target through the access worker before the engine starts and resumes it once the engine stops.
 - Live values: `ui::LiveValues` batches every registered `LiveSurface` request into one worker job per interval.
 - Debug: `debug::Controller` → `debug::Worker` job thread → `debug::PluginBackend` → plugin `debug_*` → `platform::DebugSession`/`ptrace`; `drain()` applies results; start is gated by `ui::DebugSessionGate`.
-- Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; `.skt` I/O in `table/serializer.cpp`, opened via `MainWindow::open_table_request()`.
+- Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; a drag reorders rows through `AddressTable::move`; `.skt` is a ZIP archive (`table/serializer.cpp` over `table/table_zip.cpp`), opened via `MainWindow::open_table_request()`.
 
 ## 4. Conventions
 
@@ -122,8 +122,9 @@ docs that hold the detail behind this map.
 - Generated/build-time files: icons and action glyphs (`cmake/EmbedIcon.cmake`),
   embedded fonts (`cmake/EmbedFont.cmake`), Qt resources, and
   `build/slopkit.desktop` from `assets/slopkit.desktop.in`. Never edit `build/`.
-- Must stay in sync: `assets/application-x-slopkit-table.xml` MIME magic with the
-  first line `src/table/serializer.cpp` writes; `SLOPKIT_PLUGIN_RELATIVE_DIR` in
+- Must stay in sync: `assets/application-x-slopkit-table.xml` MIME magic (the ZIP
+  signature `PK\003\004`) with the bytes `src/table/table_zip.cpp` writes;
+  `SLOPKIT_PLUGIN_RELATIVE_DIR` in
   `CMakeLists.txt`; `SLOPKIT_ACTION_ICON_NAMES` with `widgets::ActionIcon`; the
   plugin ABI version in `src/plugin/plugin_api.h` with the host handshake.
 - `.skt` address tables are registered as `application/x-slopkit-table`, so a
@@ -141,7 +142,8 @@ docs that hold the detail behind this map.
 - A test fake driven from a worker thread keeps its state behind a lock and
   exposes snapshot accessors instead of public fields, so the test thread never
   reads a record mid-write — see `tests/support/fake_debug.hpp`.
-- Configure fails without ImageMagick, Zydis dev packages and `pkg-config`.
+- Configure fails without ImageMagick, the Zydis and libzip dev packages and
+  `pkg-config`.
 
 ## 6. Maintaining this map
 
