@@ -168,7 +168,8 @@ TEST_CASE("a launch table path opens and skips the remembered auto-load", "[ui]"
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     REQUIRE(view->model()->rowCount() == 1);
-    CHECK(view->model()->index(0, 0).data(Qt::DisplayRole).toString() == QStringLiteral("launch-row"));
+    CHECK(view->model()->index(0, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
+          == QStringLiteral("launch-row"));
 }
 
 TEST_CASE("opening into an empty table loads without prompting", "[ui]")
@@ -204,7 +205,8 @@ TEST_CASE("opening into an empty table loads without prompting", "[ui]")
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     REQUIRE(view->model()->rowCount() == 1);
-    CHECK(view->model()->index(0, 0).data(Qt::DisplayRole).toString() == QStringLiteral("only-row"));
+    CHECK(view->model()->index(0, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
+          == QStringLiteral("only-row"));
 
     // A file that cannot be read reports and never prompts.
     auto* address_status =
@@ -214,7 +216,8 @@ TEST_CASE("opening into an empty table loads without prompting", "[ui]")
     CHECK(prompt_calls == 0);
     CHECK(address_status->text().contains(QStringLiteral("Open failed")));
     REQUIRE(view->model()->rowCount() == 1);
-    CHECK(view->model()->index(0, 0).data(Qt::DisplayRole).toString() == QStringLiteral("only-row"));
+    CHECK(view->model()->index(0, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
+          == QStringLiteral("only-row"));
 }
 
 TEST_CASE("cancelling an open request keeps the table, path and settings", "[ui]")
@@ -259,7 +262,8 @@ TEST_CASE("cancelling an open request keeps the table, path and settings", "[ui]
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     REQUIRE(view->model()->rowCount() == 1);
-    CHECK(view->model()->index(0, 0).data(Qt::DisplayRole).toString() == QStringLiteral("base-row"));
+    CHECK(view->model()->index(0, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
+          == QStringLiteral("base-row"));
 
     auto* address_status =
         window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
@@ -308,7 +312,8 @@ TEST_CASE("overwriting replaces the open table, path and settings", "[ui]")
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     REQUIRE(view->model()->rowCount() == 1);
-    CHECK(view->model()->index(0, 0).data(Qt::DisplayRole).toString() == QStringLiteral("incoming-row"));
+    CHECK(view->model()->index(0, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
+          == QStringLiteral("incoming-row"));
 }
 
 TEST_CASE("merging an open request keeps the path and adds only new rows", "[ui]")
@@ -379,8 +384,10 @@ TEST_CASE("merging an open request keeps the path and adds only new rows", "[ui]
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     REQUIRE(view->model()->rowCount() == 2);
-    CHECK(view->model()->index(0, 0).data(Qt::DisplayRole).toString() == QStringLiteral("shared-row"));
-    CHECK(view->model()->index(1, 0).data(Qt::DisplayRole).toString() == QStringLiteral("fresh-row"));
+    CHECK(view->model()->index(0, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
+          == QStringLiteral("shared-row"));
+    CHECK(view->model()->index(1, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
+          == QStringLiteral("fresh-row"));
 
     // Re-merging the same file changes nothing.
     CHECK(window.open_table_request(incoming_path));

@@ -409,6 +409,50 @@ TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
     CHECK(requested_kind == slopkit::debug::Kind::hardware_read_write);
 }
 
+TEST_CASE("the address list row menu toggles the Active flag", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    table.entries()[0].active = true;
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    QString status;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     [&](const QString& message, bool)
+                     {
+                         status = message;
+                     });
+
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+
+    QAction* active = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Active"))
+        {
+            active = action;
+        }
+    }
+    REQUIRE(active != nullptr);
+    CHECK(active->isCheckable());
+    CHECK(active->isChecked() == table.entries()[0].active);
+
+    // Triggering the entry flips the flag off and reports it on the status line.
+    active->trigger();
+    CHECK_FALSE(table.entries()[0].active);
+    CHECK(status == QStringLiteral("Entry inactive."));
+}
+
 TEST_CASE("the address list reorders rows by dragging and saves the order", "[ui]")
 {
     application();

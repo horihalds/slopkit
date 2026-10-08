@@ -19,7 +19,7 @@
 namespace slopkit::ui::models
 {
 
-    // Description / Address / Type / Value / Frozen rows over the address table.
+    // Active / Description / Address / Type / Value rows over the address table.
     // It owns no session: value edits are encoded here and executed by the
     // AccessWorker, with the same pending-job-id guard the immediate-mode panel
     // used.
@@ -30,11 +30,11 @@ namespace slopkit::ui::models
     public:
         enum Column
         {
+            active,
             description,
             address,
             type,
             value,
-            frozen,
             column_count,
         };
 

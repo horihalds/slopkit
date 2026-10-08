@@ -105,14 +105,14 @@ TEST_CASE("a UI action records under the ui category", "[ui]")
     slopkit::process::AttachedTarget target;
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
-    panel.toggle_freeze_selected(); // No selection: the UI refuses and warns.
+    panel.toggle_active_selected(); // No selection: the UI refuses and warns.
 
     bool saw_ui = false;
     for (const auto& record : records)
     {
         if (std::string_view {record.category} == slopkit::log::category::ui
             && record.level == slopkit::log::Level::warning
-            && record.message.find("freeze requested with no selection") != std::string::npos)
+            && record.message.find("active toggle requested with no selection") != std::string::npos)
         {
             saw_ui = true;
         }

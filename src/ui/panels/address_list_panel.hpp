@@ -48,7 +48,7 @@ namespace slopkit::ui::panels
         void save_table();
         void save_table_as();
         void delete_selected();
-        void toggle_freeze_selected();
+        void toggle_active_selected();
 
         // Runs the native file dialog only and returns the chosen path, or
         // nullopt when the dialog was cancelled. Split out of load_table() so
@@ -84,11 +84,11 @@ namespace slopkit::ui::panels
         // Loads a table file into the panel's table (parse_table + adopt_table).
         [[nodiscard]] bool load_table(const QString& path);
 
-        // Reports a status line outcome; report_freeze_error() forwards to it.
+        // Reports a status line outcome; report_active_error() forwards to it.
         void report_status(std::string_view message, bool is_error);
 
-        // Reports a freeze failure raised outside the panel.
-        void report_freeze_error(std::string_view message);
+        // Reports an active-toggle failure raised outside the panel.
+        void report_active_error(std::string_view message);
 
         // Polled by the window's tick.
         void refresh();

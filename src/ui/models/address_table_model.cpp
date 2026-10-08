@@ -113,7 +113,7 @@ namespace slopkit::ui::models
             }
             break;
         case Qt::CheckStateRole:
-            if (index.column() == frozen)
+            if (index.column() == active)
             {
                 return entry.active ? Qt::Checked : Qt::Unchecked;
             }
@@ -125,15 +125,15 @@ namespace slopkit::ui::models
             }
             break;
         case Qt::TextAlignmentRole:
-            if (index.column() == frozen)
+            if (index.column() == active)
             {
                 return static_cast<int>(Qt::AlignCenter);
             }
             return static_cast<int>(Qt::AlignLeft | Qt::AlignVCenter);
         case Qt::ToolTipRole:
-            if (index.column() == frozen)
+            if (index.column() == active)
             {
-                return tr("Freeze this value");
+                return tr("Continuously write this value back to the target");
             }
             if (index.column() == address && !entry.expression.empty())
             {
@@ -176,8 +176,8 @@ namespace slopkit::ui::models
                 return tr("Type");
             case value:
                 return tr("Value");
-            case frozen:
-                return tr("Frozen");
+            case active:
+                return tr("Active");
             default:
                 break;
             }
@@ -200,7 +200,7 @@ namespace slopkit::ui::models
         case value:
             item_flags |= Qt::ItemIsEditable;
             break;
-        case frozen:
+        case active:
             item_flags |= Qt::ItemIsUserCheckable;
             break;
         default:
@@ -311,7 +311,7 @@ namespace slopkit::ui::models
             return false;
         }
 
-        if (role == Qt::CheckStateRole && index.column() == frozen)
+        if (role == Qt::CheckStateRole && index.column() == active)
         {
             table_.entries()[row].active = value.toInt() == Qt::Checked;
             note_table_changed();

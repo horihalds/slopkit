@@ -30,20 +30,30 @@ TEST_CASE("the address-table model edits the table", "[ui]")
 
     CHECK(model.rowCount() == 1);
     CHECK(model.columnCount() == 5);
+
+    // The flag column leads the list, ahead of Description, and Value is last.
+    CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::active) == 0);
+    CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::description) == 1);
+    CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::value) == 4);
+
+    // The flag column is headed Active; Description still follows it.
+    CHECK(model.headerData(0, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Active"));
+    CHECK(model.headerData(1, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Description"));
+
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::address), Qt::DisplayRole).toString()
           == QStringLiteral("1040"));
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::type), Qt::DisplayRole).toString()
           == QStringLiteral("4 Bytes"));
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::value), Qt::DisplayRole).toString()
           == QStringLiteral("1"));
-    CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::frozen), Qt::CheckStateRole).toInt()
+    CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::active), Qt::CheckStateRole).toInt()
           == Qt::Unchecked);
 
-    // The Frozen column doubles as the freeze toggle.
+    // The Active column doubles as the toggle.
     REQUIRE(
-        model.setData(model.index(0, slopkit::ui::models::AddressTableModel::frozen), Qt::Checked, Qt::CheckStateRole));
+        model.setData(model.index(0, slopkit::ui::models::AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
     CHECK(table.entries()[0].active);
-    CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::frozen), Qt::CheckStateRole).toInt()
+    CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::active), Qt::CheckStateRole).toInt()
           == Qt::Checked);
 
     // A description edit lands in the table.

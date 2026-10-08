@@ -904,7 +904,7 @@ namespace slopkit::ui
                 {
                     log::warning(log::category::ui,
                                  std::format("freeze pass failed: {}", process::describe(*frozen.error)));
-                    address_list_->report_freeze_error(process::describe(*frozen.error));
+                    address_list_->report_active_error(process::describe(*frozen.error));
                 }
             });
         if (!submitted)

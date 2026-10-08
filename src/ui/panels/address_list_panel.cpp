@@ -61,7 +61,7 @@ namespace slopkit::ui::panels
         table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::type,
                                                               QHeaderView::ResizeToContents);
         table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::value, QHeaderView::Stretch);
-        table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::frozen,
+        table_view_->horizontalHeader()->setSectionResizeMode(models::AddressTableModel::active,
                                                               QHeaderView::ResizeToContents);
         layout->addWidget(table_view_, 1);
 
@@ -441,20 +441,20 @@ namespace slopkit::ui::panels
         set_status(tr("Entry deleted."), false);
     }
 
-    void AddressListPanel::toggle_freeze_selected()
+    void AddressListPanel::toggle_active_selected()
     {
         const int row = table_.selected();
         if (row < 0)
         {
-            log::warning(log::category::ui, "freeze requested with no selection");
-            set_status(tr("Select an entry to freeze."), true);
+            log::warning(log::category::ui, "active toggle requested with no selection");
+            set_status(tr("Select an entry to activate."), true);
             return;
         }
 
         auto& entry  = table_.entries()[static_cast<std::size_t>(row)];
         entry.active = !entry.active;
-        log::info(log::category::ui, entry.active ? "entry frozen" : "entry unfrozen");
-        set_status(entry.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
+        log::info(log::category::ui, entry.active ? "entry active" : "entry inactive");
+        set_status(entry.active ? tr("Entry active.") : tr("Entry inactive."), false);
     }
 
     void AddressListPanel::report_status(std::string_view message, bool is_error)
@@ -462,9 +462,9 @@ namespace slopkit::ui::panels
         set_status(to_qstring(message), is_error);
     }
 
-    void AddressListPanel::report_freeze_error(std::string_view message)
+    void AddressListPanel::report_active_error(std::string_view message)
     {
-        report_status(std::format("Freeze failed: {}", message), true);
+        report_status(std::format("Active write failed: {}", message), true);
     }
 
     void AddressListPanel::show_context_menu(const QPoint& position)
@@ -509,10 +509,10 @@ namespace slopkit::ui::panels
                     }
                 });
 
-        QAction* freeze = menu.addAction(tr("Freeze"));
-        freeze->setCheckable(true);
-        freeze->setChecked(entry.active);
-        connect(freeze,
+        QAction* active = menu.addAction(tr("Active"));
+        active->setCheckable(true);
+        active->setChecked(entry.active);
+        connect(active,
                 &QAction::triggered,
                 this,
                 [this, row](bool checked)
@@ -521,9 +521,9 @@ namespace slopkit::ui::panels
                     {
                         return;
                     }
-                    auto& frozen  = table_.entries()[row];
-                    frozen.active = checked;
-                    set_status(frozen.active ? tr("Entry frozen.") : tr("Entry unfrozen."), false);
+                    auto& selected  = table_.entries()[row];
+                    selected.active = checked;
+                    set_status(selected.active ? tr("Entry active.") : tr("Entry inactive."), false);
                 });
 
         QAction* show_hex = menu.addAction(tr("Show as hex"));
