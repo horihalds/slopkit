@@ -31,6 +31,50 @@ namespace slopkit::ui::panels
             const std::size_t size = scan::value_size(type);
             return size == 0 ? 4 : size;
         }
+
+        // The scanner's empty bottom row. It used to hold the Add Address
+        // Manually and Table Settings buttons the found list's Memory View row
+        // lines up with; the band keeps that row's height by mirroring the
+        // widget's own size hint, never a pixel constant, so a font, theme or
+        // scale change cannot pull the hits table out of level with the Memory
+        // Scan Options panel. No Q_OBJECT: it carries no signals of its own.
+        class BottomBand : public QWidget
+        {
+        public:
+            explicit BottomBand(QWidget* parent = nullptr) : QWidget(parent)
+            {
+                setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+            }
+
+            // Points the band at the row it mirrors; null means an empty row.
+            void set_source(QWidget* source)
+            {
+                source_ = source;
+                sync();
+            }
+
+            // Re-reads the mirrored height and re-lays out only when it moved,
+            // so a live font or scale change cannot leave the band stale.
+            void sync()
+            {
+                const int height = source_ != nullptr ? source_->sizeHint().height() : 0;
+                if (height == height_)
+                {
+                    return;
+                }
+                height_ = height;
+                updateGeometry();
+            }
+
+            [[nodiscard]] QSize sizeHint() const override
+            {
+                return QSize(0, height_);
+            }
+
+        private:
+            QPointer<QWidget> source_;
+            int               height_ {0};
+        };
     } // namespace
 
     ScannerPanel::ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent)
@@ -93,14 +137,13 @@ namespace slopkit::ui::panels
         return pause_scanning_check_;
     }
 
-    QWidget* ScannerPanel::tab_order_footer_first() const noexcept
+    void ScannerPanel::set_bottom_row_source(QWidget& row)
     {
-        return add_address_button_;
-    }
-
-    QWidget* ScannerPanel::tab_order_footer_last() const noexcept
-    {
-        return table_settings_button_;
+        bottom_row_source_ = &row;
+        if (auto* band = static_cast<BottomBand*>(bottom_band_))
+        {
+            band->set_source(bottom_row_source_.data());
+        }
     }
 
     void ScannerPanel::build_layout()
@@ -213,16 +256,13 @@ namespace slopkit::ui::panels
 
         layout->addStretch(1);
 
-        // The Add Address and Table Settings buttons sit against the window's
-        // right edge, in the bottom row shared with the found list's Memory
-        // View button; Table Settings is the right-most control.
-        auto* footer           = new QHBoxLayout();
-        add_address_button_    = widgets::secondary_button(tr("Add Address Manually"), this);
-        table_settings_button_ = widgets::secondary_button(tr("Table Settings"), this);
-        footer->addStretch(1);
-        footer->addWidget(add_address_button_);
-        footer->addWidget(table_settings_button_);
-        layout->addLayout(footer);
+        // The empty bottom row lines up with the found list's Memory View row;
+        // the window hands the band the height it mirrors.
+        auto* band_row = new QHBoxLayout();
+        bottom_band_   = new BottomBand(this);
+        band_row->addStretch(1);
+        band_row->addWidget(bottom_band_);
+        layout->addLayout(band_row);
 
         update_value_inputs();
         apply_tab_order();
@@ -231,8 +271,8 @@ namespace slopkit::ui::panels
     void ScannerPanel::apply_tab_order()
     {
         // The field run ends at the pause check; the hop from there to the
-        // footer buttons is left to the window, because the found list's table
-        // and Memory View button are spliced in between.
+        // address list is left to the window, because the found list's table and
+        // Memory View button are spliced in between.
         widgets::chain_tab_order({scan_button_,
                                   next_scan_button_,
                                   undo_button_,
@@ -251,7 +291,6 @@ namespace slopkit::ui::panels
                                   fast_scan_check_,
                                   alignment_edit_,
                                   pause_scanning_check_});
-        widgets::chain_tab_order({add_address_button_, table_settings_button_});
     }
 
     void ScannerPanel::connect_widgets()
@@ -309,9 +348,6 @@ namespace slopkit::ui::panels
                     maybe_resume_target();
                     refresh();
                 });
-        connect(add_address_button_, &QPushButton::clicked, this, &ScannerPanel::addAddressRequested);
-        connect(table_settings_button_, &QPushButton::clicked, this, &ScannerPanel::tableSettingsRequested);
-
         connect(value_edit_, &QLineEdit::returnPressed, this, &ScannerPanel::activate_scan_from_input);
         connect(hex_check_, &QCheckBox::toggled, this, &ScannerPanel::convert_value_base_fields);
 
@@ -913,6 +949,13 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::refresh()
     {
+        // The band mirrors another panel's row height, so re-read it here; a
+        // font, theme or scale change is picked up on the next tick.
+        if (auto* band = static_cast<BottomBand*>(bottom_band_))
+        {
+            band->sync();
+        }
+
         request_scan_session();
         request_memory_map();
 

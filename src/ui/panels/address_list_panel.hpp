@@ -126,6 +126,17 @@ namespace slopkit::ui::panels
         // without running the modal menu.
         void populate_row_menu(QMenu& menu, std::size_t row);
 
+        // Adds the table-area commands (`Add Address Manually…`, `Add Script…`,
+        // `Table Settings…`) to `menu`; they are the empty-area surface and the
+        // shared tail of every row menu.
+        void populate_panel_menu(QMenu& menu);
+
+        // Builds the whole menu for a right-click at `position`: the row
+        // commands, then a separator and the table-area commands, when the click
+        // lands on a row; the table-area commands alone when it does not. The
+        // selection moves to a clicked row and is left untouched below the rows.
+        void populate_context_menu(QMenu& menu, const QPoint& position);
+
         // Opens the Add Script dialog in add mode: an accepted dialog appends a
         // script entry to the table.
         void add_script();
@@ -155,6 +166,13 @@ namespace slopkit::ui::panels
 
         // A request to arm an access watch on an address, from the row menu.
         void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
+
+        // A request to open the Add Address dialog, fed by the table-area menu.
+        void addAddressRequested();
+
+        // A request to open the Table Settings dialog, fed by the table-area
+        // menu.
+        void tableSettingsRequested();
 
     private:
         void                          show_context_menu(const QPoint& position);

@@ -274,6 +274,11 @@ namespace slopkit::ui
         scanner_    = new panels::ScannerPanel(worker_, target_, this);
         found_list_ = new panels::FoundListPanel(scanner_->engine(), address_table_, this);
 
+        // The scanner's empty bottom row mirrors the found list's Memory View
+        // row, keeping the hits table's bottom edge level with the Memory Scan
+        // Options panel.
+        scanner_->set_bottom_row_source(*found_list_->tab_order_last());
+
         connect(found_list_,
                 &panels::FoundListPanel::memoryViewRequested,
                 this,
@@ -282,8 +287,6 @@ namespace slopkit::ui
                     on_memory_view_requested(scanner_->main_module_address());
                 });
         connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
-        connect(scanner_, &panels::ScannerPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
-        connect(scanner_, &panels::ScannerPanel::tableSettingsRequested, this, &MainWindow::show_table_settings);
         connect(scanner_,
                 &panels::ScannerPanel::memoryMapApplied,
                 this,
@@ -313,6 +316,10 @@ namespace slopkit::ui
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(address_list_, &panels::AddressListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
+        connect(
+            address_list_, &panels::AddressListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
+        connect(
+            address_list_, &panels::AddressListPanel::tableSettingsRequested, this, &MainWindow::show_table_settings);
         connect(address_list_, &panels::AddressListPanel::tableLoaded, this, &MainWindow::on_table_loaded);
         connect(address_list_,
                 &panels::AddressListPanel::statusChanged,
@@ -361,16 +368,13 @@ namespace slopkit::ui
 
     void MainWindow::apply_tab_order()
     {
-        // Declaring the whole junction as one run makes the four cross-panel
-        // links unambiguous, whatever order the panels chained their own
-        // controls in: the scanner's field run, then the found list's hits table
-        // and Memory View button, then the scanner's footer buttons, then the
-        // address list.
+        // Declaring the whole junction as one run makes the cross-panel links
+        // unambiguous, whatever order the panels chained their own controls in:
+        // the scanner's field run, then the found list's hits table and Memory
+        // View button, then the address list.
         widgets::chain_tab_order({scanner_->tab_order_last(),
                                   found_list_->tab_order_first(),
                                   found_list_->tab_order_last(),
-                                  scanner_->tab_order_footer_first(),
-                                  scanner_->tab_order_footer_last(),
                                   address_list_->tab_order_first()});
     }
 

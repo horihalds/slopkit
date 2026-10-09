@@ -48,8 +48,8 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(action_texts(menus[2]->menu()->actions())
           == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
 
-    // No Edit menu survives, and Undo Scan / Add Address Manually... are gone as
-    // menu actions anywhere in the window.
+    // No Edit menu survives, and Undo Scan, Add Address Manually and Table
+    // Settings are gone as menu actions anywhere in the window.
     for (QAction* menu : window.menuBar()->actions())
     {
         CHECK(menu->text() != QStringLiteral("Edit"));
@@ -58,6 +58,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     {
         CHECK(action->text() != QStringLiteral("Undo Scan"));
         CHECK(action->text() != QStringLiteral("Add Address Manually..."));
+        CHECK(action->text() != QStringLiteral("Table Settings"));
     }
 
     // Ctrl+T / Ctrl+O / Ctrl+S / Ctrl+Shift+S are bound to the file commands.
@@ -250,11 +251,10 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(hits->mapTo(&window, QPoint(0, hits->height())).y()
           == options_panel->mapTo(&window, QPoint(0, options_panel->height())).y());
 
-    // The Add Address button lives at the bottom-right of the scanner panel,
-    // not in the found list or the address list.
-    CHECK(button_labelled(*address_list, QStringLiteral("Add Address Manually")) == nullptr);
-    CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) == nullptr);
-    CHECK(button_labelled(*scanner, QStringLiteral("Add Address Manually")) != nullptr);
+    // The removed scanner buttons are gone from the whole window; the two
+    // commands now live in the address list's context menu instead.
+    CHECK(button_labelled(window, QStringLiteral("Add Address Manually")) == nullptr);
+    CHECK(button_labelled(window, QStringLiteral("Table Settings")) == nullptr);
 
     // A live theme switch re-installs the application palette.
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
@@ -294,34 +294,32 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
         return nullptr;
     };
 
-    auto* first_scan     = button_labelled(*scanner, QStringLiteral("First Scan"));
-    auto* next_scan      = button_labelled(*scanner, QStringLiteral("Next Scan"));
-    auto* undo_scan      = button_labelled(*scanner, QStringLiteral("Undo Scan"));
-    auto* cancel         = button_labelled(*scanner, QStringLiteral("Cancel"));
-    auto* hex            = checkbox_labelled(*scanner, QStringLiteral("Hex"));
-    auto* value          = address_field(*scanner, "Value");
-    auto* upper_value    = address_field(*scanner, "Upper value");
-    auto* scan_type      = combo_showing(*scanner, QStringLiteral("Exact Value"));
-    auto* value_type     = combo_showing(*scanner, QStringLiteral("4 Bytes"));
-    auto* memory_region  = range_combo(*scanner);
-    auto* start_address  = address_field(*scanner, "Start address");
-    auto* stop_address   = address_field(*scanner, "Stop address");
-    auto* writable       = checkbox_labelled(*scanner, QStringLiteral("Writable"));
-    auto* executable     = checkbox_labelled(*scanner, QStringLiteral("Executable"));
-    auto* copy_on_write  = checkbox_labelled(*scanner, QStringLiteral("CopyOnWrite"));
-    auto* fast_scan      = checkbox_labelled(*scanner, QStringLiteral("Fast Scan"));
-    auto* alignment      = address_field(*scanner, "Alignment");
-    auto* pause          = checkbox_labelled(*scanner, QStringLiteral("Pause the game while scanning"));
-    auto* hits           = found_list->findChild<QTableView*>();
-    auto* memory_view    = button_labelled(*found_list, QStringLiteral("Memory View"));
-    auto* add_address    = button_labelled(*scanner, QStringLiteral("Add Address Manually"));
-    auto* table_settings = button_labelled(*scanner, QStringLiteral("Table Settings"));
-    auto* addresses      = address_list->findChild<QTableView*>();
+    auto* first_scan    = button_labelled(*scanner, QStringLiteral("First Scan"));
+    auto* next_scan     = button_labelled(*scanner, QStringLiteral("Next Scan"));
+    auto* undo_scan     = button_labelled(*scanner, QStringLiteral("Undo Scan"));
+    auto* cancel        = button_labelled(*scanner, QStringLiteral("Cancel"));
+    auto* hex           = checkbox_labelled(*scanner, QStringLiteral("Hex"));
+    auto* value         = address_field(*scanner, "Value");
+    auto* upper_value   = address_field(*scanner, "Upper value");
+    auto* scan_type     = combo_showing(*scanner, QStringLiteral("Exact Value"));
+    auto* value_type    = combo_showing(*scanner, QStringLiteral("4 Bytes"));
+    auto* memory_region = range_combo(*scanner);
+    auto* start_address = address_field(*scanner, "Start address");
+    auto* stop_address  = address_field(*scanner, "Stop address");
+    auto* writable      = checkbox_labelled(*scanner, QStringLiteral("Writable"));
+    auto* executable    = checkbox_labelled(*scanner, QStringLiteral("Executable"));
+    auto* copy_on_write = checkbox_labelled(*scanner, QStringLiteral("CopyOnWrite"));
+    auto* fast_scan     = checkbox_labelled(*scanner, QStringLiteral("Fast Scan"));
+    auto* alignment     = address_field(*scanner, "Alignment");
+    auto* pause         = checkbox_labelled(*scanner, QStringLiteral("Pause the game while scanning"));
+    auto* hits          = found_list->findChild<QTableView*>();
+    auto* memory_view   = button_labelled(*found_list, QStringLiteral("Memory View"));
+    auto* addresses     = address_list->findChild<QTableView*>();
 
     const std::vector<QWidget*> order {
-        first_scan, next_scan,     undo_scan,     cancel,       hex,         value,          upper_value,   scan_type,
-        value_type, memory_region, start_address, stop_address, writable,    executable,     copy_on_write, fast_scan,
-        alignment,  pause,         hits,          memory_view,  add_address, table_settings, addresses};
+        first_scan,    next_scan,  undo_scan,     cancel,        hex,          value,       upper_value,
+        scan_type,     value_type, memory_region, start_address, stop_address, writable,    executable,
+        copy_on_write, fast_scan,  alignment,     pause,         hits,         memory_view, addresses};
     for (QWidget* widget : order)
     {
         REQUIRE(widget != nullptr);

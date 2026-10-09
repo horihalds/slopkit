@@ -54,6 +54,26 @@ namespace
         const QSize own = window.size();
         return parent.frameGeometry().center() - QPoint(own.width() / 2, own.height() / 2);
     }
+
+    // Triggers a table-area command through the address list's own menu, the
+    // route the removed scanner buttons used to carry.
+    void trigger_table_command(slopkit::ui::MainWindow& window, const QString& text)
+    {
+        auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+        REQUIRE(address_list != nullptr);
+        QMenu menu;
+        address_list->populate_panel_menu(menu);
+        QAction* action = nullptr;
+        for (QAction* candidate : menu.actions())
+        {
+            if (candidate->text() == text)
+            {
+                action = candidate;
+            }
+        }
+        REQUIRE(action != nullptr);
+        action->trigger();
+    }
 } // namespace
 
 TEST_CASE("a keeper restores a pre-seeded geometry", "[window_geometry]")
@@ -269,10 +289,8 @@ TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not re
     // dialog lands fully on-screen and the platform leaves the position alone.
     window.resize(780, 780);
 
-    // Add Address, through the scanner's footer button.
-    QPushButton* add_button = button_labelled(window, QStringLiteral("Add Address Manually"));
-    REQUIRE(add_button != nullptr);
-    add_button->click();
+    // Add Address, through the address list's table menu.
+    trigger_table_command(window, QStringLiteral("Add Address Manually…"));
     auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
     REQUIRE(add_dialog != nullptr);
     QCoreApplication::processEvents();
@@ -281,10 +299,8 @@ TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not re
     add_dialog->hide();
     QCoreApplication::processEvents();
 
-    // Table Settings, through the scanner's footer button.
-    QPushButton* table_button = button_labelled(window, QStringLiteral("Table Settings"));
-    REQUIRE(table_button != nullptr);
-    table_button->click();
+    // Table Settings, through the address list's table menu.
+    trigger_table_command(window, QStringLiteral("Table Settings…"));
     auto* table_dialog = window.findChild<slopkit::ui::dialogs::TableSettingsDialog*>();
     REQUIRE(table_dialog != nullptr);
     QCoreApplication::processEvents();

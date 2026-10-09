@@ -596,22 +596,36 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::show_context_menu(const QPoint& position)
     {
-        const QModelIndex index = table_view_->indexAt(position);
-        if (!index.isValid())
-        {
-            return;
-        }
-
-        const auto row = static_cast<std::size_t>(index.row());
-        if (!table_.valid_index(row))
-        {
-            return;
-        }
-        table_.set_selected(index.row());
-
         QMenu menu(this);
-        populate_row_menu(menu, row);
+        populate_context_menu(menu, position);
         menu.exec(table_view_->viewport()->mapToGlobal(position));
+    }
+
+    void AddressListPanel::populate_context_menu(QMenu& menu, const QPoint& position)
+    {
+        const QModelIndex index = table_view_->indexAt(position);
+        if (index.isValid() && table_.valid_index(static_cast<std::size_t>(index.row())))
+        {
+            table_.set_selected(index.row());
+            populate_row_menu(menu, static_cast<std::size_t>(index.row()));
+            return;
+        }
+
+        // A click below the rows shows the table-area commands alone and leaves
+        // the current selection untouched.
+        populate_panel_menu(menu);
+    }
+
+    void AddressListPanel::populate_panel_menu(QMenu& menu)
+    {
+        QAction* add = menu.addAction(tr("Add Address Manually…"));
+        connect(add, &QAction::triggered, this, &AddressListPanel::addAddressRequested);
+
+        QAction* script = menu.addAction(tr("Add Script…"));
+        connect(script, &QAction::triggered, this, &AddressListPanel::add_script);
+
+        QAction* settings = menu.addAction(tr("Table Settings…"));
+        connect(settings, &QAction::triggered, this, &AddressListPanel::tableSettingsRequested);
     }
 
     void AddressListPanel::populate_row_menu(QMenu& menu, std::size_t row)
@@ -625,7 +639,8 @@ namespace slopkit::ui::panels
         widgets::show_explanations(menu);
 
         // A script row has no address and no value, so it gets its own two
-        // commands instead of the value-row set.
+        // commands instead of the value-row set; both row kinds then share the
+        // table-area tail.
         if (entry.kind == table::EntryKind::script)
         {
             QAction* run = menu.addAction(tr("Run Script"));
@@ -649,87 +664,94 @@ namespace slopkit::ui::panels
             menu.addSeparator();
             QAction* remove_script = menu.addAction(tr("Delete"));
             connect(remove_script, &QAction::triggered, this, &AddressListPanel::delete_selected);
-            return;
+        }
+        else
+        {
+            QAction* change_value = menu.addAction(tr("Change value"));
+            connect(change_value,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        if (table_.valid_index(row))
+                        {
+                            table_view_->edit(model_->index(static_cast<int>(row), models::AddressTableModel::value));
+                        }
+                    });
+
+            QAction* active = menu.addAction(tr("Active"));
+            active->setCheckable(true);
+            active->setChecked(entry.active);
+            connect(active,
+                    &QAction::triggered,
+                    this,
+                    [this, row](bool checked)
+                    {
+                        if (!table_.valid_index(row))
+                        {
+                            return;
+                        }
+                        auto& selected  = table_.entries()[row];
+                        selected.active = checked;
+                        set_status(selected.active ? tr("Entry active.") : tr("Entry inactive."), false);
+                    });
+
+            QAction* show_hex = menu.addAction(tr("Show as hex"));
+            show_hex->setCheckable(true);
+            show_hex->setChecked(entry.hex);
+            connect(show_hex,
+                    &QAction::triggered,
+                    this,
+                    [this, row](bool checked)
+                    {
+                        if (!table_.valid_index(row))
+                        {
+                            return;
+                        }
+                        table_.entries()[row].hex = checked;
+                        set_status(tr("Display format updated."), false);
+                    });
+
+            QAction* browse = menu.addAction(tr("Browse this memory region"));
+            connect(browse,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        if (table_.valid_index(row))
+                        {
+                            emit browseRequested(table_.entries()[row].address);
+                        }
+                    });
+
+            // The watch entries arm a hardware slot, so they need a target.
+            const std::size_t width =
+                entry.bytes.empty() ? scan::value_size(entry.type) : static_cast<std::size_t>(entry.bytes.size());
+            widgets::add_watch_commands(menu,
+                                        target_.valid(),
+                                        [this, row, width](widgets::WatchCommand command)
+                                        {
+                                            if (!table_.valid_index(row))
+                                            {
+                                                return;
+                                            }
+                                            const debug::Kind kind = command == widgets::WatchCommand::writes
+                                                                       ? debug::Kind::hardware_write
+                                                                       : debug::Kind::hardware_read_write;
+                                            emit accessWatchRequested(table_.entries()[row].address, width, kind);
+                                        });
+            (void)widgets::disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
+
+            menu.addSeparator();
+            QAction* remove = menu.addAction(tr("Delete"));
+            connect(remove, &QAction::triggered, this, &AddressListPanel::delete_selected);
         }
 
-        QAction* change_value = menu.addAction(tr("Change value"));
-        connect(change_value,
-                &QAction::triggered,
-                this,
-                [this, row]
-                {
-                    if (table_.valid_index(row))
-                    {
-                        table_view_->edit(model_->index(static_cast<int>(row), models::AddressTableModel::value));
-                    }
-                });
-
-        QAction* active = menu.addAction(tr("Active"));
-        active->setCheckable(true);
-        active->setChecked(entry.active);
-        connect(active,
-                &QAction::triggered,
-                this,
-                [this, row](bool checked)
-                {
-                    if (!table_.valid_index(row))
-                    {
-                        return;
-                    }
-                    auto& selected  = table_.entries()[row];
-                    selected.active = checked;
-                    set_status(selected.active ? tr("Entry active.") : tr("Entry inactive."), false);
-                });
-
-        QAction* show_hex = menu.addAction(tr("Show as hex"));
-        show_hex->setCheckable(true);
-        show_hex->setChecked(entry.hex);
-        connect(show_hex,
-                &QAction::triggered,
-                this,
-                [this, row](bool checked)
-                {
-                    if (!table_.valid_index(row))
-                    {
-                        return;
-                    }
-                    table_.entries()[row].hex = checked;
-                    set_status(tr("Display format updated."), false);
-                });
-
-        QAction* browse = menu.addAction(tr("Browse this memory region"));
-        connect(browse,
-                &QAction::triggered,
-                this,
-                [this, row]
-                {
-                    if (table_.valid_index(row))
-                    {
-                        emit browseRequested(table_.entries()[row].address);
-                    }
-                });
-
-        // The watch entries arm a hardware slot, so they need a target.
-        const std::size_t width =
-            entry.bytes.empty() ? scan::value_size(entry.type) : static_cast<std::size_t>(entry.bytes.size());
-        widgets::add_watch_commands(menu,
-                                    target_.valid(),
-                                    [this, row, width](widgets::WatchCommand command)
-                                    {
-                                        if (!table_.valid_index(row))
-                                        {
-                                            return;
-                                        }
-                                        const debug::Kind kind = command == widgets::WatchCommand::writes
-                                                                   ? debug::Kind::hardware_write
-                                                                   : debug::Kind::hardware_read_write;
-                                        emit accessWatchRequested(table_.entries()[row].address, width, kind);
-                                    });
-        (void)widgets::disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
-
+        // The table-area commands follow the row's own entries, after their own
+        // separator, on a value row and a script row alike
+        // (docs/UI_DESIGN.md#windows-dialogs-and-layout).
         menu.addSeparator();
-        QAction* remove = menu.addAction(tr("Delete"));
-        connect(remove, &QAction::triggered, this, &AddressListPanel::delete_selected);
+        populate_panel_menu(menu);
     }
 
 } // namespace slopkit::ui::panels

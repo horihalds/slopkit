@@ -14,6 +14,7 @@
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 
+#include <QPointer>
 #include <QWidget>
 
 class QCheckBox;
@@ -33,9 +34,9 @@ namespace slopkit::ui::panels
 
     // The right half of the middle zone: the scan controls. It builds the
     // ScanConfig, owns the engine and the worker session the engine reads
-    // through, and never blocks on target access. Its bottom-right button
-    // requests the Add Address dialog, lined up with the found list's Memory
-    // View button.
+    // through, and never blocks on target access. Its bottom row is an empty
+    // band that mirrors the found list's Memory View row height, so the hits
+    // table's bottom edge stays level with the Memory Scan Options panel.
     class ScannerPanel : public QWidget
     {
         Q_OBJECT
@@ -72,21 +73,18 @@ namespace slopkit::ui::panels
         [[nodiscard]] std::uint64_t main_module_address() const noexcept;
 
         // The seam the window joins its cross-panel chain through: the last
-        // control of the scanner's own run and the footer pair. They exist only
-        // so the window can splice the found list's controls between the pause
-        // check and the footer buttons; the widgets themselves stay private.
-        [[nodiscard]] QWidget* tab_order_last() const noexcept;         // Pause the game while scanning
-        [[nodiscard]] QWidget* tab_order_footer_first() const noexcept; // Add Address Manually
-        [[nodiscard]] QWidget* tab_order_footer_last() const noexcept;  // Table Settings
+        // control of the scanner's own run. It exists only so the window can
+        // splice the found list's controls after the pause check; the widget
+        // itself stays private.
+        [[nodiscard]] QWidget* tab_order_last() const noexcept; // Pause the game while scanning
+
+        // The widget whose height the empty bottom row mirrors, so the hits
+        // table's bottom edge stays level with the `Memory Scan Options` panel
+        // (docs/UI_DESIGN.md#windows-dialogs-and-layout). The found list's
+        // Memory View row is the production value; no source means an empty row.
+        void set_bottom_row_source(QWidget& row);
 
     signals:
-        // A request to open the Add Address dialog, fed by the bottom button.
-        void addAddressRequested();
-
-        // A request to open the Table Settings dialog, fed by the bottom-right
-        // button.
-        void tableSettingsRequested();
-
         // The current memory map as file-backed module images, empty when
         // detached; the found list uses it to mark and group static hits.
         void memoryMapApplied(std::vector<process::ModuleInfo> modules);
@@ -129,8 +127,11 @@ namespace slopkit::ui::panels
         QPushButton*                next_scan_button_ {};
         QPushButton*                undo_button_ {};
         QPushButton*                cancel_button_ {};
-        QPushButton*                add_address_button_ {};
-        QPushButton*                table_settings_button_ {};
+
+        // The empty row that mirrors `bottom_row_source_`'s height; see
+        // set_bottom_row_source.
+        QWidget*          bottom_band_ {};
+        QPointer<QWidget> bottom_row_source_ {};
 
         QLineEdit* start_edit_ {};
         QLineEdit* stop_edit_ {};

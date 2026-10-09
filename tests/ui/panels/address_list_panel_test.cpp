@@ -551,12 +551,21 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
 
+    const QList<QString> table_commands {
+        QStringLiteral("Add Address Manually…"), QStringLiteral("Add Script…"), QStringLiteral("Table Settings…")};
+
     QMenu script_menu;
     panel.populate_row_menu(script_menu, 1);
     CHECK(action_texts(script_menu.actions())
-          == QList<QString> {QStringLiteral("Run Script"), QStringLiteral("Edit Script…"), QStringLiteral("Delete")});
+          == QList<QString> {QStringLiteral("Run Script"),
+                             QStringLiteral("Edit Script…"),
+                             QStringLiteral("Delete"),
+                             QStringLiteral("Add Address Manually…"),
+                             QStringLiteral("Add Script…"),
+                             QStringLiteral("Table Settings…")});
 
-    // A value row keeps its own commands and gains neither script command.
+    // A value row keeps its own commands and gains neither script command; both
+    // row kinds end with the shared table-area tail.
     QMenu value_menu;
     panel.populate_row_menu(value_menu, 0);
     const QList<QString> value_texts = action_texts(value_menu.actions());
@@ -564,11 +573,134 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
     CHECK(value_texts.contains(QStringLiteral("Browse this memory region")));
     CHECK_FALSE(value_texts.contains(QStringLiteral("Run Script")));
     CHECK_FALSE(value_texts.contains(QStringLiteral("Edit Script…")));
+    CHECK(value_texts.mid(value_texts.size() - 3) == table_commands);
 
     // An out-of-range row gets nothing.
     QMenu empty_menu;
     panel.populate_row_menu(empty_menu, 9);
     CHECK(action_texts(empty_menu.actions()).isEmpty());
+}
+
+TEST_CASE("the address list table menu carries the table-area commands", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    const QList<QString> table_commands {
+        QStringLiteral("Add Address Manually…"), QStringLiteral("Add Script…"), QStringLiteral("Table Settings…")};
+
+    // The panel menu holds exactly the three table-area commands, no separator
+    // and everything enabled, exactly as the removed buttons were.
+    QMenu panel_menu;
+    panel.populate_panel_menu(panel_menu);
+    CHECK(action_texts(panel_menu.actions()) == table_commands);
+    for (QAction* action : panel_menu.actions())
+    {
+        CHECK_FALSE(action->isSeparator());
+        CHECK(action->isEnabled());
+    }
+
+    // The two dialog requests are raised from their entries; Add Script is the
+    // panel's own dialog, so it raises neither.
+    int add_requests      = 0;
+    int settings_requests = 0;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::addAddressRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++add_requests;
+                     });
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::tableSettingsRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++settings_requests;
+                     });
+    panel_menu.actions().at(0)->trigger();
+    panel_menu.actions().at(2)->trigger();
+    panel_menu.actions().at(1)->trigger();
+    CHECK(add_requests == 1);
+    CHECK(settings_requests == 1);
+
+    // An empty table is not a dead end: the same three entries show.
+    slopkit::table::AddressTable          empty_table;
+    slopkit::ui::panels::AddressListPanel empty_panel {empty_table, worker, target};
+    QMenu                                 empty_menu;
+    empty_panel.populate_panel_menu(empty_menu);
+    CHECK(action_texts(empty_menu.actions()) == table_commands);
+}
+
+TEST_CASE("the address list context menu covers rows and the empty area", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    REQUIRE(table.add_script("helper", "print('hi')") == 1);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    panel.resize(800, 400);
+    panel.show();
+    QCoreApplication::processEvents();
+
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->model() != nullptr);
+
+    const QList<QString> table_commands {
+        QStringLiteral("Add Address Manually…"), QStringLiteral("Add Script…"), QStringLiteral("Table Settings…")};
+
+    // A click on a value row moves the selection there and shows its own
+    // commands followed by the shared table-area tail.
+    const QModelIndex value_index = view->model()->index(0, 0);
+    REQUIRE_FALSE(view->visualRect(value_index).isEmpty());
+    table.set_selected(-1);
+    QMenu value_menu;
+    panel.populate_context_menu(value_menu, view->visualRect(value_index).center());
+    const QList<QString> value_texts = action_texts(value_menu.actions());
+    CHECK(value_texts.contains(QStringLiteral("Change value")));
+    CHECK(value_texts.mid(value_texts.size() - 3) == table_commands);
+    CHECK(table.selected() == 0);
+
+    // A click on a script row keeps its own commands plus the same tail.
+    const QModelIndex script_index = view->model()->index(1, 0);
+    REQUIRE_FALSE(view->visualRect(script_index).isEmpty());
+    QMenu script_menu;
+    panel.populate_context_menu(script_menu, view->visualRect(script_index).center());
+    CHECK(action_texts(script_menu.actions())
+          == QList<QString> {QStringLiteral("Run Script"),
+                             QStringLiteral("Edit Script…"),
+                             QStringLiteral("Delete"),
+                             QStringLiteral("Add Address Manually…"),
+                             QStringLiteral("Add Script…"),
+                             QStringLiteral("Table Settings…")});
+    CHECK(table.selected() == 1);
+
+    // A click below the rows shows only the table commands and leaves the
+    // selection exactly where it was.
+    table.set_selected(0);
+    const QPoint below {view->viewport()->width() / 2, view->viewport()->height() - 2};
+    REQUIRE_FALSE(view->indexAt(below).isValid());
+    QMenu empty_menu;
+    panel.populate_context_menu(empty_menu, below);
+    CHECK(action_texts(empty_menu.actions()) == table_commands);
+    CHECK(table.selected() == 0);
+
+    panel.close();
 }
 
 TEST_CASE("Run Script without an attached target is refused", "[ui]")

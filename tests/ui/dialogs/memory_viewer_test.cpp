@@ -67,7 +67,8 @@ TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 
     auto* memory_view = button_labelled(panel, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
-    // The Add Address button moved to the scanner panel's bottom-right.
+    // The Add Address command now lives in the address list's context menu, not
+    // in the found list.
     CHECK(button_labelled(panel, QStringLiteral("Add Address Manually")) == nullptr);
 
     // The view button waits for an attached target.
@@ -130,14 +131,11 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
 
     auto* memory_view = button_labelled(*found_list, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
-    auto* add_address = button_labelled(*scanner, QStringLiteral("Add Address Manually"));
-    REQUIRE(add_address != nullptr);
-    CHECK(scanner->isAncestorOf(add_address));
-    CHECK(button_labelled(*found_list, QStringLiteral("Add Address Manually")) == nullptr);
 
-    auto* table_settings = button_labelled(*scanner, QStringLiteral("Table Settings"));
-    REQUIRE(table_settings != nullptr);
-    CHECK(scanner->isAncestorOf(table_settings));
+    // The Add Address and Table Settings buttons are gone from the whole window;
+    // the two commands now live in the address list's context menu.
+    CHECK(button_labelled(window, QStringLiteral("Add Address Manually")) == nullptr);
+    CHECK(button_labelled(window, QStringLiteral("Table Settings")) == nullptr);
 
     // The window enables the view button once the target is attached and the
     // main module's map has landed.
@@ -150,16 +148,12 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     window.show();
     QCoreApplication::processEvents();
 
-    // The three buttons share one window-wide row: Memory View on the left, Add
-    // Address Manually next and Table Settings against the window's right edge.
-    const QPoint memory_view_pos    = memory_view->mapTo(&window, QPoint(0, 0));
-    const QPoint add_address_pos    = add_address->mapTo(&window, QPoint(0, 0));
-    const QPoint table_settings_pos = table_settings->mapTo(&window, QPoint(0, 0));
-    CHECK(memory_view_pos.y() == add_address_pos.y());
-    CHECK(add_address_pos.y() == table_settings_pos.y());
-    CHECK(memory_view_pos.x() < add_address_pos.x());
-    CHECK(add_address_pos.x() < table_settings_pos.x());
-    CHECK(window.width() - table_settings->mapTo(&window, table_settings->rect().topRight()).x() <= 24);
+    // The Memory View row still sits directly below the hits table; the scanner's
+    // empty bottom band now mirrors its height instead of carrying the two
+    // removed buttons.
+    auto* hits = found_list->findChild<QTableView*>();
+    REQUIRE(hits != nullptr);
+    CHECK(memory_view->mapTo(&window, QPoint(0, 0)).y() > hits->mapTo(&window, QPoint(0, 0)).y());
 
     auto* viewer = window.memory_viewer();
     REQUIRE(viewer != nullptr);
@@ -182,18 +176,38 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
     CHECK(view->first_byte() == 0x1040);
 
-    // The add button reaches the same non-modal dialog as the menu action.
+    // The table menu's Add Address command reaches the same non-modal dialog.
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+    QMenu table_menu;
+    address_list->populate_panel_menu(table_menu);
+    QAction* add_address_action    = nullptr;
+    QAction* table_settings_action = nullptr;
+    for (QAction* action : table_menu.actions())
+    {
+        if (action->text() == QStringLiteral("Add Address Manually…"))
+        {
+            add_address_action = action;
+        }
+        if (action->text() == QStringLiteral("Table Settings…"))
+        {
+            table_settings_action = action;
+        }
+    }
+    REQUIRE(add_address_action != nullptr);
+    REQUIRE(table_settings_action != nullptr);
+
     auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
     REQUIRE(add_dialog != nullptr);
     CHECK_FALSE(add_dialog->isVisible());
-    add_address->click();
+    add_address_action->trigger();
     CHECK(add_dialog->isVisible());
 
-    // The Table Settings button reaches its own non-modal dialog.
+    // Table Settings reaches its own non-modal dialog.
     auto* settings_dialog = window.findChild<slopkit::ui::dialogs::TableSettingsDialog*>();
     REQUIRE(settings_dialog != nullptr);
     CHECK_FALSE(settings_dialog->isVisible());
-    table_settings->click();
+    table_settings_action->trigger();
     CHECK(settings_dialog->isVisible());
 }
 
