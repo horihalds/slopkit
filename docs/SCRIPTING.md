@@ -196,6 +196,40 @@ Allocating is a plugin capability: a target whose plugin cannot map memory repor
 session and an allocation never overlap, and the allocation disappears when the
 target detaches.
 
+## Assembling instructions into the target
+
+`assemble(address, text[, ...])` turns a block of instructions into bytes and
+writes them into the target at `address` in one go:
+
+```lua
+local ok, size = assemble(entry, [[
+    push rbp
+    mov rbp, rsp
+    sub rsp, 0x%X
+]], 1337)
+```
+
+- `text` holds one instruction per line, written the way the disassembly listing
+  prints it (`MOV RBP, RSP`, `JZ 4010`, `MOV RAX, [22FE]`). Blank lines and
+  everything from a `;` to the end of a line are ignored. This is the listing's
+  own vocabulary, not NASM or GAS: a bare number is hex, so `MOV EAX, 10` writes
+  `0x10`, while `#10` selects decimal.
+- Each instruction is encoded for the address it will actually occupy, so a
+  branch target and a bracket-less memory address written the way the listing
+  shows them land on the right place.
+- Extra arguments are passed to Lua's `string.format` to expand `text`; with none
+  the text is used verbatim, so a literal `%` is never interpreted.
+- The mode follows `mem.pointer_size()`: `4` assembles 32-bit code, anything else
+  the native 64-bit mode. `push ebp` therefore only assembles against a 32-bit
+  target and is rejected against a 64-bit one.
+- It returns `true, size` (the byte count written) on success, or `false, reason`
+  and writes nothing on any failure. A rejected instruction names its 1-based
+  line: `"line 3: unknown mnemonic 'frobnicate'"`.
+
+The whole block is a single write, but a target that fails part of the way
+through a write can still leave the front of the block in memory; assemble into an
+`alloc`ed scratch buffer first when a partial write would matter.
+
 ## Worked examples
 
 ### Find a pattern once and publish it
@@ -229,6 +263,35 @@ end
 
 function deactivate()
     dealloc("scratch")
+    return true
+end
+```
+
+### Assemble a stub into a scratch buffer
+
+`alloc` a run of memory, `assemble` a small routine into it and publish its entry
+address for the table or another script to use.
+
+```lua
+function activate()
+    local entry = alloc("stub", 64)
+    local ok, size = assemble(entry, [[
+        push rbp
+        mov rbp, rsp
+        mov eax, #42
+        pop rbp
+        ret
+    ]])
+    if not ok then
+        return false, "assemble failed: " .. size
+    end
+    ssymbol("stub_entry", entry)
+    print(string.format("stub at 0x%X (%d bytes)", entry, size))
+    return true
+end
+
+function deactivate()
+    dealloc("stub")
     return true
 end
 ```

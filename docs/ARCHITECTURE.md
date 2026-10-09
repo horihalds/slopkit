@@ -279,6 +279,14 @@ target.
   intended change is the new mapping. A debug session and an allocation never
   overlap — each refuses while the other holds the target. Each `alloc`/`dealloc`
   writes one `script`-category debug record (address, size, outcome).
+- `assemble(address, text[, ...])` turns a newline-separated block of the listing's
+  own instructions into bytes with `disasm::assemble_block` and writes them into
+  the target in one `MemoryApi::write`. Each instruction is encoded for the
+  address it will occupy, and the CPU mode follows `api.pointer_size()` (`4` →
+  `legacy_32`, else `long_64`). Extra arguments expand `text` through Lua's
+  `string.format`; a wrong argument type raises, while an instruction the encoder
+  rejects (naming its 1-based line), an empty block or a refused write returns
+  `false, reason` and writes nothing, and a success returns `true, size`.
 - A registered symbol resolves like a module name in any address expression, in
   both the worker's resolve job and the deref-free UI parsers. `expr::evaluate`
   takes the snapshot as an argument and looks a base up as **module name → symbol

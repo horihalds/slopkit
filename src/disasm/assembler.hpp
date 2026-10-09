@@ -35,4 +35,21 @@ namespace slopkit::disasm
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string> assemble(std::string_view       text,
                                                                               const AssembleContext& context);
 
+    // What assembling a block of instructions needs: the address the block starts
+    // at and the CPU mode every instruction is encoded for.
+    struct AssembleBlockContext
+    {
+        std::uint64_t base {};
+        MachineMode   mode {MachineMode::long_64};
+    };
+
+    // Assembles the newline-separated `text` at successive addresses from
+    // `context.base`: each instruction is encoded for the address of its own first
+    // byte, so a branch target or a base-less memory operand resolves against where
+    // the code will actually live. Blank lines, surrounding whitespace and `;`
+    // comments are ignored. On success the block's bytes in order; otherwise a
+    // message naming the 1-based line and what was rejected.
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
+    assemble_block(std::string_view text, const AssembleBlockContext& context);
+
 } // namespace slopkit::disasm

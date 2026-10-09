@@ -13,6 +13,7 @@
 
 namespace
 {
+    using slopkit::disasm::AssembleBlockContext;
     using slopkit::disasm::AssembleContext;
     using slopkit::disasm::MachineMode;
     using slopkit::disasm::MemoryRef;
@@ -35,6 +36,14 @@ namespace
     {
         const auto assembled = slopkit::disasm::assemble(
             text, AssembleContext {.address = address, .mode = MachineMode::long_64, .memory = memory});
+        REQUIRE(assembled.has_value());
+        return *assembled;
+    }
+
+    [[nodiscard]] std::vector<std::byte>
+    block(std::string_view text, std::uint64_t base = kAddress, MachineMode mode = MachineMode::long_64)
+    {
+        const auto assembled = slopkit::disasm::assemble_block(text, AssembleBlockContext {.base = base, .mode = mode});
         REQUIRE(assembled.has_value());
         return *assembled;
     }
@@ -136,4 +145,45 @@ TEST_CASE("an absolute operand that has no base falls back to rip-relative", "[d
     // operand for it, so the fallback keeps its rip-relative form.
     const auto lea = round_trip({0x48, 0x8D, 0x05, 0xF7, 0x02, 0x00, 0x00});
     CHECK(lea.assembled == lea.original);
+}
+
+TEST_CASE("a block of instructions assembles in order", "[disasm]")
+{
+    CHECK(block("MOV RBP, RSP\nRET") == bytes({0x48, 0x89, 0xE5, 0xC3}));
+    CHECK(block("NOP\nRET") == bytes({0x90, 0xC3}));
+}
+
+TEST_CASE("each block instruction is encoded for the address it occupies", "[disasm]")
+{
+    // The JZ sits at 0x2001, after the NOP, and names 0x2008 from 0x2003: the
+    // running address, not the block base, is what its target is measured from.
+    CHECK(block("NOP\nJZ 0x2008\nRET") == bytes({0x90, 0x74, 0x05, 0xC3}));
+
+    // A base-less MOV falls back to rip-relative from its own 0x2001, so its
+    // displacement is 0x2010 - 0x2008 and proves the address advanced.
+    CHECK(block("NOP\nMOV RBX, [0x2010]") == bytes({0x90, 0x48, 0x8B, 0x1D, 0x08, 0x00, 0x00, 0x00}));
+}
+
+TEST_CASE("a block assembles in the 32-bit mode", "[disasm]")
+{
+    CHECK(block("push ebp\nmov ebp, esp\nsub esp, 0x20", kAddress, MachineMode::legacy_32)
+          == bytes({0x55, 0x89, 0xE5, 0x83, 0xEC, 0x20}));
+}
+
+TEST_CASE("blank lines and `;` comments are ignored", "[disasm]")
+{
+    CHECK(block("; heading\n\n  NOP  ; trailing\n\t\nRET") == bytes({0x90, 0xC3}));
+}
+
+TEST_CASE("a rejected block names its line, and an empty one is refused", "[disasm]")
+{
+    const auto rejected =
+        slopkit::disasm::assemble_block("NOP\n; comment\nFROBNICATE RAX", AssembleBlockContext {.base = kAddress});
+    REQUIRE_FALSE(rejected.has_value());
+    CHECK(rejected.error() == "line 3: unknown mnemonic 'frobnicate'");
+
+    const auto empty =
+        slopkit::disasm::assemble_block("  \n; only a comment\n", AssembleBlockContext {.base = kAddress});
+    REQUIRE_FALSE(empty.has_value());
+    CHECK(empty.error() == "the text holds no instruction");
 }

@@ -15,6 +15,7 @@
 
 #include <sol/sol.hpp>
 
+#include "disasm/assembler.hpp"
 #include "expr/expression.hpp"
 #include "expr/resolver.hpp"
 #include "scan/pattern.hpp"
@@ -106,6 +107,7 @@ namespace slopkit::script
             install_resolution();
             install_allocation();
             install_aobscan();
+            install_assembly();
         }
 
         // The VM-instruction hook that turns the instruction budget and the
@@ -669,6 +671,87 @@ namespace slopkit::script
                         }
                         throw std::runtime_error("dealloc: " + freed.error());
                     }
+                });
+        }
+
+        // Binds `assemble(address, text[, ...])`: turns a block of the listing's
+        // instructions into bytes with `disasm::assemble_block` and writes them
+        // into the target at `address`. Extra arguments expand the text with
+        // Lua's `string.format` first. A wrong argument type raises; everything
+        // else is a `false, reason` pair, so a typo writes nothing.
+        void install_assembly()
+        {
+            lua.set_function(
+                "assemble",
+                [this](sol::object        address_object,
+                       sol::object        text_object,
+                       sol::variadic_args format) -> sol::variadic_results
+                {
+                    const std::uint64_t address = value_argument("assemble", sol::make_optional(address_object));
+                    if (text_object.get_type() != sol::type::string)
+                    {
+                        throw std::runtime_error("assemble: the text must be a string");
+                    }
+
+                    const auto failed = [this](std::string reason) -> sol::variadic_results
+                    {
+                        sol::variadic_results results;
+                        results.push_back(sol::make_object(lua.lua_state(), false));
+                        results.push_back(sol::make_object(lua.lua_state(), std::move(reason)));
+                        return results;
+                    };
+
+                    lua_State*  state = lua.lua_state();
+                    std::string text  = text_object.as<std::string>();
+                    if (format.size() > 0)
+                    {
+                        // The expansion runs on the Lua stack, so every extra
+                        // argument is passed to `string.format` as it is.
+                        const int stack_top = lua_gettop(state);
+                        lua_getglobal(state, "string");
+                        lua_getfield(state, -1, "format");
+                        lua_remove(state, -2);
+                        lua_pushlstring(state, text.data(), text.size());
+                        for (sol::object argument : format)
+                        {
+                            argument.push(state);
+                        }
+                        if (lua_pcall(state, static_cast<int>(format.size()) + 1, 1, 0) != LUA_OK)
+                        {
+                            const std::string reason = to_text(state, -1);
+                            lua_settop(state, stack_top);
+                            return failed(reason);
+                        }
+                        std::size_t length   = 0;
+                        const char* expanded = lua_tolstring(state, -1, &length);
+                        text                 = expanded != nullptr ? std::string(expanded, length) : std::string {};
+                        lua_settop(state, stack_top);
+                    }
+
+                    const std::size_t         pointer_size = api.pointer_size ? api.pointer_size() : 8;
+                    const disasm::MachineMode mode =
+                        pointer_size == 4 ? disasm::MachineMode::legacy_32 : disasm::MachineMode::long_64;
+
+                    const std::expected<std::vector<std::byte>, std::string> bytes =
+                        disasm::assemble_block(text, disasm::AssembleBlockContext {.base = address, .mode = mode});
+                    if (!bytes)
+                    {
+                        return failed(bytes.error());
+                    }
+                    if (!api.write)
+                    {
+                        return failed("no target is attached");
+                    }
+                    const std::expected<void, std::string> written = api.write(address, *bytes);
+                    if (!written)
+                    {
+                        return failed(written.error());
+                    }
+
+                    sol::variadic_results results;
+                    results.push_back(sol::make_object(state, true));
+                    results.push_back(sol::make_object(state, static_cast<std::int64_t>(bytes->size())));
+                    return results;
                 });
         }
 

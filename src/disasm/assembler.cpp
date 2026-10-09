@@ -503,4 +503,50 @@ namespace slopkit::disasm
         return bytes;
     }
 
+    std::expected<std::vector<std::byte>, std::string> assemble_block(std::string_view            text,
+                                                                      const AssembleBlockContext& context)
+    {
+        std::vector<std::byte> bytes;
+        std::uint64_t          address     = context.base;
+        std::size_t            line_number = 0;
+        std::size_t            start       = 0;
+
+        while (start <= text.size())
+        {
+            const std::size_t end  = text.find('\n', start);
+            const std::size_t stop = end == std::string_view::npos ? text.size() : end;
+            std::string_view  line = text.substr(start, stop - start);
+            ++line_number;
+
+            if (const std::size_t comment = line.find(';'); comment != std::string_view::npos)
+            {
+                line = line.substr(0, comment);
+            }
+            line = trim(line);
+            if (!line.empty())
+            {
+                const std::expected<std::vector<std::byte>, std::string> instruction =
+                    assemble(line, AssembleContext {.address = address, .mode = context.mode});
+                if (!instruction)
+                {
+                    return std::unexpected(std::format("line {}: {}", line_number, instruction.error()));
+                }
+                bytes.insert(bytes.end(), instruction->begin(), instruction->end());
+                address += instruction->size();
+            }
+
+            if (end == std::string_view::npos)
+            {
+                break;
+            }
+            start = end + 1;
+        }
+
+        if (bytes.empty())
+        {
+            return std::unexpected(std::string("the text holds no instruction"));
+        }
+        return bytes;
+    }
+
 } // namespace slopkit::disasm
