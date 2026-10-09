@@ -25,12 +25,34 @@
 #include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/row_menu.hpp"
+#include "ui/dialogs/add_script.hpp"
 #include "ui/models/address_table_model.hpp"
 #include "ui/table_file.hpp"
 #include "ui/text.hpp"
 
 namespace slopkit::ui::panels
 {
+
+    namespace
+    {
+        // A log record is one line (docs/LOGGING.md), so a message that carries
+        // newlines - a printed string that has one, or a Lua error with its
+        // traceback - is flattened before it is logged or shown.
+        std::string one_line(std::string_view text)
+        {
+            std::string line {text};
+            std::ranges::replace(line, '\n', ' ');
+            std::ranges::replace(line, '\r', ' ');
+            return line;
+        }
+
+        // The interesting part of a Lua error: its message, without the
+        // traceback that follows it.
+        std::string error_message(std::string_view text)
+        {
+            return one_line(text.substr(0, text.find('\n')));
+        }
+    } // namespace
 
     AddressListPanel::AddressListPanel(table::AddressTable&     table,
                                        process::AccessWorker&   worker,
@@ -457,6 +479,111 @@ namespace slopkit::ui::panels
         set_status(entry.active ? tr("Entry active.") : tr("Entry inactive."), false);
     }
 
+    void AddressListPanel::ensure_script_dialog()
+    {
+        if (script_dialog_ == nullptr)
+        {
+            script_dialog_ = new dialogs::AddScriptDialog(table_, this);
+        }
+    }
+
+    void AddressListPanel::add_script()
+    {
+        log::debug(log::category::ui, "add script dialog opened");
+        ensure_script_dialog();
+        script_dialog_->reset_for_add();
+        script_dialog_->show();
+        script_dialog_->raise();
+        script_dialog_->activateWindow();
+    }
+
+    void AddressListPanel::edit_script(std::size_t row)
+    {
+        if (!table_.valid_index(row) || table_.entries()[row].kind != table::EntryKind::script)
+        {
+            return;
+        }
+        log::debug(log::category::ui, std::format("edit script dialog opened on row {}", row));
+        ensure_script_dialog();
+        script_dialog_->edit_entry(row);
+        script_dialog_->show();
+        script_dialog_->raise();
+        script_dialog_->activateWindow();
+    }
+
+    void AddressListPanel::run_script(std::size_t row)
+    {
+        if (!table_.valid_index(row) || table_.entries()[row].kind != table::EntryKind::script)
+        {
+            return;
+        }
+        // The Lua chunk touches the target, so it needs a live session; the
+        // worker re-checks this before it runs anything.
+        if (!target_.valid())
+        {
+            log::warning(log::category::script, "run script refused: no attached target");
+            set_status(tr("Run Script needs an attached target."), true);
+            return;
+        }
+        if (script_job_.has_value())
+        {
+            log::warning(log::category::script, "run script refused: a script is already running");
+            set_status(tr("A script is already running."), true);
+            return;
+        }
+
+        const table::AddressEntry& entry = table_.entries()[row];
+        const process::JobId       id    = worker_.next_job_id();
+        script_job_                      = id;
+        log::info(log::category::script,
+                  std::format("running script '{}' ({} byte(s))", entry.description, entry.script.size()));
+        set_status(tr("Running script…"), false);
+
+        const bool submitted = worker_.submit_script(id,
+                                                     entry.description,
+                                                     entry.script,
+                                                     8,
+                                                     [this, id](process::JobResult&& result)
+                                                     {
+                                                         finish_script(id, std::move(result));
+                                                     });
+        if (!submitted)
+        {
+            script_job_.reset();
+            log::warning(log::category::script, "run script refused: the access worker is not accepting jobs");
+            set_status(tr("The script job could not be started."), true);
+        }
+    }
+
+    void AddressListPanel::finish_script(process::JobId id, process::JobResult&& result)
+    {
+        if (script_job_ != id)
+        {
+            return; // a later run superseded this one
+        }
+        script_job_.reset();
+
+        const auto& ran = std::get<process::ScriptResult>(result);
+        // The script's own output is the run's payload: one record per line.
+        for (const std::string& line : ran.run.output)
+        {
+            log::info(log::category::script, one_line(line));
+        }
+
+        if (ran.run.ok)
+        {
+            set_status(ran.run.returned.empty() ? tr("Script ok.")
+                                                : tr("Script returned %1.").arg(to_qstring(ran.run.returned)),
+                       false);
+            return;
+        }
+
+        // The failure is logged exactly once, here, without its traceback.
+        const std::string message = error_message(ran.run.error);
+        log::warning(log::category::script, message);
+        set_status(tr("Script failed: %1").arg(to_qstring(message)), true);
+    }
+
     void AddressListPanel::report_status(std::string_view message, bool is_error)
     {
         set_status(to_qstring(message), is_error);
@@ -496,6 +623,34 @@ namespace slopkit::ui::panels
         auto& entry = table_.entries()[row];
 
         widgets::show_explanations(menu);
+
+        // A script row has no address and no value, so it gets its own two
+        // commands instead of the value-row set.
+        if (entry.kind == table::EntryKind::script)
+        {
+            QAction* run = menu.addAction(tr("Run Script"));
+            connect(run,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        run_script(row);
+                    });
+
+            QAction* edit = menu.addAction(tr("Edit Script…"));
+            connect(edit,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        edit_script(row);
+                    });
+
+            menu.addSeparator();
+            QAction* remove_script = menu.addAction(tr("Delete"));
+            connect(remove_script, &QAction::triggered, this, &AddressListPanel::delete_selected);
+            return;
+        }
 
         QAction* change_value = menu.addAction(tr("Change value"));
         connect(change_value,

@@ -359,6 +359,19 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_script(
+        JobId id, std::string description, std::string chunk, std::size_t pointer_size, JobCallback on_done)
+    {
+        Request request;
+        request.kind         = JobKind::script;
+        request.id           = id;
+        request.pointer_size = pointer_size;
+        request.description  = std::move(description);
+        request.chunk        = std::move(chunk);
+        request.on_done      = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_suspend(JobId id, ProcessId pid, JobCallback on_done)
     {
         Request request;
@@ -412,6 +425,8 @@ namespace slopkit::process
             return "write";
         case JobKind::freeze:
             return "freeze";
+        case JobKind::script:
+            return "script";
         case JobKind::suspend:
             return "suspend";
         case JobKind::resume:
@@ -448,6 +463,8 @@ namespace slopkit::process
             return do_write(request);
         case JobKind::freeze:
             return do_freeze(request);
+        case JobKind::script:
+            return do_script(request);
         case JobKind::suspend:
             return do_suspend(request);
         case JobKind::resume:
@@ -541,6 +558,7 @@ namespace slopkit::process
                 // A failed re-attach leaves no session behind, matching the old
                 // synchronous attach that cleared the target first.
                 session_.reset();
+                engine_.reset();
                 attached_ = false;
             }
             return result;
@@ -574,9 +592,13 @@ namespace slopkit::process
             }
         }
 
-        result.info = std::move(info);
-        session_    = std::move(*attached);
-        attached_   = true;
+        result.info          = std::move(info);
+        session_             = std::move(*attached);
+        // One engine per session: its Lua state, globals included, is reused by
+        // every run against this target and dropped with the session.
+        script_pointer_size_ = 8;
+        engine_.emplace(memory_api());
+        attached_ = true;
         return result;
     }
 
@@ -753,6 +775,71 @@ namespace slopkit::process
         return result;
     }
 
+    script::MemoryApi AccessWorker::memory_api()
+    {
+        script::MemoryApi api;
+        api.pointer_size = [this]()
+        {
+            return script_pointer_size_ == 0 ? sizeof(void*) : script_pointer_size_;
+        };
+        // The lambdas read the worker's session rather than capture it, so they
+        // never outlive it: a script only ever runs inside a script job, where
+        // the session is present.
+        api.read = [this](std::uint64_t address, std::size_t size) -> std::expected<std::vector<std::byte>, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            auto bytes = session_->read(address, size);
+            if (!bytes)
+            {
+                return std::unexpected(std::string {describe(bytes.error())});
+            }
+            return std::move(*bytes);
+        };
+        api.write = [this](std::uint64_t address, std::span<const std::byte> data) -> std::expected<void, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            if (auto written = session_->write(address, data); !written)
+            {
+                return std::unexpected(std::string {describe(written.error())});
+            }
+            return {};
+        };
+        return api;
+    }
+
+    ScriptResult AccessWorker::do_script(const Request& request)
+    {
+        ScriptResult result;
+        result.id          = request.id;
+        result.description = request.description;
+
+        // Refuse before running anything when there is no target, so a script
+        // can never touch a stale session. The caller turns this into the
+        // message it shows and logs.
+        if (!session_ || !engine_)
+        {
+            result.run.error = "no target is attached";
+            log::debug(log::category::process,
+                       std::format("script '{}' refused: no attached target", request.description));
+            return result;
+        }
+
+        script_pointer_size_ = request.pointer_size == 0 ? sizeof(void*) : request.pointer_size;
+        log::debug(log::category::process,
+                   std::format("running script '{}' ({} byte(s))", request.description, request.chunk.size()));
+        result.run = engine_->run(request.chunk);
+        log::debug(
+            log::category::process,
+            std::format("script '{}' finished: {}", request.description, result.run.ok ? "ok" : result.run.error));
+        return result;
+    }
+
     SuspendResult AccessWorker::do_suspend(const Request& request)
     {
         SuspendResult result;
@@ -827,6 +914,9 @@ namespace slopkit::process
     AttachResult AccessWorker::do_detach()
     {
         session_.reset();
+        // The Lua state belongs to the session: dropping it drops the script
+        // globals, so a later attach starts from a clean state.
+        engine_.reset();
         attached_ = false;
         return AttachResult {};
     }

@@ -27,6 +27,13 @@ namespace slopkit::ui::models
     {
         // The move-only drag payload: the source row, carried as its index.
         constexpr char kRowMimeType[] = "application/x-slopkit-address-row";
+
+        // A script row carries no address and no value: the row is read-only in
+        // the grid and is run through its own row-menu action.
+        bool is_script(const table::AddressEntry& entry)
+        {
+            return entry.kind == table::EntryKind::script;
+        }
     } // namespace
 
     AddressTableModel::AddressTableModel(table::AddressTable&     table,
@@ -66,14 +73,22 @@ namespace slopkit::ui::models
             case description:
                 return to_qstring(entry.description);
             case address:
+                if (is_script(entry))
+                {
+                    return {}; // A script has no address.
+                }
                 if (!entry.expression.empty())
                 {
                     return to_qstring(entry.expression);
                 }
                 return address_text(entry.address);
             case type:
-                return to_qstring(scan::describe(entry.type));
+                return is_script(entry) ? tr("script") : to_qstring(scan::describe(entry.type));
             case value:
+                if (is_script(entry))
+                {
+                    return {}; // A script has no value.
+                }
                 if (writing_entry_.has_value() && *writing_entry_ == entry.id)
                 {
                     return tr("Writing...");
@@ -113,7 +128,7 @@ namespace slopkit::ui::models
             }
             break;
         case Qt::CheckStateRole:
-            if (index.column() == active)
+            if (index.column() == active && !is_script(entry))
             {
                 return entry.active ? Qt::Checked : Qt::Unchecked;
             }
@@ -133,7 +148,8 @@ namespace slopkit::ui::models
         case Qt::ToolTipRole:
             if (index.column() == active)
             {
-                return tr("Continuously write this value back to the target");
+                return is_script(entry) ? tr("Script entries run on demand")
+                                        : tr("Continuously write this value back to the target");
             }
             if (index.column() == address && !entry.expression.empty())
             {
@@ -151,7 +167,7 @@ namespace slopkit::ui::models
             }
             break;
         case widgets::kFullTextRole:
-            if (index.column() == address && entry.expression.empty())
+            if (index.column() == address && entry.expression.empty() && !is_script(entry))
             {
                 return ui::format_cell_address_full(address_mode_, module_spans_, entry.address);
             }
@@ -194,6 +210,12 @@ namespace slopkit::ui::models
         }
 
         Qt::ItemFlags item_flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled;
+        if (const auto row = static_cast<std::size_t>(index.row());
+            row < table_.size() && is_script(table_.entries()[row]))
+        {
+            // A script row is edited through its dialog, never in the grid.
+            return item_flags;
+        }
         switch (index.column())
         {
         case description:
@@ -311,6 +333,13 @@ namespace slopkit::ui::models
             return false;
         }
 
+        if (is_script(table_.entries()[row]))
+        {
+            // A script row is read-only in the grid: nothing here can submit a
+            // write job for it.
+            return false;
+        }
+
         if (role == Qt::CheckStateRole && index.column() == active)
         {
             table_.entries()[row].active = value.toInt() == Qt::Checked;
@@ -405,11 +434,12 @@ namespace slopkit::ui::models
         return cells_.request(entries.size(),
                               [this, &entries](std::size_t row)
                               {
-                                  const auto& entry    = entries[row];
-                                  const bool  readable = !entry.bytes.empty()
-                                                      && !(writing_entry_.has_value() && *writing_entry_ == entry.id);
+                                  const auto& entry     = entries[row];
+                                  const bool  value_row = entry.kind == table::EntryKind::value;
+                                  const bool  readable  = value_row && !entry.bytes.empty()
+                                                       && !(writing_entry_.has_value() && *writing_entry_ == entry.id);
                                   return LiveCandidate {.address  = entry.address,
-                                                        .size     = entry.bytes.size(),
+                                                        .size     = value_row ? entry.bytes.size() : 0,
                                                         .identity = entry.id,
                                                         .readable = readable};
                               });
@@ -555,9 +585,10 @@ namespace slopkit::ui::models
         {
             const auto& current = entries[index];
             const auto& last    = last_entries_[index];
-            if (current.id != last.id || current.active != last.active || current.description != last.description
-                || current.address != last.address || current.expression != last.expression || current.type != last.type
-                || current.hex != last.hex || current.bytes != last.bytes)
+            if (current.id != last.id || current.active != last.active || current.kind != last.kind
+                || current.description != last.description || current.address != last.address
+                || current.expression != last.expression || current.type != last.type || current.hex != last.hex
+                || current.bytes != last.bytes || current.script != last.script)
             {
                 return false;
             }

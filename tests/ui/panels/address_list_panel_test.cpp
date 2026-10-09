@@ -3,8 +3,12 @@
 #include "support/ui_helpers.hpp"
 #include "table/table_zip.hpp"
 
+#include <algorithm>
 #include <memory>
+#include <string>
+#include <vector>
 
+#include <QMenu>
 #include <QMimeData>
 
 TEST_CASE("the address list Value column follows live memory", "[ui]")
@@ -531,4 +535,186 @@ TEST_CASE("the address list reorders rows by dragging and saves the order", "[ui
     CHECK(reloaded.entries()[2].description == "health");
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("the address list offers the script commands only on a script row", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    REQUIRE(table.add_script("helper", "print('hi')") == 1);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    QMenu script_menu;
+    panel.populate_row_menu(script_menu, 1);
+    CHECK(action_texts(script_menu.actions())
+          == QList<QString> {QStringLiteral("Run Script"), QStringLiteral("Edit Script…"), QStringLiteral("Delete")});
+
+    // A value row keeps its own commands and gains neither script command.
+    QMenu value_menu;
+    panel.populate_row_menu(value_menu, 0);
+    const QList<QString> value_texts = action_texts(value_menu.actions());
+    CHECK(value_texts.contains(QStringLiteral("Change value")));
+    CHECK(value_texts.contains(QStringLiteral("Browse this memory region")));
+    CHECK_FALSE(value_texts.contains(QStringLiteral("Run Script")));
+    CHECK_FALSE(value_texts.contains(QStringLiteral("Edit Script…")));
+
+    // An out-of-range row gets nothing.
+    QMenu empty_menu;
+    panel.populate_row_menu(empty_menu, 9);
+    CHECK(action_texts(empty_menu.actions()).isEmpty());
+}
+
+TEST_CASE("Run Script without an attached target is refused", "[ui]")
+{
+    application();
+
+    // Nothing is attached, so the panel refuses before submitting anything.
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "return 1") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    QString status;
+    bool    is_error = false;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&](const QString& text, bool error)
+                     {
+                         status   = text;
+                         is_error = error;
+                     });
+
+    panel.run_script(0);
+
+    CHECK(is_error);
+    CHECK(status == QStringLiteral("Run Script needs an attached target."));
+}
+
+TEST_CASE("Run Script logs its output and reports the outcome", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "print('hello', 1)\nprint('world')") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    QString status;
+    bool    is_error = true;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&](const QString& text, bool error)
+                     {
+                         status   = text;
+                         is_error = error;
+                     });
+
+    attach_app_session(worker);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    panel.run_script(0);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status != QStringLiteral("Running script…");
+                    }));
+
+    // The script's own output is logged under the script category, in order.
+    std::vector<std::string> script_records;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.category == "script")
+        {
+            script_records.push_back(record.message);
+        }
+    }
+    const auto position = [&script_records](const std::string& text)
+    {
+        return std::find(script_records.begin(), script_records.end(), text);
+    };
+    REQUIRE(position("hello\t1") != script_records.end());
+    REQUIRE(position("world") != script_records.end());
+    CHECK(position("hello\t1") < position("world"));
+
+    CHECK_FALSE(is_error);
+    CHECK(status == QStringLiteral("Script ok."));
+}
+
+TEST_CASE("a failing script reports its first error line once", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "error('boom')") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    QString status;
+    bool    is_error = false;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&](const QString& text, bool error)
+                     {
+                         status   = text;
+                         is_error = error;
+                     });
+
+    attach_app_session(worker);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    panel.run_script(0);
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return is_error;
+                    }));
+
+    CHECK(status.startsWith(QStringLiteral("Script failed: ")));
+    CHECK(status.contains(QStringLiteral("boom")));
+    // The traceback does not reach the one-line status or the log record.
+    CHECK_FALSE(status.contains(QChar('\n')));
+
+    int failures = 0;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.category == "script" && record.level == slopkit::log::Level::warning)
+        {
+            ++failures;
+            CHECK(record.message.find("boom") != std::string::npos);
+            CHECK(record.message.find('\n') == std::string::npos);
+        }
+    }
+    CHECK(failures == 1);
 }

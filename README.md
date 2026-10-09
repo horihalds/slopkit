@@ -21,6 +21,7 @@ table or merge the file.
 | Process list | Browse running processes, see which plugin claims each one, inspect it and attach/detach. | Implemented |
 | Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans, keeping the shown hits up to date with live memory. | Implemented |
 | Address list | Track found addresses, edit and freeze their values, watch them refresh live, and save or reopen the table. | Implemented |
+| Lua scripts | Keep one-off Lua scripts beside the table as script entries, run them against the attached target through a small memory API (`mem.read`, `mem.write`, byte and string reads), and see what they printed and what failed. | Implemented (Add Script / Run Script) |
 | Memory browser | Hex dump of live memory around a chosen address, refreshed automatically, beside a live disassembly listing and the Debugger pane. | Implemented |
 | Practice target | A separate `slopkit-sandbox` process exposing values of every scan type; launch it from `Help > Launch Practice Target` and attach to practise the scanner. | Implemented |
 | Disassembler | Instruction decoding (Zydis) of live memory. | Implemented (Memory Viewer pane) |
@@ -32,7 +33,8 @@ table or merge the file.
 
 Dependencies (from the system repositories): CMake and Ninja, a C++23 compiler,
 the Zydis development package (e.g. Fedora's `zydis-devel`) and the libzip
-development package (e.g. Fedora's `libzip-devel`) with `pkg-config`, Catch2,
+development package (e.g. Fedora's `libzip-devel`) with `pkg-config`, the Lua
+development package and sol2 (e.g. Fedora's `lua-devel` and `sol2-devel`), Catch2,
 Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick (build-time
 only, for the icon set).
 

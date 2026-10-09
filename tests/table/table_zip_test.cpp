@@ -33,7 +33,7 @@ TEST_CASE("a table archive round-trips every member's text", "[table]")
     fs::remove(path);
 
     const std::vector<ArchiveMember> members {
-        {       .name = "version.txt",                                          .text = "slopkit-table 3\n"},
+        {       .name = "version.txt",                                          .text = "slopkit-table 4\n"},
         {.name = "entries/health.txt",                   .text = "type=i32 hex=0 size=4 expr=\"game+10\"\n"},
         { .name = "entries/empty.txt",                                                           .text = ""},
         { .name = "entries/multi.txt",                                       .text = "line one\nline two\n"},
@@ -105,7 +105,7 @@ TEST_CASE("a truncated archive keeps the signature but fails to read", "[table]"
     fs::remove(path);
 
     const std::vector<ArchiveMember> members {
-        {.name = "version.txt", .text = "slopkit-table 3\n"}
+        {.name = "version.txt", .text = "slopkit-table 4\n"}
     };
     REQUIRE(write_archive(path, members).has_value());
 

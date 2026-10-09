@@ -128,7 +128,7 @@ TEST_CASE("a settings member without an executable path still loads", "[table]")
     REQUIRE(slopkit::table::write_archive(
                 path,
                 std::vector<ArchiveMember> {
-                    { .name = "version.txt",                               .text = "slopkit-table 3\n"},
+                    { .name = "version.txt",                               .text = "slopkit-table 4\n"},
                     {.name = "settings.txt", .text = "target=\"old\" auto_attach=1 match_exe_path=1\n"},
                     {   .name = "index.txt",                                                .text = ""},
     })
@@ -194,7 +194,7 @@ TEST_CASE("the serializer rejects malformed settings members", "[table]")
         std::filesystem::remove(path);
         REQUIRE(slopkit::table::write_archive(path,
                                               std::vector<ArchiveMember> {
-                                                  { .name = "version.txt", .text = "slopkit-table 3\n"},
+                                                  { .name = "version.txt", .text = "slopkit-table 4\n"},
                                                   {.name = "settings.txt",      .text = "nonsense=1\n"},
                                                   {   .name = "index.txt",                  .text = ""},
         })
@@ -211,7 +211,7 @@ TEST_CASE("the serializer rejects malformed settings members", "[table]")
         std::filesystem::remove(path);
         REQUIRE(slopkit::table::write_archive(path,
                                               std::vector<ArchiveMember> {
-                                                  { .name = "version.txt",   .text = "slopkit-table 3\n"},
+                                                  { .name = "version.txt",   .text = "slopkit-table 4\n"},
                                                   {.name = "settings.txt", .text = "auto_attach=maybe\n"},
                                                   {   .name = "index.txt",                    .text = ""},
         })

@@ -26,25 +26,12 @@ namespace slopkit::table
 
     namespace
     {
-        constexpr std::string_view kFormatToken   = "slopkit-table 3";
-        constexpr std::string_view kEntriesPrefix = "entries/";
-        constexpr std::string_view kEntrySuffix   = ".txt";
-
-        // The description an entry member name stands for: the stem inside
-        // `entries/`, without the `.txt` suffix. A description the file system
-        // cannot hold comes back sanitised, which is the documented trade-off.
-        std::string member_description(std::string_view member)
-        {
-            if (member.starts_with(kEntriesPrefix))
-            {
-                member.remove_prefix(kEntriesPrefix.size());
-            }
-            if (member.ends_with(kEntrySuffix))
-            {
-                member.remove_suffix(kEntrySuffix.size());
-            }
-            return std::string(member);
-        }
+        constexpr std::string_view kFormatToken         = "slopkit-table 4";
+        // Reader compatibility: a version-3 archive predates script entries, so
+        // it simply has no `.lua` members. The writer always emits the current
+        // token, and an older build refuses it explicitly instead of
+        // mis-parsing a Lua body as a value entry.
+        constexpr std::string_view kPreviousFormatToken = "slopkit-table 3";
 
         std::string_view trim(std::string_view value)
         {
@@ -394,22 +381,34 @@ namespace slopkit::table
         order.reserve(table.size());
         for (const AddressEntry& entry : table.entries())
         {
-            std::string name = entry_member_name(entry.description, taken);
+            const bool        script = entry.kind == EntryKind::script;
+            const std::string name =
+                entry_member_name(entry.description, taken, script ? kScriptMemberExtension : kValueMemberExtension);
             taken.push_back(name);
 
-            // An entry that was never given an expression still has to be
-            // reachable; its address is written as the hex literal it already is.
-            const std::string expression =
-                entry.expression.empty() ? std::format("{:X}", entry.address) : entry.expression;
-            members.push_back(ArchiveMember {
-                .name = "entries/" + name,
-                .text = std::format("type={} hex={} size={} expr=\"{}\"\n",
-                                    type_token(entry.type),
-                                    entry.hex ? 1 : 0,
-                                    entry.bytes.size(),
-                                    escape(expression)),
-            });
-            order.push_back("entries/" + name);
+            const std::string member = std::string(kEntriesPrefix) + name;
+            if (script)
+            {
+                // A script member holds the Lua source and nothing else: no
+                // header and no added newline.
+                members.push_back(ArchiveMember {.name = member, .text = entry.script});
+            }
+            else
+            {
+                // An entry that was never given an expression still has to be
+                // reachable; its address is written as the hex literal it already is.
+                const std::string expression =
+                    entry.expression.empty() ? std::format("{:X}", entry.address) : entry.expression;
+                members.push_back(ArchiveMember {
+                    .name = member,
+                    .text = std::format("type={} hex={} size={} expr=\"{}\"\n",
+                                        type_token(entry.type),
+                                        entry.hex ? 1 : 0,
+                                        entry.bytes.size(),
+                                        escape(expression)),
+                });
+            }
+            order.push_back(member);
         }
 
         std::string index;
@@ -455,12 +454,13 @@ namespace slopkit::table
             log::warning(log::category::table, message);
             return std::unexpected(std::string {"version.txt: missing"});
         }
-        if (trim(*version) != kFormatToken)
+        if (const std::string_view version_text = trim(*version);
+            version_text != kFormatToken && version_text != kPreviousFormatToken)
         {
             const std::string message =
-                std::format("{}: version.txt: unknown format '{}'", path.string(), trim(*version));
+                std::format("{}: version.txt: unknown format '{}'", path.string(), version_text);
             log::warning(log::category::table, message);
-            return std::unexpected(std::format("version.txt: unknown format '{}'", trim(*version)));
+            return std::unexpected(std::format("version.txt: unknown format '{}'", version_text));
         }
 
         AddressTable loaded;
@@ -503,33 +503,54 @@ namespace slopkit::table
                     return std::unexpected(std::format("index.txt: missing entry '{}'", member));
                 }
 
-                auto entry = parse_entry_body(trim(*body), member);
-                if (!entry)
+                const std::optional<EntryKind> kind = kind_for_member(member);
+                if (!kind)
                 {
-                    log::warning(log::category::table, std::format("{}: {}", path.string(), entry.error()));
-                    return std::unexpected(entry.error());
+                    const std::string message = std::format("{}: {}: unknown entry extension", path.string(), member);
+                    log::warning(log::category::table, message);
+                    return std::unexpected(std::format("{}: unknown entry extension", member));
                 }
-                entry->description = member_description(member);
-
-                const auto expression = expr::parse(entry->expression);
-                if (!expression)
+                if (*kind == EntryKind::script)
                 {
-                    const std::string message = std::format("{}: invalid expr '{}'", member, entry->expression);
-                    log::warning(log::category::table, std::format("{}: {}", path.string(), message));
-                    return std::unexpected(message);
+                    // A script member's body is the Lua source verbatim: the
+                    // member name is the description and nothing has to be
+                    // parsed out of the body.
+                    AddressEntry script;
+                    script.kind        = EntryKind::script;
+                    script.description = member_stem(member);
+                    script.script      = *body;
+                    entries.push_back(std::move(script));
                 }
-                // A literal base resolves without a target; a module or pointer
-                // expression is left at 0 for the panel's resolve pass.
-                if (expression->pointer_levels() == 0)
+                else
                 {
-                    const auto resolved = expr::evaluate(*expression, expr::Modules {}, no_pointer_reader);
-                    if (resolved)
+                    auto entry = parse_entry_body(trim(*body), member);
+                    if (!entry)
                     {
-                        entry->address = *resolved;
+                        log::warning(log::category::table, std::format("{}: {}", path.string(), entry.error()));
+                        return std::unexpected(entry.error());
                     }
-                }
+                    entry->description = member_stem(member);
 
-                entries.push_back(std::move(*entry));
+                    const auto expression = expr::parse(entry->expression);
+                    if (!expression)
+                    {
+                        const std::string message = std::format("{}: invalid expr '{}'", member, entry->expression);
+                        log::warning(log::category::table, std::format("{}: {}", path.string(), message));
+                        return std::unexpected(message);
+                    }
+                    // A literal base resolves without a target; a module or pointer
+                    // expression is left at 0 for the panel's resolve pass.
+                    if (expression->pointer_levels() == 0)
+                    {
+                        const auto resolved = expr::evaluate(*expression, expr::Modules {}, no_pointer_reader);
+                        if (resolved)
+                        {
+                            entry->address = *resolved;
+                        }
+                    }
+
+                    entries.push_back(std::move(*entry));
+                }
                 listed.push_back(member);
             }
             if (newline == std::string::npos)

@@ -212,6 +212,7 @@ namespace slopkit::ui
         QAction* open_table_action_ {};
         QAction* save_table_action_ {};
         QAction* save_table_as_action_ {};
+        QAction* add_script_action_ {};
         QAction* log_action_ {};
         QAction* settings_action_ {};
         QAction* breakpoints_action_ {};

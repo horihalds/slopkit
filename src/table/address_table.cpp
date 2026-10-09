@@ -13,10 +13,53 @@ namespace slopkit::table
     void AddressTable::add(AddressEntry entry)
     {
         entry.id = next_id_++;
-        log::info(log::category::table,
-                  std::format("entry added: id {} at {:X} ({} byte(s))", entry.id, entry.address, entry.bytes.size()));
+        if (entry.kind == EntryKind::script)
+        {
+            log::info(
+                log::category::table,
+                std::format(
+                    "script entry added: id {} '{}' ({} byte(s))", entry.id, entry.description, entry.script.size()));
+        }
+        else
+        {
+            log::info(
+                log::category::table,
+                std::format("entry added: id {} at {:X} ({} byte(s))", entry.id, entry.address, entry.bytes.size()));
+        }
         entries_.push_back(std::move(entry));
         selected_ = static_cast<int>(entries_.size()) - 1;
+    }
+
+    std::size_t AddressTable::add_script(std::string description, std::string script)
+    {
+        AddressEntry entry;
+        entry.kind        = EntryKind::script;
+        entry.description = std::move(description);
+        entry.script      = std::move(script);
+        add(std::move(entry));
+        return entries_.size() - 1;
+    }
+
+    bool AddressTable::set_script(std::size_t index, std::string script)
+    {
+        if (!valid_index(index) || entries_[index].kind != EntryKind::script)
+        {
+            return false;
+        }
+        log::info(log::category::table, std::format("script edited at index {} ({} byte(s))", index, script.size()));
+        entries_[index].script = std::move(script);
+        return true;
+    }
+
+    bool AddressTable::set_description(std::size_t index, std::string description)
+    {
+        if (!valid_index(index))
+        {
+            return false;
+        }
+        log::info(log::category::table, std::format("entry description changed at index {}", index));
+        entries_[index].description = std::move(description);
+        return true;
     }
 
     void AddressTable::remove(std::size_t index)
@@ -96,6 +139,15 @@ namespace slopkit::table
             const bool exists = std::ranges::any_of(entries_,
                                                     [&](const AddressEntry& candidate)
                                                     {
+                                                        if (candidate.kind != entry.kind)
+                                                        {
+                                                            return false;
+                                                        }
+                                                        if (entry.kind == EntryKind::script)
+                                                        {
+                                                            return candidate.description == entry.description
+                                                                && candidate.script == entry.script;
+                                                        }
                                                         return candidate.address == entry.address
                                                             && candidate.type == entry.type
                                                             && candidate.description == entry.description;
@@ -156,7 +208,7 @@ namespace slopkit::table
 
     std::string AddressTable::display_value(std::size_t index) const
     {
-        if (!valid_index(index))
+        if (!valid_index(index) || entries_[index].kind != EntryKind::value)
         {
             return {};
         }
@@ -167,7 +219,7 @@ namespace slopkit::table
     std::expected<std::vector<std::byte>, process::AccessError> AddressTable::encode_value(std::size_t      index,
                                                                                            std::string_view text) const
     {
-        if (!valid_index(index))
+        if (!valid_index(index) || entries_[index].kind != EntryKind::value)
         {
             return std::unexpected(process::AccessError::invalid_argument);
         }
@@ -197,7 +249,7 @@ namespace slopkit::table
 
         for (const auto& entry : entries_)
         {
-            if (!entry.active || entry.bytes.empty())
+            if (entry.kind != EntryKind::value || !entry.active || entry.bytes.empty())
             {
                 continue;
             }

@@ -1,5 +1,6 @@
 #include <catch2/catch.hpp>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -8,6 +9,9 @@
 namespace
 {
     using slopkit::table::entry_member_name;
+    using slopkit::table::EntryKind;
+    using slopkit::table::kind_for_member;
+    using slopkit::table::member_stem;
 } // namespace
 
 TEST_CASE("an entry member name is derived from its description", "[table]")
@@ -61,4 +65,33 @@ TEST_CASE("a very long description is capped", "[table]")
     CHECK(name.size() <= 100);
     CHECK(name.ends_with(".txt"));
     CHECK(name == std::string(96, 'a') + ".txt");
+}
+
+TEST_CASE("a script entry member name uses the lua extension", "[table]")
+{
+    const std::vector<std::string> none;
+    CHECK(entry_member_name("greet", none, ".lua") == "greet.lua");
+    CHECK(entry_member_name("", none, ".lua") == "unnamed.lua");
+
+    // The numbering is per extension, so a value entry and a script entry may
+    // share a stem.
+    std::vector<std::string> taken;
+    CHECK(entry_member_name("health", taken, ".txt") == "health.txt");
+    taken.push_back("health.txt");
+    CHECK(entry_member_name("health", taken, ".lua") == "health.lua");
+    taken.push_back("health.lua");
+    CHECK(entry_member_name("health", taken, ".lua") == "health2.lua");
+}
+
+TEST_CASE("a member name classifies as a kind and yields its stem", "[table]")
+{
+    CHECK(kind_for_member("entries/health.txt") == EntryKind::value);
+    CHECK(kind_for_member("entries/greet.lua") == EntryKind::script);
+    CHECK(kind_for_member("entries/health") == std::nullopt);
+    CHECK(kind_for_member("entries/notes.md") == std::nullopt);
+
+    CHECK(member_stem("entries/health.txt") == "health");
+    CHECK(member_stem("entries/greet.lua") == "greet");
+    CHECK(member_stem("entries/plain") == "plain");
+    CHECK(member_stem("health.txt") == "health");
 }

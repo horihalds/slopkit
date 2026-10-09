@@ -144,6 +144,17 @@ set(CMAKE_AUTOMOC ON)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ZYDIS REQUIRED IMPORTED_TARGET zydis)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
+# Lua scripting: sol2 is header-only, Lua provides the VM.
+pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua)
+pkg_check_modules(SOL2 REQUIRED IMPORTED_TARGET sol2)
+
+# sol2 is a large template library; treat its headers as system so its own
+# diagnostics never break the warning-free build stage of tools/verify.sh.
+get_target_property(SLOPKIT_SOL2_INCLUDE_DIRS PkgConfig::SOL2 INTERFACE_INCLUDE_DIRECTORIES)
+if(SLOPKIT_SOL2_INCLUDE_DIRS)
+    set_target_properties(PkgConfig::SOL2 PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${SLOPKIT_SOL2_INCLUDE_DIRS}")
+endif()
 
 # --- assets ----------------------------------------------------------------
 
@@ -251,6 +262,8 @@ target_link_libraries(slopkit PRIVATE
     Qt6::Widgets
     PkgConfig::ZYDIS
     PkgConfig::LIBZIP
+    PkgConfig::LUA
+    PkgConfig::SOL2
     ${CMAKE_DL_LIBS})
 
 # Every generated icon size is embedded as :/icons/<N>x<N>/apps/slopkit.png,
@@ -431,6 +444,8 @@ target_link_libraries(slopkit_tests PRIVATE
     Qt6::Widgets
     PkgConfig::ZYDIS
     PkgConfig::LIBZIP
+    PkgConfig::LUA
+    PkgConfig::SOL2
     ${CMAKE_DL_LIBS})
 slopkit_add_icon_resources(slopkit_tests)
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)

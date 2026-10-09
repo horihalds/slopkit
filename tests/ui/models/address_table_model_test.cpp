@@ -246,3 +246,56 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     CHECK_FALSE(model.dropMimeData(self.get(), Qt::MoveAction, 0, 0, QModelIndex()));
     CHECK(table.entries()[0].description == "second");
 }
+
+TEST_CASE("the address-table model renders a script row as read-only", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    slopkit::table::AddressEntry value;
+    value.description = "health";
+    value.address     = 0x1040;
+    value.type        = slopkit::scan::ValueType::int32;
+    value.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(value);
+    REQUIRE(table.add_script("helper", "print('hi')") == 1);
+
+    slopkit::plugin::PluginHost            host;
+    slopkit::process::PluginAccess         access {host};
+    slopkit::process::AccessWorker         worker {access};
+    slopkit::process::AttachedTarget       target;
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+
+    using slopkit::ui::models::AddressTableModel;
+
+    // The Type cell says what the row is; the address and the value stay blank.
+    CHECK(model.data(model.index(1, AddressTableModel::type), Qt::DisplayRole).toString() == QStringLiteral("script"));
+    CHECK(model.data(model.index(1, AddressTableModel::address), Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.data(model.index(1, AddressTableModel::value), Qt::DisplayRole).toString().isEmpty());
+
+    // A script row has no Active checkbox and no editable cell.
+    CHECK_FALSE(model.data(model.index(1, AddressTableModel::active), Qt::CheckStateRole).isValid());
+    CHECK(model.data(model.index(0, AddressTableModel::active), Qt::CheckStateRole).isValid());
+    for (int column = 0; column < model.columnCount(); ++column)
+    {
+        const QModelIndex index = model.index(1, column);
+        CHECK_FALSE(model.flags(index) & Qt::ItemIsEditable);
+        CHECK_FALSE(model.flags(index) & Qt::ItemIsUserCheckable);
+        CHECK(model.flags(index) & Qt::ItemIsSelectable);
+    }
+    // A value row keeps both.
+    CHECK(model.flags(model.index(0, AddressTableModel::description)) & Qt::ItemIsEditable);
+    CHECK(model.flags(model.index(0, AddressTableModel::active)) & Qt::ItemIsUserCheckable);
+
+    // Every edit is refused, so no write job can be submitted for a script row.
+    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::description), QStringLiteral("other"), Qt::EditRole));
+    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::value), QStringLiteral("1"), Qt::EditRole));
+    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
+    CHECK(table.entries()[1].description == "helper");
+    CHECK_FALSE(table.entries()[1].active);
+
+    // The live pass reads only the value row.
+    const auto requests = model.next_live_request();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].address == 0x1040);
+}

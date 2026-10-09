@@ -23,6 +23,11 @@ class QPoint;
 class QMenu;
 class QTableView;
 
+namespace slopkit::ui::dialogs
+{
+    class AddScriptDialog;
+} // namespace slopkit::ui::dialogs
+
 namespace slopkit::ui::models
 {
     class AddressTableModel;
@@ -121,6 +126,18 @@ namespace slopkit::ui::panels
         // without running the modal menu.
         void populate_row_menu(QMenu& menu, std::size_t row);
 
+        // Opens the Add Script dialog in add mode: an accepted dialog appends a
+        // script entry to the table.
+        void add_script();
+
+        // Opens the same dialog on the script entry at `row`, prefilled.
+        void edit_script(std::size_t row);
+
+        // Runs the script entry at `row` on the access worker against the
+        // attached target; one run is in flight at a time, and a run without a
+        // target is refused.
+        void run_script(std::size_t row);
+
     signals:
         // A request to show an address, fed by the context menu.
         void browseRequested(quint64 address);
@@ -149,6 +166,12 @@ namespace slopkit::ui::panels
         // interval unless the expression set or the module map changed.
         void                          maybe_resolve_expressions();
 
+        // Creates the Add/Edit Script dialog on first use.
+        void ensure_script_dialog();
+        // Applies one script job's completion: logs the printed lines and the
+        // failure, and reports the outcome in the status line.
+        void finish_script(process::JobId id, process::JobResult&& result);
+
         table::AddressTable&                  table_;
         process::AccessWorker&                worker_;
         process::AttachedTarget&              target_;
@@ -156,6 +179,9 @@ namespace slopkit::ui::panels
         models::AddressTableModel*            model_ {};
         QTableView*                           table_view_ {};
         std::optional<process::JobId>         resolve_job_;
+        // The in-flight script run, so a second Run Script is refused.
+        std::optional<process::JobId>         script_job_;
+        dialogs::AddScriptDialog*             script_dialog_ {};
         bool                                  resolving_ {false};
         bool                                  force_resolve_ {true};
         std::chrono::steady_clock::time_point last_resolve_ {};

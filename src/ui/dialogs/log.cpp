@@ -175,7 +175,9 @@ namespace slopkit::ui::dialogs
     void LogDialog::clear()
     {
         records_.clear();
-        notifier_.take();
+        // Drain whatever the notifier buffered before the clear; the records are
+        // dropped on purpose, so the nodiscard result is explicitly discarded.
+        (void)notifier_.take();
         log::Logger::instance().clear_history();
         render();
     }

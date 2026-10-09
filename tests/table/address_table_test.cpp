@@ -21,11 +21,13 @@
 
 namespace
 {
+    using slopkit::process::AccessError;
     using slopkit::process::WriteItem;
     using slopkit::scan::ValueType;
     using slopkit::table::AddressEntry;
     using slopkit::table::AddressTable;
     using slopkit::table::ArchiveMember;
+    using slopkit::table::EntryKind;
     using slopkit::table::read_archive;
     using slopkit::table::write_archive;
 
@@ -288,7 +290,7 @@ TEST_CASE("the archive holds version, index and one member per entry", "[table]"
 
     CHECK(member_names(path)
           == std::vector<std::string> {"version.txt", "entries/health.txt", "entries/armor.txt", "index.txt"});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 3\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 4\n"});
     CHECK(member_text(path, "index.txt") == std::optional<std::string> {"entries/health.txt\nentries/armor.txt\n"});
     CHECK(member_text(path, "entries/health.txt")
           == std::optional<std::string> {"type=i32 hex=0 size=4 expr=\"1234\"\n"});
@@ -419,7 +421,7 @@ TEST_CASE("a pointer expression is left for the target resolve pass", "[table]")
 
 TEST_CASE("a damaged archive is rejected with the member name", "[table]")
 {
-    const auto version = ArchiveMember {.name = "version.txt", .text = "slopkit-table 3\n"};
+    const auto version = ArchiveMember {.name = "version.txt", .text = "slopkit-table 4\n"};
     const auto body    = ArchiveMember {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 expr=\"1234\"\n"};
 
     SECTION("an unknown entry key")
@@ -480,6 +482,26 @@ TEST_CASE("a damaged archive is rejected with the member name", "[table]")
         std::filesystem::remove(path);
         REQUIRE_FALSE(result.has_value());
         CHECK(result.error().find("entries/orphan.txt") != std::string::npos);
+    }
+
+    SECTION("an unknown entry extension")
+    {
+        const auto path = scratch_file("unknown_extension.skt");
+        std::filesystem::remove(path);
+        REQUIRE(write_archive(path,
+                              std::vector<ArchiveMember> {
+                                  version,
+                                  {.name = "entries/notes.md",            .text = "hello\n"},
+                                  {       .name = "index.txt", .text = "entries/notes.md\n"}
+        })
+                    .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("entries/notes.md") != std::string::npos);
+        CHECK(result.error().find("unknown entry extension") != std::string::npos);
     }
 
     SECTION("an unknown format token")
@@ -733,4 +755,171 @@ TEST_CASE("entry mutations are recorded on the table category", "[table][log]")
         }
         CHECK(saw_warning);
     }
+}
+
+TEST_CASE("a script entry is stored as a lua member holding only the source", "[table]")
+{
+    AddressTable table;
+    auto         health = make_entry(0x1234, ValueType::int32, {1, 0, 0, 0});
+    health.description  = "health";
+    health.expression   = "1234";
+    table.add(health);
+
+    const std::string source = "print('hi')\nreturn 1";
+    CHECK(table.add_script("greet", source) == 1);
+
+    auto armor        = make_entry(0x2008, ValueType::int32, {2, 0, 0, 0});
+    armor.description = "armor";
+    armor.expression  = "2008";
+    table.add(armor);
+
+    const auto path = scratch_file("script_layout.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    CHECK(member_names(path)
+          == std::vector<std::string> {
+              "version.txt", "entries/health.txt", "entries/greet.lua", "entries/armor.txt", "index.txt"});
+    CHECK(member_text(path, "index.txt")
+          == std::optional<std::string> {"entries/health.txt\nentries/greet.lua\nentries/armor.txt\n"});
+    // The body is the source and nothing else: no header and no added newline.
+    CHECK(member_text(path, "entries/greet.lua") == std::optional<std::string> {source});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 4\n"});
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("a mixed table round-trips its scripts verbatim in row order", "[table]")
+{
+    AddressTable table;
+    auto         health = make_entry(0x1234, ValueType::int32, {1, 0, 0, 0});
+    health.description  = "health";
+    health.expression   = "1234";
+    table.add(health);
+
+    const std::string source = "local\ttab = {1, 2}\nprint(\"quoted\", 'single')\nreturn tab\n";
+    CHECK(table.add_script("helper", source) == 1);
+    CHECK(table.add_script("", "") == 2); // an empty description and an empty body
+
+    const auto path = scratch_file("mixed.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+
+    REQUIRE(loaded.size() == 3);
+    CHECK(loaded.entries()[0].kind == EntryKind::value);
+    CHECK(loaded.entries()[0].description == "health");
+    CHECK(loaded.entries()[1].kind == EntryKind::script);
+    CHECK(loaded.entries()[1].description == "helper");
+    CHECK(loaded.entries()[1].script == source);
+    CHECK(loaded.entries()[2].kind == EntryKind::script);
+    CHECK(loaded.entries()[2].description == "unnamed");
+    CHECK(loaded.entries()[2].script.empty());
+
+    // A drag-reorder round-trips in the new order.
+    loaded.move(2, 0);
+    REQUIRE(slopkit::table::save(path, loaded).has_value());
+
+    AddressTable reordered;
+    REQUIRE(slopkit::table::load(path, reordered).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(reordered.size() == 3);
+    const std::vector<std::string> descriptions {
+        reordered.entries()[0].description, reordered.entries()[1].description, reordered.entries()[2].description};
+    CHECK(descriptions == std::vector<std::string> {"unnamed", "health", "helper"});
+    CHECK(reordered.entries()[2].script == source);
+}
+
+TEST_CASE("a version 3 archive still loads and is re-saved as version 4", "[table]")
+{
+    const auto path = scratch_file("legacy.skt");
+    std::filesystem::remove(path);
+    REQUIRE(write_archive(path,
+                          std::vector<ArchiveMember> {
+                              {       .name = "version.txt",                     .text = "slopkit-table 3\n"},
+                              {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 expr=\"1234\"\n"},
+                              {         .name = "index.txt",                  .text = "entries/health.txt\n"}
+    })
+                .has_value());
+
+    AddressTable table;
+    REQUIRE(slopkit::table::load(path, table).has_value());
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].kind == EntryKind::value);
+    CHECK(table.entries()[0].description == "health");
+
+    REQUIRE(slopkit::table::save(path, table).has_value());
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 4\n"});
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("script rows are edited through the table, not the value path", "[table]")
+{
+    AddressTable      table;
+    const std::size_t row = table.add_script("helper", "return 1");
+
+    REQUIRE(table.size() == 1);
+    CHECK(row == 0);
+    CHECK(table.entries()[0].kind == EntryKind::script);
+    CHECK(table.entries()[0].description == "helper");
+    CHECK(table.entries()[0].script == "return 1");
+    CHECK(table.selected() == 0); // add_script selects the new row
+
+    // A script row has no value text and cannot be encoded.
+    CHECK(table.display_value(0).empty());
+    const auto encoded = table.encode_value(0, "1");
+    REQUIRE_FALSE(encoded.has_value());
+    CHECK(encoded.error() == AccessError::invalid_argument);
+
+    // The source and the description can be replaced.
+    CHECK(table.set_script(0, "return 2"));
+    CHECK(table.entries()[0].script == "return 2");
+    CHECK(table.set_description(0, "renamed"));
+    CHECK(table.entries()[0].description == "renamed");
+
+    // A value row refuses a script edit; an out-of-range row refuses both.
+    table.add(make_entry(0x1000, ValueType::int32, {0, 0, 0, 0}));
+    CHECK_FALSE(table.set_script(1, "return 3"));
+    CHECK_FALSE(table.set_script(9, "return 3"));
+    CHECK_FALSE(table.set_description(9, "x"));
+
+    // Even with the Active flag on and bytes cached, a script row is never a
+    // freeze item.
+    table.entries()[0].active = true;
+    table.entries()[0].bytes  = {std::byte {0x42}};
+    CHECK(table.freeze_items(0.0, 0.1).empty());
+}
+
+TEST_CASE("merge treats scripts by description and source text", "[table]")
+{
+    AddressTable table;
+    CHECK(table.add_script("helper", "return 1") == 0);
+
+    AddressEntry same;
+    same.kind        = EntryKind::script;
+    same.description = "helper";
+    same.script      = "return 1";
+
+    AddressEntry rewritten = same;
+    rewritten.script       = "return 2";
+
+    AddressEntry renamed = same;
+    renamed.description  = "other";
+
+    AddressEntry value; // same description, but a value entry is a different thing
+    value.description = "helper";
+
+    const std::vector<AddressEntry> incoming {same, rewritten, renamed, value};
+    const auto                      summary = table.merge(incoming);
+
+    CHECK(summary.added == 3);
+    CHECK(summary.skipped == 1);
+    REQUIRE(table.size() == 4);
+    CHECK(table.entries()[0].script == "return 1");
+    CHECK(table.entries()[1].script == "return 2");
+    CHECK(table.entries()[2].description == "other");
+    CHECK(table.entries()[3].kind == EntryKind::value);
 }

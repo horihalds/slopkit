@@ -160,3 +160,42 @@ beside the normal access path rather than in it, so the read/write path stays
   `debug` log category at start and stop. The Access Watch window's instruction
   reads are the one debugger-adjacent UI access that does not go through the debug
   worker: they are ordinary memory reads batched on `process::AccessWorker`.
+
+## Lua scripting
+
+The address table can hold **script entries** beside its value entries: a script
+is Lua source that travels inside the `.skt` file (`entries/<stem>.lua`, whose
+body is the source and nothing else) and runs on demand against the attached
+target.
+
+- The engine lives in `slopkit::script` (`src/script`) and is built on the system
+  Lua through `sol2`. `script::Engine` is a pimpl whose Lua state is created once
+  per attached session by `process::AccessWorker` — worker thread only, exactly
+  like its `Session` — and dropped on detach, so a script's globals survive
+  between runs on one target and never outlive it. `sol2` and the Lua headers are
+  included only by `script/engine.cpp`, so no public header depends on them.
+- `script::MemoryApi` is the seam to the target: three `std::function`s the worker
+  fills from its session. The engine never sees `Session` or `ProcessAccess`, so
+  it is unit-testable against an in-memory buffer
+  (`tests/support/script_helpers.hpp`). A failed access raises a Lua error that
+  carries the target's error text, which then surfaces as `RunResult::error`.
+- A chunk sees `mem.pointer_size()`, `mem.read(addr, "u32")`-style typed reads
+  (`u8 i8 u16 i16 u32 i32 u64 i64 f32 f64 ptr`, decoded by `script::codec`),
+  `mem.read_bytes`, `mem.read_string`, typed writes and `mem.write_bytes`; `print`
+  is captured into `RunResult::output` — bounded by `kMaxOutputLines` and
+  `kMaxOutputLine` — instead of writing to stdout, and a scalar `return` is
+  rendered into `RunResult::returned`.
+- Running a script is an `AccessWorker` job (`JobKind::script` → `ScriptResult`),
+  so the chunk touches the target on the worker thread and the UI only submits and
+  handles the completion. The address list logs the printed lines under the
+  `script` category, logs the first error exactly once and reports a short outcome
+  in the status line; a run without an attached target is refused.
+- A runaway chunk is aborted by the instruction budget and the wall-clock deadline
+  in `script::EngineConfig`, checked from a `lua_sethook` installed for the run; the
+  abort is an ordinary Lua error that leaves both the state and the session usable.
+
+A script entry has no address and no value, never takes part in the freeze pass
+(`Active` does not apply to it) and renders read-only in the grid: the Type column
+says `script`, the Address and Value cells stay blank and no cell is editable.
+`File > Add Script…`, the row menu's `Run Script` and `Edit Script…` are the only
+new UI.

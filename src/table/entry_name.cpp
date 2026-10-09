@@ -8,8 +8,8 @@ namespace slopkit::table
 {
     namespace
     {
-        // Long enough for any real description, short enough that the ".txt"
-        // suffix and a collision number still fit a 255-byte file name.
+        // Long enough for any real description, short enough that the extension
+        // and a collision number still fit a 255-byte file name.
         constexpr std::size_t kMaxStemBytes = 96;
 
         bool is_hostile(unsigned char character)
@@ -47,7 +47,8 @@ namespace slopkit::table
         }
     } // namespace
 
-    std::string entry_member_name(std::string_view description, std::span<const std::string> taken)
+    std::string
+    entry_member_name(std::string_view description, std::span<const std::string> taken, std::string_view extension)
     {
         std::string stem;
         stem.reserve(description.size());
@@ -83,19 +84,49 @@ namespace slopkit::table
             return std::ranges::find(taken, candidate) != taken.end();
         };
 
-        std::string candidate = stem + ".txt";
+        std::string candidate = stem + std::string(extension);
         if (!present(candidate))
         {
             return candidate;
         }
         for (std::size_t index = 2;; ++index)
         {
-            candidate = stem + std::to_string(index) + ".txt";
+            candidate = stem + std::to_string(index) + std::string(extension);
             if (!present(candidate))
             {
                 return candidate;
             }
         }
+    }
+
+    std::optional<EntryKind> kind_for_member(std::string_view member_name)
+    {
+        if (member_name.ends_with(kScriptMemberExtension))
+        {
+            return EntryKind::script;
+        }
+        if (member_name.ends_with(kValueMemberExtension))
+        {
+            return EntryKind::value;
+        }
+        return std::nullopt;
+    }
+
+    std::string member_stem(std::string_view member_name)
+    {
+        if (member_name.starts_with(kEntriesPrefix))
+        {
+            member_name.remove_prefix(kEntriesPrefix.size());
+        }
+        for (const std::string_view extension : {kValueMemberExtension, kScriptMemberExtension})
+        {
+            if (member_name.ends_with(extension))
+            {
+                member_name.remove_suffix(extension.size());
+                break;
+            }
+        }
+        return std::string(member_name);
     }
 
 } // namespace slopkit::table

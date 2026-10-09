@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "support/ui_helpers.hpp"
+#include "ui/dialogs/add_script.hpp"
 #include "ui/panels/debug_controls.hpp"
 
 TEST_CASE("the main window shell is built", "[ui]")
@@ -31,6 +32,7 @@ TEST_CASE("the main window shell is built", "[ui]")
                              QStringLiteral("Open Table"),
                              QStringLiteral("Save Table"),
                              QStringLiteral("Save Table As"),
+                             QStringLiteral("Add Script…"),
                              QStringLiteral("Quit")});
 
     // The toolbar is gone; the file commands live only in the menus now.
@@ -60,23 +62,24 @@ TEST_CASE("the main window shell is built", "[ui]")
 
     // Ctrl+T / Ctrl+O / Ctrl+S / Ctrl+Shift+S are bound to the file commands.
     const QList<QAction*> file_actions = menus[0]->menu()->actions();
-    REQUIRE(file_actions.size() == 6);
+    REQUIRE(file_actions.size() == 7);
     CHECK(file_actions[0]->shortcut() == QKeySequence(QStringLiteral("Ctrl+T")));
     CHECK(file_actions[1]->shortcut() == QKeySequence(QKeySequence::Open));
     CHECK(file_actions[2]->shortcut() == QKeySequence(QKeySequence::Save));
     CHECK(file_actions[3]->shortcut() == QKeySequence(QKeySequence::SaveAs));
 
-    // The four file commands carry their action glyphs; every other menu entry
-    // stays text-only.
-    for (const int index : {0, 1, 2, 3})
+    // The five table and target commands carry their action glyphs; every
+    // other menu entry stays text-only.
+    for (const int index : {0, 1, 2, 3, 4})
     {
         CHECK_FALSE(file_actions[index]->icon().isNull());
         CHECK(file_actions[index]->icon().availableSizes().contains(QSize(16, 16)));
     }
     // Save and Save As share the same diskette glyph.
     CHECK(file_actions[2]->icon().pixmap(16).toImage() == file_actions[3]->icon().pixmap(16).toImage());
-    // Quit, and every View/Help entry, remain icon-less.
-    CHECK(file_actions[5]->icon().isNull());
+    // The separator, Quit and every View/Help entry remain icon-less.
+    CHECK(file_actions[5]->isSeparator());
+    CHECK(file_actions[6]->icon().isNull());
     for (QAction* action : menus[1]->menu()->actions())
     {
         CHECK(action->icon().isNull());
@@ -591,4 +594,65 @@ TEST_CASE("File > Quit closes the window and stores the geometry", "[ui]")
         }
     }
     CHECK(lifetime_owners == 0);
+}
+
+TEST_CASE("File > Add Script opens the dialog and appends a script row", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("add_script.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    QAction* add_script = nullptr;
+    for (QAction* action : window.menuBar()->actions().first()->menu()->actions())
+    {
+        if (action->text() == QStringLiteral("Add Script…"))
+        {
+            add_script = action;
+        }
+    }
+    REQUIRE(add_script != nullptr);
+
+    add_script->trigger();
+    QCoreApplication::processEvents();
+
+    auto* dialog = window.findChild<slopkit::ui::dialogs::AddScriptDialog*>();
+    REQUIRE(dialog != nullptr);
+    CHECK(dialog->isVisible());
+
+    auto* description = dialog->findChild<QLineEdit*>(QStringLiteral("description_edit"));
+    auto* editor      = dialog->findChild<QPlainTextEdit*>(QStringLiteral("script_edit"));
+    auto* commit      = dialog->findChild<QPushButton*>(QStringLiteral("commit_button"));
+    REQUIRE(description != nullptr);
+    REQUIRE(editor != nullptr);
+    REQUIRE(commit != nullptr);
+
+    // An empty description is refused, so the dialog stays up and adds nothing.
+    description->clear();
+    commit->click();
+    CHECK(dialog->isVisible());
+
+    description->setText(QStringLiteral("helper"));
+    editor->setPlainText(QStringLiteral("print('hi')\nreturn 1"));
+    commit->click();
+    QCoreApplication::processEvents();
+
+    // A confirmed dialog closes and the new row is the feedback.
+    CHECK_FALSE(dialog->isVisible());
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+    auto* view = address_list->findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->model() != nullptr);
+    REQUIRE(view->model()->rowCount() == 1);
+    CHECK(view->model()->index(0, 1).data(Qt::DisplayRole).toString() == QStringLiteral("helper"));
+    CHECK(view->model()->index(0, 2).data(Qt::DisplayRole).toString().isEmpty());
+    CHECK(view->model()->index(0, 3).data(Qt::DisplayRole).toString() == QStringLiteral("script"));
+    CHECK(view->model()->index(0, 4).data(Qt::DisplayRole).toString().isEmpty());
 }

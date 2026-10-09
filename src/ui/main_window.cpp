@@ -217,6 +217,9 @@ namespace slopkit::ui
         save_table_as_action_->setShortcut(QKeySequence::SaveAs);
         save_table_as_action_->setShortcutContext(Qt::WindowShortcut);
 
+        add_script_action_ = new QAction(tr("Add Script…"), this);
+        add_script_action_->setIcon(widgets::action_icon(widgets::ActionIcon::file));
+
         log_action_ = new QAction(tr("Log"), this);
 
         settings_action_ = new QAction(tr("Settings"), this);
@@ -237,6 +240,7 @@ namespace slopkit::ui
         file_menu->addAction(open_table_action_);
         file_menu->addAction(save_table_action_);
         file_menu->addAction(save_table_as_action_);
+        file_menu->addAction(add_script_action_);
         file_menu->addSeparator();
         file_menu->addAction(quit_action_);
 
@@ -322,6 +326,7 @@ namespace slopkit::ui
         connect(launch_sandbox_action_, &QAction::triggered, this, &MainWindow::on_launch_sandbox_requested);
         connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
         connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
+        connect(add_script_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::add_script);
 
         auto* middle_splitter = new QSplitter(Qt::Horizontal, this);
         middle_splitter->addWidget(found_list_);

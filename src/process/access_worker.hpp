@@ -19,6 +19,8 @@
 #include "expr/resolver.hpp"
 #include "process/access.hpp"
 #include "process/types.hpp"
+#include "script/engine.hpp"
+#include "script/types.hpp"
 
 namespace slopkit::process
 {
@@ -131,6 +133,15 @@ namespace slopkit::process
         std::optional<AccessError> error;
     };
 
+    // Outcome of running one script entry: the chunk's own run result plus the
+    // entry's description so the caller can name it in its log record.
+    struct ScriptResult
+    {
+        JobId             id {};
+        std::string       description;
+        script::RunResult run;
+    };
+
     struct MemoryMapResult
     {
         std::vector<ModuleInfo>    modules;
@@ -157,6 +168,7 @@ namespace slopkit::process
                                    ReadResult,
                                    ReadManyResult,
                                    WriteResult,
+                                   ScriptResult,
                                    FreezeResult,
                                    SuspendResult,
                                    MemoryMapResult,
@@ -204,6 +216,11 @@ namespace slopkit::process
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
+        // Runs `chunk` as a Lua script against the attached target, with
+        // `pointer_size` as the target's pointer width. The engine and its state
+        // outlive the job, so globals persist between runs on one session.
+        bool submit_script(
+            JobId id, std::string description, std::string chunk, std::size_t pointer_size, JobCallback on_done);
         // Stops / resumes the attached target through the worker's session. `pid`
         // must match that session, so a stale target between the click and the
         // job is refused instead of stopped.
@@ -241,6 +258,7 @@ namespace slopkit::process
             read_many,
             write,
             freeze,
+            script,
             suspend,
             resume,
             detach,
@@ -262,6 +280,8 @@ namespace slopkit::process
             std::vector<ResolveRequest>  resolve_items;
             std::vector<expr::ModuleRef> module_refs;
             std::size_t                  pointer_size {};
+            std::string                  description;
+            std::string                  chunk;
             JobCallback                  on_done;
         };
 
@@ -284,21 +304,27 @@ namespace slopkit::process
         ReadManyResult          do_read_many(const Request& request);
         WriteResult             do_write(const Request& request);
         FreezeResult            do_freeze(const Request& request);
+        ScriptResult            do_script(const Request& request);
+        // The seam a script sees the target through. Its lambdas read the
+        // worker's current session, so one engine stays valid across attaches.
+        script::MemoryApi       memory_api();
         SuspendResult           do_suspend(const Request& request);
         SuspendResult           do_resume(const Request& request);
         AttachResult            do_detach();
         ResolveResult           do_resolve(const Request& request);
 
-        ProcessAccess&          access_;
-        std::mutex              mutex_;
-        std::condition_variable cv_;
-        std::deque<Request>     requests_;
-        std::deque<Completion>  completions_;
-        CompletionHook          completion_hook_; // guarded by mutex_
-        std::optional<Session>  session_;         // worker thread only
-        std::atomic<bool>       attached_ {false};
-        std::atomic<JobId>      next_id_ {1};
-        bool                    stopping_ {false}; // guarded by mutex_
+        ProcessAccess&                access_;
+        std::mutex                    mutex_;
+        std::condition_variable       cv_;
+        std::deque<Request>           requests_;
+        std::deque<Completion>        completions_;
+        CompletionHook                completion_hook_;         // guarded by mutex_
+        std::optional<Session>        session_;                 // worker thread only
+        std::optional<script::Engine> engine_;                  // worker thread only, follows session_
+        std::size_t                   script_pointer_size_ {8}; // worker thread only
+        std::atomic<bool>             attached_ {false};
+        std::atomic<JobId>            next_id_ {1};
+        bool                          stopping_ {false}; // guarded by mutex_
 
         // Declared last: the worker thread started by the constructor touches
         // mutex_, cv_, requests_ and completion_hook_ before it can process a

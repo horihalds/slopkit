@@ -2,6 +2,51 @@
 
 #include "support/access_worker_helpers.hpp"
 
+namespace
+{
+    using slopkit::process::ScriptResult;
+
+    // Attaches the fake target on the worker and waits for the completion.
+    bool attach_target(AccessWorker& worker)
+    {
+        AttachResult attached;
+        worker.submit_attach_app(worker.next_job_id(),
+                                 7,
+                                 "fake",
+                                 [&](JobResult&& result)
+                                 {
+                                     attached = std::get<AttachResult>(std::move(result));
+                                 });
+        return pump(worker,
+                    [&]
+                    {
+                        return attached.info.has_value();
+                    });
+    }
+
+    // Submits one script job and returns its result once the completion arrived.
+    ScriptResult run_script(AccessWorker& worker, std::string chunk, std::size_t pointer_size = 8)
+    {
+        ScriptResult result;
+        bool         done = false;
+        worker.submit_script(worker.next_job_id(),
+                             "helper",
+                             std::move(chunk),
+                             pointer_size,
+                             [&](JobResult&& job)
+                             {
+                                 result = std::get<ScriptResult>(std::move(job));
+                                 done   = true;
+                             });
+        pump(worker,
+             [&]
+             {
+                 return done;
+             });
+        return result;
+    }
+} // namespace
+
 TEST_CASE("submissions do not block and completions arrive after the job finishes", "[process]")
 {
     GatedAccess  access {true};
@@ -695,4 +740,94 @@ TEST_CASE("a backend without suspend support reports unsupported", "[process]")
                  }));
     CHECK(result.error == AccessError::unsupported);
     CHECK(access.backend()->suspends.load() == 0);
+}
+
+TEST_CASE("a script job is refused without an attached target", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    const ScriptResult result = run_script(worker, "return 1");
+
+    CHECK(result.description == "helper");
+    CHECK_FALSE(result.run.ok);
+    CHECK(result.run.error == "no target is attached");
+    CHECK(result.run.output.empty());
+}
+
+TEST_CASE("a script job reads and writes the attached target's memory", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+    REQUIRE(attach_target(worker));
+
+    access.backend()->memory->flat[0] = std::byte {0x2A};
+
+    const ScriptResult result = run_script(worker, R"(
+print("value", mem.read(0x1000, "u8"))
+print(mem.read(0x1001, "u8"))
+mem.write(0x1004, "u8", 0x42)
+print(mem.pointer_size())
+)");
+
+    REQUIRE(result.run.ok);
+    REQUIRE(result.run.output.size() == 3);
+    CHECK(result.run.output[0] == "value\t42");
+    CHECK(result.run.output[1] == "0");
+    CHECK(result.run.output[2] == "8");
+
+    // The write really reached the fake target.
+    CHECK(access.backend()->memory->flat[4] == std::byte {0x42});
+    CHECK(access.backend()->writes.load() >= 1);
+}
+
+TEST_CASE("a failing access becomes a script error", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+    REQUIRE(attach_target(worker));
+
+    const ScriptResult result = run_script(worker, "return mem.read(0x9999, 'u8')");
+
+    CHECK_FALSE(result.run.ok);
+    CHECK(result.run.error.find("mem.read") != std::string::npos);
+}
+
+TEST_CASE("two script runs on one session share the engine's state", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+    REQUIRE(attach_target(worker));
+
+    const ScriptResult first = run_script(worker, "counter = 41\nfunction bump() return counter + 1 end");
+    REQUIRE(first.run.ok);
+
+    const ScriptResult second = run_script(worker, "return bump()");
+    REQUIRE(second.run.ok);
+    CHECK(second.run.returned == "42");
+}
+
+TEST_CASE("a script job after detach reports the failure instead of running", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+    REQUIRE(attach_target(worker));
+
+    bool detached = false;
+    worker.submit_detach(worker.next_job_id(),
+                         [&](JobResult&&)
+                         {
+                             detached = true;
+                         });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return detached;
+                 }));
+    CHECK_FALSE(worker.attached());
+
+    const ScriptResult result = run_script(worker, "return 1");
+
+    CHECK_FALSE(result.run.ok);
+    CHECK(result.run.error == "no target is attached");
 }

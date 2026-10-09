@@ -22,6 +22,7 @@ docs that hold the detail behind this map.
 | `src/process` | Access seam, `AccessWorker`, plugin access, attachment metadata, shared types |
 | `src/sandbox` | Standalone practice-target binary (`slopkit-sandbox`) |
 | `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
+| `src/script` | Lua scripting engine: a sol2 state, the `mem` API and the type-token codec |
 | `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
 | `src/ui` | Qt main window and shared UI infrastructure |
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, input boxes, message box, window geometry keeper, window centerer) |
@@ -39,7 +40,8 @@ docs that hold the detail behind this map.
 | `tests/process` | Tests for `src/process` |
 | `tests/sandbox` | Tests for `src/sandbox` |
 | `tests/scan` | Tests for `src/scan` |
-| `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `memory_view_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
+| `tests/script` | Tests for `src/script` |
+| `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `script_helpers.hpp`, `memory_view_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
 | `tests/table` | Tests for `src/table` |
 | `tests/ui` | Window/flow tests (the four subdirectories have their own rows) |
 | `tests/ui/components` | Tests for `src/ui/components` |
@@ -64,12 +66,13 @@ docs that hold the detail behind this map.
 | table | Address table, `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, libzip |
 | expr | Address expression parsing/resolution | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | process |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
+| script | Lua scripting engine over the system Lua and sol2 | `script/engine.hpp` (`Engine`), `script/types.hpp`, `script/codec.hpp` | `tests/script/*` | Lua, sol2 |
 | debug | Debugger core: controller, worker, backends, breakpoints | `debug/controller.hpp` (`Controller`; `controller*.cpp` holds the per-concern definitions), `worker.hpp`, `backend.hpp`, `plugin_backend.hpp`, `breakpoints.hpp`, `step_over.hpp`, `access_watch.hpp` | `tests/debug/*` | process, plugin, platform |
 | platform/linux | Linux primitives shared with plugins | `platform/linux/debug_session.hpp` (`DebugSession`), `ptrace.hpp`, `procfs.hpp`, `memory.hpp`, `process_control.hpp`, `module_entry.hpp`, `proc_text.hpp`, `desktop_entry.hpp`, `wine.hpp` | `tests/platform/linux/*` | core |
 | sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
 | ui | Main window, settings, live values, table file, theme/fonts | `ui/main_window.hpp` (`MainWindow`), `app.hpp`, `settings.hpp` (per-window geometries), `platform.hpp` (`preferred_platform_spec`), `text.hpp` (`to_qstring`), `live_values.hpp`, `debug_session.hpp`, `access_watch.hpp`, `completion_notifier.hpp`, `log_notifier.hpp`, `theme.hpp`, `fonts.hpp`, `table_file.hpp`, `address_format.hpp` | `tests/ui/*` | process, plugin, table, scan, debug |
 | ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`), `code_patch.hpp`, `elided_tooltip_delegate.hpp`, `row_menu.hpp` | `tests/ui/components/*` | ui, disasm |
-| ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`) | `tests/ui/dialogs/*` | ui, process, debug |
+| ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`) | `tests/ui/dialogs/*` | ui, process, debug |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug |
 | ui/panels | Docked panes | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
 | plugins/support | Shared bundled-plugin ABI plumbing | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp` | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
@@ -86,6 +89,7 @@ docs that hold the detail behind this map.
 - Live values: `ui::LiveValues` batches every registered `LiveSurface` request into one worker job per interval.
 - Debug: `debug::Controller` → `debug::Worker` job thread → `debug::PluginBackend` → plugin `debug_*` → `platform::DebugSession`/`ptrace`; `drain()` applies results; start is gated by `ui::DebugSessionGate`.
 - Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; a drag reorders rows through `AddressTable::move`; `.skt` is a ZIP archive (`table/serializer.cpp` over `table/table_zip.cpp`), opened via `MainWindow::open_table_request()`.
+- Scripts: the address list's `Run Script` submits `AccessWorker::submit_script`; the worker's `script::Engine` (one per attached session) runs the chunk with `print` captured, logs the printed lines under the `script` category and reports the outcome in the status line.
 
 ## 4. Conventions
 
@@ -127,6 +131,12 @@ docs that hold the detail behind this map.
   `SLOPKIT_PLUGIN_RELATIVE_DIR` in
   `CMakeLists.txt`; `SLOPKIT_ACTION_ICON_NAMES` with `widgets::ActionIcon`; the
   plugin ABI version in `src/plugin/plugin_api.h` with the host handshake.
+- A `.skt` archive is versioned by `version.txt`: the writer emits
+  `slopkit-table 4` (value and script entries) and the reader also accepts
+  `slopkit-table 3` (value entries only). An entry's kind is its member
+  extension: `entries/<stem>.txt` is a value entry and a `entries/<stem>.lua`
+  member's whole body is the script verbatim. `index.txt` lists both kinds in
+  row order.
 - `.skt` address tables are registered as `application/x-slopkit-table`, so a
   double-click opens slopkit with the slopkit icon; `tools/install.sh` finishes
   the MIME/desktop registration and the per-user default handler for a `$HOME`
@@ -142,8 +152,8 @@ docs that hold the detail behind this map.
 - A test fake driven from a worker thread keeps its state behind a lock and
   exposes snapshot accessors instead of public fields, so the test thread never
   reads a record mid-write — see `tests/support/fake_debug.hpp`.
-- Configure fails without ImageMagick, the Zydis and libzip dev packages and
-  `pkg-config`.
+- Configure fails without ImageMagick, the Zydis, libzip, Lua and sol2 dev
+  packages and `pkg-config`.
 
 ## 6. Maintaining this map
 
