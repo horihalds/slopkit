@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <format>
 #include <span>
 #include <stop_token>
@@ -57,6 +58,28 @@ namespace slopkit::process
                 return read.error();
             }
             return std::nullopt;
+        }
+
+        // The name a region belongs to: the loaded module whose image contains
+        // the region's start, else the filename of the region's backing file. An
+        // anonymous mapping has no name.
+        std::string module_name_for(const RegionInfo& region, std::span<const ModuleInfo> modules)
+        {
+            const auto owner =
+                std::ranges::find_if(modules,
+                                     [&region](const ModuleInfo& module)
+                                     {
+                                         return module.base <= region.start && region.start - module.base < module.size;
+                                     });
+            if (owner != modules.end() && !owner->name.empty())
+            {
+                return owner->name;
+            }
+            if (!region.path.empty())
+            {
+                return std::filesystem::path(region.path).filename().string();
+            }
+            return {};
         }
 
         // Decodes a little-endian pointer of at most eight bytes; a shorter read
@@ -839,6 +862,40 @@ namespace slopkit::process
             }
             return {};
         };
+        // The region list `aobscan` walks. Module names are best-effort: a target
+        // that cannot list modules still scans, its regions just carry no name.
+        api.regions = [this]() -> std::expected<std::vector<script::MemoryRegion>, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            const std::expected<std::vector<RegionInfo>, AccessError> listed = session_->regions();
+            if (!listed)
+            {
+                return std::unexpected(std::string {describe(listed.error())});
+            }
+
+            std::vector<ModuleInfo> modules;
+            if (const std::expected<std::vector<ModuleInfo>, AccessError> found = session_->modules())
+            {
+                modules = *found;
+                std::ranges::sort(modules, {}, &ModuleInfo::base);
+            }
+
+            std::vector<script::MemoryRegion> regions;
+            regions.reserve(listed->size());
+            for (const RegionInfo& region : *listed)
+            {
+                script::MemoryRegion entry;
+                entry.base     = region.start;
+                entry.size     = region.end > region.start ? region.end - region.start : 0;
+                entry.readable = region.readable;
+                entry.module   = module_name_for(region, modules);
+                regions.push_back(std::move(entry));
+            }
+            return regions;
+        };
         return api;
     }
 
@@ -865,6 +922,11 @@ namespace slopkit::process
                 log::debug(log::category::script, std::format("symbol '{}' removed", name));
             }
             return result;
+        };
+        // A read, not a mutation, so it is passed through without a log record.
+        logging.lookup = [inner = api.lookup](std::string_view name) -> std::optional<std::uint64_t>
+        {
+            return inner(name);
         };
         return logging;
     }

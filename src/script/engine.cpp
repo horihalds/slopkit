@@ -1,10 +1,12 @@
 #include "script/engine.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -13,7 +15,9 @@
 
 #include <sol/sol.hpp>
 
+#include "scan/pattern.hpp"
 #include "script/codec.hpp"
+#include "script/symbols.hpp"
 
 namespace slopkit::script
 {
@@ -29,8 +33,33 @@ namespace slopkit::script
         constexpr std::size_t kStringChunk      = 64;
         constexpr std::size_t kStringDefaultMax = 256;
 
+        // How many bytes `aobscan` reads per target read. Consecutive chunks
+        // overlap by the pattern size so a match on a boundary is still found,
+        // and a huge region never becomes one allocation.
+        constexpr std::size_t kAobChunk = 64 * 1024;
+
         constexpr const char* kBudgetError   = "script exceeded its instruction budget";
         constexpr const char* kDeadlineError = "script exceeded its time budget";
+
+        bool equals_case_insensitive(std::string_view left, std::string_view right)
+        {
+            if (left.size() != right.size())
+            {
+                return false;
+            }
+            for (std::size_t i = 0; i < left.size(); ++i)
+            {
+                const auto lower = [](char value)
+                {
+                    return static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
+                };
+                if (lower(left[i]) != lower(right[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
 
         // Pops the top of the stack and returns it as text, exactly like Lua's
         // `tostring` (which is what `print` uses for each of its arguments).
@@ -51,6 +80,12 @@ namespace slopkit::script
         EngineConfig config;
         sol::state   lua;
 
+        // The script-local registry behind `rlabel`/`slabel`/`ulabel`, plus the
+        // chunk it belongs to: a run of a different chunk drops them, so labels
+        // never leak between scripts while a script's own hooks share theirs.
+        SymbolTable                labels;
+        std::optional<std::string> labels_owner;
+
         std::vector<std::string>              output;
         std::size_t                           ticks {0};
         std::chrono::steady_clock::time_point deadline;
@@ -64,6 +99,8 @@ namespace slopkit::script
             install_print();
             install_memory();
             install_symbols();
+            install_labels();
+            install_aobscan();
         }
 
         // The VM-instruction hook that turns the instruction budget and the
@@ -98,6 +135,19 @@ namespace slopkit::script
             sol::protected_function_result result = body();
             lua_sethook(state, nullptr, 0, 0);
             return result;
+        }
+
+        // Scopes the label table to the chunk currently running: a different
+        // chunk starts with an empty registry while the same chunk keeps its
+        // labels, so a script's `activate`/`deactivate` see what it registered.
+        void begin_chunk(std::string_view chunk)
+        {
+            if (labels_owner && *labels_owner == chunk)
+            {
+                return;
+            }
+            labels.clear();
+            labels_owner = std::string(chunk);
         }
 
         // `print` appends one line per call to the run's output instead of
@@ -255,6 +305,42 @@ namespace slopkit::script
             }
         }
 
+        // The value a name resolves to, and whether the script-local table
+        // answered (`local`) or the process-wide symbols did.
+        struct NameHit
+        {
+            std::uint64_t value {};
+            bool          local {};
+        };
+
+        // Labels first, then the shared table; a name can live in either.
+        [[nodiscard]] std::optional<NameHit> resolve_name(std::string_view name) const
+        {
+            if (const std::optional<std::uint64_t> local = labels.lookup(name))
+            {
+                return NameHit {*local, true};
+            }
+            if (symbols.lookup)
+            {
+                if (const std::optional<std::uint64_t> global = symbols.lookup(name))
+                {
+                    return NameHit {*global, false};
+                }
+            }
+            return std::nullopt;
+        }
+
+        // Stores a label, mirroring `store_symbol`: a rejected name throws with
+        // the function that asked for it.
+        void store_label(const std::string& function, std::string_view name, std::uint64_t value)
+        {
+            const std::expected<void, std::string> stored = labels.set(name, value);
+            if (!stored)
+            {
+                throw std::runtime_error(function + ": " + stored.error());
+            }
+        }
+
         // Binds `rsymbol`/`ssymbol`/`usymbol`; a bad argument or a rejected name
         // throws, which sol2 turns into a Lua error carrying the function name,
         // exactly like a failed `mem` access.
@@ -292,6 +378,178 @@ namespace slopkit::script
                                      throw std::runtime_error("usymbol: " + removed.error());
                                  }
                              });
+        }
+
+        // Binds `rlabel`/`slabel`/`ulabel`, the script-local twin of the symbol
+        // triple, with the same argument checks and error wording.
+        void install_labels()
+        {
+            lua.set_function("rlabel",
+                             [this](sol::object name, sol::optional<sol::object> value)
+                             {
+                                 store_label("rlabel", name_argument("rlabel", name), value_argument("rlabel", value));
+                             });
+
+            lua.set_function("slabel",
+                             [this](sol::object name, sol::optional<sol::object> value)
+                             {
+                                 if (!value)
+                                 {
+                                     throw std::runtime_error("slabel: the value must be a 64-bit unsigned integer");
+                                 }
+                                 store_label("slabel", name_argument("slabel", name), value_argument("slabel", value));
+                             });
+
+            lua.set_function("ulabel",
+                             [this](sol::object name)
+                             {
+                                 labels.remove(name_argument("ulabel", name));
+                             });
+        }
+
+        // Stores the address of a successful scan under `name`: into the label
+        // the script already owns, else into an existing global symbol (so an
+        // address field can resolve it), else into a freshly registered label.
+        void store_hit(const std::string& function, std::string_view name, std::uint64_t address)
+        {
+            if (const std::optional<NameHit> hit = resolve_name(name); hit && !hit->local)
+            {
+                const std::expected<void, std::string> stored = symbols.set(name, address);
+                if (!stored)
+                {
+                    throw std::runtime_error(function + ": " + stored.error());
+                }
+                return;
+            }
+            store_label(function, name, address);
+        }
+
+        // Walks the readable regions in ascending address order and returns the
+        // lowest address where `pattern` matches, or nullopt. `module`, when set,
+        // restricts the walk to that module's regions. Every failure is thrown,
+        // never a `longjmp`, so the walk's containers are destroyed.
+        std::optional<std::uint64_t> scan_memory(const scan::BytePattern&          pattern,
+                                                 const std::optional<std::string>& module)
+        {
+            if (!api.regions)
+            {
+                throw std::runtime_error("aobscan: no target is attached");
+            }
+            const std::expected<std::vector<MemoryRegion>, std::string> listed = api.regions();
+            if (!listed)
+            {
+                throw std::runtime_error("aobscan: " + listed.error());
+            }
+
+            std::vector<MemoryRegion> regions;
+            for (const MemoryRegion& region : *listed)
+            {
+                if (!region.readable || (module && !equals_case_insensitive(region.module, *module)))
+                {
+                    continue;
+                }
+                regions.push_back(region);
+            }
+
+            if (module && regions.empty())
+            {
+                throw std::runtime_error("aobscan: no region belongs to module '" + *module + "'");
+            }
+            if (regions.empty())
+            {
+                throw std::runtime_error("aobscan: the target reported no readable memory");
+            }
+
+            std::ranges::sort(regions, {}, &MemoryRegion::base);
+
+            const std::size_t pattern_size = pattern.size();
+            const std::size_t overlap      = pattern_size - 1;
+            const std::size_t step         = std::max(kAobChunk, pattern_size);
+            for (const MemoryRegion& region : regions)
+            {
+                if (region.size < pattern_size)
+                {
+                    continue;
+                }
+                std::uint64_t       cursor = region.base;
+                const std::uint64_t end    = region.base + region.size;
+                while (cursor < end)
+                {
+                    if (std::chrono::steady_clock::now() > deadline)
+                    {
+                        throw std::runtime_error(kDeadlineError);
+                    }
+                    const std::uint64_t remaining = end - cursor;
+                    const std::size_t   want      = static_cast<std::size_t>(std::min<std::uint64_t>(remaining, step));
+                    const std::expected<std::vector<std::byte>, std::string> bytes = api.read(cursor, want);
+                    if (!bytes)
+                    {
+                        break; // abandon this region and continue with the next
+                    }
+                    if (const std::optional<std::size_t> offset = pattern.find(*bytes))
+                    {
+                        return cursor + *offset;
+                    }
+                    if (want >= remaining)
+                    {
+                        break; // the chunk reached the region's end
+                    }
+                    cursor += want - overlap;
+                }
+            }
+            return std::nullopt;
+        }
+
+        // Binds `aobscan(name, pattern[, module])`: it walks the target's
+        // readable memory for a wildcard byte pattern, stores the address of the
+        // first match under `name` and returns whether it was found, with the
+        // address as a second value.
+        void install_aobscan()
+        {
+            lua.set_function(
+                "aobscan",
+                [this](
+                    sol::object name, sol::object pattern, sol::optional<sol::object> module) -> sol::variadic_results
+                {
+                    const std::string scan_name = name_argument("aobscan", name);
+                    if (const std::optional<std::string> rejected = validate_symbol_name(scan_name))
+                    {
+                        throw std::runtime_error("aobscan: " + *rejected);
+                    }
+                    if (pattern.get_type() != sol::type::string)
+                    {
+                        throw std::runtime_error("aobscan: the pattern must be a string");
+                    }
+                    std::optional<std::string> module_name;
+                    if (module)
+                    {
+                        if (module->get_type() != sol::type::string)
+                        {
+                            throw std::runtime_error("aobscan: the module must be a string");
+                        }
+                        module_name = module->as<std::string>();
+                    }
+
+                    const std::expected<scan::BytePattern, std::string> compiled =
+                        scan::BytePattern::parse(pattern.as<std::string>());
+                    if (!compiled)
+                    {
+                        throw std::runtime_error("aobscan: " + compiled.error());
+                    }
+
+                    sol::variadic_results results;
+                    if (const std::optional<std::uint64_t> found = scan_memory(*compiled, module_name))
+                    {
+                        store_hit("aobscan", scan_name, *found);
+                        results.push_back(sol::make_object(lua.lua_state(), true));
+                        results.push_back(sol::make_object(lua.lua_state(), static_cast<std::int64_t>(*found)));
+                    }
+                    else
+                    {
+                        results.push_back(sol::make_object(lua.lua_state(), false));
+                    }
+                    return results;
+                });
         }
 
         std::vector<std::byte> read_raw(std::uint64_t address, std::size_t size)
@@ -372,6 +630,7 @@ namespace slopkit::script
 
         RunResult result;
         impl.output.clear();
+        impl.begin_chunk(chunk);
 
         sol::load_result loaded = impl.lua.load(chunk, "@script");
         if (!loaded.valid())
@@ -420,6 +679,7 @@ namespace slopkit::script
 
         LifecycleResult result;
         impl.output.clear();
+        impl.begin_chunk(chunk);
 
         sol::load_result loaded = impl.lua.load(chunk, "@script");
         if (!loaded.valid())

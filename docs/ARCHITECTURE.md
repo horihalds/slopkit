@@ -174,9 +174,11 @@ target.
   like its `Session` — and dropped on detach, so a script's globals survive
   between runs on one target and never outlive it. `sol2` and the Lua headers are
   included only by `script/engine.cpp`, so no public header depends on them.
-- `script::MemoryApi` is the seam to the target: three `std::function`s the worker
-  fills from its session. The engine never sees `Session` or `ProcessAccess`, so
-  it is unit-testable against an in-memory buffer
+- `script::MemoryApi` is the seam to the target: the `pointer_size`/`read`/`write`
+  `std::function`s plus a `regions` supplier returning every mapped region
+  (`MemoryRegion {base, size, readable, module}`), which the worker builds from its
+  session's regions joined with its modules. The engine never sees `Session` or
+  `ProcessAccess`, so it is unit-testable against an in-memory buffer
   (`tests/support/script_helpers.hpp`). A failed access raises a Lua error that
   carries the target's error text, which then surfaces as `RunResult::error`.
 - A chunk sees `mem.pointer_size()`, `mem.read(addr, "u32")`-style typed reads
@@ -196,6 +198,28 @@ target.
   mutex-guarded: the worker writes it while the UI reads a snapshot, so a symbol
   survives a detach and is lost only when slopkit exits, and it is never written to
   a `.skt` file.
+- The same triple exists as **labels** — `rlabel(name[, value])`, `slabel(name,
+  value)` and `ulabel(name)` — with identical arguments, naming and error wording,
+  but the registry is the engine's own and a label only exists inside the script
+  source that registered it: the engine drops the labels whenever a run is handed a
+  *different* chunk, so a script's own `activate`/`deactivate` hooks share its
+  labels while two scripts never do. Labels never reach `script::SymbolTable` or an
+  address expression; a value that must outlive another script's run belongs in a
+  global symbol (`ssymbol`).
+- A script function that resolves a name — `aobscan` today — looks at the labels
+  first (case-insensitively) and only then at the process-wide symbols, so a label
+  shadows a global symbol of the same name.
+- `aobscan(name, pattern[, module])` walks the target's readable regions in
+  ascending address order for the byte pattern `pattern` — hex bytes with `?`
+  wildcards, matched by `scan::BytePattern` — and stops at the first match. With
+  `module` given only that module's regions are walked, matched case-insensitively
+  against the target's module names. On a hit the address is stored under `name` —
+  into a label the script owns, else an existing global symbol (so the address
+  table can resolve it), else a new label — and the call returns `true, address`;
+  on a miss it returns `false` and leaves the entry alone. Argument, name, pattern,
+  missing-region and no-readable-memory failures all raise a Lua error naming
+  `aobscan`, and the scan is bounded by the run's wall-clock budget and read in
+  64 KiB chunks.
 - A registered symbol resolves like a module name in any address expression, in
   both the worker's resolve job and the deref-free UI parsers. `expr::evaluate`
   takes the snapshot as an argument and looks a base up as **module name → symbol

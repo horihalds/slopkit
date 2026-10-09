@@ -8,11 +8,14 @@
 namespace slopkit::script
 {
 
-    // One Lua state with the `mem` table bound over a `MemoryApi` and the
-    // `rsymbol`/`ssymbol`/`usymbol` globals bound over a `SymbolApi`. `run()` is
-    // not re-entrant; callers serialize runs. The state (and its globals)
-    // survives between runs, so a script can remember helper functions across
-    // calls.
+    // One Lua state with the `mem` table bound over a `MemoryApi`, the
+    // `rsymbol`/`ssymbol`/`usymbol` globals bound over a `SymbolApi` and the
+    // script-local `rlabel`/`slabel`/`ulabel` registry the engine owns. A name
+    // resolved by a script function is looked up in the labels first, then in
+    // the shared symbols. `run()` is not re-entrant; callers serialize runs. The
+    // state (and its globals) survives between runs, so a script can remember
+    // helper functions across calls, while the labels are dropped when a
+    // different chunk runs.
     //
     // sol2 and the Lua headers stay inside `engine.cpp`: this header only needs
     // the plain data types above.

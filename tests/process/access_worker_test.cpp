@@ -1262,3 +1262,67 @@ TEST_CASE("the symbol table survives a detach", "[process]")
     CHECK(symbols.lookup("hp") == 0x77);
     CHECK(symbols.lookup("mp") == 0x66);
 }
+
+TEST_CASE("aobscan walks the attached target's regions", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+    REQUIRE(attach_target(worker));
+
+    SECTION("a chunkless scan hits inside the flat window")
+    {
+        access.backend()->region_list = {
+            slopkit::process::RegionInfo {kBase, kBase + 0x40, 0, true, false, false, false, ""}
+        };
+        access.backend()->module_list        = {slopkit::test::module_image("libgame.so", kBase, 0x40)};
+        access.backend()->memory->flat[0x10] = std::byte {0xDE};
+        access.backend()->memory->flat[0x11] = std::byte {0xAD};
+        access.backend()->memory->flat[0x12] = std::byte {0xBE};
+        access.backend()->memory->flat[0x13] = std::byte {0xEF};
+
+        const ScriptResult result = run_script(worker, R"(
+local ok, addr = aobscan("origin", "de ad be ef")
+print(ok, addr)
+)");
+
+        REQUIRE(result.run.ok);
+        REQUIRE(result.run.output.size() == 1);
+        CHECK(result.run.output[0] == "true\t" + std::to_string(kBase + 0x10));
+    }
+
+    SECTION("a module filter restricts the scan to that module")
+    {
+        access.backend()->region_list = {
+            slopkit::process::RegionInfo {       kBase, kBase + 0x20, 0, true, false, false, false, ""},
+            slopkit::process::RegionInfo {kBase + 0x20, kBase + 0x40, 0, true, false, false, false, ""}
+        };
+        access.backend()->module_list        = {slopkit::test::module_image("libother.so", kBase, 0x20),
+                                                slopkit::test::module_image("libgame.so", kBase + 0x20, 0x20)};
+        access.backend()->memory->flat[0x00] = std::byte {0xCA};
+        access.backend()->memory->flat[0x01] = std::byte {0xFE};
+        access.backend()->memory->flat[0x30] = std::byte {0xCA};
+        access.backend()->memory->flat[0x31] = std::byte {0xFE};
+
+        const ScriptResult unfiltered = run_script(worker, R"(
+local _, addr = aobscan("origin", "ca fe")
+print(addr)
+)");
+        REQUIRE(unfiltered.run.ok);
+        CHECK(unfiltered.run.output[0] == std::to_string(kBase));
+
+        const ScriptResult filtered = run_script(worker, R"(
+local _, addr = aobscan("origin2", "ca fe", "libgame.so")
+print(addr)
+)");
+        REQUIRE(filtered.run.ok);
+        CHECK(filtered.run.output[0] == std::to_string(kBase + 0x30));
+    }
+
+    SECTION("the default region-less target reports nothing readable")
+    {
+        const ScriptResult result = run_script(worker, R"(aobscan("origin", "de ad"))");
+
+        CHECK_FALSE(result.run.ok);
+        CHECK(result.run.error.find("aobscan: the target reported no readable memory") != std::string::npos);
+    }
+}

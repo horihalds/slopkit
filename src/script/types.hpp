@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -47,6 +48,16 @@ namespace slopkit::script
         std::vector<std::string> output;
     };
 
+    // One mapped region of the target: where it starts, how big it is, whether
+    // it can be read and which module owns it (empty for an anonymous mapping).
+    struct MemoryRegion
+    {
+        std::uint64_t base {};
+        std::uint64_t size {};
+        bool          readable {};
+        std::string   module;
+    };
+
     // The memory seam a script may touch. The owner (the access worker) fills
     // these from its attached session; the engine never sees a `Session` or
     // `ProcessAccess`, so it is testable against an in-memory buffer.
@@ -55,6 +66,10 @@ namespace slopkit::script
         std::function<std::size_t()>                                                                  pointer_size;
         std::function<std::expected<std::vector<std::byte>, std::string>(std::uint64_t, std::size_t)> read;
         std::function<std::expected<void, std::string>(std::uint64_t, std::span<const std::byte>)>    write;
+        // Every mapped region the target exposes. Absent when the seam has no
+        // region metadata at all (then `aobscan` reports "no target is
+        // attached").
+        std::function<std::expected<std::vector<MemoryRegion>, std::string>()>                        regions;
     };
 
     // The symbol seam a script's `rsymbol`/`ssymbol`/`usymbol` write through. The
@@ -67,6 +82,11 @@ namespace slopkit::script
         std::function<std::expected<void, std::string>(std::string_view name, std::uint64_t value)> set;
         // Removes `name`; an unknown name is a no-op.
         std::function<std::expected<void, std::string>(std::string_view name)>                      remove;
+        // The value `name` currently has, matched case-insensitively; empty when
+        // the shared table does not know it. Read-only: the engine never
+        // publishes through this closure, it only consults it for labels-first
+        // resolution.
+        std::function<std::optional<std::uint64_t>(std::string_view name)>                          lookup;
     };
 
     // Guards a runaway chunk: at most this many VM instructions, and at most

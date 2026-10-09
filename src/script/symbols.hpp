@@ -15,6 +15,12 @@
 namespace slopkit::script
 {
 
+    // Validates a name the expression parser could later resolve: non-empty,
+    // non-blank, no `+` (the parser splits on one) and no leading `#` (that
+    // marks a decimal literal). Returns the error text, or an empty optional for
+    // a valid name. Shared by the symbol table and the script-local labels.
+    [[nodiscard]] std::optional<std::string> validate_symbol_name(std::string_view name);
+
     // The process-wide registry scripts publish names into. A registered name
     // resolves like a module name in any address expression (see
     // `expr::evaluate`). The table survives a detach and lives until slopkit
@@ -40,6 +46,10 @@ namespace slopkit::script
 
         // A copy of the whole table, taken under the lock.
         [[nodiscard]] std::vector<expr::SymbolRef> snapshot() const;
+
+        // Drops every entry; used to scope the engine's script-local labels to
+        // the chunk that registered them.
+        void clear();
 
         [[nodiscard]] std::size_t size() const;
 

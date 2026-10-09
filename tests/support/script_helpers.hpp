@@ -8,6 +8,7 @@
 #include <cstring>
 #include <expected>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -22,6 +23,7 @@ namespace
     using slopkit::script::Engine;
     using slopkit::script::EngineConfig;
     using slopkit::script::MemoryApi;
+    using slopkit::script::MemoryRegion;
     using slopkit::script::RunResult;
 
     // The base address an in-memory fake target answers from.
@@ -32,8 +34,16 @@ namespace
     // message the worker's `AccessError` text produces.
     struct FakeMemory
     {
-        std::vector<std::byte> bytes;
-        std::size_t            pointer_size {8};
+        std::vector<std::byte>     bytes;
+        std::size_t                pointer_size {8};
+        // The module name the default region reports, so a test can exercise the
+        // module filter of `aobscan`.
+        std::string                module_name {"test.so"};
+        // When non-empty, overrides the default single readable region covering
+        // the whole buffer.
+        std::vector<MemoryRegion>  regions;
+        // When set, listing regions fails with this text.
+        std::optional<std::string> regions_error;
 
         explicit FakeMemory(std::size_t size = 0x100) : bytes(size) {}
 
@@ -84,6 +94,23 @@ namespace
                 const auto offset = static_cast<std::size_t>(address - kScriptBase);
                 std::copy(data.begin(), data.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset));
                 return {};
+            };
+            memory.regions = [this]() -> std::expected<std::vector<MemoryRegion>, std::string>
+            {
+                if (regions_error)
+                {
+                    return std::unexpected(*regions_error);
+                }
+                if (!regions.empty())
+                {
+                    return regions;
+                }
+                MemoryRegion region;
+                region.base     = kScriptBase;
+                region.size     = bytes.size();
+                region.readable = true;
+                region.module   = module_name;
+                return std::vector<MemoryRegion> {region};
             };
             return memory;
         }

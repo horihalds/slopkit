@@ -27,35 +27,36 @@ namespace slopkit::script
             return true;
         }
 
-        // The parser could never produce a base with a `+` (it splits on one) or
-        // a leading `#` (that marks a decimal literal), and a blank name cannot
-        // be typed; those are rejected at registration rather than stored as an
-        // unreachable entry.
-        std::optional<std::string> validate_name(std::string_view name)
-        {
-            if (name.empty())
-            {
-                return std::string {"the name must not be empty"};
-            }
-            if (name.find_first_not_of(" \t\r\n\f\v") == std::string_view::npos)
-            {
-                return std::string {"the name must not be blank"};
-            }
-            if (name.find('+') != std::string_view::npos)
-            {
-                return std::string {"the name must not contain '+'"};
-            }
-            if (name.front() == '#')
-            {
-                return std::string {"the name must not start with '#'"};
-            }
-            return std::nullopt;
-        }
     } // namespace
+
+    // The parser could never produce a base with a `+` (it splits on one) or a
+    // leading `#` (that marks a decimal literal), and a blank name cannot be
+    // typed; those are rejected at registration rather than stored as an
+    // unreachable entry.
+    std::optional<std::string> validate_symbol_name(std::string_view name)
+    {
+        if (name.empty())
+        {
+            return std::string {"the name must not be empty"};
+        }
+        if (name.find_first_not_of(" \t\r\n\f\v") == std::string_view::npos)
+        {
+            return std::string {"the name must not be blank"};
+        }
+        if (name.find('+') != std::string_view::npos)
+        {
+            return std::string {"the name must not contain '+'"};
+        }
+        if (name.front() == '#')
+        {
+            return std::string {"the name must not start with '#'"};
+        }
+        return std::nullopt;
+    }
 
     std::expected<void, std::string> SymbolTable::set(std::string_view name, std::uint64_t value)
     {
-        if (const std::optional<std::string> error = validate_name(name))
+        if (const std::optional<std::string> error = validate_symbol_name(name))
         {
             return std::unexpected(*error);
         }
@@ -112,6 +113,12 @@ namespace slopkit::script
         return symbols_;
     }
 
+    void SymbolTable::clear()
+    {
+        const std::lock_guard lock(mutex_);
+        symbols_.clear();
+    }
+
     std::size_t SymbolTable::size() const
     {
         const std::lock_guard lock(mutex_);
@@ -130,6 +137,10 @@ namespace slopkit::script
             {
                 remove(name);
                 return {};
+            },
+            .lookup = [this](std::string_view name) -> std::optional<std::uint64_t>
+            {
+                return lookup(name);
             },
         };
     }
