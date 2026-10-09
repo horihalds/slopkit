@@ -654,3 +654,42 @@ TEST_CASE("File > Add Script opens the dialog and appends a script row", "[ui]")
     CHECK(view->model()->index(0, 3).data(Qt::DisplayRole).toString() == QStringLiteral("script"));
     CHECK(view->model()->index(0, 4).data(Qt::DisplayRole).toString().isEmpty());
 }
+
+TEST_CASE("the Hook Instruction relay opens the address list's Add Script window", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("hook_relay.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* viewer = window.memory_viewer();
+    REQUIRE(viewer != nullptr);
+
+    // The viewer hands its generated script to the window, exactly as the
+    // Hook Instruction command does.
+    const QString description = QStringLiteral("Hook app+1A2B40");
+    const QString source      = QStringLiteral("function activate()\n    return true\nend\n");
+    REQUIRE(QMetaObject::invokeMethod(
+        viewer, "hookScriptRequested", Qt::DirectConnection, Q_ARG(QString, description), Q_ARG(QString, source)));
+
+    auto* dialog = window.findChild<slopkit::ui::dialogs::AddScriptDialog*>();
+    REQUIRE(dialog != nullptr);
+    auto* description_edit = dialog->findChild<QLineEdit*>(QStringLiteral("description_edit"));
+    auto* script_edit      = dialog->findChild<QPlainTextEdit*>(QStringLiteral("script_edit"));
+    REQUIRE(description_edit != nullptr);
+    REQUIRE(script_edit != nullptr);
+    CHECK(description_edit->text() == description);
+    CHECK(script_edit->toPlainText() == source);
+
+    // The relay prefills the window only; no row exists until Add.
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+    auto* view = address_list->findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->model() != nullptr);
+    CHECK(view->model()->rowCount() == 0);
+}

@@ -777,6 +777,68 @@ namespace slopkit::ui::components
         return cached_bytes(instruction.address, instruction.length).size() == instruction.length;
     }
 
+    DisassemblyDocument::HookAnalysis DisassemblyDocument::hook_analysis(std::size_t index) const
+    {
+        HookAnalysis analysis;
+        if (!target_.valid())
+        {
+            analysis.reason = "no target is attached";
+            return analysis;
+        }
+        if (index >= instructions_.size())
+        {
+            analysis.reason = "this row is not in the listing";
+            return analysis;
+        }
+        if (patch_at(index) != nullptr)
+        {
+            analysis.reason = "this row is already patched by this session";
+            return analysis;
+        }
+        if (!editable(index))
+        {
+            analysis.reason = "this row is not a fully decoded instruction";
+            return analysis;
+        }
+
+        // The neighbourhood the generator decides from: every decoded row with
+        // its cached bytes and the addresses its text prints. The spans point
+        // into the document's own cache and instruction stream, which stay put
+        // for the length of the call.
+        std::vector<script::HookRow> rows;
+        rows.reserve(instructions_.size());
+        for (const disasm::Instruction& instruction : instructions_)
+        {
+            script::HookRow row;
+            row.address       = instruction.address;
+            row.bytes         = cached_bytes(instruction.address, instruction.length);
+            row.address_bytes = instruction.address_bytes;
+            row.addresses     = instruction.addresses;
+            row.text          = instruction.text;
+            row.valid         = instruction.valid && row.bytes.size() == instruction.length;
+            rows.push_back(std::move(row));
+        }
+
+        const std::uint64_t   address = instructions_[index].address;
+        script::HookCandidate candidate;
+        candidate.rows     = rows;
+        candidate.selected = index;
+        candidate.mode     = machine_mode_;
+        if (const ui::ModuleSpan* span = module_spans_.containing(address); span != nullptr)
+        {
+            candidate.module_name     = span->name;
+            candidate.module_rva_text = QString::number(address - span->base, 16).toUpper().toStdString();
+            candidate.description     = span->name + "+" + candidate.module_rva_text;
+        }
+        else
+        {
+            candidate.description = QString::number(address, 16).toUpper().toStdString();
+        }
+
+        analysis.target = script::build_hook(candidate, analysis.reason);
+        return analysis;
+    }
+
     std::expected<std::vector<std::byte>, std::string> DisassemblyDocument::replacement_for(std::size_t      index,
                                                                                             std::string_view text) const
     {

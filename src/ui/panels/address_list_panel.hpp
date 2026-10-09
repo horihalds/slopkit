@@ -140,6 +140,10 @@ namespace slopkit::ui::panels
         // Opens the Add Script dialog in add mode: an accepted dialog appends a
         // script entry to the table.
         void add_script();
+        // Opens the same dialog prefilled with a caller's description and source
+        // (the viewer's Hook Instruction command). Add is still the only thing
+        // that creates a row.
+        void add_hook_script(const QString& description, const QString& source);
 
         // Opens the same dialog on the script entry at `row`, prefilled.
         void edit_script(std::size_t row);

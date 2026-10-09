@@ -99,6 +99,13 @@ namespace slopkit::ui::dialogs
         // captures the registers of the running target once.
         void instruction_accesses(std::size_t row);
 
+        // Opens the Add Script window prefilled with a generated hook for the
+        // listing row: an AoB pattern, a code cave holding the hook code and the
+        // re-encoded instructions, a jump at the site and a restore. The target
+        // is never read; a row that cannot be hooked puts the reason on the
+        // status line instead.
+        void hook_instruction(std::size_t row);
+
         // The on-demand attach gate behind the listing command; also the test seam.
         [[nodiscard]] DebugSessionGate& debug_gate() noexcept;
 
@@ -122,6 +129,9 @@ namespace slopkit::ui::dialogs
                                          std::vector<ui::ResolvedAccess> accesses);
         // The attach and capture steps of the listing command, for the status line.
         void instructionAccessesProgress(const QString& text, bool error);
+
+        // The generated hook script, for the address list's Add Script window.
+        void hookScriptRequested(const QString& description, const QString& source);
 
     protected:
         void showEvent(QShowEvent* event) override;

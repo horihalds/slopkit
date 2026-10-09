@@ -549,6 +549,16 @@ namespace slopkit::ui::panels
         script_dialog_->activateWindow();
     }
 
+    void AddressListPanel::add_hook_script(const QString& description, const QString& source)
+    {
+        log::debug(log::category::ui, "add hook script dialog opened");
+        ensure_script_dialog();
+        script_dialog_->reset_for_add(description, source);
+        script_dialog_->show();
+        script_dialog_->raise();
+        script_dialog_->activateWindow();
+    }
+
     void AddressListPanel::edit_script(std::size_t row)
     {
         if (!table_.valid_index(row) || table_.entries()[row].kind != table::EntryKind::script)

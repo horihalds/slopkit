@@ -682,6 +682,21 @@ namespace slopkit::ui::components
                     {
                         emit editRequested(row);
                     });
+
+            QAction* hook =
+                decodable ? widgets::described_action(
+                                menu,
+                                tr("Hook Instruction..."),
+                                tr("Open a new script that hooks this instruction and finds it on every activation."))
+                          : widgets::disabled_action(
+                                menu, tr("Hook Instruction..."), tr("Only a decoded instruction can be hooked."));
+            connect(hook,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        emit hookRequested(row);
+                    });
         }
 
         menu.addSeparator();

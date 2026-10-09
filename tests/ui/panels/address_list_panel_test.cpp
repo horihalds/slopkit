@@ -8,8 +8,13 @@
 #include <string>
 #include <vector>
 
+#include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
+#include <QPlainTextEdit>
+#include <QPushButton>
+
+#include "ui/dialogs/add_script.hpp"
 
 TEST_CASE("the address list Value column follows live memory", "[ui]")
 {
@@ -638,6 +643,46 @@ TEST_CASE("the address list table menu carries the table-area commands", "[ui]")
     QMenu                                 empty_menu;
     empty_panel.populate_panel_menu(empty_menu);
     CHECK(action_texts(empty_menu.actions()) == table_commands);
+}
+
+TEST_CASE("the address list prefills the Add Script window from a hook request", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    const QString description = QStringLiteral("Hook app+1A2B40");
+    const QString source      = QStringLiteral("function activate()\n    return true\nend\n");
+    panel.add_hook_script(description, source);
+
+    auto* dialog = panel.findChild<slopkit::ui::dialogs::AddScriptDialog*>();
+    REQUIRE(dialog != nullptr);
+    auto* description_edit = dialog->findChild<QLineEdit*>(QStringLiteral("description_edit"));
+    auto* script_edit      = dialog->findChild<QPlainTextEdit*>(QStringLiteral("script_edit"));
+    REQUIRE(description_edit != nullptr);
+    REQUIRE(script_edit != nullptr);
+    CHECK(description_edit->text() == description);
+    CHECK(script_edit->toPlainText() == source);
+
+    // The dialog is up and the table has gained nothing yet.
+    CHECK(dialog->isVisible());
+    CHECK(table.empty());
+
+    // Add is the only thing that creates the row.
+    auto* commit = dialog->findChild<QPushButton*>(QStringLiteral("commit_button"));
+    REQUIRE(commit != nullptr);
+    commit->click();
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].kind == slopkit::table::EntryKind::script);
+    CHECK(table.entries()[0].description == description.toStdString());
+    CHECK(table.entries()[0].script == source.toStdString());
+
+    dialog->close();
 }
 
 TEST_CASE("the address list context menu covers rows and the empty area", "[ui]")

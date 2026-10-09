@@ -149,6 +149,63 @@ namespace slopkit::disasm
             return refs;
         }
 
+        // Where inside the instruction's own encoding every address value lives,
+        // so a caller can wildcard those bytes in an AoB pattern or re-emit the
+        // instruction elsewhere. Zydis reports each raw field's byte offset, so
+        // this stays a straight mapping.
+        [[nodiscard]] std::vector<AddressBytes> collect_address_bytes(const ZydisDecodedInstruction& decoded,
+                                                                      const ZydisDecodedOperand*     operands)
+        {
+            std::vector<AddressBytes> fields;
+
+            // The displacement of the instruction's memory operand. A rip-relative
+            // form is measured from the next instruction (relative), a base-less
+            // one is the absolute address the listing prints; a base+disp form
+            // (`[RBP-04]`) names no address and is left alone.
+            if (decoded.raw.disp.size != 0)
+            {
+                for (ZyanU8 i = 0; i < decoded.operand_count_visible; ++i)
+                {
+                    if (operands[i].type != ZYDIS_OPERAND_TYPE_MEMORY)
+                    {
+                        continue;
+                    }
+                    const bool rip =
+                        operands[i].mem.base == ZYDIS_REGISTER_RIP || operands[i].mem.base == ZYDIS_REGISTER_EIP;
+                    const bool absolute =
+                        operands[i].mem.base == ZYDIS_REGISTER_NONE && operands[i].mem.index == ZYDIS_REGISTER_NONE;
+                    if (rip || absolute)
+                    {
+                        fields.push_back(
+                            {decoded.raw.disp.offset, static_cast<std::size_t>(decoded.raw.disp.size) / 8, rip});
+                    }
+                    break;
+                }
+            }
+
+            // A relative branch/call displacement is measured from the next
+            // instruction; a 4- or 8-byte immediate is a value the listing may
+            // print as an absolute address. Smaller immediates are plain operands
+            // (`sub rsp, 0x28`) and stay literal.
+            for (const auto& immediate : decoded.raw.imm)
+            {
+                if (immediate.size == 0)
+                {
+                    continue;
+                }
+                if (immediate.is_relative)
+                {
+                    fields.push_back({immediate.offset, static_cast<std::size_t>(immediate.size) / 8, true});
+                }
+                else if (immediate.size == 32 || immediate.size == 64)
+                {
+                    fields.push_back({immediate.offset, static_cast<std::size_t>(immediate.size) / 8, false});
+                }
+            }
+
+            return fields;
+        }
+
         // A decode attempt that keeps the raw Zydis status so a block sweep can
         // tell a truncated tail (stop) from an undefined opcode (`.byte` row).
         struct Attempt
@@ -168,7 +225,7 @@ namespace slopkit::disasm
             if (!ZYAN_SUCCESS(status))
             {
                 return {
-                    status, {address, 1, byte_text(code.front()), false, {}, {}, {}},
+                    status, {address, 1, byte_text(code.front()), false, {}, {}, {}, {}},
                      false
                 };
             }
@@ -199,14 +256,15 @@ namespace slopkit::disasm
                 if (!ZYAN_SUCCESS(formatted))
                 {
                     return {
-                        formatted, {address, 1, byte_text(code.front()), false, {}, {}, {}},
+                        formatted, {address, 1, byte_text(code.front()), false, {}, {}, {}, {}},
                          false
                     };
                 }
 
                 return {
-                    ZYAN_STATUS_SUCCESS, {address, decoded.length, buffer, true, {}, {}, {}},
-                     true
+                    ZYAN_STATUS_SUCCESS,
+                    {address, decoded.length, buffer, true, {}, {}, {}, collect_address_bytes(decoded, operands)},
+                    true
                 };
             }
 
@@ -260,7 +318,8 @@ namespace slopkit::disasm
 
             // Written before the text is moved into the record, so the operand
             // slices still point into the string.
-            std::vector<MemoryRef> memory = collect_memory(decoded, operands, text, address);
+            std::vector<MemoryRef>    memory        = collect_memory(decoded, operands, text, address);
+            std::vector<AddressBytes> address_bytes = collect_address_bytes(decoded, operands);
 
             return {
                 ZYAN_STATUS_SUCCESS,
@@ -269,7 +328,8 @@ namespace slopkit::disasm
                   std::move(text),
                   true, std::move(addresses),
                   std::move(memory),
-                  std::move(tokens)},
+                  std::move(tokens),
+                  std::move(address_bytes)},
                 true
             };
         }

@@ -191,6 +191,16 @@ namespace slopkit::ui::dialogs
                         instruction_accesses(*row);
                     }
                 });
+        connect(menu_,
+                &panels::ViewerMenu::hookRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        hook_instruction(*row);
+                    }
+                });
         // Back depends on the focused pane's history, which changes without a
         // selection change, so refresh just before the menus open.
         connect(menu_->view_menu(), &QMenu::aboutToShow, this, &MemoryViewerDialog::refresh_menu_command_state);
@@ -281,6 +291,7 @@ namespace slopkit::ui::dialogs
                 &components::DisassemblyView::editRequested,
                 this,
                 &MemoryViewerDialog::prompt_edit_instruction);
+        connect(disassembly_, &components::DisassemblyView::hookRequested, this, &MemoryViewerDialog::hook_instruction);
         return panel;
     }
 
@@ -395,6 +406,7 @@ namespace slopkit::ui::dialogs
             state.selected_is_instruction     = disassembly_document_.editable(*row);
             state.selected_has_memory_operand = !disassembly_document_.row_memory(*row).empty();
             state.can_follow                  = !disassembly_document_.row_addresses(*row).empty();
+            state.can_hook                    = disassembly_document_.editable(*row);
             if (const components::CodePatch* patch = disassembly_document_.patch_at(*row); patch != nullptr)
             {
                 state.selected_is_patched = true;
@@ -480,6 +492,21 @@ namespace slopkit::ui::dialogs
                            {
                                resolve_instruction_accesses(row);
                            });
+    }
+
+    void MemoryViewerDialog::hook_instruction(std::size_t row)
+    {
+        const components::DisassemblyDocument::HookAnalysis analysis = disassembly_document_.hook_analysis(row);
+        if (!analysis.target.has_value())
+        {
+            status_->set_status(widgets::StatusKind::warning, QString::fromStdString(analysis.reason));
+            return;
+        }
+
+        // Only the dialog names the entry; the address list's Add Script window
+        // stays the one place a row is created.
+        emit hookScriptRequested(tr("Hook %1").arg(QString::fromStdString(analysis.target->description)),
+                                 QString::fromStdString(script::render(*analysis.target)));
     }
 
     DebugSessionGate& MemoryViewerDialog::debug_gate() noexcept

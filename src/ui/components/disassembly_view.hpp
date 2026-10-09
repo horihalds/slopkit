@@ -114,6 +114,8 @@ namespace slopkit::ui::components
         void nopRequested(std::size_t row);
         // "Edit Instruction..." on the decoded row, or a double-click on it.
         void editRequested(std::size_t row);
+        // "Hook Instruction..." on the decoded row.
+        void hookRequested(std::size_t row);
         // "Restore Original Instruction" on a row the session replaced.
         void restoreRequested(std::size_t row);
 

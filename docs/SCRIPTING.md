@@ -230,6 +230,63 @@ The whole block is a single write, but a target that fails part of the way
 through a write can still leave the front of the block in memory; assemble into an
 `alloc`ed scratch buffer first when a partial write would matter.
 
+## Hooking an instruction
+
+The disassembly listing's `Hook Instruction...` command turns the selected row
+into a ready-to-edit hook script and prefills the Add Script window with it (see
+[`docs/UI_DESIGN.md`](docs/UI_DESIGN.md)); nothing is written to the target and no
+row is created until you click **Add**. The generated script follows one shape:
+
+1. `activate()` scans for an AoB pattern that pins the instruction, restricted to
+   the module the instruction lives in when it is inside one. The pattern spans the
+   instruction plus its neighbours — up to two on each side, and at least 16 bytes
+   — and wildcards only the bytes of *absolute* address fields, so a rebased module
+   still matches while a relative branch or rip-relative displacement stays
+   literal. A miss returns `false, "<reason>"`.
+2. It checks the bytes at the hit against the recorded originals and refuses when
+   they differ, so a site someone else already hooked is not hooked twice.
+3. It `alloc`s one code cave beside the site, writes the placeholder `kHookCode`
+   (your code), then the `kTrampoline` — the instructions the hook overwrites,
+   re-encoded so their addresses keep working — then a jump back to the first byte
+   after the hook window.
+4. It writes a near jump to the cave over the site and pads every leftover byte of
+   the window with `NOP` (`90`), returning `true` only once every write succeeded.
+
+`deactivate()` writes the recorded original bytes back, `dealloc`s the cave and
+`ulabel`s both names.
+
+The hook window is whole instructions: the selected instruction **plus as many
+following instructions as needed** for a 5-byte near jump to fit, so an instruction
+shorter than a jump pulls in its successor and the hook never cuts an instruction
+in half. `kWindow` is the window's byte length and `kOriginal` its bytes; a row
+whose window would run past the listing's decoded bytes is refused rather than
+hooked.
+
+Every address the replaced instructions print is re-emitted
+position-independently: a `%X` placeholder in the trampoline text is filled from
+the matching `site ± delta` argument passed to `assemble`, so a rebased module
+still reads the same data. The generator proves the rewritten trampoline assembles
+before the script reaches the editor and refuses with a reason when an instruction
+cannot be re-encoded.
+
+The script keeps its state in two labels, `hook_site_<rva>` and `hook_cave_<rva>`
+(both reachable through Go To by name), and records:
+
+- `kModule` — the owning module, or nothing outside a module (then the scan is not
+  restricted and the whole address space is searched);
+- `kPattern` and `kMatchOffset` — the signature and the window's offset inside it;
+- `kWindow` and `kOriginal` — the overwritten bytes;
+- `kCaveSize` — a starting budget covering the stub and the trampoline; grow it
+  when your code needs more room;
+- `kHookCode` and `kTrampoline` — the two assembler blocks.
+
+Two caveats: the cave has to hold your code **and** the trampoline, so a large stub
+needs a larger `kCaveSize` (or its own `alloc`); and the hook's write is a direct
+script write, not a listing patch — it does not show on the listing, is not part of
+the session patch list, and is undone by `deactivate()` (and when slopkit closes,
+which deactivates every ticked script) rather than by `Restore Original
+Instruction`.
+
 ## Worked examples
 
 ### Find a pattern once and publish it

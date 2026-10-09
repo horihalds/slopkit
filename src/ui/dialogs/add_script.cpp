@@ -146,6 +146,17 @@ end
         status_->clear_status();
     }
 
+    void AddScriptDialog::reset_for_add(const QString& description, const QString& source)
+    {
+        // The parameterless form seeds the skeleton and the default description;
+        // this one overwrites both with the caller's own text.
+        reset_for_add();
+        description_edit_->setText(description);
+        script_edit_->setPlainText(source);
+        script_edit_->set_error_line(0);
+        status_->clear_status();
+    }
+
     void AddScriptDialog::edit_entry(std::size_t row)
     {
         if (!table_.valid_index(row) || table_.entries()[row].kind != table::EntryKind::script)

@@ -40,6 +40,7 @@ namespace slopkit::ui::panels
             bool    selected_is_instruction {};     // decoded and not covered by a session patch
             bool    selected_is_patched {};         // inside a session patch
             bool    selected_has_memory_operand {}; // the selected row accesses memory
+            bool    can_hook {};                    // the selected row can be hooked
             QString restore_description;            // the replaced instruction, for its tooltip
         };
 
@@ -80,6 +81,7 @@ namespace slopkit::ui::panels
         [[nodiscard]] QAction* nop_action() const noexcept;
         [[nodiscard]] QAction* restore_action() const noexcept;
         [[nodiscard]] QAction* edit_action() const noexcept;
+        [[nodiscard]] QAction* hook_action() const noexcept;
         [[nodiscard]] QAction* instruction_accesses_action() const noexcept;
 
     signals:
@@ -92,6 +94,7 @@ namespace slopkit::ui::panels
         void nopRequested();
         void restoreRequested();
         void editRequested();
+        void hookRequested();
         void instructionAccessesRequested();
 
     private:
@@ -129,6 +132,7 @@ namespace slopkit::ui::panels
         QAction* nop_action_ {};
         QAction* restore_action_ {};
         QAction* edit_action_ {};
+        QAction* hook_action_ {};
         QAction* instruction_accesses_action_ {};
 
         CommandState                 command_state_;

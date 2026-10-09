@@ -465,6 +465,12 @@ namespace slopkit::ui
                 {
                     address_list_->report_status(text.toStdString(), error);
                 });
+        // Hook Instruction hands its generated script to the address list, which
+        // opens its Add Script window prefilled; no row exists until Add.
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::hookScriptRequested,
+                address_list_,
+                &panels::AddressListPanel::add_hook_script);
 
         // The dialog is a view over the shared controller; the window is the only
         // component that applies the persisted values to the live views.

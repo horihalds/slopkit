@@ -65,6 +65,8 @@ namespace slopkit::ui::panels
         connect(restore_action_, &QAction::triggered, this, &ViewerMenu::restoreRequested);
         edit_action_ = tools_menu_->addAction(tr("Edit Instruction..."));
         connect(edit_action_, &QAction::triggered, this, &ViewerMenu::editRequested);
+        hook_action_ = tools_menu_->addAction(tr("Hook Instruction..."));
+        connect(hook_action_, &QAction::triggered, this, &ViewerMenu::hookRequested);
         tools_menu_->addSeparator();
         instruction_accesses_action_ = tools_menu_->addAction(tr("Find out what addresses this instruction accesses"));
         connect(instruction_accesses_action_, &QAction::triggered, this, &ViewerMenu::instructionAccessesRequested);
@@ -245,6 +247,10 @@ namespace slopkit::ui::panels
                                      ? tr("Rewrite this instruction with assembler text.")
                                      : tr("Only a decoded instruction can be edited."));
 
+        hook_action_->setEnabled(command_state_.can_hook);
+        hook_action_->setToolTip(command_state_.can_hook ? tr("Open a new hook script for this instruction.")
+                                                         : tr("Only a decoded instruction can be hooked."));
+
         instruction_accesses_action_->setEnabled(command_state_.selected_has_memory_operand);
         instruction_accesses_action_->setToolTip(
             command_state_.selected_has_memory_operand
@@ -351,6 +357,11 @@ namespace slopkit::ui::panels
     QAction* ViewerMenu::edit_action() const noexcept
     {
         return edit_action_;
+    }
+
+    QAction* ViewerMenu::hook_action() const noexcept
+    {
+        return hook_action_;
     }
 
     QAction* ViewerMenu::instruction_accesses_action() const noexcept

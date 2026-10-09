@@ -989,3 +989,70 @@ TEST_CASE("the disassembly document edits a rip-relative instruction in place", 
     CHECK(fixture.patches.empty());
     CHECK(fixture.access.memory->bytes.at(kCode + 5) == std::byte {0x00});
 }
+
+TEST_CASE("the disassembly document plans a hook from the cached window", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x83, 0xC4, 0x28, 0xC3});
+    for (std::uint64_t offset = 0xC; offset < 0x40; ++offset)
+    {
+        fixture.put(kCode + offset, {0x90});
+    }
+    fixture.pass();
+    fixture.document.ensure_rows(6);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    REQUIRE(analysis.target.has_value());
+    CHECK(analysis.reason.empty());
+
+    const slopkit::script::HookTarget& target = *analysis.target;
+    CHECK(target.address == kCode);
+    CHECK(target.description == "app+0");
+    CHECK(target.module_name == "app");
+    CHECK(target.original.size() == 7); // SUB RSP, 0x28 and its successor
+    CHECK(target.covered.size() == 2);
+    CHECK(target.pattern.rfind("48 83 EC 28 48 89 D8 48 83 C4 28 C3", 0) == 0);
+    CHECK(target.pattern_offset == 0);
+}
+
+TEST_CASE("a `.byte` row cannot be hooked", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x06, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("not a fully decoded instruction") != std::string::npos);
+}
+
+TEST_CASE("a detached target cannot be hooked", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+    fixture.target.session_live = false;
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("no target is attached") != std::string::npos);
+}
+
+TEST_CASE("a hook window that leaves the decoded bytes is refused", "[ui]")
+{
+    DocFixture fixture;
+    // A 4-byte instruction whose successor is an undecodable byte: the window
+    // cannot reach a near jump without cutting the run.
+    fixture.put(kCode, {0x48, 0x83, 0xEC, 0x28, 0x06});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("runs past") != std::string::npos);
+}

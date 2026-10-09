@@ -30,6 +30,17 @@ namespace slopkit::disasm
         std::uint64_t address {}; // what the printed text names
     };
 
+    // Where inside an instruction's own encoding an address value lives: the
+    // encoded-position twin of AddressRef, which slices `Instruction::text`
+    // instead. A caller that wildcards an AoB pattern - or re-emits an
+    // instruction somewhere else - needs the byte range, not the text range.
+    struct AddressBytes
+    {
+        std::size_t offset {}; // byte offset into the instruction's own encoding
+        std::size_t length {};
+        bool        relative {}; // measured from the next instruction (a branch or rip-relative operand)
+    };
+
     // The memory one explicit operand touches, expressed so a caller that knows
     // the register file can compute the address. A sibling of AddressRef, which
     // only carries what the printed text names: the decoder stays ignorant of
@@ -69,13 +80,16 @@ namespace slopkit::disasm
     // is rendered as a one-byte `.byte NN` row so a listing never stalls.
     struct Instruction
     {
-        std::uint64_t           address {};
-        std::size_t             length {};
-        std::string             text;
-        bool                    valid {};
-        std::vector<AddressRef> addresses; // in the order the text prints them; empty for `.byte`
-        std::vector<MemoryRef>  memory;    // explicit operands only; empty for `lea` and `.byte`
-        std::vector<TokenSpan>  tokens;    // in printed order; empty for `RET` and `.byte`
+        std::uint64_t             address {};
+        std::size_t               length {};
+        std::string               text;
+        bool                      valid {};
+        std::vector<AddressRef>   addresses; // in the order the text prints them; empty for `.byte`
+        std::vector<MemoryRef>    memory;    // explicit operands only; empty for `lea` and `.byte`
+        std::vector<TokenSpan>    tokens;    // in printed order; empty for `RET` and `.byte`
+        // In Zydis's raw order; empty for `.byte` and for an instruction whose
+        // operands name no address.
+        std::vector<AddressBytes> address_bytes;
     };
 
     // Decodes the instruction at `address` from the front of `code`. Returns

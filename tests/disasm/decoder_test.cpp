@@ -341,3 +341,84 @@ TEST_CASE("lea and .byte rows carry no memory operand", "[disasm]")
     const auto dot_byte = *slopkit::disasm::decode(bytes({0x06}), 0x1000);
     CHECK(dot_byte.memory.empty());
 }
+
+TEST_CASE("a relative branch reports where its displacement sits in the encoding", "[disasm]")
+{
+    const auto jmp = *slopkit::disasm::decode(bytes({0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(jmp.address_bytes.size() == 1);
+    CHECK(jmp.address_bytes[0].offset == 1);
+    CHECK(jmp.address_bytes[0].length == 4);
+    CHECK(jmp.address_bytes[0].relative);
+
+    const auto jcc = *slopkit::disasm::decode(bytes({0x74, 0x15}), 0x2000);
+    REQUIRE(jcc.address_bytes.size() == 1);
+    CHECK(jcc.address_bytes[0].offset == 1);
+    CHECK(jcc.address_bytes[0].length == 1);
+    CHECK(jcc.address_bytes[0].relative);
+}
+
+TEST_CASE("absolute immediates report their encoded range", "[disasm]")
+{
+    const auto mov =
+        *slopkit::disasm::decode(bytes({0x48, 0xB8, 0x00, 0x20, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(mov.address_bytes.size() == 1);
+    CHECK(mov.address_bytes[0].offset == 2);
+    CHECK(mov.address_bytes[0].length == 8);
+    CHECK_FALSE(mov.address_bytes[0].relative);
+
+    const auto mov32 = *slopkit::disasm::decode(bytes({0xB8, 0x78, 0x56, 0x34, 0x12}), 0x1000);
+    REQUIRE(mov32.address_bytes.size() == 1);
+    CHECK(mov32.address_bytes[0].offset == 1);
+    CHECK(mov32.address_bytes[0].length == 4);
+    CHECK_FALSE(mov32.address_bytes[0].relative);
+}
+
+TEST_CASE("memory displacement address fields are flagged relative or absolute", "[disasm]")
+{
+    const auto rip = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    REQUIRE(rip.address_bytes.size() == 1);
+    CHECK(rip.address_bytes[0].offset == 3);
+    CHECK(rip.address_bytes[0].length == 4);
+    CHECK(rip.address_bytes[0].relative);
+
+    const auto absolute = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}), 0x1000);
+    REQUIRE(absolute.address_bytes.size() == 1);
+    CHECK(absolute.address_bytes[0].offset == 4);
+    CHECK(absolute.address_bytes[0].length == 4);
+    CHECK_FALSE(absolute.address_bytes[0].relative);
+}
+
+TEST_CASE("instructions with no address field carry no address bytes", "[disasm]")
+{
+    CHECK(slopkit::disasm::decode(bytes({0x55}), 0x1000)->address_bytes.empty());                   // PUSH RBP
+    CHECK(slopkit::disasm::decode(bytes({0xC3}), 0x1000)->address_bytes.empty());                   // RET
+    CHECK(slopkit::disasm::decode(bytes({0x48, 0x89, 0xD8}), 0x1000)->address_bytes.empty());       // MOV RAX, RBX
+    CHECK(slopkit::disasm::decode(bytes({0x48, 0x8B, 0x5D, 0xFC}), 0x1000)->address_bytes.empty()); // [RBP-04]
+    CHECK(slopkit::disasm::decode(bytes({0x48, 0x83, 0xEC, 0x28}), 0x1000)->address_bytes.empty()); // imm8
+
+    const auto dot_byte = *slopkit::disasm::decode(bytes({0x06}), 0x1000);
+    CHECK(dot_byte.address_bytes.empty());
+}
+
+TEST_CASE("address bytes stay inside the instruction's encoding", "[disasm]")
+{
+    const auto code         = bytes({0x74, 0x15, 0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0xC3});
+    const auto instructions = slopkit::disasm::decode_block(code, 0x2000, 10);
+
+    REQUIRE(instructions.size() == 3);
+    for (const auto& instruction : instructions)
+    {
+        for (const auto& field : instruction.address_bytes)
+        {
+            CHECK(field.length > 0);
+            CHECK(field.offset + field.length <= instruction.length);
+        }
+    }
+
+    REQUIRE(instructions[0].address_bytes.size() == 1);
+    CHECK(instructions[0].address_bytes[0].relative);
+    REQUIRE(instructions[1].address_bytes.size() == 1);
+    CHECK(instructions[1].address_bytes[0].offset == 3);
+    CHECK(instructions[1].address_bytes[0].relative);
+    CHECK(instructions[2].address_bytes.empty());
+}

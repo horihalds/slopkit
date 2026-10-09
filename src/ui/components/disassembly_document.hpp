@@ -13,6 +13,7 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
+#include "script/hook_script.hpp"
 #include "script/symbols.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/code_patch.hpp"
@@ -163,6 +164,18 @@ namespace slopkit::ui::components
         // The paint annotation for row `index`: "NOPed: MOV RBP, RSP" or "Edited: MOV
         // RBP, RSP" on the patch's own first row, empty everywhere else.
         [[nodiscard]] QString          row_annotation(std::size_t index) const;
+
+        // The hook window, the AoB pattern and the trampoline facts for row
+        // `index`, built from the cached window alone so the UI thread never
+        // touches the target: either a `script::HookTarget` to render, or the
+        // reason the row cannot be hooked.
+        struct HookAnalysis
+        {
+            std::optional<script::HookTarget> target;
+            std::string                       reason;
+        };
+
+        [[nodiscard]] HookAnalysis hook_analysis(std::size_t index) const;
 
         // Replaces the whole instruction on row `index` with NOP bytes and records what
         // it held. False when there is no target, the row is not a decoded instruction

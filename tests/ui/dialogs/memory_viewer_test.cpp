@@ -1771,6 +1771,62 @@ TEST_CASE("the menu bar's Tools entries track the selected instruction", "[ui]")
     viewer.hide();
 }
 
+TEST_CASE("the menu bar's Hook Instruction generates a prefilled script", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    auto*                                    listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    auto*                                    menu    = viewer.viewer_menu();
+    REQUIRE(listing != nullptr);
+    REQUIRE(menu != nullptr);
+
+    viewer.set_address(0x2000);
+    viewer.show();
+    const std::uint64_t code_base = seed_listing_operand(access, worker, viewer);
+
+    // Nothing selected: the Tools entry is off and explains itself.
+    CHECK_FALSE(menu->hook_action()->isEnabled());
+    CHECK_FALSE(menu->hook_action()->toolTip().isEmpty());
+
+    // A decoded instruction can be hooked.
+    listing->set_selected_address(code_base);
+    REQUIRE(menu->hook_action()->isEnabled());
+
+    QString description;
+    QString source;
+    QObject::connect(&viewer,
+                     &slopkit::ui::dialogs::MemoryViewerDialog::hookScriptRequested,
+                     &viewer,
+                     [&](const QString& emitted_description, const QString& emitted_source)
+                     {
+                         description = emitted_description;
+                         source      = emitted_source;
+                     });
+    menu->hook_action()->trigger();
+    CHECK(description.startsWith(QStringLiteral("Hook ")));
+    CHECK(source.contains(QStringLiteral("function activate()")));
+    CHECK(source.contains(QStringLiteral("function deactivate()")));
+    CHECK(source.contains(QStringLiteral("local kPattern")));
+
+    // A detached target refuses and prints the reason on the status line instead
+    // of emitting a script.
+    description.clear();
+    source.clear();
+    target.session_live = false;
+    viewer.hook_instruction(0);
+    CHECK(description.isEmpty());
+    CHECK(source.isEmpty());
+    CHECK(viewer.status_text().contains(QStringLiteral("no target is attached")));
+
+    viewer.hide();
+}
+
 TEST_CASE("the menu bar's viewer commands act on the panes", "[ui]")
 {
     application();

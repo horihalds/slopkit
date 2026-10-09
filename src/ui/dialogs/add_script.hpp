@@ -38,6 +38,10 @@ namespace slopkit::ui::dialogs
 
         // Prepares the dialog for appending: a clean form in add mode.
         void reset_for_add();
+        // The same, for a caller that already has the description and the source
+        // (the viewer's Hook Instruction command): both are seeded, the text
+        // stays editable and Add is still the only thing that creates a row.
+        void reset_for_add(const QString& description, const QString& source);
 
         // Prepares the dialog for editing `row`: its description and source are
         // shown and committing replaces them. A row that is not a script entry

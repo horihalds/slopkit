@@ -225,3 +225,30 @@ TEST_CASE("verifying in edit mode leaves the entry unchanged", "[ui]")
     CHECK(dialog.isVisible());
     CHECK(script_editor_of(dialog)->error_line() > 0);
 }
+
+TEST_CASE("a prefilled add dialog keeps the generated text editable", "[ui]")
+{
+    application();
+
+    AddressTable    table;
+    AddScriptDialog dialog {table};
+
+    const QString description = QStringLiteral("Hook game.exe+1A2B40");
+    const QString source      = QStringLiteral("function activate()\n    return true\nend\n");
+    dialog.reset_for_add(description, source);
+
+    CHECK(description_of(dialog)->text() == description);
+    CHECK(editor_of(dialog)->toPlainText() == source);
+    CHECK(dialog.windowTitle() == QStringLiteral("Add Script"));
+    CHECK(commit_of(dialog)->text() == QStringLiteral("Add"));
+
+    // Nothing reaches the table before Add.
+    CHECK(table.empty());
+    dialog.show();
+    commit_of(dialog)->click();
+
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].kind == EntryKind::script);
+    CHECK(table.entries()[0].description == description.toStdString());
+    CHECK(table.entries()[0].script == source.toStdString());
+}

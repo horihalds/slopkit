@@ -915,6 +915,47 @@ TEST_CASE("the disassembly view offers Edit Instruction and a double-click opens
     view.hide();
 }
 
+TEST_CASE("the disassembly view offers Hook Instruction", "[ui]")
+{
+    application();
+    ViewFixture     fixture;
+    DisassemblyView view(fixture.document);
+    view.resize(800, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0x06}); // PUSH RBP; MOV RBP, RSP; .byte 0x06
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    // A decoded row offers the hook entry.
+    QMenu decoded;
+    view.populate_menu(decoded, 1);
+    QAction* hook = action(decoded, QStringLiteral("Hook Instruction..."));
+    REQUIRE(hook != nullptr);
+    CHECK(hook->isEnabled());
+
+    std::size_t requested = 99;
+    QObject::connect(&view,
+                     &DisassemblyView::hookRequested,
+                     &view,
+                     [&requested](std::size_t row)
+                     {
+                         requested = row;
+                     });
+    hook->trigger();
+    CHECK(requested == 1);
+
+    // A `.byte` row shows the entry, disabled with the explanation.
+    QMenu byte_row;
+    view.populate_menu(byte_row, 2);
+    QAction* disabled = action(byte_row, QStringLiteral("Hook Instruction..."));
+    REQUIRE(disabled != nullptr);
+    CHECK_FALSE(disabled->isEnabled());
+    CHECK(disabled->toolTip() == QStringLiteral("Only a decoded instruction can be hooked."));
+
+    view.hide();
+}
+
 TEST_CASE("the disassembly view keeps its automatic columns until a drag", "[ui]")
 {
     application();
