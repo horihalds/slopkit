@@ -196,6 +196,50 @@ TEST_CASE("hook::install frees the cave when the site write is refused", "[scrip
     CHECK(fixture.fake.allocations.empty());
 }
 
+TEST_CASE("hook::install sizes the cave at a real 64-bit site", "[script][hook]")
+{
+    // Regression: sizing the payload by assembling at address zero left the jump
+    // back more than 2 GB from a 64-bit site, so the encoder refused it.
+    ScriptFixture fixture(0x200);
+    fixture.fake.base                  = 0x563CEBE54F80ull;
+    const script::hook::Spec hook_spec = simple_spec();
+    prime_site(fixture.fake);
+
+    MemoryApi           memory = fixture.fake.api();
+    const std::uint64_t site   = fixture.fake.address(0x10);
+
+    const std::expected<std::uint64_t, std::string> installed = script::hook::install(hook_spec, memory, site);
+    REQUIRE(installed.has_value());
+
+    const auto site_offset = static_cast<std::size_t>(site - fixture.fake.base);
+    CHECK(fixture.fake.bytes[site_offset] == std::byte {0xE9});
+    CHECK(fixture.fake.write_count == 2);
+}
+
+TEST_CASE("hook::install remaps when a branch grows to rel32 at the cave", "[script][hook]")
+{
+    ScriptFixture      fixture(0x200);
+    script::hook::Spec hook_spec = simple_spec();
+    // Three jumps that are short next to the site grow to rel32 at the cave, so
+    // the payload outgrows the first, rounded-up mapping.
+    hook_spec.trampoline_text    = "jmp 0x%X\njmp 0x%X\njmp 0x%X";
+    hook_spec.address_args       = {0x20, 0x30, 0x40};
+    prime_site(fixture.fake);
+
+    MemoryApi           memory = fixture.fake.api();
+    const std::uint64_t site   = fixture.fake.address(0x10);
+
+    const std::expected<std::uint64_t, std::string> installed = script::hook::install(hook_spec, memory, site);
+    REQUIRE(installed.has_value());
+
+    // The first cave was too small; only the second mapping is live and fits.
+    REQUIRE(fixture.fake.allocate_requests.size() == 2);
+    REQUIRE(fixture.fake.allocations.size() == 1);
+    CHECK(fixture.fake.allocations.count(*installed) == 1);
+    CHECK(fixture.fake.allocations.at(*installed) == 32);
+    CHECK(fixture.fake.write_count == 2);
+}
+
 namespace
 {
     // The window a generated hook patches: eight whole bytes at offset 0x10.

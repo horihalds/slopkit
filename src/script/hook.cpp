@@ -23,6 +23,9 @@ namespace slopkit::script::hook
         constexpr std::size_t   kCaveAlign = 16;
         // The byte a leftover slot of the hooked window is padded with.
         constexpr std::byte     kPad {0x90};
+        // The longest a near jump back to the site can encode: a `jmp` with a
+        // single immediate target is at most a five-byte rel32.
+        constexpr std::size_t   kMaxJumpBack = 5;
 
         [[nodiscard]] std::size_t round_up(std::size_t value, std::size_t multiple)
         {
@@ -129,61 +132,93 @@ namespace slopkit::script::hook
 
         const disasm::MachineMode mode = machine_mode(memory);
 
-        // Size the cave from the payload. The measurement assembles at address 0,
-        // where the jump back is a full rel32, so it never under-estimates the
-        // real payload.
-        const std::expected<std::vector<std::byte>, std::string> measured = build_payload(spec, mode, 0, site);
-        if (!measured)
+        // Size the cave from the payload. The measurement assembles at the site
+        // itself: that is the base every site-relative branch target is near -
+        // unlike address zero, whose distance to a 64-bit site the encoder
+        // refuses - so the only estimate left is the jump back, budgeted at its
+        // longest (rel32) form because the cave's exact distance is not known
+        // before it is mapped.
+        const std::expected<std::vector<std::byte>, std::string> preview = build_payload(spec, mode, site, site);
+        if (!preview)
         {
-            return std::unexpected(measured.error());
+            return std::unexpected(preview.error());
         }
-        const std::size_t size = spec.cave_size.value_or(round_up(measured->size(), kCaveAlign));
+        std::size_t size = spec.cave_size.value_or(round_up(preview->size() + kMaxJumpBack, kCaveAlign));
 
-        const std::expected<std::uint64_t, std::string> mapped = memory.allocate(size, site);
-        if (!mapped)
+        // Maps `bytes` of cave near the site, freeing and refusing one out of a
+        // near jump's reach.
+        const auto map_cave = [&](std::size_t bytes) -> std::expected<std::uint64_t, std::string>
         {
-            return std::unexpected(mapped.error());
-        }
-        const std::uint64_t cave = *mapped;
+            const std::expected<std::uint64_t, std::string> mapped = memory.allocate(bytes, site);
+            if (!mapped)
+            {
+                return std::unexpected(mapped.error());
+            }
+            const std::uint64_t span = site > *mapped ? site - *mapped : *mapped - site;
+            if (span > kCaveReach)
+            {
+                (void)memory.deallocate(*mapped);
+                return std::unexpected(std::format("the cave at 0x{:X} is out of the site's jump reach", *mapped));
+            }
+            return *mapped;
+        };
 
-        const std::uint64_t span = site > cave ? site - cave : cave - site;
-        if (span > kCaveReach)
+        std::expected<std::uint64_t, std::string> cave = map_cave(size);
+        if (!cave)
         {
-            (void)memory.deallocate(cave);
-            return std::unexpected(std::format("the cave at 0x{:X} is out of the site's jump reach", cave));
+            return std::unexpected(cave.error());
         }
-
-        std::expected<std::vector<std::byte>, std::string> payload = build_payload(spec, mode, cave, site);
+        std::expected<std::vector<std::byte>, std::string> payload = build_payload(spec, mode, *cave, site);
         if (!payload)
         {
-            (void)memory.deallocate(cave);
+            (void)memory.deallocate(*cave);
             return std::unexpected(payload.error());
+        }
+
+        // Re-encoded branches can grow to rel32 once the payload sits at the
+        // cave; when the caller did not pin a size, remap once with the measured
+        // size so a grown payload still fits.
+        if (payload->size() > size && !spec.cave_size)
+        {
+            (void)memory.deallocate(*cave);
+            size = round_up(payload->size(), kCaveAlign);
+            cave = map_cave(size);
+            if (!cave)
+            {
+                return std::unexpected(cave.error());
+            }
+            payload = build_payload(spec, mode, *cave, site);
+            if (!payload)
+            {
+                (void)memory.deallocate(*cave);
+                return std::unexpected(payload.error());
+            }
         }
         if (payload->size() > size)
         {
-            (void)memory.deallocate(cave);
+            (void)memory.deallocate(*cave);
             return std::unexpected(std::string {"the hook payload does not fit in the cave"});
         }
 
-        const std::expected<void, std::string> wrote = memory.write(cave, *payload);
+        const std::expected<void, std::string> wrote = memory.write(*cave, *payload);
         if (!wrote)
         {
-            (void)memory.deallocate(cave);
+            (void)memory.deallocate(*cave);
             return std::unexpected(wrote.error());
         }
 
         // The site becomes a near jump into the cave, every leftover byte of the
         // window NOP-padded.
         const std::expected<std::vector<std::byte>, std::string> jump = disasm::assemble_block(
-            std::format("jmp 0x{:X}", cave), disasm::AssembleBlockContext {.base = site, .mode = mode});
+            std::format("jmp 0x{:X}", *cave), disasm::AssembleBlockContext {.base = site, .mode = mode});
         if (!jump)
         {
-            (void)memory.deallocate(cave);
+            (void)memory.deallocate(*cave);
             return std::unexpected("the jump to the cave: " + jump.error());
         }
         if (jump->size() > spec.original.size())
         {
-            (void)memory.deallocate(cave);
+            (void)memory.deallocate(*cave);
             return std::unexpected(std::string {"the jump to the cave is longer than the hook window"});
         }
         std::vector<std::byte> patch = *jump;
@@ -192,10 +227,10 @@ namespace slopkit::script::hook
         const std::expected<void, std::string> patched = memory.write(site, patch);
         if (!patched)
         {
-            (void)memory.deallocate(cave);
+            (void)memory.deallocate(*cave);
             return std::unexpected(patched.error());
         }
-        return cave;
+        return *cave;
     }
 
     std::expected<void, std::string>
