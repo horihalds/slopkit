@@ -38,11 +38,11 @@ namespace slopkit::script
     // One instruction of the window a hook overwrites.
     struct HookInstruction
     {
-        std::uint64_t            address {}; // where it sat when it was read
-        std::vector<std::byte>   bytes;
-        std::string              text;              // as the listing prints it
-        std::vector<std::string> rewritten;         // operand-rewritten text, or the same text
-        std::vector<std::string> address_arguments; // "site + 0x40" / "site - 0x120" per placeholder
+        std::uint64_t             address {}; // where it sat when it was read
+        std::vector<std::byte>    bytes;
+        std::string               text;         // as the listing prints it
+        std::vector<std::string>  rewritten;    // operand-rewritten text, or the same text
+        std::vector<std::int64_t> address_args; // site-relative value per `%X`, in placeholder order
     };
 
     // Everything a hook script for one row is generated from.
@@ -57,7 +57,6 @@ namespace slopkit::script
         std::string                  pattern;           // "48 89 E5 48 8B ?? ?? ..."
         std::size_t                  pattern_offset {}; // the window's offset inside the match
         std::size_t                  instruction_length {};
-        std::size_t                  cave_size {};
         std::vector<std::string>     trampoline_lines; // the replaced instructions, operand-rewritten
     };
 

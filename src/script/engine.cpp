@@ -20,6 +20,7 @@
 #include "expr/resolver.hpp"
 #include "scan/pattern.hpp"
 #include "script/codec.hpp"
+#include "script/hook.hpp"
 #include "script/symbols.hpp"
 
 namespace slopkit::script
@@ -108,6 +109,7 @@ namespace slopkit::script
             install_allocation();
             install_aobscan();
             install_assembly();
+            install_hook();
         }
 
         // The VM-instruction hook that turns the instruction budget and the
@@ -772,21 +774,24 @@ namespace slopkit::script
             store_label(function, name, address);
         }
 
-        // Walks the readable regions in ascending address order and returns the
-        // lowest address where `pattern` matches, or nullopt. `module`, when set,
-        // restricts the walk to that module's regions. Every failure is thrown,
-        // never a `longjmp`, so the walk's containers are destroyed.
-        std::optional<std::uint64_t> scan_memory(const scan::BytePattern&          pattern,
-                                                 const std::optional<std::string>& module)
+        // Walks the readable regions in ascending address order and collects the
+        // lowest `limit` addresses where `pattern` matches. `module`, when set,
+        // restricts the walk to that module's regions. Every failure is thrown
+        // with `function`'s name, never a `longjmp`, so the walk's containers are
+        // destroyed.
+        std::vector<std::uint64_t> scan_memory(const scan::BytePattern&          pattern,
+                                               const std::optional<std::string>& module,
+                                               std::size_t                       limit,
+                                               std::string_view                  function)
         {
             if (!api.regions)
             {
-                throw std::runtime_error("aobscan: no target is attached");
+                throw std::runtime_error(std::string {function} + ": no target is attached");
             }
             const std::expected<std::vector<MemoryRegion>, std::string> listed = api.regions();
             if (!listed)
             {
-                throw std::runtime_error("aobscan: " + listed.error());
+                throw std::runtime_error(std::string {function} + ": " + listed.error());
             }
 
             std::vector<MemoryRegion> regions;
@@ -801,18 +806,19 @@ namespace slopkit::script
 
             if (module && regions.empty())
             {
-                throw std::runtime_error("aobscan: no region belongs to module '" + *module + "'");
+                throw std::runtime_error(std::string {function} + ": no region belongs to module '" + *module + "'");
             }
             if (regions.empty())
             {
-                throw std::runtime_error("aobscan: the target reported no readable memory");
+                throw std::runtime_error(std::string {function} + ": the target reported no readable memory");
             }
 
             std::ranges::sort(regions, {}, &MemoryRegion::base);
 
-            const std::size_t pattern_size = pattern.size();
-            const std::size_t overlap      = pattern_size - 1;
-            const std::size_t step         = std::max(kAobChunk, pattern_size);
+            std::vector<std::uint64_t> matches;
+            const std::size_t          pattern_size = pattern.size();
+            const std::size_t          overlap      = pattern_size - 1;
+            const std::size_t          step         = std::max(kAobChunk, pattern_size);
             for (const MemoryRegion& region : regions)
             {
                 if (region.size < pattern_size)
@@ -834,9 +840,25 @@ namespace slopkit::script
                     {
                         break; // abandon this region and continue with the next
                     }
-                    if (const std::optional<std::size_t> offset = pattern.find(*bytes))
+                    for (std::size_t from = 0; matches.size() < limit;)
                     {
-                        return cursor + *offset;
+                        const std::optional<std::size_t> offset = pattern.find(*bytes, from);
+                        if (!offset)
+                        {
+                            break;
+                        }
+                        const std::uint64_t address = cursor + *offset;
+                        // Consecutive chunks overlap, so a match near a chunk's
+                        // end can surface once more in the next one.
+                        if (matches.empty() || address != matches.back())
+                        {
+                            matches.push_back(address);
+                        }
+                        from = *offset + 1;
+                    }
+                    if (matches.size() >= limit)
+                    {
+                        return matches;
                     }
                     if (want >= remaining)
                     {
@@ -845,7 +867,7 @@ namespace slopkit::script
                     cursor += want - overlap;
                 }
             }
-            return std::nullopt;
+            return matches;
         }
 
         // Binds `aobscan(name, pattern[, module])`: it walks the target's
@@ -885,12 +907,14 @@ namespace slopkit::script
                         throw std::runtime_error("aobscan: " + compiled.error());
                     }
 
-                    sol::variadic_results results;
-                    if (const std::optional<std::uint64_t> found = scan_memory(*compiled, module_name))
+                    sol::variadic_results            results;
+                    const std::vector<std::uint64_t> matches = scan_memory(*compiled, module_name, 1, "aobscan");
+                    if (!matches.empty())
                     {
-                        store_hit("aobscan", scan_name, *found);
+                        store_hit("aobscan", scan_name, matches.front());
                         results.push_back(sol::make_object(lua.lua_state(), true));
-                        results.push_back(sol::make_object(lua.lua_state(), static_cast<std::int64_t>(*found)));
+                        results.push_back(
+                            sol::make_object(lua.lua_state(), static_cast<std::int64_t>(matches.front())));
                     }
                     else
                     {
@@ -898,6 +922,185 @@ namespace slopkit::script
                     }
                     return results;
                 });
+        }
+
+        // Reads a required string field of a hook facts table, raising under the
+        // calling function's name when it is missing or not a string.
+        std::string hook_string(sol::table table, std::string_view field, std::string_view function)
+        {
+            sol::object value = table[std::string {field}];
+            if (value.get_type() != sol::type::string)
+            {
+                throw std::runtime_error(std::string {function} + ": the " + std::string {field}
+                                         + " field must be a string");
+            }
+            return value.as<std::string>();
+        }
+
+        // Parses a generated hook's facts table into a `hook::Spec`, raising
+        // under the calling function's name when a field has the wrong type.
+        [[nodiscard]] hook::Spec parse_hook(sol::table table, std::string_view function)
+        {
+            hook::Spec spec;
+            spec.site_name = hook_string(table, "site_name", function);
+            spec.cave_name = hook_string(table, "cave_name", function);
+            spec.pattern   = hook_string(table, "pattern", function);
+
+            if (sol::object module = table[std::string {"module"}]; module.get_type() == sol::type::string)
+            {
+                spec.module = module.as<std::string>();
+            }
+            else if (module.get_type() != sol::type::nil && module.get_type() != sol::type::none)
+            {
+                throw std::runtime_error(std::string {function} + ": the module field must be a string");
+            }
+
+            if (sol::object offset = table[std::string {"offset"}]; offset.get_type() != sol::type::nil)
+            {
+                spec.offset =
+                    static_cast<std::size_t>(value_argument(std::string {function}, sol::make_optional(offset)));
+            }
+
+            sol::object original = table[std::string {"original"}];
+            if (original.get_type() != sol::type::string)
+            {
+                throw std::runtime_error(std::string {function} + ": the original field must be a string");
+            }
+            const std::string original_bytes = original.as<std::string>();
+            spec.original.reserve(original_bytes.size());
+            for (const char byte : original_bytes)
+            {
+                spec.original.push_back(static_cast<std::byte>(static_cast<unsigned char>(byte)));
+            }
+
+            spec.code_text       = hook_string(table, "code", function);
+            spec.trampoline_text = hook_string(table, "trampoline", function);
+
+            if (sol::object arguments = table[std::string {"trampoline_args"}];
+                arguments.get_type() == sol::type::table)
+            {
+                const sol::table  list  = arguments.as<sol::table>();
+                const std::size_t count = list.size();
+                for (std::size_t index = 1; index <= count; ++index)
+                {
+                    sol::object entry = list[index];
+                    if (entry.get_type() != sol::type::number)
+                    {
+                        throw std::runtime_error(std::string {function}
+                                                 + ": the trampoline_args field must hold numbers");
+                    }
+                    const double number = entry.as<double>();
+                    if (!std::isfinite(number) || std::floor(number) != number)
+                    {
+                        throw std::runtime_error(std::string {function}
+                                                 + ": the trampoline_args field must hold whole numbers");
+                    }
+                    spec.address_args.push_back(static_cast<std::int64_t>(number));
+                }
+            }
+            else if (arguments.get_type() != sol::type::nil && arguments.get_type() != sol::type::none)
+            {
+                throw std::runtime_error(std::string {function} + ": the trampoline_args field must be a table");
+            }
+
+            if (sol::object cave_size = table[std::string {"cave_size"}]; cave_size.get_type() != sol::type::nil)
+            {
+                spec.cave_size =
+                    static_cast<std::size_t>(value_argument(std::string {function}, sol::make_optional(cave_size)));
+            }
+            return spec;
+        }
+
+        // Binds `hook.install(spec)` and `hook.remove(spec)`, the two calls a
+        // generated hook script makes. `install` demands a unique pattern,
+        // verifies the site, maps a cave near it and patches the site; `remove`
+        // puts the originals back and frees the cave. Both return `true` alone on
+        // success, or `false, reason` on a refusal.
+        void install_hook()
+        {
+            sol::table hook_table = lua.create_named_table("hook");
+
+            const auto failed = [this](std::string reason) -> sol::variadic_results
+            {
+                sol::variadic_results results;
+                results.push_back(sol::make_object(lua.lua_state(), false));
+                results.push_back(sol::make_object(lua.lua_state(), std::move(reason)));
+                return results;
+            };
+            const auto succeeded = [this]() -> sol::variadic_results
+            {
+                sol::variadic_results results;
+                results.push_back(sol::make_object(lua.lua_state(), true));
+                return results;
+            };
+
+            hook_table.set_function(
+                "install",
+                [this, failed, succeeded](sol::object spec_object) -> sol::variadic_results
+                {
+                    if (spec_object.get_type() != sol::type::table)
+                    {
+                        throw std::runtime_error("hook.install: the argument must be a table");
+                    }
+                    const hook::Spec spec = parse_hook(spec_object.as<sol::table>(), "hook.install");
+
+                    const std::expected<scan::BytePattern, std::string> compiled =
+                        scan::BytePattern::parse(spec.pattern);
+                    if (!compiled)
+                    {
+                        throw std::runtime_error("hook.install: " + compiled.error());
+                    }
+
+                    const std::optional<std::string> module =
+                        spec.module.empty() ? std::nullopt : std::make_optional(spec.module);
+                    const std::vector<std::uint64_t> matches = scan_memory(*compiled, module, 2, "hook.install");
+                    if (matches.empty())
+                    {
+                        return failed("the hook pattern was not found");
+                    }
+                    if (matches.size() > 1)
+                    {
+                        return failed("the hook pattern matches more than one place");
+                    }
+
+                    const std::uint64_t                             site      = matches.front() + spec.offset;
+                    const std::expected<std::uint64_t, std::string> installed = hook::install(spec, api, site);
+                    if (!installed)
+                    {
+                        return failed(installed.error());
+                    }
+
+                    store_hit("hook.install", spec.site_name, site);
+                    store_hit("hook.install", spec.cave_name, *installed);
+                    return succeeded();
+                });
+
+            hook_table.set_function("remove",
+                                    [this, failed, succeeded](sol::object spec_object) -> sol::variadic_results
+                                    {
+                                        if (spec_object.get_type() != sol::type::table)
+                                        {
+                                            throw std::runtime_error("hook.remove: the argument must be a table");
+                                        }
+                                        const hook::Spec spec = parse_hook(spec_object.as<sol::table>(), "hook.remove");
+
+                                        const std::optional<NameHit> site = resolve_name(spec.site_name);
+                                        if (!site)
+                                        {
+                                            return failed("this hook's site is not known anymore");
+                                        }
+                                        const std::optional<NameHit> cave = resolve_name(spec.cave_name);
+
+                                        const std::expected<void, std::string> removed =
+                                            hook::remove(spec, api, site->value, cave ? cave->value : 0);
+                                        if (!removed)
+                                        {
+                                            return failed(removed.error());
+                                        }
+                                        labels.remove(spec.site_name);
+                                        labels.remove(spec.cave_name);
+                                        return succeeded();
+                                    });
         }
 
         std::vector<std::byte> read_raw(std::uint64_t address, std::size_t size)

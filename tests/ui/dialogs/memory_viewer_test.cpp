@@ -1810,9 +1810,10 @@ TEST_CASE("the menu bar's Hook Instruction generates a prefilled script", "[ui]"
                      });
     menu->hook_action()->trigger();
     CHECK(description.startsWith(QStringLiteral("Hook ")));
+    CHECK(source.contains(QStringLiteral("local kHook = {")));
     CHECK(source.contains(QStringLiteral("function activate()")));
     CHECK(source.contains(QStringLiteral("function deactivate()")));
-    CHECK(source.contains(QStringLiteral("local kPattern")));
+    CHECK(source.contains(QStringLiteral("return hook.install(kHook)")));
 
     // A detached target refuses and prints the reason on the status line instead
     // of emitting a script.

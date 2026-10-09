@@ -296,12 +296,35 @@ target.
   `false, reason` and writes nothing, and a success returns `true, size`. A
   relative-branch target (`jmp`/`call`/`j<cc>`) the encoder cannot reach is
   rejected with the added cause that a relative branch reaches at most ±2 GB.
+- `hook.install(spec)` and `hook.remove(spec)` install and remove a
+  jump-between-code hook in two target writes — the runtime behind the generated
+  hook script. The argument is the facts table the generator emits: the pattern and
+  its optional module, the window's offset inside the match, the original bytes,
+  the user's assembler block, the replaced instructions and their `site`-relative
+  `%X` argument deltas. `install` scans for the pattern with a **match limit of
+  two** — a pattern that is not unique is refused with a reason rather than hooking
+  an arbitrary copy — verifies the originals at `match + offset`, maps a cave near
+  the site, then writes the cave payload (code, trampoline, jump back) and the
+  site's near jump plus NOP padding in two `MemoryApi::write`s; a failure after the
+  mapping frees the cave, so the target is never left half-hooked. `remove` writes
+  the originals back and frees the cave. Both return `true` alone on success or
+  `false, reason` on a refusal, and both publish and drop the `site_name`/`cave_name`
+  script-local labels the generated table names, so a live hook's state stays in the
+  script and nothing is remembered engine-side. The mechanics live in the pure,
+  Qt-free `script::hook` (`src/script/hook.{hpp,cpp}`) over `MemoryApi`;
+  `engine.cpp` only parses the table, scans and publishes labels. The shared region
+  walk (`Impl::scan_memory`) now takes a match limit, so `aobscan` keeps its
+  first-hit behaviour and the hook path can collect up to two.
 - `script::hook_script` (`src/script/hook_script.{hpp,cpp}`) is the pure, Qt-free
   generator behind the listing's `Hook Instruction...` command. It turns a decoded
   neighbourhood into a `HookTarget` — the AoB pattern and its match offset, the hook
-  window's original bytes and re-encoded trampoline, the cave size — or a refusal
-  reason, and renders the prefilled Lua source. The pattern wildcards only the bytes
-  of *absolute* address fields, which the decoder reports as
+  window's original bytes, the re-encoded trampoline and its numeric `site`-relative
+  argument deltas — or a refusal reason, and renders the prefilled Lua source. The
+  generated script is a facts table plus
+  `function activate() return hook.install(kHook) end` and
+  `function deactivate() return hook.remove(kHook) end`: the target work lives in
+  the `hook` global, not in a self-installing template. The pattern wildcards only
+  the bytes of *absolute* address fields, which the decoder reports as
   `disasm::AddressBytes {offset, length, relative}` (the encoded-position twin of
   `AddressRef`, which slices the printed text): a relative branch or rip-relative
   displacement is module-relative and stays literal, so a rebased module still
@@ -310,9 +333,8 @@ target.
   argument, so the trampoline stays position-independent after ASLR; and the
   generator proves the rewritten trampoline assembles at the original address with
   `disasm::assemble_block`, refusing when it does not so a broken hook never reaches
-  the editor. The rendered `activate` also frees and refuses a cave the hint could not
-  place within a near jump's reach before it touches the site. Generation reads only
-  the listing's cached bytes — the UI thread never touches the target.
+  the editor. Generation reads only the listing's cached bytes — the UI thread never
+  touches the target.
 - A registered symbol resolves like a module name in any address expression, in
   both the worker's resolve job and the deref-free UI parsers. `expr::evaluate`
   takes the snapshot as an argument and looks a base up as **module name → symbol

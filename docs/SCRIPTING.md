@@ -230,69 +230,110 @@ The whole block is a single write, but a target that fails part of the way
 through a write can still leave the front of the block in memory; assemble into an
 `alloc`ed scratch buffer first when a partial write would matter.
 
+## Installing a hook in the target
+
+The generated hook script leans on one runtime global, `hook`, which installs and
+removes a jump-between-code hook in **two target writes**. The [Hooking an
+instruction](#hooking-an-instruction) section shows the facts table it consumes.
+
+- `hook.install(spec)` — finds `spec.pattern` (restricted to `spec.module` when it
+  is not empty), requires it to match **exactly once** — more than one match refuses
+  instead of hooking an arbitrary copy — verifies the bytes at `site = match +
+  spec.offset` against `spec.original`, maps a code cave near the site, writes
+  `spec.code`, then `spec.trampoline`, then a jump back, and patches the site with a
+  near jump plus NOP padding. It returns `true` alone on success or `false, reason`
+  on a refusal, and a refusal leaves the target as it was (a cave mapped before the
+  failure is freed). On success the site and the cave are published under
+  `spec.site_name` and `spec.cave_name` as script-local labels.
+- `hook.remove(spec)` — writes `spec.original` back at the site and frees the cave.
+  It resolves the site and the cave from the labels `install` published, so pass the
+  **same table** back; when the site's label is gone it returns
+  `false, "this hook's site is not known anymore"`. On success it drops both labels.
+
+The fields a `spec` table must carry are `site_name` and `cave_name` (the labels to
+publish), `pattern` (the AoB signature), `original` (the bytes the site must hold,
+as a string built with `string.char`), `code` (the assembler block your hook runs)
+and `trampoline` (the instructions the hook replaced, re-encoded so their addresses
+keep working). `module` (optional; omitted or empty scans the whole address space),
+`offset` (the window's offset inside the match, default `0`), `trampoline_args`
+(one `site`-relative delta per `%X` in `trampoline`) and `cave_size` (an override of
+the automatic cave size) round it out. A missing required field or a wrong type
+raises `hook.install: …` / `hook.remove: …`.
+
 ## Hooking an instruction
 
 The disassembly listing's `Hook Instruction...` command turns the selected row
 into a ready-to-edit hook script and prefills the Add Script window with it (see
 [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md)); nothing is written to the target and no
-row is created until you click **Add**. The generated script follows one shape:
+row is created until you click **Add**. The generated script is a facts table plus
+two one-line hooks, with the target work done by
+[`hook.install`](#installing-a-hook-in-the-target):
 
-1. `activate()` scans for an AoB pattern that pins the instruction, restricted to
-   the module the instruction lives in when it is inside one. The pattern spans the
-   instruction plus its neighbours — up to two on each side, and at least 16 bytes
-   — and wildcards only the bytes of *absolute* address fields, so a rebased module
-   still matches while a relative branch or rip-relative displacement stays
-   literal. A miss returns `false, "<reason>"`.
-2. It turns the hit into the hook site — the window's first byte, `match +
-   kMatchOffset` bytes into the pattern — and publishes that address as
-   `hook_site_<rva>`, then checks the bytes at the site against the recorded
-   originals and refuses when they differ, so a site someone else already hooked
-   is not hooked twice. Every refusal drops the labels it published, so a refused
-   activation leaves no stale hook state behind.
-3. It `alloc`s one code cave beside the site, writes the placeholder `kHookCode`
-   (your code), then the `kTrampoline` — the instructions the hook overwrites,
-   re-encoded so their addresses keep working — then a jump back to the first byte
-   after the hook window.
-4. It writes a near jump to the cave over the site and pads every leftover byte of
-   the window with `NOP` (`90`), returning `true` only once every write succeeded.
+```lua
+local kHook = {
+    site_name  = "hook_site_1a2b40",
+    cave_name  = "hook_cave_1a2b40",
+    module     = "game.exe",
+    pattern    = "48 83 EC 28 48 89 D8 48 83 C4 28 C3 90 90 90 90",
+    offset     = 0,   -- the window's offset inside the match
+    original   = string.char(0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8),
+    code       = [[
+        nop    ; TODO: replace with your code
+    ]],
+    trampoline = [[
+        SUB RSP, 28
+        MOV RAX, RBX
+    ]],
+}
 
-`deactivate()` writes the recorded original bytes back at `hook_site_<rva>`,
-`dealloc`s the cave and `ulabel`s both names.
+function activate()
+    return hook.install(kHook)
+end
+
+function deactivate()
+    return hook.remove(kHook)
+end
+```
+
+Everything you edit is the `code` block — replace the `nop` with what the hook
+should do. `activate()` is a single `hook.install(kHook)` call, so the `Active`
+checkbox's verdict is exactly the helper's.
+
+- The pattern spans the instruction plus its neighbours — up to two on each side,
+  and at least 16 bytes — and wildcards only the bytes of *absolute* address
+  fields, so a rebased module still matches while a relative branch or rip-relative
+  displacement stays literal.
+- The site is the window's first byte, `match + offset` bytes into the pattern; the
+  bytes there are checked against `original`, so a site someone else already changed
+  is refused rather than hooked twice.
+- The cave is sized automatically from the assembled payload (the code, the
+  trampoline and the jump back), so there is no budget to grow; add
+  `cave_size = <bytes>` to `kHook` when you want extra room.
+- Every address the replaced instructions print is re-emitted
+  position-independently: a `%X` placeholder in `trampoline` is filled from the
+  matching `trampoline_args` entry, a `site`-relative delta, so a rebased module
+  still reads the same data. The generator proves the rewritten trampoline assembles
+  before the script reaches the editor and refuses with a reason when an instruction
+  cannot be re-encoded.
 
 The hook window is whole instructions: the selected instruction **plus as many
 following instructions as needed** for a 5-byte near jump to fit, so an instruction
 shorter than a jump pulls in its successor and the hook never cuts an instruction
-in half. `kWindow` is the window's byte length and `kOriginal` its bytes; a row
-whose window would run past the listing's decoded bytes is refused rather than
-hooked.
+in half. A row whose window would run past the listing's decoded bytes is refused
+rather than hooked.
 
-Every address the replaced instructions print is re-emitted
-position-independently: a `%X` placeholder in the trampoline text is filled from
-the matching `site ± delta` argument passed to `assemble`, so a rebased module
-still reads the same data. The generator proves the rewritten trampoline assembles
-before the script reaches the editor and refuses with a reason when an instruction
-cannot be re-encoded.
+A live hook's state is the two script-local labels the helper publishes —
+`hook_site_<rva>`, the hooked window's first byte, and `hook_cave_<rva>`, the stub —
+so `deactivate()` reads them back and nothing is remembered engine-side. Being
+labels they resolve only inside this script; the UI's address fields resolve only a
+name a script registers as a symbol (see [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md)).
 
-The script keeps its state in two script-local labels — `hook_site_<rva>`, the
-hooked window's first byte, and `hook_cave_<rva>`, the stub. Being labels they
-resolve only inside this script; the UI's address fields resolve only a name a
-script registers as a symbol (see [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md)).
-Alongside them the script records:
-
-- `kModule` — the owning module, or nothing outside a module (then the scan is not
-  restricted and the whole address space is searched);
-- `kPattern` and `kMatchOffset` — the signature and the window's offset inside it;
-- `kWindow` and `kOriginal` — the overwritten bytes;
-- `kCaveSize` — a starting budget covering the stub and the trampoline; grow it
-  when your code needs more room;
-- `kHookCode` and `kTrampoline` — the two assembler blocks.
-
-Two caveats: the cave has to hold your code **and** the trampoline, so a large stub
-needs a larger `kCaveSize` (or its own `alloc`); and the hook's write is a direct
-script write, not a listing patch — it does not show on the listing, is not part of
-the session patch list, and is undone by `deactivate()` (and when slopkit closes,
-which deactivates every ticked script) rather than by `Restore Original
-Instruction`.
+One caveat: the hook's write is a direct script write, not a listing patch — it does
+not show on the listing, is not part of the session patch list, and is undone by
+`deactivate()` (and when slopkit closes, which deactivates every ticked script)
+rather than by `Restore Original Instruction`. A hook script saved before `hook`
+existed still activates and deactivates unchanged, because every global it used is
+still there.
 
 ## Worked examples
 

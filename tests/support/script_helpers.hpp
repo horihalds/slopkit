@@ -59,6 +59,11 @@ namespace
         std::unordered_map<std::uint64_t, std::size_t>     allocations;
         std::vector<std::pair<std::uint64_t, std::size_t>> allocate_requests;
         std::vector<slopkit::expr::ModuleRef>              modules;
+        // How many writes reached the seam, so a test can pin the two-write
+        // activation; when `refuse_write_at` is set, a write to that address
+        // fails instead.
+        std::size_t                                        write_count {0};
+        std::optional<std::uint64_t>                       refuse_write_at;
 
         explicit FakeMemory(std::size_t size = 0x100) : bytes(size) {}
 
@@ -102,6 +107,11 @@ namespace
             memory.write = [this](std::uint64_t              address,
                                   std::span<const std::byte> data) -> std::expected<void, std::string>
             {
+                ++write_count;
+                if (refuse_write_at && address == *refuse_write_at)
+                {
+                    return std::unexpected(std::string {"write refused"});
+                }
                 if (address < kScriptBase || address - kScriptBase + data.size() > bytes.size())
                 {
                     return std::unexpected(std::string {"address is not mapped"});

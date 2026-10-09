@@ -214,8 +214,8 @@ TEST_CASE("address operands are re-emitted position-independently", "[script][ho
 
         REQUIRE(target.trampoline_lines.size() == 1);
         CHECK(target.trampoline_lines[0] == "MOV RAX, [0x%X]");
-        REQUIRE(target.covered[0].address_arguments.size() == 1);
-        CHECK(target.covered[0].address_arguments[0] == "site + 0x401000");
+        REQUIRE(target.covered[0].address_args.size() == 1);
+        CHECK(target.covered[0].address_args[0] == 0x401000);
     }
 
     SECTION("an immediate is a value and is copied verbatim")
@@ -231,7 +231,7 @@ TEST_CASE("address operands are re-emitted position-independently", "[script][ho
 
         REQUIRE(target.trampoline_lines.size() == 1);
         CHECK(target.trampoline_lines[0] == "MOV RAX, 1122334455667788");
-        CHECK(target.covered[0].address_arguments.empty());
+        CHECK(target.covered[0].address_args.empty());
     }
 
     SECTION("a rip-relative operand uses the absolute the decoder computed")
@@ -246,10 +246,10 @@ TEST_CASE("address operands are re-emitted position-independently", "[script][ho
         const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
 
         CHECK(target.trampoline_lines[0] == "MOV RAX, RBX");
-        CHECK(target.covered[0].address_arguments.empty());
+        CHECK(target.covered[0].address_args.empty());
         CHECK(target.trampoline_lines[1] == "MOV RAX, [0x%X]");
-        REQUIRE(target.covered[1].address_arguments.size() == 1);
-        CHECK(target.covered[1].address_arguments[0] == "site + 0x301");
+        REQUIRE(target.covered[1].address_args.size() == 1);
+        CHECK(target.covered[1].address_args[0] == 0x301);
     }
 
     SECTION("a backward branch yields a negative delta")
@@ -263,8 +263,8 @@ TEST_CASE("address operands are re-emitted position-independently", "[script][ho
         const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
 
         CHECK(target.trampoline_lines[0] == "JMP 0x%X");
-        REQUIRE(target.covered[0].address_arguments.size() == 1);
-        CHECK(target.covered[0].address_arguments[0] == "site - 0x100");
+        REQUIRE(target.covered[0].address_args.size() == 1);
+        CHECK(target.covered[0].address_args[0] == -0x100);
     }
 }
 
@@ -296,31 +296,38 @@ TEST_CASE("the rendered script carries the generated facts", "[script][hook]")
     const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
     const std::string        source = script::render(target);
 
-    CHECK(source.find("local kModule      = \"game.exe\"") != std::string::npos);
-    CHECK(source.find("local kPattern     = \"" + target.pattern + "\"") != std::string::npos);
-    CHECK(source.find("local kWindow      = 7") != std::string::npos);
-    CHECK(source.find("local kOriginal    = string.char(0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8)")
-          != std::string::npos);
-    CHECK(source.find("local kSiteName    = \"hook_site_1a2b40\"") != std::string::npos);
-    CHECK(source.find("local kCaveName    = \"hook_cave_1a2b40\"") != std::string::npos);
-    CHECK(source.find("aobscan(kSiteName, kPattern, kModule)") != std::string::npos);
-    CHECK(source.find("local kReach       = 0x7FFF0000") != std::string::npos);
-    CHECK(source.find("if span > kReach then") != std::string::npos);
-    CHECK(source.find("out of the site's jump reach") != std::string::npos);
-    CHECK(source.find("function activate()") != std::string::npos);
-    CHECK(source.find("function deactivate()") != std::string::npos);
-    // The site is published under the label deactivate() reads, not left as the
-    // match address aobscan stored.
-    CHECK(source.find("slabel(kSiteName, site)") != std::string::npos);
-    // A refusal after the cave was mapped frees it and drops both labels.
-    CHECK(
-        source.find("if not ok then\n        dealloc(kCaveName)\n        ulabel(kCaveName)\n        ulabel(kSiteName)")
-        != std::string::npos);
-    CHECK(source.find("if not ok2 then\n        dealloc(kCaveName)") != std::string::npos);
-    CHECK(source.find("if not ok3 then\n        dealloc(kCaveName)") != std::string::npos);
-    CHECK(source.find("if not ok4 then\n        dealloc(kCaveName)") != std::string::npos);
-    CHECK(source.find("mem.write_bytes(site, kOriginal)") != std::string::npos);
-    CHECK(source.find("dealloc(kCaveName)") != std::string::npos);
+    // The facts table.
+    CHECK(source.find("local kHook = {") != std::string::npos);
+    CHECK(source.find("\"hook_site_1a2b40\"") != std::string::npos);
+    CHECK(source.find("\"hook_cave_1a2b40\"") != std::string::npos);
+    CHECK(source.find("\"game.exe\"") != std::string::npos);
+    CHECK(source.find("\"" + target.pattern + "\"") != std::string::npos);
+    CHECK(source.find("string.char(0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8)") != std::string::npos);
+    CHECK(source.find("SUB RSP, 28") != std::string::npos);
+    CHECK(source.find("MOV RAX, RBX") != std::string::npos);
+
+    // The two one-line lifecycle hooks, with the install mechanics moved into
+    // the runtime.
+    CHECK(source.find("function activate()\n    return hook.install(kHook)\nend") != std::string::npos);
+    CHECK(source.find("function deactivate()\n    return hook.remove(kHook)\nend") != std::string::npos);
+    CHECK(source.find("aobscan") == std::string::npos);
+    CHECK(source.find("dealloc") == std::string::npos);
+    CHECK(script::check_syntax(source).has_value());
+}
+
+TEST_CASE("the rendered script lists the trampoline arguments", "[script][hook]")
+{
+    // MOV RAX, [00402000] at 0x1000, then filler for the window.
+    const Listing listing({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00, 0x90, 0x90,
+                           0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          0x1000);
+
+    std::string              reason;
+    const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
+    const std::string        source = script::render(target);
+
+    CHECK(source.find("trampoline_args") != std::string::npos);
+    CHECK(source.find("{ 0x401000 }") != std::string::npos);
     CHECK(script::check_syntax(source).has_value());
 }
 
@@ -334,9 +341,8 @@ TEST_CASE("a module-less target scans everywhere and drops the module text", "[s
     const script::HookTarget target = *script::build_hook(candidate_at(listing, 0, ""), reason);
     const std::string        source = script::render(target);
 
-    CHECK(source.find("local kModule") == std::string::npos);
-    CHECK(source.find("aobscan(kSiteName, kPattern)") != std::string::npos);
-    CHECK(source.find("the hook pattern was not found\"") != std::string::npos);
+    CHECK(source.find("module") == std::string::npos);
+    CHECK(source.find("\"hook_site_7f3a1b2c\"") != std::string::npos);
     CHECK(script::check_syntax(source).has_value());
 }
 
@@ -373,12 +379,14 @@ TEST_CASE("the generated script activates and deactivates against a target", "[s
     REQUIRE(activated.ok);
     CHECK(activated.message.empty());
 
-    // Exactly one cave was mapped, near the site.
+    // Exactly one cave was mapped, near the site, sized from the payload
+    // (1 + 7 + 5 rounded up).
     REQUIRE(fixture.fake.allocations.size() == 1);
     const std::uint64_t cave = fixture.fake.allocations.begin()->first;
-    CHECK(fixture.fake.allocations.begin()->second == target->cave_size);
+    CHECK(fixture.fake.allocations.begin()->second == 16);
     REQUIRE_FALSE(fixture.fake.allocate_requests.empty());
     CHECK(fixture.fake.allocate_requests.front().first == site);
+    CHECK(fixture.fake.write_count == 2);
 
     // The site holds a near jump into the cave and the payload is NOP-padded.
     const auto site_offset = static_cast<std::size_t>(site - kScriptBase);
@@ -498,8 +506,8 @@ TEST_CASE("a refused activation frees the cave and drops the site label", "[scri
     std::string        reason;
     script::HookTarget target = *script::build_hook(candidate, reason);
     // The trampoline is copied verbatim into the script, so an instruction the
-    // assembler cannot encode makes `assemble(cave, kTrampoline)` fail after the
-    // cave was mapped.
+    // assembler cannot encode makes the helper refuse before it maps or patches
+    // anything.
     REQUIRE_FALSE(target.trampoline_lines.empty());
     target.trampoline_lines.front() = "frobnicate";
 
@@ -509,8 +517,9 @@ TEST_CASE("a refused activation frees the cave and drops the site label", "[scri
     INFO(activated.message);
     CHECK_FALSE(activated.ok);
     CHECK(activated.message.find("the trampoline:") != std::string::npos);
-    // The cleanup: the cave mapping is freed, not left behind.
+    // The cleanup: no mapping is left behind and the site was never touched.
     CHECK(fixture.fake.allocations.empty());
+    CHECK(fixture.fake.write_count == 0);
 
     const script::LifecycleResult deactivated = fixture.engine.run_lifecycle(source, "deactivate");
     INFO(deactivated.message);
@@ -567,4 +576,68 @@ TEST_CASE("activate refuses a cave that is out of the site's reach", "[script][h
     CHECK_FALSE(cave_labeled.ok);
     const script::LifecycleResult site_labeled = fixture.engine.run_lifecycle(probe, "site_still_labeled");
     CHECK_FALSE(site_labeled.ok);
+}
+
+TEST_CASE("a hook script saved in the old shape still activates and deactivates", "[script][hook]")
+{
+    ScriptFixture fixture(0x200);
+    fixture.fake.put(0x10,
+                     {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90});
+
+    // The self-installing shape a `.skt` hook script written before the `hook`
+    // helper looks like: every global it used is still there, unchanged.
+    const std::string source = R"(
+local kPattern  = "48 83 EC 28 48 89 D8 48"
+local kOriginal = string.char(0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48)
+local kSiteName = "hook_site_legacy"
+local kCaveName = "hook_cave_legacy"
+
+function activate()
+    local found, site = aobscan(kSiteName, kPattern)
+    if not found then
+        return false, "the hook pattern was not found"
+    end
+    local cave = alloc(kCaveName, 0x40, site)
+    local ok, hook_len = assemble(cave, "nop")
+    if not ok then
+        dealloc(kCaveName)
+        ulabel(kCaveName)
+        ulabel(kSiteName)
+        return false, "the hook code: " .. hook_len
+    end
+    local ok2 = assemble(site, "jmp 0x%X", cave)
+    if not ok2 then
+        dealloc(kCaveName)
+        ulabel(kCaveName)
+        ulabel(kSiteName)
+        return false, "the jump to the cave"
+    end
+    return true
+end
+
+function deactivate()
+    local site = label(kSiteName)
+    local cave = label(kCaveName)
+    if site == 0 then
+        return false, "this hook's site is not known anymore"
+    end
+    mem.write_bytes(site, kOriginal)
+    if cave ~= 0 then
+        dealloc(kCaveName)
+        ulabel(kCaveName)
+    end
+    ulabel(kSiteName)
+    return true
+end
+)";
+
+    const script::LifecycleResult activated = fixture.engine.run_lifecycle(source, "activate");
+    INFO(activated.message);
+    REQUIRE(activated.ok);
+    CHECK(fixture.fake.allocations.size() == 1);
+
+    const script::LifecycleResult deactivated = fixture.engine.run_lifecycle(source, "deactivate");
+    INFO(deactivated.message);
+    REQUIRE(deactivated.ok);
+    CHECK(fixture.fake.allocations.empty());
 }
