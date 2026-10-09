@@ -496,8 +496,19 @@ namespace slopkit::disasm
             }
         }
 
+        // A `jmp`, `call` or `j<cc>` with a single immediate target encodes to a
+        // rel8/rel32 displacement, so its target has to stay within ±2 GB. Every
+        // other instruction fails for a reason that is not reach.
+        const bool relative_branch = (name == "call" || (!name.empty() && name.front() == 'j')) && operands.size() == 1
+                                  && operands[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
+
         if (!ZYAN_SUCCESS(status))
         {
+            if (relative_branch)
+            {
+                return std::unexpected(std::format(
+                    "the encoder rejected '{}' (a relative branch reaches at most ±2 GB)", instruction_text));
+            }
             return std::unexpected(std::format("the encoder rejected '{}'", instruction_text));
         }
         return bytes;

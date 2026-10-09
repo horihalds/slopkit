@@ -52,6 +52,10 @@ namespace
         // module names against.
         bool                                               can_allocate {true};
         std::optional<std::string>                         allocate_error;
+        // When set, `alloc` returns this address (still recorded, so `dealloc`
+        // can free it) instead of appending to the buffer, so a test can place a
+        // mapping far away from the target.
+        std::optional<std::uint64_t>                       forced_allocation;
         std::unordered_map<std::uint64_t, std::size_t>     allocations;
         std::vector<std::pair<std::uint64_t, std::size_t>> allocate_requests;
         std::vector<slopkit::expr::ModuleRef>              modules;
@@ -132,6 +136,12 @@ namespace
                 if (allocate_error)
                 {
                     return std::unexpected(*allocate_error);
+                }
+                if (forced_allocation)
+                {
+                    allocations[*forced_allocation] = size;
+                    allocate_requests.emplace_back(near, size);
+                    return *forced_allocation;
                 }
                 constexpr std::size_t page   = 0x1000;
                 const std::size_t     offset = (bytes.size() + page - 1) / page * page;

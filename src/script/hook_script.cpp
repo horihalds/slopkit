@@ -18,16 +18,20 @@ namespace slopkit::script
     {
         // A near jump rel32 is the shortest form the site's jump into the cave
         // takes, so the window always covers at least this many bytes.
-        constexpr std::size_t kWindowMinimum     = 5;
+        constexpr std::size_t   kWindowMinimum     = 5;
         // A short instruction still needs a signature this long to be unique.
-        constexpr std::size_t kPatternMinimum    = 16;
+        constexpr std::size_t   kPatternMinimum    = 16;
         // How many rows one side of the window the pattern prefers to include.
-        constexpr std::size_t kPatternNeighbours = 2;
+        constexpr std::size_t   kPatternNeighbours = 2;
         // The cave budget: a stub allowance for the user's hook code plus a
         // re-encoding allowance for the trampoline (a rel8 branch can grow into
         // rel32), rounded up to a comfortable boundary.
-        constexpr std::size_t kStubAllowance     = 128;
-        constexpr std::size_t kTrampolineGrowth  = 4;
+        constexpr std::size_t   kStubAllowance     = 128;
+        constexpr std::size_t   kTrampolineGrowth  = 4;
+        // A near jump reaches ±2 GB; the generated guard leaves a margin for the
+        // stub, the trampoline and both jump displacements, so a cave that
+        // passes it always assembles.
+        constexpr std::uint64_t kCaveReach         = 0x7FFF0000;
 
         [[nodiscard]] std::size_t round_up(std::size_t value, std::size_t multiple)
         {
@@ -358,7 +362,9 @@ namespace slopkit::script
                            target.cave_size);
         out += std::format("local kSiteName    = {}\n", quote(site_name));
         out += std::format("local kCaveName    = {}\n", quote(cave_name));
-        out += "local kPadding     = string.rep(string.char(0x90), kWindow)\n\n";
+        out += "local kPadding     = string.rep(string.char(0x90), kWindow)\n";
+        out += std::format("local kReach       = 0x{:X}   -- a near jump reaches ±2 GB, less the payload's margin\n\n",
+                           kCaveReach);
 
         out += "-- Your code runs first, then the instructions the hook replaced (re-encoded at the\n";
         out += "-- cave so their addresses keep working), then the jump back to the site.\n";
@@ -399,6 +405,14 @@ namespace slopkit::script
         out += "        end\n";
         out += "    end\n\n";
         out += "    local cave = alloc(kCaveName, kCaveSize, site)\n\n";
+        out += "    -- The site jumps into the cave with a near jump, so a cave the hint could not\n";
+        out += "    -- place within reach is freed and refused before the site is touched.\n";
+        out += "    local span = site > cave and site - cave or cave - site\n";
+        out += "    if span > kReach then\n";
+        out += "        dealloc(kCaveName)\n";
+        out += "        ulabel(kCaveName)\n";
+        out += "        return false, string.format(\"the cave at 0x%X is out of the site's jump reach\", cave)\n";
+        out += "    end\n\n";
         out += "    local ok, hook_len = assemble(cave, kHookCode)\n";
         out += "    if not ok then return false, \"the hook code: \" .. hook_len end\n";
         out +=

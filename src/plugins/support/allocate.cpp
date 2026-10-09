@@ -5,13 +5,16 @@
 #include <cerrno>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <system_error>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "platform/linux/procfs.hpp"
@@ -35,6 +38,20 @@ namespace slopkit::plugins::support
         // run; every real image exposes one long before this.
         constexpr std::size_t kMaxGadgetScanBytes = 64u * 1024u * 1024u;
         constexpr std::size_t kGadgetChunkBytes   = 4096;
+
+        // How many hinted pages a single allocate_memory tries before falling
+        // back to a hint-less mapping. Each attempt is one remote syscall, so a
+        // small bound keeps the closed-as-possible search affordable.
+        constexpr std::size_t kMaxNearAttempts = 4;
+
+        // A remote syscall that did not return a value. `error` is the target
+        // kernel's positive errno when the call itself was refused, or 0 when
+        // the host could not run it at all (the message says what went wrong).
+        struct SyscallRefusal
+        {
+            int         error {0};
+            std::string message;
+        };
 
         std::string errno_text(int error)
         {
@@ -62,6 +79,15 @@ namespace slopkit::plugins::support
             return AllocationError {code, std::move(message)};
         }
 
+        AllocationError as_allocation_error(const SyscallRefusal& refusal)
+        {
+            if (refusal.error != 0)
+            {
+                return failure(status_for_errno(refusal.error), refusal.message);
+            }
+            return failure(SLOPKIT_ERR_IO, refusal.message);
+        }
+
         std::uint64_t page_size()
         {
             const long value = ::sysconf(_SC_PAGESIZE);
@@ -72,12 +98,13 @@ namespace slopkit::plugins::support
         // scanning ascending so the run is deterministic. The exact byte is a
         // valid syscall boundary when RIP points straight at it, which is how the
         // remote call uses it.
-        std::expected<std::uint64_t, AllocationError> find_syscall_gadget(Session& session)
+        std::expected<std::uint64_t, AllocationError>
+        find_syscall_gadget(Session& session, const std::vector<platform::MappedRegion>& maps)
         {
             std::vector<std::byte> buffer(kGadgetChunkBytes);
             std::size_t            scanned = 0;
 
-            for (const platform::MappedRegion& region : platform::read_maps(session.pid))
+            for (const platform::MappedRegion& region : maps)
             {
                 if (!region.executable)
                 {
@@ -130,94 +157,252 @@ namespace slopkit::plugins::support
             (void)debug.set_register(tid, "RIP", saved.rip);
         }
 
-        // Runs one syscall inside the target. The session's debug session seizes
-        // and stops the thread group, so the whole sequence is invisible to the
-        // target; every saved register is put back and the group is detached
-        // before returning, whether the call succeeded or failed.
+        // Seizes and stops the target's thread group once, then runs any number
+        // of syscalls while it stays stopped. Sharing one attach window is what
+        // makes a multi-candidate near search affordable: the attach and the
+        // syscall-gadget scan dominate the cost, not the individual calls.
+        //
+        // Every saved register is put back and the group is detached by the
+        // destructor, whether the calls succeeded or failed.
+        class RemoteRunner
+        {
+        public:
+            explicit RemoteRunner(Session& session) : session_(session)
+            {
+                const auto leader_result = session.debug.attach();
+                if (!leader_result)
+                {
+                    error_ = failure(SLOPKIT_ERR_PERMISSION_DENIED, "cannot stop the target to run a syscall");
+                    return;
+                }
+                leader_   = *leader_result;
+                attached_ = true;
+
+                const auto saved = session.debug.registers(leader_);
+                if (!saved)
+                {
+                    error_ = failure(SLOPKIT_ERR_IO, "cannot read the target's registers");
+                    return;
+                }
+                saved_ = *saved;
+
+                maps_             = platform::read_maps(session.pid);
+                const auto gadget = find_syscall_gadget(session, maps_);
+                if (!gadget)
+                {
+                    error_ = gadget.error();
+                    return;
+                }
+                gadget_ = *gadget;
+                ready_  = true;
+            }
+
+            ~RemoteRunner()
+            {
+                if (!attached_)
+                {
+                    return;
+                }
+                if (saved_)
+                {
+                    restore_registers(session_.debug, leader_, *saved_);
+                }
+                (void)session_.debug.detach();
+            }
+
+            RemoteRunner(const RemoteRunner&)            = delete;
+            RemoteRunner& operator=(const RemoteRunner&) = delete;
+
+            [[nodiscard]] bool ready() const noexcept
+            {
+                return ready_;
+            }
+
+            [[nodiscard]] const AllocationError& error() const noexcept
+            {
+                return error_;
+            }
+
+            // The target's mapped regions as read for the gadget scan, reused to
+            // find free gaps for a near hint.
+            [[nodiscard]] const std::vector<platform::MappedRegion>& maps() const noexcept
+            {
+                return maps_;
+            }
+
+            // Runs one syscall while the group stays stopped. A negative kernel
+            // return is reported as a SyscallRefusal carrying its errno.
+            std::expected<std::uint64_t, SyscallRefusal> run(std::uint64_t                       number,
+                                                             const std::array<std::uint64_t, 6>& arguments)
+            {
+                if (!ready_)
+                {
+                    return std::unexpected(SyscallRefusal {0, error_.message});
+                }
+
+                const std::array<std::pair<const char*, std::uint64_t>, 7> registers {
+                    {
+                     {"RIP", gadget_},
+                     {"RAX", number},
+                     {"RDI", arguments[0]},
+                     {"RSI", arguments[1]},
+                     {"RDX", arguments[2]},
+                     {"R10", arguments[3]},
+                     {"R8", arguments[4]},
+                     }
+                };
+                for (const auto& [name, value] : registers)
+                {
+                    if (const auto written = session_.debug.set_register(leader_, name, value); !written)
+                    {
+                        return std::unexpected(SyscallRefusal {0, "cannot set up the remote syscall"});
+                    }
+                }
+                if (const auto written = session_.debug.set_register(leader_, "R9", arguments[5]); !written)
+                {
+                    return std::unexpected(SyscallRefusal {0, "cannot set up the remote syscall"});
+                }
+
+                const auto stop = session_.debug.step(leader_);
+                if (!stop)
+                {
+                    return std::unexpected(SyscallRefusal {0, "the remote syscall did not complete"});
+                }
+
+                const auto after = session_.debug.registers(leader_);
+                if (!after)
+                {
+                    return std::unexpected(SyscallRefusal {0, "cannot read the syscall result"});
+                }
+
+                const auto value = after->rax;
+                if (static_cast<std::int64_t>(value) < 0)
+                {
+                    const auto error = static_cast<int>(-static_cast<std::int64_t>(value));
+                    if (error > 0 && error < 4096)
+                    {
+                        return std::unexpected(SyscallRefusal {error, errno_text(error)});
+                    }
+                    return std::unexpected(SyscallRefusal {0, "the remote syscall failed"});
+                }
+                return value;
+            }
+
+        private:
+            Session&                            session_;
+            process::ProcessId                  leader_ {0};
+            bool                                attached_ {false};
+            bool                                ready_ {false};
+            std::optional<platform::Registers>  saved_;
+            std::uint64_t                       gadget_ {0};
+            std::vector<platform::MappedRegion> maps_;
+            AllocationError                     error_ {};
+        };
+
+        // Runs one syscall in a one-shot attach window; keeps free_memory's
+        // munmap simple now that the runner can batch.
         std::expected<std::uint64_t, AllocationError>
         run_remote_syscall(Session& session, std::uint64_t number, const std::array<std::uint64_t, 6>& arguments)
         {
-            const auto leader_result = session.debug.attach();
-            if (!leader_result)
+            RemoteRunner runner(session);
+            if (!runner.ready())
             {
-                return std::unexpected(
-                    failure(SLOPKIT_ERR_PERMISSION_DENIED, "cannot stop the target to run a syscall"));
+                return std::unexpected(runner.error());
             }
-            const process::ProcessId leader = *leader_result;
-
-            const auto saved = session.debug.registers(leader);
-            if (!saved)
+            const auto result = runner.run(number, arguments);
+            if (!result)
             {
-                (void)session.debug.detach();
-                return std::unexpected(failure(SLOPKIT_ERR_IO, "cannot read the target's registers"));
+                return std::unexpected(as_allocation_error(result.error()));
             }
+            return *result;
+        }
 
-            // Restore the register file and drop the tracer on every exit path.
-            struct Guard
+        // Mapping addresses to try for a `near` hint, closest first: the
+        // page-aligned hint itself, then the top of every free gap below the
+        // hint (closest first), then the bottom of every free gap above it
+        // (closest first). Only gaps that fit `rounded` bytes are considered and
+        // the list is capped at kMaxNearAttempts, deduplicated.
+        std::vector<std::uint64_t>
+        near_candidates(const std::vector<platform::MappedRegion>& maps, std::uint64_t near, std::uint64_t rounded)
+        {
+            const std::uint64_t page      = page_size();
+            const std::uint64_t hint_page = near / page * page;
+
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> used;
+            used.reserve(maps.size());
+            for (const platform::MappedRegion& region : maps)
             {
-                platform::DebugSession&    debug;
-                process::ProcessId         leader;
-                const platform::Registers& saved;
-
-                ~Guard()
+                if (region.end > region.start)
                 {
-                    restore_registers(debug, leader, saved);
-                    (void)debug.detach();
+                    used.emplace_back(region.start, region.end);
                 }
-            } guard {session.debug, leader, *saved};
-
-            const auto gadget = find_syscall_gadget(session);
-            if (!gadget)
-            {
-                return std::unexpected(gadget.error());
             }
+            std::sort(used.begin(), used.end());
 
-            const std::array<std::pair<const char*, std::uint64_t>, 7> registers {
+            std::vector<std::uint64_t> below;
+            std::vector<std::uint64_t> above;
+
+            const auto consider = [&](std::uint64_t gap_start, std::uint64_t gap_end)
+            {
+                if (gap_end <= gap_start || gap_end - gap_start < rounded)
                 {
-                 {"RIP", *gadget},
-                 {"RAX", number},
-                 {"RDI", arguments[0]},
-                 {"RSI", arguments[1]},
-                 {"RDX", arguments[2]},
-                 {"R10", arguments[3]},
-                 {"R8", arguments[4]},
-                 }
+                    return;
+                }
+                // The closest start at or below the hint that still fits here.
+                const std::uint64_t floor_start = std::min(gap_end, hint_page);
+                if (floor_start >= rounded)
+                {
+                    const std::uint64_t candidate = floor_start - rounded;
+                    if (candidate >= gap_start && candidate != 0)
+                    {
+                        below.push_back(candidate);
+                    }
+                }
+                // The closest start at or above the hint that still fits here.
+                const std::uint64_t candidate = std::max(gap_start, hint_page);
+                if (candidate <= gap_end - rounded && candidate >= gap_start)
+                {
+                    above.push_back(candidate);
+                }
             };
-            for (const auto& [name, value] : registers)
+
+            std::uint64_t cursor = 0;
+            for (const auto& [start, end] : used)
             {
-                if (const auto written = session.debug.set_register(leader, name, value); !written)
+                if (start > cursor)
                 {
-                    return std::unexpected(failure(SLOPKIT_ERR_IO, "cannot set up the remote syscall"));
+                    consider(cursor, start);
                 }
+                cursor = std::max(cursor, end);
             }
-            if (const auto written = session.debug.set_register(leader, "R9", arguments[5]); !written)
-            {
-                return std::unexpected(failure(SLOPKIT_ERR_IO, "cannot set up the remote syscall"));
-            }
+            consider(cursor, std::numeric_limits<std::uint64_t>::max());
 
-            const auto stop = session.debug.step(leader);
-            if (!stop)
-            {
-                return std::unexpected(failure(SLOPKIT_ERR_IO, "the remote syscall did not complete"));
-            }
+            std::sort(below.begin(), below.end(), std::greater<> {});
+            std::sort(above.begin(), above.end());
 
-            const auto after = session.debug.registers(leader);
-            if (!after)
+            std::vector<std::uint64_t> candidates;
+            candidates.reserve(kMaxNearAttempts);
+            const auto add = [&](std::uint64_t address)
             {
-                return std::unexpected(failure(SLOPKIT_ERR_IO, "cannot read the syscall result"));
-            }
-
-            const auto value = after->rax;
-            if (static_cast<std::int64_t>(value) < 0)
-            {
-                const auto error = static_cast<int>(-static_cast<std::int64_t>(value));
-                if (error > 0 && error < 4096)
+                if (address == 0 || candidates.size() >= kMaxNearAttempts)
                 {
-                    return std::unexpected(failure(status_for_errno(error), errno_text(error)));
+                    return;
                 }
-                return std::unexpected(failure(SLOPKIT_ERR_IO, "the remote syscall failed"));
+                if (std::find(candidates.begin(), candidates.end(), address) == candidates.end())
+                {
+                    candidates.push_back(address);
+                }
+            };
+            add(hint_page);
+            for (const std::uint64_t address : below)
+            {
+                add(address);
             }
-            return value;
+            for (const std::uint64_t address : above)
+            {
+                add(address);
+            }
+            return candidates;
         }
 
         std::uint64_t round_up_to_page(std::uint64_t size)
@@ -281,30 +466,60 @@ namespace slopkit::plugins::support
         const std::uint64_t base_flags = kMapPrivate | kMapAnonymous;
         const std::uint64_t no_hint    = 0xFFFFFFFFFFFFFFFFull;
 
-        const auto attempt = [&](std::uint64_t hint) -> std::expected<std::uint64_t, AllocationError>
+        RemoteRunner runner(session);
+        if (!runner.ready())
         {
-            const std::uint64_t                flags = base_flags | (hint != 0 ? kMapFixedNoreplace : 0);
-            const std::array<std::uint64_t, 6> arguments {hint != 0 ? hint : 0, rounded, protection, flags, no_hint, 0};
-            return run_remote_syscall(session, static_cast<std::uint64_t>(SYS_mmap), arguments);
+            return std::unexpected(runner.error());
+        }
+
+        const auto mmap_at = [&](std::uint64_t hint,
+                                 std::uint64_t flags) -> std::expected<std::uint64_t, SyscallRefusal>
+        {
+            const std::array<std::uint64_t, 6> arguments {hint, rounded, protection, flags, no_hint, 0};
+            return runner.run(static_cast<std::uint64_t>(SYS_mmap), arguments);
         };
 
-        auto result = attempt(near_address);
-        if (!result && near_address != 0)
+        std::uint64_t address = 0;
+        bool          mapped  = false;
+
+        if (near_address != 0)
         {
-            // A hint the kernel refuses (taken address, no MAP_FIXED_NOREPLACE)
-            // never fails the call while a hint-less mapping succeeds.
-            result = attempt(0);
+            for (const std::uint64_t candidate : near_candidates(runner.maps(), near_address, rounded))
+            {
+                const auto attempt = mmap_at(candidate, base_flags | kMapFixedNoreplace);
+                if (attempt)
+                {
+                    address = *attempt;
+                    mapped  = true;
+                    break;
+                }
+                // A taken or unavailable page just moves the search on; any
+                // other refusal (a permission problem, a bad argument) is the
+                // caller's error.
+                if (attempt.error().error != EEXIST && attempt.error().error != ENOMEM)
+                {
+                    return std::unexpected(as_allocation_error(attempt.error()));
+                }
+            }
         }
-        if (!result)
+
+        if (!mapped)
         {
-            return std::unexpected(result.error());
+            // A hint the plugin cannot honour never fails the call while a
+            // hint-less mapping succeeds.
+            const auto fallback = mmap_at(0, base_flags);
+            if (!fallback)
+            {
+                return std::unexpected(as_allocation_error(fallback.error()));
+            }
+            address = *fallback;
         }
 
         {
             const std::lock_guard lock(session.allocation_mutex);
-            session.allocations[*result] = static_cast<std::size_t>(rounded);
+            session.allocations[address] = static_cast<std::size_t>(rounded);
         }
-        return *result;
+        return address;
     }
 
     std::expected<void, AllocationError> free_memory(Session& session, std::uint64_t address)

@@ -213,6 +213,47 @@ TEST_CASE("linux-proc honours a best-effort allocation hint", "[linux_proc][allo
     REQUIRE(session->free_memory(*hinted).has_value());
 }
 
+TEST_CASE("linux-proc maps near a hint that is already taken", "[linux_proc][alloc]")
+{
+    AllocChild child;
+    REQUIRE(child.pid() != 0);
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(child.pid());
+    REQUIRE(session.has_value());
+    REQUIRE(session->supports_allocation());
+
+    constexpr std::size_t page = 0x1000;
+
+    // Hold a mapping so the page at its base is taken. Hinting it must land in
+    // the closest free page instead of giving up and mapping anywhere.
+    auto taken = session->allocate_memory(page, 0);
+    REQUIRE(taken.has_value());
+    REQUIRE(any_region_at(child.pid(), *taken));
+
+    auto near = session->allocate_memory(page, *taken);
+    REQUIRE(near.has_value());
+    const std::uint64_t address = *near;
+    CHECK((address % page) == 0);
+    CHECK(address != *taken);
+    CHECK(mapped_rwx_at(child.pid(), address));
+
+    // Close enough for the ±2 GB a near jump reaches (in practice a few pages).
+    const std::uint64_t distance = address > *taken ? address - *taken : *taken - address;
+    CHECK(distance <= 0x80000000ull);
+
+    // The hinted region itself is untouched.
+    CHECK(any_region_at(child.pid(), *taken));
+
+    REQUIRE(session->free_memory(address).has_value());
+    REQUIRE(session->free_memory(*taken).has_value());
+}
+
 TEST_CASE("a debug session and an allocation never overlap", "[linux_proc][alloc]")
 {
     AllocChild child;

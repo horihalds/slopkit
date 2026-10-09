@@ -91,12 +91,14 @@ host calls:
   leaves a target frozen.
 - `allocate_memory` / `free_memory` — the ABI 1.6 target-allocation operations,
   left null by a plugin that cannot map memory. `allocate_memory` maps a
-  page-rounded read/write/execute block in the target, as close to a best-effort
-  `near_address` hint as it can (0 = anywhere), and `free_memory` unmaps a block
-  an earlier call of the same session returned; anything else is
-  `SLOPKIT_ERR_NOT_FOUND`. A session whose plugin leaves them null reports
-  `unsupported`, which a script sees as `alloc: the target's plugin cannot
-  allocate memory`.
+  page-rounded read/write/execute block in the target as close to a best-effort
+  `near_address` hint as it can (0 = anywhere): the hinted page when it is free,
+  else the closest free gap below it, then above it, and only then anywhere. A
+  hint the plugin cannot honour is never an error while the mapping succeeds.
+  `free_memory` unmaps a block an earlier call of the same session returned;
+  anything else is `SLOPKIT_ERR_NOT_FOUND`. A session whose plugin leaves them
+  null reports `unsupported`, which a script sees as `alloc: the target's plugin
+  cannot allocate memory`.
 
 `src/plugin/plugin_api.h` is the authoritative contract, and the bundled plugins
 under `src/plugins/` are the worked example. They do not hand-write the vtable:
@@ -262,11 +264,13 @@ target.
   returns the address, publishing it under `name` with `aobscan`'s exact rule — an
   existing label the script owns, else an existing global symbol, else a new label
   — so `local p = alloc("buf", 64)` works straight away with `write`/`read_u8`.
-  `near_address` is a best-effort hint (omitted or `0` means anywhere): a hint the
-  plugin cannot honour never fails the call while the mapping succeeds. The mapping
-  is a plugin capability (ABI 1.6 `allocate_memory`/`free_memory`), so a target
-  whose plugin cannot map memory reports `alloc: the target's plugin cannot
-  allocate memory` rather than pretending.
+  `near_address` is a best-effort hint (omitted or `0` means anywhere): the plugin
+  places the mapping as close to it as it can — the hinted page, else the closest
+  free gap below it, then above it, then anywhere — and a hint the plugin cannot
+  honour never fails the call while the mapping succeeds. The mapping is a plugin
+  capability (ABI 1.6 `allocate_memory`/`free_memory`), so a target whose plugin
+  cannot map memory reports `alloc: the target's plugin cannot allocate memory`
+  rather than pretending.
 - `dealloc(name)` resolves `name` through the same label-then-symbol chain and
   unmaps exactly the mapping an `alloc` of the **same session** created there; a
   foreign address is never unmapped (`dealloc: <name> is not this session's
@@ -276,9 +280,12 @@ target.
   plugin's existing ptrace `DebugSession`: the target's thread group is stopped,
   the syscall is executed with the whole register file saved and restored, and the
   group is resumed, so the target is left exactly as it was found and the only
-  intended change is the new mapping. A debug session and an allocation never
-  overlap — each refuses while the other holds the target. Each `alloc`/`dealloc`
-  writes one `script`-category debug record (address, size, outcome).
+  intended change is the new mapping. The near search runs its few
+  `MAP_FIXED_NOREPLACE` candidates inside that one attach window, and a candidate
+  the kernel refuses only moves the search on. A debug session and an allocation
+  never overlap — each refuses while the other holds the target. Each
+  `alloc`/`dealloc` writes one `script`-category debug record (address, size,
+  outcome).
 - `assemble(address, text[, ...])` turns a newline-separated block of the listing's
   own instructions into bytes with `disasm::assemble_block` and writes them into
   the target in one `MemoryApi::write`. Each instruction is encoded for the
@@ -286,7 +293,9 @@ target.
   `legacy_32`, else `long_64`). Extra arguments expand `text` through Lua's
   `string.format`; a wrong argument type raises, while an instruction the encoder
   rejects (naming its 1-based line), an empty block or a refused write returns
-  `false, reason` and writes nothing, and a success returns `true, size`.
+  `false, reason` and writes nothing, and a success returns `true, size`. A
+  relative-branch target (`jmp`/`call`/`j<cc>`) the encoder cannot reach is
+  rejected with the added cause that a relative branch reaches at most ±2 GB.
 - `script::hook_script` (`src/script/hook_script.{hpp,cpp}`) is the pure, Qt-free
   generator behind the listing's `Hook Instruction...` command. It turns a decoded
   neighbourhood into a `HookTarget` — the AoB pattern and its match offset, the hook
@@ -301,8 +310,9 @@ target.
   argument, so the trampoline stays position-independent after ASLR; and the
   generator proves the rewritten trampoline assembles at the original address with
   `disasm::assemble_block`, refusing when it does not so a broken hook never reaches
-  the editor. Generation reads only the listing's cached bytes — the UI thread never
-  touches the target.
+  the editor. The rendered `activate` also frees and refuses a cave the hint could not
+  place within a near jump's reach before it touches the site. Generation reads only
+  the listing's cached bytes — the UI thread never touches the target.
 - A registered symbol resolves like a module name in any address expression, in
   both the worker's resolve job and the deref-free UI parsers. `expr::evaluate`
   takes the snapshot as an argument and looks a base up as **module name → symbol

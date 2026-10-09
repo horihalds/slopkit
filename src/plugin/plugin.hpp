@@ -93,8 +93,9 @@ namespace slopkit::plugin
         // True when the plugin implements the ABI 1.6 allocation operations.
         [[nodiscard]] bool                                 supports_allocation() const noexcept;
         // Maps `size` bytes (page-rounded) of read/write/execute memory in the
-        // target, as close to `near_address` as it can (0 = anywhere), and
-        // returns the mapping base.
+        // target, as close to `near_address` as it can (0 = anywhere): the hint
+        // itself, else free space below it, else above it, else anywhere. Returns
+        // the mapping base.
         std::expected<std::uint64_t, process::AccessError> allocate_memory(std::size_t   size,
                                                                            std::uint64_t near_address);
         // Unmaps a mapping an earlier allocate_memory of this session returned.

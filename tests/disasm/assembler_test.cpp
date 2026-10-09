@@ -99,6 +99,20 @@ TEST_CASE("branch targets are assembled as absolute addresses", "[disasm]")
     CHECK(encoded("CALL 0x2017") == bytes({0xE8, 0x12, 0x00, 0x00, 0x00}));
 }
 
+TEST_CASE("an out-of-reach branch target names the reach", "[disasm]")
+{
+    const auto jump = slopkit::disasm::assemble("JMP 0x7F0000000000", AssembleContext {.address = kAddress});
+    REQUIRE_FALSE(jump.has_value());
+    CHECK(jump.error() == "the encoder rejected 'JMP 0x7F0000000000' (a relative branch reaches at most ±2 GB)");
+
+    const auto call = slopkit::disasm::assemble("CALL 0x7F0000000000", AssembleContext {.address = kAddress});
+    REQUIRE_FALSE(call.has_value());
+    CHECK(call.error() == "the encoder rejected 'CALL 0x7F0000000000' (a relative branch reaches at most ±2 GB)");
+
+    // A register branch has no reach to exceed and still encodes.
+    CHECK(encoded("JMP RAX") == bytes({0xFF, 0xE0}));
+}
+
 TEST_CASE("memory operands assemble with base, index and displacement", "[disasm]")
 {
     CHECK(encoded("MOV RAX, [RBP+0x10]") == bytes({0x48, 0x8B, 0x45, 0x10}));

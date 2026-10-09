@@ -19,8 +19,10 @@ namespace slopkit::plugins::support
 
     // Maps `size` bytes (page-rounded) of read/write/execute memory inside the
     // session's target and returns the mapping base. `near_address` is a
-    // best-effort hint (0 = anywhere). The mapping is recorded on the session so
-    // free_memory can unmap exactly it.
+    // best-effort hint (0 = anywhere): the mapping goes to the closest page it
+    // can take — the hint itself, else free space below it, else above it, else
+    // anywhere. The mapping is recorded on the session so free_memory can unmap
+    // exactly it.
     std::expected<std::uint64_t, AllocationError>
     allocate_memory(Session& session, std::uint64_t size, std::uint64_t near_address);
 

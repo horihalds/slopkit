@@ -304,6 +304,9 @@ TEST_CASE("the rendered script carries the generated facts", "[script][hook]")
     CHECK(source.find("local kSiteName    = \"hook_site_1a2b40\"") != std::string::npos);
     CHECK(source.find("local kCaveName    = \"hook_cave_1a2b40\"") != std::string::npos);
     CHECK(source.find("aobscan(kSiteName, kPattern, kModule)") != std::string::npos);
+    CHECK(source.find("local kReach       = 0x7FFF0000") != std::string::npos);
+    CHECK(source.find("if span > kReach then") != std::string::npos);
+    CHECK(source.find("out of the site's jump reach") != std::string::npos);
     CHECK(source.find("function activate()") != std::string::npos);
     CHECK(source.find("function deactivate()") != std::string::npos);
     CHECK(source.find("mem.write_bytes(site, kOriginal)") != std::string::npos);
@@ -392,4 +395,52 @@ TEST_CASE("the generated script activates and deactivates against a target", "[s
         CHECK(fixture.fake.bytes[site_offset + offset] == target->original[offset]);
     }
     CHECK(fixture.fake.allocations.empty());
+}
+
+TEST_CASE("activate refuses a cave that is out of the site's reach", "[script][hook]")
+{
+    ScriptFixture fixture(0x200);
+    fixture.fake.put(0x10, {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x83, 0xC4,
+                            0x28, 0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90});
+
+    const Listing listing({0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x83, 0xC4,
+                           0x28, 0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          fixture.fake.address(0x10));
+    REQUIRE(listing.rows.size() >= 4);
+
+    script::HookCandidate candidate;
+    candidate.rows            = listing.rows;
+    candidate.selected        = 0;
+    candidate.module_name     = "test.so";
+    candidate.module_rva_text = "10";
+    candidate.description     = "test.so+10";
+
+    std::string                             reason;
+    const std::optional<script::HookTarget> target = script::build_hook(candidate, reason);
+    REQUIRE(target.has_value());
+
+    // Force the cave tens of TB away, past the ±2 GB a near jump reaches.
+    fixture.fake.forced_allocation = 0x7F0000000000ull;
+
+    const std::string   source = script::render(*target);
+    // The same chunk string keeps the labels across the two runs.
+    const std::string   probe  = source + "\nfunction cave_still_labeled() return label(kCaveName) ~= 0 end\n";
+    const std::uint64_t site   = fixture.fake.address(0x10);
+
+    const script::LifecycleResult activated = fixture.engine.run_lifecycle(probe, "activate");
+    INFO(activated.message);
+    CHECK_FALSE(activated.ok);
+    CHECK(activated.message.find("out of the site's jump reach") != std::string::npos);
+
+    // The site still holds its original bytes and the cave was freed.
+    const auto site_offset = static_cast<std::size_t>(site - kScriptBase);
+    for (std::size_t offset = 0; offset < target->original.size(); ++offset)
+    {
+        CHECK(fixture.fake.bytes[site_offset + offset] == target->original[offset]);
+    }
+    CHECK(fixture.fake.allocations.empty());
+
+    // The cave's label is gone: the probe reports `true` only while it resolves.
+    const script::LifecycleResult labeled = fixture.engine.run_lifecycle(probe, "cave_still_labeled");
+    CHECK_FALSE(labeled.ok);
 }

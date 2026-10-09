@@ -75,7 +75,7 @@ docs that hold the detail behind this map.
 | ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug |
 | ui/panels | Docked panes | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
-| plugins/support | Shared bundled-plugin ABI plumbing | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 remote `mmap`/`munmap`) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
+| plugins/support | Shared bundled-plugin ABI plumbing | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
 | plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
 | plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) | `plugins/wine_proton/wine_proton_plugin.cpp` | `tests/plugin/wine_proton*` | plugin, support, platform |
 

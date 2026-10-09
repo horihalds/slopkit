@@ -239,8 +239,10 @@ extern "C"
            With a non-zero `resume_address` the saved byte at that address is
            restored, the current thread is single-stepped and the trap is
            re-inserted, so a software breakpoint can be stepped over. */
-        slopkit_result (*debug_continue)(
-            void* session, uint64_t resume_address, size_t resume_step_size, slopkit_stop_info* out_stop);
+        slopkit_result (*debug_continue)(void*              session,
+                                         uint64_t           resume_address,
+                                         size_t             resume_step_size,
+                                         slopkit_stop_info* out_stop);
         /* Single-steps one thread and blocks until it stops. */
         slopkit_result (*debug_step)(void* session, uint32_t tid, slopkit_stop_info* out_stop);
         /* Asks a running thread to stop. It does not block: the in-flight
@@ -248,8 +250,10 @@ extern "C"
         slopkit_result (*debug_interrupt)(void* session, uint32_t tid);
         /* The 18 x86-64 registers of a stopped thread, allocated with the host
            allocator and released by the host. */
-        slopkit_result (*debug_get_registers)(
-            void* session, uint32_t tid, slopkit_register_value** out, size_t* out_count);
+        slopkit_result (*debug_get_registers)(void*                    session,
+                                              uint32_t                 tid,
+                                              slopkit_register_value** out,
+                                              size_t*                  out_count);
         slopkit_result (*debug_set_register)(void* session, uint32_t tid, const char* name, uint64_t value);
         /* Arms (`insert` non-zero) or disarms a software trap at a slot the
            host allocates; the original byte is saved by the plugin. */
@@ -280,8 +284,10 @@ extern "C"
         /* Maps `size` bytes (rounded up to the target's page size) in the
            target with at least read/write/execute permission and stores the
            mapping base in *out_address. `near_address` is a best-effort hint
-           (0 = anywhere): a hint the plugin cannot honour is not an error
-           while the mapping succeeds. */
+           (0 = anywhere): the plugin places the mapping as close to it as it
+           can (the hint itself, else free space below it, else above it, else
+           anywhere). A hint the plugin cannot honour is not an error while the
+           mapping succeeds. */
         slopkit_result (*allocate_memory)(void* session, uint64_t size, uint64_t near_address, uint64_t* out_address);
         /* Unmaps the whole mapping an earlier allocate_memory of the same
            session returned at `address`; anything else is SLOPKIT_ERR_NOT_FOUND. */
