@@ -6,6 +6,7 @@
 
 #include "process/access_worker.hpp"
 #include "process/types.hpp"
+#include "script/symbols.hpp"
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
 
@@ -35,7 +36,10 @@ namespace slopkit::ui::dialogs
         Q_OBJECT
 
     public:
-        AddAddressDialog(table::AddressTable& table, process::AccessWorker& worker, QWidget* parent = nullptr);
+        AddAddressDialog(table::AddressTable&   table,
+                         process::AccessWorker& worker,
+                         QWidget*               parent  = nullptr,
+                         script::SymbolTable&   symbols = script::default_symbol_table());
 
         // The module images address expressions resolve against.
         void set_modules(std::vector<process::ModuleInfo> modules);
@@ -54,6 +58,7 @@ namespace slopkit::ui::dialogs
 
         table::AddressTable&          table_;
         process::AccessWorker&        worker_;
+        script::SymbolTable&          symbols_;
         ui::ModuleSpans               spans_;
         std::optional<process::JobId> resolve_job_;
 

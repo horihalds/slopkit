@@ -158,7 +158,13 @@ TEST_CASE("a launch table path opens and skips the remembered auto-load", "[ui]"
     slopkit::process::AttachedTarget target;
     slopkit::plugin::PluginHost      host;
     slopkit::ui::SettingsController  settings {settings_path};
-    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller(), launch_path};
+    slopkit::ui::MainWindow          window {worker,
+                                             target,
+                                             host,
+                                             settings,
+                                             shared_debug_controller(),
+                                             slopkit::script::default_symbol_table(),
+                                             launch_path};
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);

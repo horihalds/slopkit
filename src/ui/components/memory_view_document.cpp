@@ -46,8 +46,9 @@ namespace slopkit::ui::components
 
     MemoryViewDocument::MemoryViewDocument(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
-                                           QObject*                 parent)
-        : QObject(parent), worker_(worker), target_(target)
+                                           QObject*                 parent,
+                                           script::SymbolTable&     symbols)
+        : QObject(parent), worker_(worker), target_(target), symbols_(symbols)
     {
     }
 
@@ -163,6 +164,11 @@ namespace slopkit::ui::components
     const ui::ModuleSpans& MemoryViewDocument::module_spans() const
     {
         return module_spans_;
+    }
+
+    script::SymbolTable& MemoryViewDocument::symbols() const
+    {
+        return symbols_;
     }
 
     std::uint64_t MemoryViewDocument::window_extent() const noexcept

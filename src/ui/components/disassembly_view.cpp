@@ -450,7 +450,8 @@ namespace slopkit::ui::components
 
     bool DisassemblyView::go_to(const QString& text)
     {
-        const auto parsed = ui::parse_address_text(text.toStdString(), document_.module_spans());
+        const auto parsed =
+            ui::parse_address_text(text.toStdString(), document_.module_spans(), document_.symbols().snapshot());
         if (!parsed.has_value())
         {
             return false;

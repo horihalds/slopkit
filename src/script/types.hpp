@@ -57,6 +57,18 @@ namespace slopkit::script
         std::function<std::expected<void, std::string>(std::uint64_t, std::span<const std::byte>)>    write;
     };
 
+    // The symbol seam a script's `rsymbol`/`ssymbol`/`usymbol` write through. The
+    // owner (the access worker) fills these from the shared `SymbolTable`; the
+    // engine never sees the table itself, so it is testable on its own.
+    struct SymbolApi
+    {
+        // Registers `name` or overwrites its value; a non-empty error text
+        // becomes a Lua error.
+        std::function<std::expected<void, std::string>(std::string_view name, std::uint64_t value)> set;
+        // Removes `name`; an unknown name is a no-op.
+        std::function<std::expected<void, std::string>(std::string_view name)>                      remove;
+    };
+
     // Guards a runaway chunk: at most this many VM instructions, and at most
     // this many wall-clock seconds, before the run is aborted as an error.
     struct EngineConfig

@@ -75,7 +75,8 @@ namespace slopkit::ui
             log::warning(log::category::app, "another slopkit instance owns the launch socket");
         }
 
-        window_ = std::make_unique<MainWindow>(access_worker_, target_, host_, settings_, debug_, initial_table_path);
+        window_ = std::make_unique<MainWindow>(
+            access_worker_, target_, host_, settings_, debug_, symbols_, initial_table_path);
         window_->show();
 
         if (server_ != nullptr)

@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 
+#include "script/symbols.hpp"
 #include "support/memory_view_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
 #include "ui/fonts.hpp"
@@ -35,7 +36,8 @@ namespace
         slopkit::process::AccessWorker          worker {access};
         slopkit::process::AttachedTarget        target = attached_target();
         slopkit::ui::components::CodePatchTable patches;
-        DisassemblyDocument                     document {worker, target, patches};
+        slopkit::script::SymbolTable            symbols;
+        DisassemblyDocument                     document {worker, target, patches, nullptr, symbols};
 
         ViewFixture()
         {
@@ -416,8 +418,14 @@ TEST_CASE("the disassembly view goes to absolute, module and module+offset text"
     CHECK(view.go_to(QStringLiteral("app+20")));
     CHECK(view.first_address() == kCode + 0x20);
 
+    REQUIRE(fixture.symbols.set("hp", kCode + 0x30).has_value());
+    CHECK(view.go_to(QStringLiteral("hp")));
+    CHECK(view.first_address() == kCode + 0x30);
+    CHECK(view.go_to(QStringLiteral("hp+10")));
+    CHECK(view.first_address() == kCode + 0x40);
+
     CHECK_FALSE(view.go_to(QStringLiteral("not-an-address")));
-    CHECK(view.first_address() == kCode + 0x20);
+    CHECK(view.first_address() == kCode + 0x40);
 
     view.hide();
 }

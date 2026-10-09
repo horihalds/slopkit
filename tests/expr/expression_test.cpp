@@ -16,6 +16,8 @@ namespace
     using slopkit::expr::parse;
     using slopkit::expr::parse_literal;
     using slopkit::expr::PointerReader;
+    using slopkit::expr::SymbolRef;
+    using slopkit::expr::Symbols;
 
     Expression parse_ok(std::string_view text)
     {
@@ -128,21 +130,21 @@ TEST_CASE("evaluate resolves module bases, literals and pointer chains", "[expr]
 
     SECTION("a module name is looked up case-insensitively")
     {
-        const auto address = evaluate(parse_ok("FireFox-BIN+10"), modules, never_read);
+        const auto address = evaluate(parse_ok("FireFox-BIN+10"), modules, Symbols {}, never_read);
         REQUIRE(address.has_value());
         CHECK(*address == 0x400010);
     }
 
     SECTION("without offsets the base value itself is returned")
     {
-        const auto address = evaluate(parse_ok("libc.so.6"), modules, never_read);
+        const auto address = evaluate(parse_ok("libc.so.6"), modules, Symbols {}, never_read);
         REQUIRE(address.has_value());
         CHECK(*address == 0x7F000000);
     }
 
     SECTION("an unknown module falls back to a literal")
     {
-        const auto address = evaluate(parse_ok("0x7F001234"), modules, never_read);
+        const auto address = evaluate(parse_ok("0x7F001234"), modules, Symbols {}, never_read);
         REQUIRE(address.has_value());
         CHECK(*address == 0x7F001234);
     }
@@ -152,7 +154,7 @@ TEST_CASE("evaluate resolves module bases, literals and pointer chains", "[expr]
         const std::vector<ModuleRef> numeric {
             {"deadbeef", 0x1234}
         };
-        const auto address = evaluate(parse_ok("deadbeef"), numeric, never_read);
+        const auto address = evaluate(parse_ok("deadbeef"), numeric, Symbols {}, never_read);
         REQUIRE(address.has_value());
         CHECK(*address == 0x1234);
     }
@@ -174,7 +176,7 @@ TEST_CASE("evaluate resolves module bases, literals and pointer chains", "[expr]
             return std::unexpected(std::string {"unexpected read"});
         };
 
-        const auto address = evaluate(parse_ok("firefox-bin+0d+5d+44"), modules, reader);
+        const auto address = evaluate(parse_ok("firefox-bin+0d+5d+44"), modules, Symbols {}, reader);
         REQUIRE(address.has_value());
         CHECK(*address == 0x2000 + 0x44);
 
@@ -185,7 +187,7 @@ TEST_CASE("evaluate resolves module bases, literals and pointer chains", "[expr]
 
     SECTION("an unknown base reports the base failure")
     {
-        const auto address = evaluate(parse_ok("foo+10"), modules, never_read);
+        const auto address = evaluate(parse_ok("foo+10"), modules, Symbols {}, never_read);
         REQUIRE_FALSE(address.has_value());
         CHECK(address.error().failed_level == 0);
         CHECK(address.error().message.find("unknown module or literal 'foo'") != std::string::npos);
@@ -202,7 +204,7 @@ TEST_CASE("evaluate resolves module bases, literals and pointer chains", "[expr]
             return 0x2000;
         };
 
-        const auto address = evaluate(parse_ok("firefox-bin+0d+5d+44"), modules, reader);
+        const auto address = evaluate(parse_ok("firefox-bin+0d+5d+44"), modules, Symbols {}, reader);
         REQUIRE_FALSE(address.has_value());
         CHECK(address.error().failed_level == 1);
         CHECK(address.error().message.find("cannot read pointer at level 1") != std::string::npos);
@@ -219,9 +221,115 @@ TEST_CASE("evaluate resolves module bases, literals and pointer chains", "[expr]
             return std::unexpected(std::string {"read failed"});
         };
 
-        const auto address = evaluate(parse_ok("firefox-bin+0d+5d+44"), modules, reader);
+        const auto address = evaluate(parse_ok("firefox-bin+0d+5d+44"), modules, Symbols {}, reader);
         REQUIRE_FALSE(address.has_value());
         CHECK(address.error().failed_level == 2);
         CHECK(address.error().message.find("cannot read pointer at level 2") != std::string::npos);
+    }
+}
+
+TEST_CASE("evaluate resolves symbol bases", "[expr]")
+{
+    const std::vector<ModuleRef> modules {
+        {"firefox-bin",   0x400000},
+        {  "libc.so.6", 0x7F000000},
+    };
+    const std::vector<SymbolRef> symbols {
+        {      "hp", 0x1337},
+        {"deadbeef", 0xABCD},
+        {    "zero",      0},
+    };
+
+    PointerReader never_read = [](std::uint64_t) -> std::expected<std::uint64_t, std::string>
+    {
+        return std::unexpected(std::string {"unexpected read"});
+    };
+
+    SECTION("a symbol name resolves to its stored value")
+    {
+        const auto address = evaluate(parse_ok("hp"), modules, symbols, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0x1337);
+    }
+
+    SECTION("a symbol is matched case-insensitively")
+    {
+        const auto address = evaluate(parse_ok("HP"), modules, symbols, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0x1337);
+    }
+
+    SECTION("an offset is added after the symbol base")
+    {
+        const auto address = evaluate(parse_ok("hp + 0x10"), modules, symbols, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0x1347);
+    }
+
+    SECTION("a decimal offset is added after the symbol base")
+    {
+        const auto address = evaluate(parse_ok("hp + #8"), modules, symbols, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0x133F);
+    }
+
+    SECTION("a pointer chain dereferences through the reader after the symbol base")
+    {
+        std::vector<std::uint64_t> reads;
+        PointerReader              reader = [&reads](std::uint64_t address) -> std::expected<std::uint64_t, std::string>
+        {
+            reads.push_back(address);
+            if (address == 0x1337 + 0x0D)
+            {
+                return 0x1000;
+            }
+            return std::unexpected(std::string {"unexpected read"});
+        };
+
+        const auto address = evaluate(parse_ok("hp+0d+5d"), modules, symbols, reader);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0x105D);
+
+        REQUIRE(reads.size() == 1);
+        CHECK(reads.at(0) == 0x1337 + 0x0D);
+    }
+
+    SECTION("a symbol named like hex text wins over the bare-hex reading")
+    {
+        const auto address = evaluate(parse_ok("deadbeef"), modules, symbols, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0xABCD);
+    }
+
+    SECTION("a zero-valued symbol resolves to zero, not an error")
+    {
+        const auto address = evaluate(parse_ok("zero"), modules, symbols, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0);
+    }
+
+    SECTION("a module name still beats a colliding symbol")
+    {
+        const std::vector<SymbolRef> colliding {
+            {"firefox-bin", 0x9999}
+        };
+        const auto address = evaluate(parse_ok("firefox-bin"), modules, colliding, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0x400000);
+    }
+
+    SECTION("an unknown name keeps the existing base failure")
+    {
+        const auto address = evaluate(parse_ok("nope+10"), modules, symbols, never_read);
+        REQUIRE_FALSE(address.has_value());
+        CHECK(address.error().failed_level == 0);
+        CHECK(address.error().message.find("unknown module or literal 'nope'") != std::string::npos);
+    }
+
+    SECTION("an empty symbol list changes nothing")
+    {
+        const auto address = evaluate(parse_ok("firefox-bin+10"), modules, Symbols {}, never_read);
+        REQUIRE(address.has_value());
+        CHECK(*address == 0x400010);
     }
 }

@@ -50,8 +50,11 @@ namespace slopkit::ui::dialogs
         }
     } // namespace
 
-    AddAddressDialog::AddAddressDialog(table::AddressTable& table, process::AccessWorker& worker, QWidget* parent)
-        : QDialog(parent), table_(table), worker_(worker)
+    AddAddressDialog::AddAddressDialog(table::AddressTable&   table,
+                                       process::AccessWorker& worker,
+                                       QWidget*               parent,
+                                       script::SymbolTable&   symbols)
+        : QDialog(parent), table_(table), worker_(worker), symbols_(symbols)
     {
         setWindowTitle(tr("Add Address"));
         setMinimumWidth(360);
@@ -183,6 +186,7 @@ namespace slopkit::ui::dialogs
             const auto resolved =
                 expr::evaluate(*expression,
                                ui::module_refs(spans_),
+                               symbols_.snapshot(),
                                [](std::uint64_t) -> std::expected<std::uint64_t, std::string>
                                {
                                    return std::unexpected(std::string {"a pointer read was required"});

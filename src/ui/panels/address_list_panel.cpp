@@ -621,6 +621,9 @@ namespace slopkit::ui::panels
 
         if (ran.run.ok)
         {
+            // A script may have registered a symbol, so re-resolve at once
+            // instead of waiting for a module-map change.
+            force_resolve_ = true;
             set_status(ran.run.returned.empty() ? tr("Script ok.")
                                                 : tr("Script returned %1.").arg(to_qstring(ran.run.returned)),
                        false);
@@ -725,6 +728,9 @@ namespace slopkit::ui::panels
 
         if (outcome.ok)
         {
+            // A script may have registered a symbol, so re-resolve at once
+            // instead of waiting for a module-map change.
+            force_resolve_ = true;
             if (row.has_value())
             {
                 table_.entries()[*row].active = wanted;

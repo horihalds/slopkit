@@ -11,6 +11,7 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
+#include "script/symbols.hpp"
 #include "ui/access_watch.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/code_patch.hpp"
@@ -60,7 +61,8 @@ namespace slopkit::ui::dialogs
         MemoryViewerDialog(process::AccessWorker&   worker,
                            process::AttachedTarget& target,
                            debug::Controller&       debug,
-                           QWidget*                 parent = nullptr);
+                           QWidget*                 parent  = nullptr,
+                           script::SymbolTable&     symbols = script::default_symbol_table());
 
         // Opens the viewer at `address`, seeding both panes' cursors.
         void set_address(std::uint64_t address);

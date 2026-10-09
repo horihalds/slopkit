@@ -89,7 +89,7 @@ namespace slopkit::process
         }
     } // namespace
 
-    AccessWorker::AccessWorker(ProcessAccess& access) : access_(access)
+    AccessWorker::AccessWorker(ProcessAccess& access, script::SymbolTable& symbols) : access_(access), symbols_(symbols)
     {
         // A std::jthread may run its start routine before its constructor
         // returns, so run() must not be reachable while the members it touches
@@ -625,7 +625,7 @@ namespace slopkit::process
         // One engine per session: its Lua state, globals included, is reused by
         // every run against this target and dropped with the session.
         script_pointer_size_ = 8;
-        engine_.emplace(memory_api());
+        engine_.emplace(memory_api(), symbol_api());
         active_scripts_.clear();
         attached_ = true;
         return result;
@@ -840,6 +840,33 @@ namespace slopkit::process
             return {};
         };
         return api;
+    }
+
+    script::SymbolApi AccessWorker::symbol_api()
+    {
+        script::SymbolApi api = symbols_.api();
+        // Wrap the table's closures so each write is traced under the `script`
+        // category; a rejected name is reported by the engine, not here.
+        script::SymbolApi logging;
+        logging.set = [inner = api.set](std::string_view name, std::uint64_t value) -> std::expected<void, std::string>
+        {
+            auto result = inner(name, value);
+            if (result)
+            {
+                log::debug(log::category::script, std::format("symbol '{}' = {:#x}", name, value));
+            }
+            return result;
+        };
+        logging.remove = [inner = api.remove](std::string_view name) -> std::expected<void, std::string>
+        {
+            auto result = inner(name);
+            if (result)
+            {
+                log::debug(log::category::script, std::format("symbol '{}' removed", name));
+            }
+            return result;
+        };
+        return logging;
     }
 
     ScriptResult AccessWorker::do_script(const Request& request)
@@ -1074,7 +1101,10 @@ namespace slopkit::process
         };
 
         result.items.reserve(request.resolve_items.size());
-        std::size_t failed = 0;
+        std::size_t                        failed  = 0;
+        // One snapshot for the whole batch: the symbols are resolved on this
+        // thread while scripts may write the table on it, guarded by the table.
+        const std::vector<expr::SymbolRef> symbols = symbols_.snapshot();
         for (const auto& item : request.resolve_items)
         {
             ResolveItemResult entry;
@@ -1089,8 +1119,8 @@ namespace slopkit::process
                 continue;
             }
 
-            const auto resolved =
-                expr::evaluate(*expression, request.module_refs, reader, expr::Options {.pointer_size = pointer_size});
+            const auto resolved = expr::evaluate(
+                *expression, request.module_refs, symbols, reader, expr::Options {.pointer_size = pointer_size});
             if (resolved)
             {
                 entry.address = *resolved;

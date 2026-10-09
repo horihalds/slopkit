@@ -542,7 +542,8 @@ namespace slopkit::table
                     // expression is left at 0 for the panel's resolve pass.
                     if (expression->pointer_levels() == 0)
                     {
-                        const auto resolved = expr::evaluate(*expression, expr::Modules {}, no_pointer_reader);
+                        const auto resolved =
+                            expr::evaluate(*expression, expr::Modules {}, expr::Symbols {}, no_pointer_reader);
                         if (resolved)
                         {
                             entry->address = *resolved;

@@ -15,14 +15,14 @@ docs that hold the detail behind this map.
 | `src/core` | Shared logging (`log.hpp`, `log_categories.hpp`) and version string |
 | `src/debug` | Debugger core: session controller (split over `controller*.cpp`), worker, backends, breakpoints, step-over, access watch |
 | `src/disasm` | Zydis-backed instruction decoding and assembling |
-| `src/expr` | Address expression parsing (`base + offset...`) and module/literal resolution |
+| `src/expr` | Address expression parsing (`base + offset...`) and module/symbol/literal resolution |
 | `src/platform/linux` | Linux primitives (ptrace, procfs, memory, modules, desktop entries, Wine) shared with plugins |
 | `src/plugin` | Plugin C ABI, host-side facade and loader/discovery |
 | `src/plugins/{support,linux_proc,wine_proton}` | Shared plugin ABI plumbing and the two bundled plugins |
 | `src/process` | Access seam, `AccessWorker`, plugin access, attachment metadata, shared types |
 | `src/sandbox` | Standalone practice-target binary (`slopkit-sandbox`) |
 | `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
-| `src/script` | Lua scripting engine: a sol2 state, the `mem` API and the type-token codec |
+| `src/script` | Lua scripting engine: a sol2 state, the `mem` API, the type-token codec and the process-wide symbol registry |
 | `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
 | `src/ui` | Qt main window and shared UI infrastructure |
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, input boxes, message box, window geometry keeper, window centerer) |
@@ -64,9 +64,9 @@ docs that hold the detail behind this map.
 | process | Access seam, worker, attachment metadata | `process/access.hpp` (`ProcessAccess`), `access_worker.hpp` (`AccessWorker`), `attachment.hpp` (`AttachedTarget`), `plugin_access.hpp`, `types.hpp` | `tests/process/*` | plugin |
 | scan | Multithreaded value scanner | `scan/engine.hpp` (`ScanEngine`), `matcher.hpp`, `source.hpp`, `value.hpp`, `types.hpp` | `tests/scan/*` | process, expr |
 | table | Address table, `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, libzip |
-| expr | Address expression parsing/resolution | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | process |
+| expr | Address expression parsing/resolution; a dependency-free leaf (it includes nothing outside `expr/`) | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | — |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
-| script | Lua scripting engine over the system Lua and sol2 | `script/engine.hpp` (`Engine`, `run_lifecycle`), `script/types.hpp` (`RunResult`, `LifecycleResult`), `script/codec.hpp` | `tests/script/*` | Lua, sol2 |
+| script | Lua scripting engine over the system Lua and sol2 | `script/engine.hpp` (`Engine`, `run_lifecycle`), `script/types.hpp` (`RunResult`, `LifecycleResult`, `SymbolApi`), `script/symbols.hpp` (`SymbolTable`), `script/codec.hpp` | `tests/script/*` | Lua, sol2, expr |
 | debug | Debugger core: controller, worker, backends, breakpoints | `debug/controller.hpp` (`Controller`; `controller*.cpp` holds the per-concern definitions), `worker.hpp`, `backend.hpp`, `plugin_backend.hpp`, `breakpoints.hpp`, `step_over.hpp`, `access_watch.hpp` | `tests/debug/*` | process, plugin, platform |
 | platform/linux | Linux primitives shared with plugins | `platform/linux/debug_session.hpp` (`DebugSession`), `ptrace.hpp`, `procfs.hpp`, `memory.hpp`, `process_control.hpp`, `module_entry.hpp`, `proc_text.hpp`, `desktop_entry.hpp`, `wine.hpp` | `tests/platform/linux/*` | core |
 | sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
@@ -89,7 +89,7 @@ docs that hold the detail behind this map.
 - Live values: `ui::LiveValues` batches every registered `LiveSurface` request into one worker job per interval.
 - Debug: `debug::Controller` → `debug::Worker` job thread → `debug::PluginBackend` → plugin `debug_*` → `platform::DebugSession`/`ptrace`; `drain()` applies results; start is gated by `ui::DebugSessionGate`.
 - Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; a drag reorders rows through `AddressTable::move`; `.skt` is a ZIP archive (`table/serializer.cpp` over `table/table_zip.cpp`), opened via `MainWindow::open_table_request()`.
-- Scripts: the address list's `Run Script` and a script row's `Active` checkbox submit `AccessWorker::submit_script`; the checkbox passes the `activate`/`deactivate` hook name and the worker calls `script::Engine::run_lifecycle`. The worker's `script::Engine` (one per attached session) runs the chunk with `print` captured, logs the printed lines under the `script` category and reports the outcome in the status line. It also deactivates a still-active script — running its `deactivate` hook and ignoring the verdict — when it stops, before the session is released.
+- Scripts: the address list's `Run Script` and a script row's `Active` checkbox submit `AccessWorker::submit_script`; the checkbox passes the `activate`/`deactivate` hook name and the worker calls `script::Engine::run_lifecycle`. The worker's `script::Engine` (one per attached session) runs the chunk with `print` captured, logs the printed lines under the `script` category and reports the outcome in the status line. It also deactivates a still-active script — running its `deactivate` hook and ignoring the verdict — when it stops, before the session is released. The `rsymbol`/`ssymbol`/`usymbol` globals write a process-wide `script::SymbolTable` (owned by `ui::App`); the worker takes a snapshot in its resolve job and every typed-address parser resolves a base as module → symbol → literal, so a symbol survives a detach and is lost only when slopkit exits.
 
 ## 4. Conventions
 

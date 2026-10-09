@@ -185,6 +185,24 @@ target.
   is captured into `RunResult::output` — bounded by `kMaxOutputLines` and
   `kMaxOutputLine` — instead of writing to stdout, and a scalar `return` is
   rendered into `RunResult::returned`.
+- A chunk also publishes **symbols** through `rsymbol(name[, value])` (registers
+  `name`, with `value` or `0`), `ssymbol(name, value)` (sets the value, registering
+  the name when it is new) and `usymbol(name)` (removes it). Names are
+  case-insensitive — `HP` and `hp` are one entry, whose first spelling is kept —
+  must be a non-blank string without `+` and not starting with `#`, and the value
+  must be an integral number in `0 .. 2^64-1`. A bad argument raises a Lua error
+  naming the function, which surfaces as `RunResult::error` exactly like a failed
+  `mem` access. The registry (`script::SymbolTable`) is process-wide and
+  mutex-guarded: the worker writes it while the UI reads a snapshot, so a symbol
+  survives a detach and is lost only when slopkit exits, and it is never written to
+  a `.skt` file.
+- A registered symbol resolves like a module name in any address expression, in
+  both the worker's resolve job and the deref-free UI parsers. `expr::evaluate`
+  takes the snapshot as an argument and looks a base up as **module name → symbol
+  name → literal**, so a loaded image is never shadowed while a symbol literally
+  named `deadbeef` still beats the bare-hex reading; an unknown name keeps the
+  existing base failure. `expr` stays a leaf module — `script` includes
+  `expr/resolver.hpp`, not the other way round.
 - Besides `run(chunk)`, the engine exposes `run_lifecycle(chunk, function)`, which
   runs the chunk and then calls its named global (`activate` / `deactivate`),
   returning a `script::LifecycleResult`. The chunk runs first, so a chunk error

@@ -116,15 +116,20 @@ namespace slopkit::ui
 
     // A deref-free address: a bare hex value (`0x…` is also accepted, `#…` is
     // decimal), a bare module name (resolved case-insensitively to its base,
-    // winning over the hex reading), or a `<module>+<RVA>` /
+    // winning over the hex reading), a bare symbol name (resolved the same way,
+    // after the module lookup), or a `<module>+<RVA>` / `<symbol>+<offset>` /
     // `<literal>+<offset>` expression. A pointer chain (two or more offsets)
     // yields nothing - it must go through the access worker.
-    [[nodiscard]] std::optional<std::uint64_t> parse_address_text(std::string_view text, const ModuleSpans& spans);
+    [[nodiscard]] std::optional<std::uint64_t>
+    parse_address_text(std::string_view text, const ModuleSpans& spans, expr::Symbols symbols = {});
 
     // The module map in the form the expression resolver expects.
     [[nodiscard]] std::vector<expr::ModuleRef> module_refs(const ModuleSpans& spans);
 
     // The base of the module named `name` (case-insensitive), or nothing.
     [[nodiscard]] std::optional<std::uint64_t> module_base(const ModuleSpans& spans, std::string_view name);
+
+    // The value of the symbol named `name` (case-insensitive), or nothing.
+    [[nodiscard]] std::optional<std::uint64_t> symbol_value(expr::Symbols symbols, std::string_view name);
 
 } // namespace slopkit::ui

@@ -18,6 +18,7 @@
 #include "debug/breakpoints.hpp"
 #include "debug/worker.hpp"
 #include "process/types.hpp"
+#include "script/symbols.hpp"
 #include "ui/address_format.hpp"
 
 namespace slopkit::debug
@@ -48,7 +49,9 @@ namespace slopkit::debug
             error,
         };
 
-        explicit Controller(DebugBackend& backend, QObject* parent = nullptr);
+        explicit Controller(DebugBackend&        backend,
+                            script::SymbolTable& symbols = script::default_symbol_table(),
+                            QObject*             parent  = nullptr);
         ~Controller() override;
 
         Controller(const Controller&)            = delete;
@@ -159,6 +162,7 @@ namespace slopkit::debug
         [[nodiscard]] QString       failure_text(process::AccessError error) const;
 
         DebugBackend&                backend_;
+        script::SymbolTable&         symbols_;
         Worker                       worker_;
         BreakpointTable              breakpoints_;
         ui::ModuleSpans              modules_;

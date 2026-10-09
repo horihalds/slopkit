@@ -29,8 +29,11 @@ namespace slopkit::expr
         }
     } // namespace
 
-    std::expected<std::uint64_t, ResolveError>
-    evaluate(const Expression& expression, Modules modules, const PointerReader& reader, Options /*options*/)
+    std::expected<std::uint64_t, ResolveError> evaluate(const Expression&    expression,
+                                                        Modules              modules,
+                                                        Symbols              symbols,
+                                                        const PointerReader& reader,
+                                                        Options /*options*/)
     {
         std::uint64_t address    = 0;
         bool          base_found = false;
@@ -41,6 +44,21 @@ namespace slopkit::expr
                 address    = module.base;
                 base_found = true;
                 break;
+            }
+        }
+        // A symbol resolves after the module map (a loaded image can never be
+        // shadowed) and before the literal parse (a symbol wins over the bare-hex
+        // reading of a name like `deadbeef`).
+        if (!base_found)
+        {
+            for (const auto& symbol : symbols)
+            {
+                if (equals_case_insensitive(symbol.name, expression.base))
+                {
+                    address    = symbol.value;
+                    base_found = true;
+                    break;
+                }
             }
         }
         if (!base_found)

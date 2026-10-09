@@ -15,6 +15,7 @@
 #include "plugin/plugin_host.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
+#include "script/symbols.hpp"
 #include "table/address_table.hpp"
 #include "ui/access_watch.hpp"
 #include "ui/dialogs/table_conflict.hpp"
@@ -79,6 +80,7 @@ namespace slopkit::ui
                    plugin::PluginHost&      host,
                    SettingsController&      settings,
                    debug::Controller&       debug,
+                   script::SymbolTable&     symbols            = script::default_symbol_table(),
                    const QString&           initial_table_path = QString(),
                    QWidget*                 parent             = nullptr);
         ~MainWindow() override;
@@ -173,6 +175,7 @@ namespace slopkit::ui
         plugin::PluginHost&      host_;
         SettingsController&      settings_;
         debug::Controller&       debug_;
+        script::SymbolTable&     symbols_;
 
         // The table path passed on the command line; empty when none.
         QString initial_table_path_;

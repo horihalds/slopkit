@@ -1180,3 +1180,85 @@ function deactivate() print("must not run") return true end
 
     CHECK(category_records(records, "script").empty());
 }
+
+TEST_CASE("a script's symbols resolve in a later resolve job", "[process]")
+{
+    GatedAccess                  access {false};
+    slopkit::script::SymbolTable symbols;
+    AccessWorker                 worker {access, symbols};
+    REQUIRE(attach_target(worker));
+
+    REQUIRE(run_script(worker, R"(rsymbol("hp", 0x1337))").run.ok);
+    REQUIRE(symbols.lookup("hp") == 0x1337);
+
+    ResolveResult batch;
+    worker.submit_resolve_expressions(worker.next_job_id(),
+                                      std::vector<ResolveRequest> {
+                                          {.key = 1, .expression = "hp + 4"}
+    },
+                                      std::vector<slopkit::expr::ModuleRef> {},
+                                      8,
+                                      [&](JobResult&& result)
+                                      {
+                                          batch = std::get<ResolveResult>(std::move(result));
+                                      });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return batch.items.size() == 1;
+                 }));
+    REQUIRE(batch.items[0].address.has_value());
+    CHECK(*batch.items[0].address == 0x133B);
+
+    // A second run changes the value the next resolve job sees.
+    REQUIRE(run_script(worker, R"(ssymbol("hp", 0x2000))").run.ok);
+    ResolveResult second;
+    worker.submit_resolve_expressions(worker.next_job_id(),
+                                      std::vector<ResolveRequest> {
+                                          {.key = 1, .expression = "hp"}
+    },
+                                      std::vector<slopkit::expr::ModuleRef> {},
+                                      8,
+                                      [&](JobResult&& result)
+                                      {
+                                          second = std::get<ResolveResult>(std::move(result));
+                                      });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return second.items.size() == 1;
+                 }));
+    REQUIRE(second.items[0].address.has_value());
+    CHECK(*second.items[0].address == 0x2000);
+}
+
+TEST_CASE("the symbol table survives a detach", "[process]")
+{
+    GatedAccess                  access {false};
+    slopkit::script::SymbolTable symbols;
+    AccessWorker                 worker {access, symbols};
+    REQUIRE(attach_target(worker));
+
+    REQUIRE(run_script(worker, R"(rsymbol("hp", 0x55) rsymbol("mp", 0x66))").run.ok);
+
+    bool detached = false;
+    worker.submit_detach(worker.next_job_id(),
+                         [&](JobResult&&)
+                         {
+                             detached = true;
+                         });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return detached;
+                 }));
+
+    CHECK(symbols.lookup("hp") == 0x55);
+    CHECK(symbols.lookup("mp") == 0x66);
+
+    // A re-attach builds a fresh engine but keeps the names.
+    REQUIRE(attach_target(worker));
+    REQUIRE(run_script(worker, R"(ssymbol("hp", 0x77))").run.ok);
+    CHECK(symbols.lookup("hp") == 0x77);
+    CHECK(symbols.lookup("mp") == 0x66);
+}

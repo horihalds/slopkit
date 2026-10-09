@@ -51,9 +51,10 @@ namespace slopkit::ui::dialogs
     MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
                                            debug::Controller&       debug,
-                                           QWidget*                 parent)
+                                           QWidget*                 parent,
+                                           script::SymbolTable&     symbols)
         : QDialog(parent), worker_(worker), target_(target), debug_(debug), gate_(debug, target, *this, this),
-          document_(worker, target, this), disassembly_document_(worker, target, patches_, this)
+          document_(worker, target, this, symbols), disassembly_document_(worker, target, patches_, this, symbols)
     {
         setWindowTitle(tr("Memory Viewer"));
         resize(1280, 960);
@@ -615,6 +616,12 @@ namespace slopkit::ui::dialogs
             return expression.error().message;
         }
         if (ui::module_base(pane_module_spans(target), expression->base).has_value())
+        {
+            return {};
+        }
+        // A symbol resolves like a module name, so the prompt accepts it too;
+        // both panes share the one table.
+        if (ui::symbol_value(document_.symbols().snapshot(), expression->base).has_value())
         {
             return {};
         }

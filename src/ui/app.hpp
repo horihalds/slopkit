@@ -11,6 +11,7 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/plugin_access.hpp"
+#include "script/symbols.hpp"
 #include "ui/completion_notifier.hpp"
 #include "ui/main_window.hpp"
 #include "ui/settings.hpp"
@@ -37,6 +38,11 @@ namespace slopkit::ui
         int run(int argc, char** argv, const QString& initial_table_path = QString());
 
     private:
+        // The process-wide symbol registry scripts publish into. Declared first
+        // so it outlives the worker, the controller and the window that hold a
+        // reference to it.
+        script::SymbolTable symbols_;
+
         plugin::PluginHost    host_;
         process::PluginAccess access_ {host_};
 
@@ -44,12 +50,12 @@ namespace slopkit::ui
         // controller that owns its worker. Declared before the window so the
         // window and its panes are destroyed first.
         debug::PluginBackend debug_backend_ {host_};
-        debug::Controller    debug_ {debug_backend_};
+        debug::Controller    debug_ {debug_backend_, symbols_};
 
         // Declared before the workers so it outlives the threads that call its
         // post().
         CompletionNotifier      notifier_;
-        process::AccessWorker   access_worker_ {access_};
+        process::AccessWorker   access_worker_ {access_, symbols_};
         process::AttachedTarget target_;
         SettingsController      settings_;
 

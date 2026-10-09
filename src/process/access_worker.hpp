@@ -20,6 +20,7 @@
 #include "process/access.hpp"
 #include "process/types.hpp"
 #include "script/engine.hpp"
+#include "script/symbols.hpp"
 #include "script/types.hpp"
 
 namespace slopkit::process
@@ -192,7 +193,7 @@ namespace slopkit::process
     class AccessWorker
     {
     public:
-        explicit AccessWorker(ProcessAccess& access);
+        explicit AccessWorker(ProcessAccess& access, script::SymbolTable& symbols = script::default_symbol_table());
         ~AccessWorker();
 
         AccessWorker(const AccessWorker&)            = delete;
@@ -334,12 +335,16 @@ namespace slopkit::process
         // The seam a script sees the target through. Its lambdas read the
         // worker's current session, so one engine stays valid across attaches.
         script::MemoryApi       memory_api();
+        // The seam a script publishes symbols through, over the shared symbol
+        // table; register/set/remove are logged under the `script` category.
+        script::SymbolApi       symbol_api();
         SuspendResult           do_suspend(const Request& request);
         SuspendResult           do_resume(const Request& request);
         AttachResult            do_detach();
         ResolveResult           do_resolve(const Request& request);
 
         ProcessAccess&                access_;
+        script::SymbolTable&          symbols_;
         std::mutex                    mutex_;
         std::condition_variable       cv_;
         std::deque<Request>           requests_;

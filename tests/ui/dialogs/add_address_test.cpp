@@ -26,6 +26,7 @@
 #include "process/access_worker.hpp"
 #include "process/types.hpp"
 #include "scan/types.hpp"
+#include "script/symbols.hpp"
 #include "support/fake_process.hpp"
 #include "table/address_table.hpp"
 #include "ui/components/widgets.hpp"
@@ -201,6 +202,34 @@ TEST_CASE("the add address dialog accepts a module expression and stores it", "[
     REQUIRE(table.size() == 1);
     CHECK(table.entries().front().expression == "APP+0x10");
     CHECK(table.entries().front().address == 0x100010);
+}
+
+TEST_CASE("the add address dialog resolves a symbol name", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    slopkit::script::SymbolTable   symbols;
+    REQUIRE(symbols.set("hp", 0x1337).has_value());
+    AddAddressDialog dialog {table, worker, nullptr, symbols};
+
+    auto* address = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* add     = button_labelled(dialog, QStringLiteral("Add"));
+    REQUIRE(address != nullptr);
+    REQUIRE(add != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+
+    address->setText(QStringLiteral("hp + 8"));
+    add->click();
+
+    CHECK_FALSE(dialog.isVisible());
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries().front().expression == "hp + 8");
+    CHECK(table.entries().front().address == 0x133F);
 }
 
 TEST_CASE("a pointer-chain expression resolves through the worker before the entry is added", "[ui]")

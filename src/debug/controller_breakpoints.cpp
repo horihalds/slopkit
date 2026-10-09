@@ -23,7 +23,7 @@ namespace slopkit::debug
     std::expected<std::uint64_t, std::string>
     Controller::add_breakpoint(std::string expression, Kind kind, std::size_t size)
     {
-        const auto address = ui::parse_address_text(expression, modules_);
+        const auto address = ui::parse_address_text(expression, modules_, symbols_.snapshot());
         if (!address)
         {
             return std::unexpected(std::string {"cannot resolve the address"});

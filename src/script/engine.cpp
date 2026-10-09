@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -46,6 +47,7 @@ namespace slopkit::script
     struct Engine::Impl
     {
         MemoryApi    api;
+        SymbolApi    symbols;
         EngineConfig config;
         sol::state   lua;
 
@@ -53,13 +55,15 @@ namespace slopkit::script
         std::size_t                           ticks {0};
         std::chrono::steady_clock::time_point deadline;
 
-        Impl(MemoryApi memory_api, EngineConfig engine_config) : api(std::move(memory_api)), config(engine_config)
+        Impl(MemoryApi memory_api, SymbolApi symbol_api, EngineConfig engine_config)
+            : api(std::move(memory_api)), symbols(std::move(symbol_api)), config(engine_config)
         {
             lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::table, sol::lib::math);
             // The instruction hook finds its Impl through the state's extra space.
             *static_cast<Impl**>(lua_getextraspace(lua.lua_state())) = this;
             install_print();
             install_memory();
+            install_symbols();
         }
 
         // The VM-instruction hook that turns the instruction budget and the
@@ -191,6 +195,105 @@ namespace slopkit::script
                              });
         }
 
+        // Turns a Lua value into a symbol value: `rsymbol` with no argument means
+        // 0, and anything else must be an integral number in `0 .. 2^64-1`.
+        std::uint64_t value_argument(const std::string& function, const sol::optional<sol::object>& value)
+        {
+            if (!value)
+            {
+                return 0;
+            }
+            if (value->get_type() != sol::type::number)
+            {
+                throw std::runtime_error(function + ": the value must be a 64-bit unsigned integer");
+            }
+
+            lua_State* state = lua.lua_state();
+            value->push(state);
+            bool          valid  = false;
+            std::uint64_t result = 0;
+            if (lua_isinteger(state, -1))
+            {
+                const lua_Integer integer = lua_tointeger(state, -1);
+                valid                     = integer >= 0;
+                result                    = static_cast<std::uint64_t>(integer);
+            }
+            else
+            {
+                const double number = lua_tonumber(state, -1);
+                valid               = std::isfinite(number) && number >= 0.0 && number < 18446744073709551616.0
+                                   && std::floor(number) == number;
+                result              = static_cast<std::uint64_t>(number);
+            }
+            lua_pop(state, 1);
+            if (!valid)
+            {
+                throw std::runtime_error(function + ": the value must be a 64-bit unsigned integer");
+            }
+            return result;
+        }
+
+        static std::string name_argument(const std::string& function, const sol::object& name)
+        {
+            if (name.get_type() != sol::type::string)
+            {
+                throw std::runtime_error(function + ": the name must be a string");
+            }
+            return name.as<std::string>();
+        }
+
+        void store_symbol(const std::string& function, std::string_view name, std::uint64_t value)
+        {
+            if (!symbols.set)
+            {
+                throw std::runtime_error(function + ": no symbol store is attached");
+            }
+            const std::expected<void, std::string> stored = symbols.set(name, value);
+            if (!stored)
+            {
+                throw std::runtime_error(function + ": " + stored.error());
+            }
+        }
+
+        // Binds `rsymbol`/`ssymbol`/`usymbol`; a bad argument or a rejected name
+        // throws, which sol2 turns into a Lua error carrying the function name,
+        // exactly like a failed `mem` access.
+        void install_symbols()
+        {
+            lua.set_function("rsymbol",
+                             [this](sol::object name, sol::optional<sol::object> value)
+                             {
+                                 store_symbol(
+                                     "rsymbol", name_argument("rsymbol", name), value_argument("rsymbol", value));
+                             });
+
+            lua.set_function("ssymbol",
+                             [this](sol::object name, sol::optional<sol::object> value)
+                             {
+                                 if (!value)
+                                 {
+                                     throw std::runtime_error("ssymbol: the value must be a 64-bit unsigned integer");
+                                 }
+                                 store_symbol(
+                                     "ssymbol", name_argument("ssymbol", name), value_argument("ssymbol", value));
+                             });
+
+            lua.set_function("usymbol",
+                             [this](sol::object name)
+                             {
+                                 if (!symbols.remove)
+                                 {
+                                     throw std::runtime_error("usymbol: no symbol store is attached");
+                                 }
+                                 const std::expected<void, std::string> removed =
+                                     symbols.remove(name_argument("usymbol", name));
+                                 if (!removed)
+                                 {
+                                     throw std::runtime_error("usymbol: " + removed.error());
+                                 }
+                             });
+        }
+
         std::vector<std::byte> read_raw(std::uint64_t address, std::size_t size)
         {
             if (!api.read)
@@ -253,7 +356,10 @@ namespace slopkit::script
         }
     };
 
-    Engine::Engine(MemoryApi api, EngineConfig config) : impl_(std::make_unique<Impl>(std::move(api), config)) {}
+    Engine::Engine(MemoryApi api, SymbolApi symbols, EngineConfig config)
+        : impl_(std::make_unique<Impl>(std::move(api), std::move(symbols), config))
+    {
+    }
 
     Engine::~Engine()                            = default;
     Engine::Engine(Engine&&) noexcept            = default;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 #include "support/script_helpers.hpp"
 
@@ -431,5 +432,162 @@ TEST_CASE("script engine guards a runaway lifecycle hook", "[script]")
 
         CHECK_FALSE(result.ok);
         CHECK(result.error.find("time budget") != std::string::npos);
+    }
+}
+
+TEST_CASE("script engine registers and sets symbols", "[script]")
+{
+    ScriptFixture fixture;
+
+    SECTION("rsymbol without a value registers zero")
+    {
+        REQUIRE(fixture.engine.run(R"(rsymbol("hp"))").ok);
+        CHECK(fixture.symbols.lookup("hp") == 0);
+    }
+
+    SECTION("rsymbol with a value stores it")
+    {
+        REQUIRE(fixture.engine.run(R"(rsymbol("hp", 0x1337))").ok);
+        CHECK(fixture.symbols.lookup("hp") == 0x1337);
+    }
+
+    SECTION("ssymbol sets the value of a fresh name")
+    {
+        REQUIRE(fixture.engine.run(R"(ssymbol("hp", 1337))").ok);
+        CHECK(fixture.symbols.lookup("hp") == 1337);
+    }
+
+    SECTION("a later set overwrites the value and keeps one entry")
+    {
+        REQUIRE(fixture.engine.run(R"(rsymbol("hp", 1) ssymbol("hp", 2))").ok);
+        CHECK(fixture.symbols.lookup("hp") == 2);
+        CHECK(fixture.symbols.size() == 1);
+    }
+
+    SECTION("names are case-insensitive and the first spelling is kept")
+    {
+        REQUIRE(fixture.engine.run(R"(rsymbol("HP", 1) ssymbol("hp", 2))").ok);
+        CHECK(fixture.symbols.size() == 1);
+        const std::vector<slopkit::expr::SymbolRef> snapshot = fixture.symbols.snapshot();
+        REQUIRE(snapshot.size() == 1);
+        CHECK(snapshot.at(0).name == "HP");
+    }
+
+    SECTION("the value extremes round-trip")
+    {
+        REQUIRE(fixture.engine.run(R"(rsymbol("zero", 0) rsymbol("big", 0xFFFFFFFFFFFF))").ok);
+        CHECK(fixture.symbols.lookup("zero") == 0);
+        CHECK(fixture.symbols.lookup("big") == 0xFFFFFFFFFFFFULL);
+    }
+
+    SECTION("a chunk may register many names")
+    {
+        REQUIRE(fixture.engine.run(R"(for i = 1, 1000 do rsymbol("sym" .. i, i) end)").ok);
+        CHECK(fixture.symbols.size() == 1000);
+        CHECK(fixture.symbols.lookup("sym1000") == 1000);
+    }
+}
+
+TEST_CASE("script engine unregisters symbols", "[script]")
+{
+    ScriptFixture fixture;
+
+    SECTION("usymbol drops the entry and returns nothing")
+    {
+        const RunResult result = fixture.engine.run(R"(rsymbol("hp", 1) usymbol("hp"))");
+
+        REQUIRE(result.ok);
+        CHECK_FALSE(fixture.symbols.lookup("hp").has_value());
+        CHECK(result.returned.empty());
+    }
+
+    SECTION("a second usymbol is a silent no-op")
+    {
+        const RunResult result = fixture.engine.run(R"(ssymbol("hp", 1) usymbol("hp") usymbol("hp"))");
+
+        REQUIRE(result.ok);
+        CHECK(fixture.symbols.size() == 0);
+        CHECK(result.returned.empty());
+    }
+}
+
+TEST_CASE("script engine reports symbol argument errors", "[script]")
+{
+    ScriptFixture fixture;
+
+    SECTION("a fractional value is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(ssymbol("hp", 1.5))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("ssymbol: the value must be a 64-bit unsigned integer") != std::string::npos);
+        CHECK(fixture.symbols.size() == 0);
+    }
+
+    SECTION("a negative value is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(rsymbol("hp", -1))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("rsymbol: the value must be a 64-bit unsigned integer") != std::string::npos);
+        CHECK(fixture.symbols.size() == 0);
+    }
+
+    SECTION("a non-number value is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(ssymbol("hp", "1337"))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("ssymbol: the value must be a 64-bit unsigned integer") != std::string::npos);
+        CHECK(fixture.symbols.size() == 0);
+    }
+
+    SECTION("a value past the 64-bit range is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(ssymbol("hp", 2.0^64))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("ssymbol: the value must be a 64-bit unsigned integer") != std::string::npos);
+        CHECK(fixture.symbols.size() == 0);
+    }
+
+    SECTION("ssymbol without a value is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(ssymbol("hp"))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("ssymbol: the value must be a 64-bit unsigned integer") != std::string::npos);
+    }
+
+    SECTION("a non-string name is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(rsymbol(1, 2))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("rsymbol: the name must be a string") != std::string::npos);
+    }
+
+    SECTION("a name with a plus is refused with the function name")
+    {
+        const RunResult result = fixture.engine.run(R"(ssymbol("a+b", 1))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("ssymbol: the name must not contain '+'") != std::string::npos);
+        CHECK(fixture.symbols.size() == 0);
+    }
+
+    SECTION("a name with a leading hash is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(rsymbol("#hp", 1))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("rsymbol: the name must not start with '#'") != std::string::npos);
+    }
+
+    SECTION("the engine stays usable after a symbol error")
+    {
+        CHECK_FALSE(fixture.engine.run(R"(ssymbol("hp", 1.5))").ok);
+        CHECK(fixture.engine.run(R"(ssymbol("hp", 2))").ok);
+        CHECK(fixture.symbols.lookup("hp") == 2);
     }
 }

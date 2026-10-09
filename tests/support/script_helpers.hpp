@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "script/engine.hpp"
+#include "script/symbols.hpp"
 #include "script/types.hpp"
 
 namespace
@@ -88,14 +89,16 @@ namespace
         }
     };
 
-    // An engine over a fake target, ready to run chunks.
+    // An engine over a fake target, ready to run chunks, with the symbol seam
+    // backed by a table the test can assert on.
     struct ScriptFixture
     {
-        FakeMemory fake;
-        Engine     engine;
+        FakeMemory                   fake;
+        slopkit::script::SymbolTable symbols;
+        Engine                       engine;
 
         explicit ScriptFixture(std::size_t size = 0x100, EngineConfig config = {})
-            : fake(size), engine(fake.api(), config)
+            : fake(size), engine(fake.api(), symbols.api(), config)
         {
         }
     };

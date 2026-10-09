@@ -13,6 +13,7 @@
 #include "process/types.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
+#include "script/symbols.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
 
@@ -63,7 +64,10 @@ namespace slopkit::ui::components
         Q_OBJECT
 
     public:
-        MemoryViewDocument(process::AccessWorker& worker, process::AttachedTarget& target, QObject* parent = nullptr);
+        MemoryViewDocument(process::AccessWorker&   worker,
+                           process::AttachedTarget& target,
+                           QObject*                 parent  = nullptr,
+                           script::SymbolTable&     symbols = script::default_symbol_table());
 
         // View geometry: the first visible byte, the auto-fitted row width and
         // how many rows fit. `first_byte` is kept exactly as requested; the
@@ -89,6 +93,8 @@ namespace slopkit::ui::components
         [[nodiscard]] QString                full_address_text(std::uint64_t address) const;
         [[nodiscard]] QString                display_text(std::uint64_t address) const;
         [[nodiscard]] const ui::ModuleSpans& module_spans() const;
+        // The symbol registry the Go-to parser resolves a bare name against.
+        [[nodiscard]] script::SymbolTable&   symbols() const;
 
         // LiveSurface: the three window blocks while visible with a target.
         [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
@@ -131,6 +137,7 @@ namespace slopkit::ui::components
 
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;
+        script::SymbolTable&     symbols_;
 
         std::uint64_t first_byte_ {0};
         std::size_t   bytes_per_row_ {16};

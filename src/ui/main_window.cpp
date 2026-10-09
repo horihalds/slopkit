@@ -68,10 +68,11 @@ namespace slopkit::ui
                            plugin::PluginHost&      host,
                            SettingsController&      settings,
                            debug::Controller&       debug,
+                           script::SymbolTable&     symbols,
                            const QString&           initial_table_path,
                            QWidget*                 parent)
         : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings), debug_(debug),
-          initial_table_path_(initial_table_path)
+          symbols_(symbols), initial_table_path_(initial_table_path)
     {
         // The production launch and attach question; a test swaps them out.
         sandbox_launcher_ = []
@@ -393,13 +394,13 @@ namespace slopkit::ui
                     refresh_target_label();
                 });
 
-        add_address_ = new dialogs::AddAddressDialog(address_table_, worker_, this);
+        add_address_ = new dialogs::AddAddressDialog(address_table_, worker_, this, symbols_);
         new WindowCenterer(*add_address_);
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
         new WindowCenterer(*table_settings_);
 
-        memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_);
+        memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_, nullptr, symbols_);
         new WindowGeometryKeeper(*memory_view_, settings_, WindowId::memory_viewer, memory_view_.get());
 
         // The one live cadence, driven by the window's tick; surfaces register

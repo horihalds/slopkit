@@ -10,8 +10,8 @@
 namespace slopkit::debug
 {
 
-    Controller::Controller(DebugBackend& backend, QObject* parent)
-        : QObject(parent), backend_(backend), worker_(backend)
+    Controller::Controller(DebugBackend& backend, script::SymbolTable& symbols, QObject* parent)
+        : QObject(parent), backend_(backend), symbols_(symbols), worker_(backend)
     {
     }
 

@@ -259,3 +259,29 @@ TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")
     CHECK_FALSE(slopkit::ui::parse_address_text("low+bogus", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("not an address", spans).has_value());
 }
+
+TEST_CASE("address text resolves symbol names", "[ui]")
+{
+    const std::vector<slopkit::process::ModuleInfo> modules {module_image("low", 0x1000, 0x1000)};
+    slopkit::ui::ModuleSpans                        spans;
+    spans.set_modules(modules);
+    const std::vector<slopkit::expr::SymbolRef> symbols {
+        {      "hp", 0x1337},
+        {     "low", 0x9999}, // collides with the module name
+        {"deadbeef", 0xABCD},
+    };
+
+    // A bare symbol name resolves to its value, case-insensitively.
+    CHECK(slopkit::ui::parse_address_text("hp", spans, symbols) == std::optional<std::uint64_t> {0x1337});
+    CHECK(slopkit::ui::parse_address_text("HP", spans, symbols) == std::optional<std::uint64_t> {0x1337});
+    // A symbol base plus an offset.
+    CHECK(slopkit::ui::parse_address_text("hp+10", spans, symbols) == std::optional<std::uint64_t> {0x1347});
+    // A loaded module still wins over a colliding symbol.
+    CHECK(slopkit::ui::parse_address_text("low", spans, symbols) == std::optional<std::uint64_t> {0x1000});
+    // A symbol wins over the bare-hex reading of the same text.
+    CHECK(slopkit::ui::parse_address_text("deadbeef", spans, symbols) == std::optional<std::uint64_t> {0xABCD});
+
+    // An empty snapshot behaves exactly as before.
+    CHECK(slopkit::ui::parse_address_text("deadbeef", spans) == std::optional<std::uint64_t> {0xDEADBEEF});
+    CHECK_FALSE(slopkit::ui::parse_address_text("hp", spans).has_value());
+}

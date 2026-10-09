@@ -9,6 +9,7 @@
 
 #include <QPushButton>
 
+#include "script/symbols.hpp"
 #include "support/ui_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
 #include "ui/components/memory_view.hpp"
@@ -424,6 +425,35 @@ TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
     CHECK_FALSE(viewer.go_to(QStringLiteral("missing")));
     CHECK(view->first_byte() == before);
     CHECK_FALSE(viewer.go_to(QStringLiteral("missing+40")));
+    CHECK(view->first_byte() == before);
+}
+
+TEST_CASE("the memory viewer go-to accepts symbol names", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    slopkit::script::SymbolTable   symbols;
+    REQUIRE(symbols.set("hp", 0x1337).has_value());
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller(), nullptr, symbols};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+
+    viewer.set_modules({module_image("app", 0x1000, 0x1000)});
+
+    // A symbol name resolves to its live value, with an offset.
+    CHECK(viewer.go_to(QStringLiteral("hp")));
+    CHECK(view->first_byte() == 0x1337);
+    CHECK(viewer.go_to(QStringLiteral("hp+10")));
+    CHECK(view->first_byte() == 0x1347);
+
+    // An unknown name still leaves the page where it was.
+    const std::uint64_t before = view->first_byte();
+    CHECK_FALSE(viewer.go_to(QStringLiteral("nope")));
     CHECK(view->first_byte() == before);
 }
 

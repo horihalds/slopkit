@@ -49,8 +49,9 @@ namespace slopkit::ui::components
     DisassemblyDocument::DisassemblyDocument(process::AccessWorker&   worker,
                                              process::AttachedTarget& target,
                                              CodePatchTable&          patches,
-                                             QObject*                 parent)
-        : QObject(parent), worker_(worker), target_(target), patches_(patches)
+                                             QObject*                 parent,
+                                             script::SymbolTable&     symbols)
+        : QObject(parent), worker_(worker), target_(target), patches_(patches), symbols_(symbols)
     {
     }
 
@@ -177,6 +178,11 @@ namespace slopkit::ui::components
     const ui::ModuleSpans& DisassemblyDocument::module_spans() const
     {
         return module_spans_;
+    }
+
+    script::SymbolTable& DisassemblyDocument::symbols() const
+    {
+        return symbols_;
     }
 
     QString DisassemblyDocument::copy_text(std::size_t index, CopyFormat format) const

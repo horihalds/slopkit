@@ -234,15 +234,21 @@ namespace slopkit::ui
         return format_module_relative(*span, address);
     }
 
-    std::optional<std::uint64_t> parse_address_text(std::string_view text, const ModuleSpans& spans)
+    std::optional<std::uint64_t>
+    parse_address_text(std::string_view text, const ModuleSpans& spans, expr::Symbols symbols)
     {
         if (text.find('+') == std::string_view::npos)
         {
             // A bare module name jumps to the module base; the lookup is
-            // case-insensitive and wins over the hex reading of the text.
+            // case-insensitive and wins over the hex reading of the text. A
+            // symbol name resolves the same way, after the module lookup.
             if (const ModuleSpan* span = spans.find_by_name(text); span != nullptr)
             {
                 return span->base;
+            }
+            if (const std::optional<std::uint64_t> value = symbol_value(symbols, text); value.has_value())
+            {
+                return value;
             }
             // A plain absolute address is bare hex; `0x…` is hex and `#…`
             // is decimal.
@@ -260,6 +266,10 @@ namespace slopkit::ui
         if (const ModuleSpan* span = spans.find_by_name(expression->base); span != nullptr)
         {
             base = span->base;
+        }
+        else if (const std::optional<std::uint64_t> value = symbol_value(symbols, expression->base); value.has_value())
+        {
+            base = *value;
         }
         else if (const auto literal = expr::parse_literal(expression->base); literal.has_value())
         {
@@ -288,6 +298,18 @@ namespace slopkit::ui
         if (const ModuleSpan* span = spans.find_by_name(name); span != nullptr)
         {
             return span->base;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::uint64_t> symbol_value(expr::Symbols symbols, std::string_view name)
+    {
+        for (const expr::SymbolRef& symbol : symbols)
+        {
+            if (ascii_iequals(symbol.name, name))
+            {
+                return symbol.value;
+            }
         }
         return std::nullopt;
     }

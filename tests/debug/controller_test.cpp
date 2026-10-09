@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "debug/controller.hpp"
+#include "script/symbols.hpp"
 #include "support/fake_debug.hpp"
 
 using slopkit::debug::Controller;
@@ -256,6 +257,32 @@ TEST_CASE("controller refuses an unresolvable breakpoint expression", "[debug][c
     const auto missing = controller.add_breakpoint("not-a-module+10", Kind::software, 1);
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error().find("resolve") != std::string::npos);
+}
+
+TEST_CASE("controller resolves a symbol expression to arm a breakpoint", "[debug][controller]")
+{
+    FakeDebugBackend             backend;
+    slopkit::script::SymbolTable symbols;
+    REQUIRE(symbols.set("hp", 0x3000).has_value());
+    Controller controller(backend, symbols);
+
+    backend.block_continue = true;
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    const auto id = controller.add_breakpoint("hp", Kind::hardware_write, 4);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = controller.table().find(*id);
+                           return entry != nullptr && entry->armed && !backend.hardware_calls().empty();
+                       }));
+    CHECK(std::get<2>(backend.hardware_calls().front()) == 0x3000);
 }
 
 TEST_CASE("controller gates register writes on the stopped state", "[debug][controller]")

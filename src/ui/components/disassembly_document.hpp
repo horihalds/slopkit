@@ -13,6 +13,7 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
+#include "script/symbols.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/code_patch.hpp"
 #include "ui/live_values.hpp"
@@ -73,7 +74,8 @@ namespace slopkit::ui::components
         DisassemblyDocument(process::AccessWorker&   worker,
                             process::AttachedTarget& target,
                             CodePatchTable&          patches,
-                            QObject*                 parent = nullptr);
+                            QObject*                 parent  = nullptr,
+                            script::SymbolTable&     symbols = script::default_symbol_table());
 
         // The cursor the listing starts at and how many rows fit.
         void                        set_view(std::uint64_t first_address, std::size_t visible_rows);
@@ -96,6 +98,8 @@ namespace slopkit::ui::components
         // The same, untruncated: the module name as stored, for hovers.
         [[nodiscard]] QString                full_address_text(std::uint64_t address) const;
         [[nodiscard]] const ui::ModuleSpans& module_spans() const; // Go To validation
+        // The symbol registry the Go-to parser resolves a bare name against.
+        [[nodiscard]] script::SymbolTable&   symbols() const;
 
         // The clipboard text for the decoded row `index` in `format`; empty when
         // the row is out of range or the format has nothing to copy. The address
@@ -213,6 +217,7 @@ namespace slopkit::ui::components
         process::AccessWorker&        worker_;
         process::AttachedTarget&      target_;
         CodePatchTable&               patches_;
+        script::SymbolTable&          symbols_;
         // The patch write in flight, so a second NOP or a restore is refused.
         std::optional<process::JobId> patch_write_;
 
