@@ -225,6 +225,64 @@ namespace slopkit::test
         return {};
     }
 
+    bool FakeBackend::supports_allocation() const noexcept
+    {
+        return can_allocate;
+    }
+
+    std::expected<std::uint64_t, process::AccessError> FakeBackend::allocate(std::size_t   size,
+                                                                             std::uint64_t near_address)
+    {
+        ++allocates;
+        allocate_requests.emplace_back(near_address, size);
+        if (!can_allocate)
+        {
+            return std::unexpected(process::AccessError::unsupported);
+        }
+        if (allocate_error.has_value())
+        {
+            return std::unexpected(*allocate_error);
+        }
+
+        constexpr std::size_t page    = 0x1000;
+        const auto            rounded = (size + page - 1) / page * page;
+
+        std::uint64_t address = 0;
+        if (!memory->flat.empty() || memory->base != 0)
+        {
+            // Carve the block out of the flat window so a script can read and
+            // write it; keep every block page-aligned.
+            const std::size_t offset = (memory->flat.size() + page - 1) / page * page;
+            memory->flat.resize(offset + rounded, std::byte {0});
+            address = memory->base + offset;
+        }
+        else
+        {
+            address = allocation_base;
+            while (allocations.contains(address))
+            {
+                address += page;
+            }
+        }
+
+        allocations[address] = rounded;
+        return address;
+    }
+
+    std::expected<void, process::AccessError> FakeBackend::free(std::uint64_t address)
+    {
+        ++frees;
+        if (free_error.has_value())
+        {
+            return std::unexpected(*free_error);
+        }
+        if (allocations.erase(address) == 0)
+        {
+            return std::unexpected(process::AccessError::not_found);
+        }
+        return {};
+    }
+
     std::expected<std::vector<process::ProcessInfo>, process::AccessError> FakeAccess::list_processes()
     {
         ++list_calls;
@@ -238,17 +296,21 @@ namespace slopkit::test
         {
             return std::unexpected(process::AccessError::permission_denied);
         }
-        auto backend           = std::make_unique<FakeBackend>(memory);
-        backend->fake_pid      = fake_pid;
-        backend->unreadable    = unreadable;
-        backend->read_error    = read_error;
-        backend->module_list   = modules;
-        backend->region_list   = regions;
-        backend->can_suspend   = can_suspend;
-        backend->suspend_error = suspend_error;
-        backend->resume_error  = resume_error;
-        backend->suspend_calls = suspend_calls;
-        backend->resume_calls  = resume_calls;
+        auto backend             = std::make_unique<FakeBackend>(memory);
+        backend->fake_pid        = fake_pid;
+        backend->unreadable      = unreadable;
+        backend->read_error      = read_error;
+        backend->module_list     = modules;
+        backend->region_list     = regions;
+        backend->can_suspend     = can_suspend;
+        backend->suspend_error   = suspend_error;
+        backend->resume_error    = resume_error;
+        backend->suspend_calls   = suspend_calls;
+        backend->resume_calls    = resume_calls;
+        backend->can_allocate    = can_allocate;
+        backend->allocation_base = allocation_base;
+        backend->allocate_error  = allocate_error;
+        backend->free_error      = free_error;
         return process::Session {std::move(backend)};
     }
 

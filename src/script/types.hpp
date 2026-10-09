@@ -10,6 +10,8 @@
 #include <string_view>
 #include <vector>
 
+#include "expr/resolver.hpp"
+
 namespace slopkit::script
 {
 
@@ -63,13 +65,24 @@ namespace slopkit::script
     // `ProcessAccess`, so it is testable against an in-memory buffer.
     struct MemoryApi
     {
-        std::function<std::size_t()>                                                                  pointer_size;
-        std::function<std::expected<std::vector<std::byte>, std::string>(std::uint64_t, std::size_t)> read;
-        std::function<std::expected<void, std::string>(std::uint64_t, std::span<const std::byte>)>    write;
+        std::function<std::size_t()>                                                                   pointer_size;
+        std::function<std::expected<std::vector<std::byte>, std::string>(std::uint64_t, std::size_t)>  read;
+        std::function<std::expected<void, std::string>(std::uint64_t, std::span<const std::byte>)>     write;
         // Every mapped region the target exposes. Absent when the seam has no
         // region metadata at all (then `aobscan` reports "no target is
         // attached").
-        std::function<std::expected<std::vector<MemoryRegion>, std::string>()>                        regions;
+        std::function<std::expected<std::vector<MemoryRegion>, std::string>()>                         regions;
+        // Maps new memory in the target, readable, writable and executable;
+        // `near` is a best-effort hint (0 = anywhere). Absent when the plugin
+        // behind the session cannot allocate, which the engine reports as the
+        // run's error.
+        std::function<std::expected<std::uint64_t, std::string>(std::size_t size, std::uint64_t near)> allocate;
+        // Unmaps a mapping `allocate` returned in this session.
+        std::function<std::expected<void, std::string>(std::uint64_t address)>                         deallocate;
+        // The target's images (name + load base) `expression` resolves module
+        // names against, built exactly like the resolve job builds its module
+        // snapshot.
+        std::function<std::expected<std::vector<expr::ModuleRef>, std::string>()>                      modules;
     };
 
     // The symbol seam a script's `rsymbol`/`ssymbol`/`usymbol` write through. The

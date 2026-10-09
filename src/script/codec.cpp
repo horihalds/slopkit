@@ -161,4 +161,18 @@ namespace slopkit::script
         return store_little_endian(static_cast<std::uint64_t>(static_cast<std::int64_t>(value)), info->width);
     }
 
+    std::expected<std::vector<std::byte>, std::string> encode_integer(std::string_view token, std::uint64_t value)
+    {
+        const TokenInfo* info = find_token(token);
+        if (info == nullptr)
+        {
+            return std::unexpected(std::format("unknown value type '{}'", token));
+        }
+        if (info->kind == NumberKind::floating)
+        {
+            return std::unexpected(std::format("'{}' is not an integer type", token));
+        }
+        return store_little_endian(value, info->width);
+    }
+
 } // namespace slopkit::script

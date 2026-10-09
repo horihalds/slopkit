@@ -83,34 +83,48 @@ namespace slopkit::test
         FakeBackend();
         explicit FakeBackend(std::shared_ptr<FakeMemory> memory);
 
-        std::shared_ptr<FakeMemory>              memory;
-        std::shared_ptr<std::set<std::uint64_t>> unreadable {std::make_shared<std::set<std::uint64_t>>()};
+        std::shared_ptr<FakeMemory>                        memory;
+        std::shared_ptr<std::set<std::uint64_t>>           unreadable {std::make_shared<std::set<std::uint64_t>>()};
         // When set, every read fails with this error, modelling a target whose
         // metadata is readable but whose memory cannot be.
-        std::optional<process::AccessError>      read_error;
+        std::optional<process::AccessError>                read_error;
         // `module_list` wins when non-empty; otherwise `module_count` blank images
         // are reported, with a file-backed main image at the flat window's base.
-        std::vector<process::ModuleInfo>         module_list;
-        std::vector<process::RegionInfo>         region_list;
-        std::size_t                              module_count {0};
-        std::size_t                              thread_count {0};
-        process::ProcessId                       fake_pid {42};
-        std::string                              fake_plugin_id {"fake"};
-        std::atomic<int>                         reads {0};
-        std::atomic<int>                         writes {0};
+        std::vector<process::ModuleInfo>                   module_list;
+        std::vector<process::RegionInfo>                   region_list;
+        std::size_t                                        module_count {0};
+        std::size_t                                        thread_count {0};
+        process::ProcessId                                 fake_pid {42};
+        std::string                                        fake_plugin_id {"fake"};
+        std::atomic<int>                                   reads {0};
+        std::atomic<int>                                   writes {0};
         // Suspend capability and recording. `can_suspend` gates the capability
         // the panel queries; `suspends`/`resumes` count the operations that
         // reach the backend, and the error knobs model a refused operation.
-        bool                                     can_suspend {false};
-        std::optional<process::AccessError>      suspend_error;
-        std::optional<process::AccessError>      resume_error;
-        std::atomic<int>                         suspends {0};
-        std::atomic<int>                         resumes {0};
+        bool                                               can_suspend {false};
+        std::optional<process::AccessError>                suspend_error;
+        std::optional<process::AccessError>                resume_error;
+        std::atomic<int>                                   suspends {0};
+        std::atomic<int>                                   resumes {0};
         // Shared counters owned by the FakeAccess that built this backend, so a
         // test observes suspend/resume jobs from outside the worker, whichever
         // session (app or handoff) the backend belongs to.
-        std::shared_ptr<std::atomic<int>>        suspend_calls;
-        std::shared_ptr<std::atomic<int>>        resume_calls;
+        std::shared_ptr<std::atomic<int>>                  suspend_calls;
+        std::shared_ptr<std::atomic<int>>                  resume_calls;
+        // Allocation capability and recording. `can_allocate` gates the
+        // capability the engine queries; `allocates`/`frees` count the calls
+        // that reach the backend, the error knobs model a refused operation and
+        // `allocations` is the address -> page-rounded-size pool a `free`
+        // consults. A successful `allocate` grows the flat window so a script
+        // can write through the returned address.
+        bool                                               can_allocate {false};
+        std::uint64_t                                      allocation_base {0x50000};
+        std::optional<process::AccessError>                allocate_error;
+        std::optional<process::AccessError>                free_error;
+        std::map<std::uint64_t, std::size_t>               allocations;
+        std::vector<std::pair<std::uint64_t, std::size_t>> allocate_requests;
+        std::atomic<int>                                   allocates {0};
+        std::atomic<int>                                   frees {0};
 
         [[nodiscard]] process::ProcessId    pid() const noexcept override;
         [[nodiscard]] std::string_view      plugin_id() const noexcept override;
@@ -124,9 +138,13 @@ namespace slopkit::test
         std::expected<std::vector<process::ModuleInfo>, process::AccessError> modules() override;
         std::expected<std::vector<process::ThreadInfo>, process::AccessError> threads() override;
         std::expected<std::vector<process::RegionInfo>, process::AccessError> regions() override;
-        [[nodiscard]] bool                        supports_suspend() const noexcept override;
-        std::expected<void, process::AccessError> suspend() override;
-        std::expected<void, process::AccessError> resume() override;
+        [[nodiscard]] bool                                 supports_suspend() const noexcept override;
+        std::expected<void, process::AccessError>          suspend() override;
+        std::expected<void, process::AccessError>          resume() override;
+        [[nodiscard]] bool                                 supports_allocation() const noexcept override;
+        std::expected<std::uint64_t, process::AccessError> allocate(std::size_t   size,
+                                                                    std::uint64_t near_address) override;
+        std::expected<void, process::AccessError>          free(std::uint64_t address) override;
     };
 
     // A ProcessAccess serving a fixed process list that can be told to fail the
@@ -147,6 +165,10 @@ namespace slopkit::test
         std::optional<process::AccessError>      resume_error;
         std::shared_ptr<std::atomic<int>>        suspend_calls {std::make_shared<std::atomic<int>>(0)};
         std::shared_ptr<std::atomic<int>>        resume_calls {std::make_shared<std::atomic<int>>(0)};
+        bool                                     can_allocate {false};
+        std::uint64_t                            allocation_base {0x50000};
+        std::optional<process::AccessError>      allocate_error;
+        std::optional<process::AccessError>      free_error;
         std::atomic<int>                         attach_calls {0};
         std::atomic<int>                         list_calls {0};
 

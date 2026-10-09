@@ -896,6 +896,69 @@ namespace slopkit::process
             }
             return regions;
         };
+        // Target allocation, from the plugin ABI 1.6 operations. A session whose
+        // plugin leaves the slots null reports `unsupported` here.
+        api.allocate = [this](std::size_t size, std::uint64_t near) -> std::expected<std::uint64_t, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            auto address = session_->allocate(size, near);
+            if (!address)
+            {
+                if (address.error() == AccessError::unsupported)
+                {
+                    return std::unexpected(std::string {"the target's plugin cannot allocate memory"});
+                }
+                return std::unexpected(std::string {describe(address.error())});
+            }
+            log::debug(log::category::script,
+                       std::format("allocated {} byte(s) at {:#x} (near {:#x})", size, *address, near));
+            return *address;
+        };
+        api.deallocate = [this](std::uint64_t address) -> std::expected<void, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            if (auto freed = session_->free(address); !freed)
+            {
+                if (freed.error() == AccessError::unsupported)
+                {
+                    return std::unexpected(std::string {"the target's plugin cannot allocate memory"});
+                }
+                if (freed.error() == AccessError::not_found)
+                {
+                    return std::unexpected(std::string {"not this session's allocation"});
+                }
+                return std::unexpected(std::string {describe(freed.error())});
+            }
+            log::debug(log::category::script, std::format("freed allocation at {:#x}", address));
+            return {};
+        };
+        // The module snapshot `expression` resolves module names against, in the
+        // same shape the resolve job passes to `expr::evaluate`.
+        api.modules = [this]() -> std::expected<std::vector<expr::ModuleRef>, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            const std::expected<std::vector<ModuleInfo>, AccessError> found = session_->modules();
+            if (!found)
+            {
+                return std::unexpected(std::string {describe(found.error())});
+            }
+            std::vector<expr::ModuleRef> modules;
+            modules.reserve(found->size());
+            for (const ModuleInfo& module : *found)
+            {
+                modules.push_back(expr::ModuleRef {module.name, module.base});
+            }
+            return modules;
+        };
         return api;
     }
 

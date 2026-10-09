@@ -15,6 +15,7 @@
 #include "platform/linux/memory.hpp"
 #include "platform/linux/process_control.hpp"
 #include "platform/linux/procfs.hpp"
+#include "plugins/support/allocate.hpp"
 #include "plugins/support/session.hpp"
 
 namespace slopkit::plugins::support
@@ -577,6 +578,17 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
+                // The allocation path and the debugger must not race for the
+                // target's thread group. Holding the allocation lock across the
+                // attach makes the check and the seize one step from the
+                // allocator's point of view, and it sees `allocating` before it
+                // can attach.
+                const std::lock_guard lock(session->allocation_mutex);
+                if (session->allocating)
+                {
+                    return fail(SLOPKIT_ERR_PERMISSION_DENIED, "an allocation is in flight");
+                }
+
                 const auto leader = session->debug.attach();
                 if (!leader)
                 {
@@ -923,6 +935,69 @@ namespace slopkit::plugins::support
             }
         }
 
+        // --- target allocation (ABI 1.6) ------------------------------------
+
+        slopkit_result
+        plugin_allocate_memory(void* handle, uint64_t size, uint64_t near_address, uint64_t* out_address) noexcept
+        {
+            try
+            {
+                if (out_address == nullptr)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "null output pointer");
+                }
+                *out_address  = 0;
+                auto* session = lookup_session(handle);
+                if (session == nullptr)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
+                }
+                if (size == 0)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "the size must be larger than 0");
+                }
+
+                const auto allocated = allocate_memory(*session, size, near_address);
+                if (!allocated)
+                {
+                    log_message(SLOPKIT_LOG_WARN, std::format("allocation failed: {}", allocated.error().message));
+                    return fail(allocated.error().code, intern(allocated.error().message));
+                }
+                *out_address = *allocated;
+                log_message(SLOPKIT_LOG_DEBUG,
+                            std::format("allocated {} byte(s) at {:#x} for pid {}", size, *out_address, session->pid));
+                return ok();
+            }
+            catch (...)
+            {
+                return fail(SLOPKIT_ERR_INTERNAL, "unhandled exception");
+            }
+        }
+
+        slopkit_result plugin_free_memory(void* handle, uint64_t address) noexcept
+        {
+            try
+            {
+                auto* session = lookup_session(handle);
+                if (session == nullptr)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
+                }
+                const auto freed = free_memory(*session, address);
+                if (!freed)
+                {
+                    log_message(SLOPKIT_LOG_WARN, std::format("cannot free {:#x}: {}", address, freed.error().message));
+                    return fail(freed.error().code, intern(freed.error().message));
+                }
+                log_message(SLOPKIT_LOG_DEBUG, std::format("freed {:#x} for pid {}", address, session->pid));
+                return ok();
+            }
+            catch (...)
+            {
+                return fail(SLOPKIT_ERR_INTERNAL, "unhandled exception");
+            }
+        }
+
         const slopkit_plugin_vtable g_vtable {
             SLOPKIT_PLUGIN_ABI_VERSION,
             sizeof(slopkit_plugin_vtable),
@@ -949,6 +1024,8 @@ namespace slopkit::plugins::support
             plugin_debug_backtrace,
             plugin_suspend_target,
             plugin_resume_target,
+            plugin_allocate_memory,
+            plugin_free_memory,
         };
     } // namespace
 

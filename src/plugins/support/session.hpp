@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include "platform/linux/debug_session.hpp"
 #include "platform/linux/memory.hpp"
@@ -29,6 +31,14 @@ namespace slopkit::plugins::support
         // True while this session has stopped the target itself; the destructor
         // resumes only a target slopkit stopped, never one the user did.
         bool                   suspended {false};
+
+        // Allocation state, guarded by `allocation_mutex`. `allocations` maps a
+        // mapping this session created to its page-rounded size, so free_memory
+        // can unmap exactly it; `allocating` is set while a remote syscall is in
+        // flight so a debug attach and an allocation never overlap.
+        std::mutex                                     allocation_mutex;
+        std::unordered_map<std::uint64_t, std::size_t> allocations;
+        bool                                           allocating {false};
     };
 
     // The registry of open sessions, mutex-guarded because the host and the

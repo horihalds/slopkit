@@ -742,4 +742,70 @@ namespace slopkit::plugin
         return {};
     }
 
+    bool PluginSession::supports_allocation() const noexcept
+    {
+        if (plugin_ == nullptr || handle_ == nullptr || plugin_->vtable_ == nullptr)
+        {
+            return false;
+        }
+        const auto* vtable = plugin_->vtable_;
+        return vtable->allocate_memory != nullptr && vtable->free_memory != nullptr;
+    }
+
+    std::expected<std::uint64_t, process::AccessError> PluginSession::allocate_memory(std::size_t   size,
+                                                                                      std::uint64_t near_address)
+    {
+        if (!valid())
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (plugin_->vtable_->allocate_memory == nullptr)
+        {
+            return std::unexpected(process::AccessError::unsupported);
+        }
+
+        std::uint64_t  address = 0;
+        slopkit_result result {};
+        try
+        {
+            result = plugin_->vtable_->allocate_memory(handle_, size, near_address, &address);
+        }
+        catch (...)
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (result.code != SLOPKIT_OK)
+        {
+            return std::unexpected(Plugin::classify(result));
+        }
+        return address;
+    }
+
+    std::expected<void, process::AccessError> PluginSession::free_memory(std::uint64_t address)
+    {
+        if (!valid())
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (plugin_->vtable_->free_memory == nullptr)
+        {
+            return std::unexpected(process::AccessError::unsupported);
+        }
+
+        slopkit_result result {};
+        try
+        {
+            result = plugin_->vtable_->free_memory(handle_, address);
+        }
+        catch (...)
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (result.code != SLOPKIT_OK)
+        {
+            return std::unexpected(Plugin::classify(result));
+        }
+        return {};
+    }
+
 } // namespace slopkit::plugin

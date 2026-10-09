@@ -90,6 +90,16 @@ namespace slopkit::plugin
         std::expected<void, process::AccessError> suspend_target();
         std::expected<void, process::AccessError> resume_target();
 
+        // True when the plugin implements the ABI 1.6 allocation operations.
+        [[nodiscard]] bool                                 supports_allocation() const noexcept;
+        // Maps `size` bytes (page-rounded) of read/write/execute memory in the
+        // target, as close to `near_address` as it can (0 = anywhere), and
+        // returns the mapping base.
+        std::expected<std::uint64_t, process::AccessError> allocate_memory(std::size_t   size,
+                                                                           std::uint64_t near_address);
+        // Unmaps a mapping an earlier allocate_memory of this session returned.
+        std::expected<void, process::AccessError>          free_memory(std::uint64_t address);
+
         // True when the plugin implements the ABI 1.4 debug operations.
         [[nodiscard]] bool                         supports_debug() const noexcept;
         // Raw ABI view, for the debug backend that maps the debug_* operations

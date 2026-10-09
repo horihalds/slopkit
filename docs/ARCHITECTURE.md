@@ -89,6 +89,14 @@ host calls:
   by a plugin that cannot stop its target. A session that suspended its target
   resumes it when the session closes or is destroyed, so an orderly teardown never
   leaves a target frozen.
+- `allocate_memory` / `free_memory` — the ABI 1.6 target-allocation operations,
+  left null by a plugin that cannot map memory. `allocate_memory` maps a
+  page-rounded read/write/execute block in the target, as close to a best-effort
+  `near_address` hint as it can (0 = anywhere), and `free_memory` unmaps a block
+  an earlier call of the same session returned; anything else is
+  `SLOPKIT_ERR_NOT_FOUND`. A session whose plugin leaves them null reports
+  `unsupported`, which a script sees as `alloc: the target's plugin cannot
+  allocate memory`.
 
 `src/plugin/plugin_api.h` is the authoritative contract, and the bundled plugins
 under `src/plugins/` are the worked example. They do not hand-write the vtable:
@@ -177,8 +185,10 @@ target.
 - `script::MemoryApi` is the seam to the target: the `pointer_size`/`read`/`write`
   `std::function`s plus a `regions` supplier returning every mapped region
   (`MemoryRegion {base, size, readable, module}`), which the worker builds from its
-  session's regions joined with its modules. The engine never sees `Session` or
-  `ProcessAccess`, so it is unit-testable against an in-memory buffer
+  session's regions joined with its modules. It also carries the ABI 1.6
+  `allocate`/`deallocate` operations and a `modules` supplier (`name` + base, the
+  snapshot `expression` resolves module names against). The engine never sees
+  `Session` or `ProcessAccess`, so it is unit-testable against an in-memory buffer
   (`tests/support/script_helpers.hpp`). A failed access raises a Lua error that
   carries the target's error text, which then surfaces as `RunResult::error`.
 - A chunk sees `mem.pointer_size()`, `mem.read(addr, "u32")`-style typed reads
@@ -187,6 +197,15 @@ target.
   is captured into `RunResult::output` — bounded by `kMaxOutputLines` and
   `kMaxOutputLine` — instead of writing to stdout, and a scalar `return` is
   rendered into `RunResult::returned`.
+- Beside `mem.*`, a chunk reaches the target with the typed one-liners
+  `read_u8`/`read_i8`/…/`read_f64` (`read_<type>(address)`, the same tokens and
+  the same integer-Lua-integer/float-Lua-float split `mem.read` uses) and
+  `write(address, value[, type])`. With no token the width is inferred from the
+  Lua value — a float writes `f32`, an integer the **narrowest** of
+  `u8`/`u16`/`u32`/`u64` (or `i8`/`i16`/`i32`/`i64` when negative) — and an
+  explicit token from the `mem.write` vocabulary overrides that, so a 64-bit
+  integer or an `f64` write is always expressible. Every failure names the
+  function (`read_u32: <target's error text>`, `write: unknown value type 'x'`).
 - A chunk also publishes **symbols** through `rsymbol(name[, value])` (registers
   `name`, with `value` or `0`), `ssymbol(name, value)` (sets the value, registering
   the name when it is new) and `usymbol(name)` (removes it). Names are
@@ -203,12 +222,24 @@ target.
   but the registry is the engine's own and a label only exists inside the script
   source that registered it: the engine drops the labels whenever a run is handed a
   *different* chunk, so a script's own `activate`/`deactivate` hooks share its
-  labels while two scripts never do. Labels never reach `script::SymbolTable` or an
-  address expression; a value that must outlive another script's run belongs in a
-  global symbol (`ssymbol`).
-- A script function that resolves a name — `aobscan` today — looks at the labels
-  first (case-insensitively) and only then at the process-wide symbols, so a label
-  shadows a global symbol of the same name.
+  labels while two scripts never do. Labels never reach `script::SymbolTable` or
+  the address table's own resolution; a value that must outlive another script's
+  run belongs in a global symbol (`ssymbol`).
+- A chunk reads the names it knows back through `label(name)` (its own labels
+  only) and `symbol(name)` (labels first, then the process-wide table), both
+  returning `0` for an unknown name; and it resolves a full address expression —
+  module/symbol/label base plus the usual `+offset` dereference chain — through
+  `expression(text)`, which returns the absolute address. `expression` resolves
+  the base **label → process-wide symbol → module name → literal**, so a script's
+  own name beats a module of the same spelling; this is the one place a script
+  label reaches an address expression, while the address table's own resolution
+  (module → symbol → literal) is unchanged. A blank name, a name with `+` or a
+  leading `#` and an unresolvable expression each raise a Lua error naming the
+  function.
+- A script function that resolves a name — `aobscan`, `symbol`, `expression`,
+  `alloc` and `dealloc` — looks at the labels first (case-insensitively) and only
+  then at the process-wide symbols, so a label shadows a global symbol of the same
+  name.
 - `aobscan(name, pattern[, module])` walks the target's readable regions in
   ascending address order for the byte pattern `pattern` — hex bytes with `?`
   wildcards, matched by `scan::BytePattern` — and stops at the first match. With
@@ -220,13 +251,37 @@ target.
   missing-region and no-readable-memory failures all raise a Lua error naming
   `aobscan`, and the scan is bounded by the run's wall-clock budget and read in
   64 KiB chunks.
+- `alloc(name, size_bytes[, near_address])` maps `size_bytes` (rounded up to the
+  target's page size) of read/write/execute memory **inside the target** and
+  returns the address, publishing it under `name` with `aobscan`'s exact rule — an
+  existing label the script owns, else an existing global symbol, else a new label
+  — so `local p = alloc("buf", 64)` works straight away with `write`/`read_u8`.
+  `near_address` is a best-effort hint (omitted or `0` means anywhere): a hint the
+  plugin cannot honour never fails the call while the mapping succeeds. The mapping
+  is a plugin capability (ABI 1.6 `allocate_memory`/`free_memory`), so a target
+  whose plugin cannot map memory reports `alloc: the target's plugin cannot
+  allocate memory` rather than pretending.
+- `dealloc(name)` resolves `name` through the same label-then-symbol chain and
+  unmaps exactly the mapping an `alloc` of the **same session** created there; a
+  foreign address is never unmapped (`dealloc: <name> is not this session's
+  allocation`), so a typo cannot destroy one of the target's own mappings. The
+  allocation belongs to the target and disappears with a detach.
+- Allocation runs a remote `mmap`/`munmap` syscall inside the target through the
+  plugin's existing ptrace `DebugSession`: the target's thread group is stopped,
+  the syscall is executed with the whole register file saved and restored, and the
+  group is resumed, so the target is left exactly as it was found and the only
+  intended change is the new mapping. A debug session and an allocation never
+  overlap — each refuses while the other holds the target. Each `alloc`/`dealloc`
+  writes one `script`-category debug record (address, size, outcome).
 - A registered symbol resolves like a module name in any address expression, in
   both the worker's resolve job and the deref-free UI parsers. `expr::evaluate`
   takes the snapshot as an argument and looks a base up as **module name → symbol
   name → literal**, so a loaded image is never shadowed while a symbol literally
   named `deadbeef` still beats the bare-hex reading; an unknown name keeps the
-  existing base failure. `expr` stays a leaf module — `script` includes
-  `expr/resolver.hpp`, not the other way round.
+  existing base failure. The script-level `expression` reorders the front of that
+  chain (it looks the base up as a label, then a symbol, and only passes the name
+  that answered), so its own order is described above. `expr` stays a leaf module —
+  `script` includes `expr/resolver.hpp`, not the other way round.
 - Besides `run(chunk)`, the engine exposes `run_lifecycle(chunk, function)`, which
   runs the chunk and then calls its named global (`activate` / `deactivate`),
   returning a `script::LifecycleResult`. The chunk runs first, so a chunk error

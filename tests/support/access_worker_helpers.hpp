@@ -90,6 +90,9 @@ namespace
         // Applied to each backend attach() creates, so a test can model a target
         // whose plugin can (or cannot) suspend.
         bool                       can_suspend {false};
+        // Applied to each backend attach() creates, so a test can model a target
+        // whose plugin can (or cannot) allocate.
+        bool                       can_allocate {false};
 
         std::expected<std::vector<slopkit::process::ProcessInfo>, AccessError> list_processes() override
         {
@@ -114,6 +117,7 @@ namespace
             owned->thread_count = 3;
             owned->read_error   = read_error;
             owned->can_suspend  = can_suspend;
+            owned->can_allocate = can_allocate;
             owned->fake_pid     = 7;
             owned->memory->base = kBase;
             owned->memory->flat.assign(0x40, std::byte {0});

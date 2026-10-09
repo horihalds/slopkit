@@ -272,3 +272,25 @@ TEST_CASE("A plugin's host log messages carry its id", "[plugin]")
     }
     REQUIRE(saw_attributed);
 }
+
+TEST_CASE("A plugin that leaves the allocation slots null reports unsupported", "[plugin]")
+{
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_TEST_LOGGING_PLUGIN_DIR});
+
+    auto* plugin = host.find("logging-fixture");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(1);
+    REQUIRE(session.has_value());
+
+    REQUIRE_FALSE(session->supports_allocation());
+
+    auto allocated = session->allocate_memory(4096, 0);
+    REQUIRE_FALSE(allocated.has_value());
+    CHECK(allocated.error() == slopkit::process::AccessError::unsupported);
+
+    auto freed = session->free_memory(0x1000);
+    REQUIRE_FALSE(freed.has_value());
+    CHECK(freed.error() == slopkit::process::AccessError::unsupported);
+}

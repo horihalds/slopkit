@@ -1326,3 +1326,50 @@ print(addr)
         CHECK(result.run.error.find("aobscan: the target reported no readable memory") != std::string::npos);
     }
 }
+
+TEST_CASE("a script maps, uses and frees target memory end to end", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+    access.can_allocate = true;
+    REQUIRE(attach_target(worker));
+
+    const ScriptResult result = run_script(worker, R"(
+local p = alloc("buf", 64)
+print(p)
+write(p, 7)
+print(read_u8(p))
+dealloc("buf")
+)");
+
+    REQUIRE(result.run.ok);
+    REQUIRE(result.run.output.size() == 2);
+    CHECK(result.run.output[0] == std::to_string(0x2000));
+    CHECK(result.run.output[1] == "7");
+    CHECK(access.backend()->allocates.load() == 1);
+    CHECK(access.backend()->frees.load() == 1);
+    CHECK(access.backend()->allocations.empty());
+}
+
+TEST_CASE("a plugin that cannot allocate memory is reported through the worker", "[process]")
+{
+    GatedAccess  access {false}; // the fake plugin does not support allocation
+    AccessWorker worker {access};
+    REQUIRE(attach_target(worker));
+
+    const ScriptResult result = run_script(worker, R"(alloc("buf", 64))");
+
+    CHECK_FALSE(result.run.ok);
+    CHECK(result.run.error.find("alloc: the target's plugin cannot allocate memory") != std::string::npos);
+}
+
+TEST_CASE("a script job with allocation globals is refused without an attached target", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    const ScriptResult result = run_script(worker, R"(alloc("buf", 64))");
+
+    CHECK_FALSE(result.run.ok);
+    CHECK(result.run.error == "no target is attached");
+}

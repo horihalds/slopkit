@@ -12,8 +12,11 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "expr/resolver.hpp"
 #include "script/engine.hpp"
 #include "script/symbols.hpp"
 #include "script/types.hpp"
@@ -34,16 +37,24 @@ namespace
     // message the worker's `AccessError` text produces.
     struct FakeMemory
     {
-        std::vector<std::byte>     bytes;
-        std::size_t                pointer_size {8};
+        std::vector<std::byte>                             bytes;
+        std::size_t                                        pointer_size {8};
         // The module name the default region reports, so a test can exercise the
         // module filter of `aobscan`.
-        std::string                module_name {"test.so"};
+        std::string                                        module_name {"test.so"};
         // When non-empty, overrides the default single readable region covering
         // the whole buffer.
-        std::vector<MemoryRegion>  regions;
+        std::vector<MemoryRegion>                          regions;
         // When set, listing regions fails with this text.
-        std::optional<std::string> regions_error;
+        std::optional<std::string>                         regions_error;
+        // Allocation seams for `alloc`/`dealloc`: a pool keyed by the address
+        // the engine was handed, plus the module snapshot `expression` resolves
+        // module names against.
+        bool                                               can_allocate {true};
+        std::optional<std::string>                         allocate_error;
+        std::unordered_map<std::uint64_t, std::size_t>     allocations;
+        std::vector<std::pair<std::uint64_t, std::size_t>> allocate_requests;
+        std::vector<slopkit::expr::ModuleRef>              modules;
 
         explicit FakeMemory(std::size_t size = 0x100) : bytes(size) {}
 
@@ -111,6 +122,38 @@ namespace
                 region.readable = true;
                 region.module   = module_name;
                 return std::vector<MemoryRegion> {region};
+            };
+            memory.allocate = [this](std::size_t size, std::uint64_t near) -> std::expected<std::uint64_t, std::string>
+            {
+                if (!can_allocate)
+                {
+                    return std::unexpected(std::string {"the target's plugin cannot allocate memory"});
+                }
+                if (allocate_error)
+                {
+                    return std::unexpected(*allocate_error);
+                }
+                constexpr std::size_t page   = 0x1000;
+                const std::size_t     offset = (bytes.size() + page - 1) / page * page;
+                bytes.resize(offset + size, std::byte {0});
+                const std::uint64_t address = kScriptBase + offset;
+                allocations[address]        = size;
+                allocate_requests.emplace_back(near, size);
+                return address;
+            };
+            memory.deallocate = [this](std::uint64_t address) -> std::expected<void, std::string>
+            {
+                const auto found = allocations.find(address);
+                if (found == allocations.end())
+                {
+                    return std::unexpected(std::string {"not this session's allocation"});
+                }
+                allocations.erase(found);
+                return {};
+            };
+            memory.modules = [this]() -> std::expected<std::vector<slopkit::expr::ModuleRef>, std::string>
+            {
+                return modules;
             };
             return memory;
         }

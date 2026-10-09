@@ -38,7 +38,7 @@ extern "C"
 #endif
 
 #define SLOPKIT_PLUGIN_ABI_VERSION_MAJOR 1
-#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 5
+#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 6
 #define SLOPKIT_PLUGIN_ABI_VERSION       ((SLOPKIT_PLUGIN_ABI_VERSION_MAJOR << 16) | SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
 
     /* Status codes carried in `slopkit_result::code`. */
@@ -271,6 +271,21 @@ extern "C"
         slopkit_result (*suspend_target)(void* session);
         /* Resumes a target stopped by suspend_target with SIGCONT. Idempotent. */
         slopkit_result (*resume_target)(void* session);
+
+        /* --- target memory allocation (ABI 1.6), appended so a plugin built
+           against an older minor keeps loading with these left null. A plugin
+           that leaves them null cannot allocate; the host reports
+           "unsupported" and never calls them. --- */
+
+        /* Maps `size` bytes (rounded up to the target's page size) in the
+           target with at least read/write/execute permission and stores the
+           mapping base in *out_address. `near_address` is a best-effort hint
+           (0 = anywhere): a hint the plugin cannot honour is not an error
+           while the mapping succeeds. */
+        slopkit_result (*allocate_memory)(void* session, uint64_t size, uint64_t near_address, uint64_t* out_address);
+        /* Unmaps the whole mapping an earlier allocate_memory of the same
+           session returned at `address`; anything else is SLOPKIT_ERR_NOT_FOUND. */
+        slopkit_result (*free_memory)(void* session, uint64_t address);
     } slopkit_plugin_vtable;
 
     /*

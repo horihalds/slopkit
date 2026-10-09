@@ -117,6 +117,21 @@ namespace slopkit::process
                 return session_.resume_target();
             }
 
+            [[nodiscard]] bool supports_allocation() const noexcept override
+            {
+                return session_.supports_allocation();
+            }
+
+            std::expected<std::uint64_t, AccessError> allocate(std::size_t size, std::uint64_t near_address) override
+            {
+                return session_.allocate_memory(size, near_address);
+            }
+
+            std::expected<void, AccessError> free(std::uint64_t address) override
+            {
+                return session_.free_memory(address);
+            }
+
         private:
             plugin::PluginSession     session_;
             ProcessId                 pid_ {};

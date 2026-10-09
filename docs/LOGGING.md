@@ -37,8 +37,8 @@ string literals.
 - `memory` — target reads and writes, and memory-page loads.
 - `scan` — the scan engine and matcher lifecycle.
 - `table` — the address table and its files.
-- `script` — a Lua script entry: run submit/execute/complete, the lines it printed
-  and its first error.
+- `script` — a Lua script entry: run submit/execute/complete, the lines it printed,
+  its first error, and each `alloc`/`dealloc` of target memory.
 - `debug` — the opt-in debug session: start/stop, stops, software and hardware
   breakpoint arming and every debug failure.
 - `ui` — user actions in the Qt layer.

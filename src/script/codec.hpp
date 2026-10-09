@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -33,5 +34,11 @@ namespace slopkit::script
     // are rejected; integers truncate toward zero.
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string> encode_number(std::string_view token,
                                                                                    double           value);
+
+    // Encodes an exact 64-bit integer using the token's width, little-endian, so
+    // a `u64`/`i64` write keeps every bit a Lua integer carries. Floating tokens
+    // and unknown tokens are rejected; use `encode_number` for those.
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string> encode_integer(std::string_view token,
+                                                                                    std::uint64_t    value);
 
 } // namespace slopkit::script

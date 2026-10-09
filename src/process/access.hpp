@@ -66,6 +66,24 @@ namespace slopkit::process
         {
             return std::unexpected(AccessError::unsupported);
         }
+
+        // Allocation capability. Defaulted so a backend or a test fake without
+        // the plugin ABI 1.6 operations keeps compiling; only a backend that
+        // actually implements them overrides them.
+        [[nodiscard]] virtual bool supports_allocation() const noexcept
+        {
+            return false;
+        }
+
+        virtual std::expected<std::uint64_t, AccessError> allocate(std::size_t /*size*/, std::uint64_t /*near_address*/)
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
+
+        virtual std::expected<void, AccessError> free(std::uint64_t /*address*/)
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
     };
 
     // Move-only handle to an attached process. All operations return
@@ -180,6 +198,29 @@ namespace slopkit::process
                 return std::unexpected(AccessError::internal);
             }
             return backend_->resume();
+        }
+
+        [[nodiscard]] bool supports_allocation() const noexcept
+        {
+            return backend_ ? backend_->supports_allocation() : false;
+        }
+
+        std::expected<std::uint64_t, AccessError> allocate(std::size_t size, std::uint64_t near_address)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->allocate(size, near_address);
+        }
+
+        std::expected<void, AccessError> free(std::uint64_t address)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->free(address);
         }
 
         [[nodiscard]] explicit operator bool() const noexcept

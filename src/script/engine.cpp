@@ -15,6 +15,8 @@
 
 #include <sol/sol.hpp>
 
+#include "expr/expression.hpp"
+#include "expr/resolver.hpp"
 #include "scan/pattern.hpp"
 #include "script/codec.hpp"
 #include "script/symbols.hpp"
@@ -98,8 +100,11 @@ namespace slopkit::script
             *static_cast<Impl**>(lua_getextraspace(lua.lua_state())) = this;
             install_print();
             install_memory();
+            install_typed_access();
             install_symbols();
             install_labels();
+            install_resolution();
+            install_allocation();
             install_aobscan();
         }
 
@@ -242,6 +247,88 @@ namespace slopkit::script
                              {
                                  const auto* bytes = reinterpret_cast<const std::byte*>(data.data());
                                  write_raw(address, std::span<const std::byte>(bytes, data.size()));
+                             });
+        }
+
+        // The ten typed reads and the inferring `write`: the one-line
+        // counterparts of `mem.read`/`mem.write` that name the type in the
+        // function, over the same `script::codec` value vocabulary.
+        void install_typed_access()
+        {
+            struct ReadBinding
+            {
+                const char* name;
+                const char* token;
+            };
+
+            static constexpr ReadBinding kReads[] = {
+                { "read_u8",  "u8"},
+                { "read_i8",  "i8"},
+                {"read_u16", "u16"},
+                {"read_i16", "i16"},
+                {"read_u32", "u32"},
+                {"read_i32", "i32"},
+                {"read_u64", "u64"},
+                {"read_i64", "i64"},
+                {"read_f32", "f32"},
+                {"read_f64", "f64"},
+            };
+            for (const ReadBinding& binding : kReads)
+            {
+                const std::string name {binding.name};
+                const std::string token {binding.token};
+                lua.set_function(binding.name,
+                                 [this, name, token](std::uint64_t address) -> sol::object
+                                 {
+                                     const std::size_t                        width   = *type_width(token);
+                                     const std::vector<std::byte>             bytes   = read_for(name, address, width);
+                                     const std::expected<double, std::string> decoded = decode_number(token, bytes);
+                                     if (!decoded)
+                                     {
+                                         throw std::runtime_error(name + ": " + decoded.error());
+                                     }
+                                     // Integer tokens come back as Lua integers so a
+                                     // value prints as `42`, not `42.0`.
+                                     if (is_integer_token(token))
+                                     {
+                                         return sol::make_object(lua.lua_state(), static_cast<std::int64_t>(*decoded));
+                                     }
+                                     return sol::make_object(lua.lua_state(), *decoded);
+                                 });
+            }
+
+            lua.set_function("write",
+                             [this](std::uint64_t address, sol::object value, sol::optional<sol::object> type)
+                             {
+                                 if (value.get_type() != sol::type::number)
+                                 {
+                                     throw std::runtime_error("write: the value must be a number");
+                                 }
+                                 std::string token;
+                                 if (type)
+                                 {
+                                     if (type->get_type() != sol::type::string)
+                                     {
+                                         throw std::runtime_error("write: the value type must be a string");
+                                     }
+                                     token = type->as<std::string>();
+                                     if (!type_width(token))
+                                     {
+                                         throw std::runtime_error("write: unknown value type '" + token + "'");
+                                     }
+                                 }
+                                 else
+                                 {
+                                     token = infer_token(value);
+                                 }
+
+                                 const std::expected<std::vector<std::byte>, std::string> encoded =
+                                     encode_value(token, value);
+                                 if (!encoded)
+                                 {
+                                     throw std::runtime_error("write: " + encoded.error());
+                                 }
+                                 write_for("write", address, *encoded);
                              });
         }
 
@@ -405,6 +492,184 @@ namespace slopkit::script
                              {
                                  labels.remove(name_argument("ulabel", name));
                              });
+        }
+
+        // Binds `label(name)` (the script's own labels), `symbol(name)` (labels
+        // first, then the process-wide table) and `expression(text)` (a full
+        // address expression). An unknown name is the value 0, not an error; a
+        // malformed name or an unresolvable expression throws under the
+        // function's name.
+        void install_resolution()
+        {
+            lua.set_function("label",
+                             [this](sol::object name) -> std::uint64_t
+                             {
+                                 const std::string resolved_name = name_argument("label", name);
+                                 if (const std::optional<std::string> rejected = validate_symbol_name(resolved_name))
+                                 {
+                                     throw std::runtime_error("label: " + *rejected);
+                                 }
+                                 return labels.lookup(resolved_name).value_or(0);
+                             });
+
+            lua.set_function("symbol",
+                             [this](sol::object name) -> std::uint64_t
+                             {
+                                 const std::string resolved_name = name_argument("symbol", name);
+                                 if (const std::optional<std::string> rejected = validate_symbol_name(resolved_name))
+                                 {
+                                     throw std::runtime_error("symbol: " + *rejected);
+                                 }
+                                 if (const std::optional<NameHit> hit = resolve_name(resolved_name))
+                                 {
+                                     return hit->value;
+                                 }
+                                 return 0;
+                             });
+
+            lua.set_function(
+                "expression",
+                [this](sol::object text) -> std::uint64_t
+                {
+                    if (text.get_type() != sol::type::string)
+                    {
+                        throw std::runtime_error("expression: the expression must be a string");
+                    }
+                    const std::string source = text.as<std::string>();
+
+                    const std::expected<expr::Expression, expr::Error> parsed = expr::parse(source);
+                    if (!parsed)
+                    {
+                        throw std::runtime_error("expression: " + parsed.error().message);
+                    }
+
+                    // The base is a script label first, then a
+                    // process-wide symbol, then (via the evaluator)
+                    // a module name and a literal. Passing only the
+                    // name that answered makes the script's own name
+                    // beat a module with the same spelling.
+                    std::vector<expr::SymbolRef> symbol_entries;
+                    std::vector<expr::ModuleRef> module_entries;
+                    if (const std::optional<NameHit> hit = resolve_name(parsed->base))
+                    {
+                        symbol_entries.push_back(expr::SymbolRef {parsed->base, hit->value});
+                    }
+                    else if (api.modules)
+                    {
+                        if (std::expected<std::vector<expr::ModuleRef>, std::string> listed = api.modules())
+                        {
+                            module_entries = std::move(*listed);
+                        }
+                    }
+
+                    const std::size_t pointer_size = api.pointer_size ? api.pointer_size() : sizeof(std::uint64_t);
+                    const auto        reader =
+                        [this, pointer_size](std::uint64_t address) -> std::expected<std::uint64_t, std::string>
+                    {
+                        if (!api.read)
+                        {
+                            return std::unexpected(std::string {"no target is attached"});
+                        }
+                        std::expected<std::vector<std::byte>, std::string> bytes = api.read(address, pointer_size);
+                        if (!bytes)
+                        {
+                            return std::unexpected(bytes.error());
+                        }
+                        return decode_pointer_value(*bytes);
+                    };
+
+                    const std::expected<std::uint64_t, expr::ResolveError> resolved = expr::evaluate(
+                        *parsed, module_entries, symbol_entries, reader, expr::Options {.pointer_size = pointer_size});
+                    if (!resolved)
+                    {
+                        throw std::runtime_error("expression: " + resolved.error().message);
+                    }
+                    return *resolved;
+                });
+        }
+
+        // Binds `alloc(name, size[, near])` and `dealloc(name)`: map and unmap
+        // memory in the target from a script. `alloc` publishes the address with
+        // `aobscan`'s rule, so a label or symbol of that name sees it too.
+        void install_allocation()
+        {
+            lua.set_function(
+                "alloc",
+                [this](sol::object name, sol::object size, sol::optional<sol::object> near) -> std::uint64_t
+                {
+                    const std::string label_name = name_argument("alloc", name);
+                    if (const std::optional<std::string> rejected = validate_symbol_name(label_name))
+                    {
+                        throw std::runtime_error("alloc: " + *rejected);
+                    }
+
+                    if (size.get_type() != sol::type::number)
+                    {
+                        throw std::runtime_error("alloc: the size must be a number");
+                    }
+                    lua_State* state = lua.lua_state();
+                    size.push(state);
+                    const bool        is_integer = lua_isinteger(state, -1) != 0;
+                    const lua_Integer integer    = is_integer ? lua_tointeger(state, -1) : 0;
+                    const double      number     = is_integer ? 0.0 : lua_tonumber(state, -1);
+                    lua_pop(state, 1);
+                    const double checked_size = is_integer ? static_cast<double>(integer) : number;
+                    if (!std::isfinite(checked_size) || checked_size <= 0.0)
+                    {
+                        throw std::runtime_error("alloc: the size must be larger than 0");
+                    }
+                    const std::size_t size_bytes =
+                        is_integer ? static_cast<std::size_t>(integer) : static_cast<std::size_t>(number);
+
+                    std::uint64_t near_address = 0;
+                    if (near)
+                    {
+                        near_address = value_argument("alloc", near);
+                    }
+
+                    if (!api.allocate)
+                    {
+                        throw std::runtime_error("alloc: the target's plugin cannot allocate memory");
+                    }
+                    const std::expected<std::uint64_t, std::string> address = api.allocate(size_bytes, near_address);
+                    if (!address)
+                    {
+                        throw std::runtime_error("alloc: " + address.error());
+                    }
+                    store_hit("alloc", label_name, *address);
+                    return *address;
+                });
+
+            lua.set_function(
+                "dealloc",
+                [this](sol::object name)
+                {
+                    const std::string label_name = name_argument("dealloc", name);
+                    if (const std::optional<std::string> rejected = validate_symbol_name(label_name))
+                    {
+                        throw std::runtime_error("dealloc: " + *rejected);
+                    }
+                    if (!api.deallocate)
+                    {
+                        throw std::runtime_error("dealloc: the target's plugin cannot allocate memory");
+                    }
+
+                    const std::optional<NameHit> hit = resolve_name(label_name);
+                    if (!hit)
+                    {
+                        throw std::runtime_error("dealloc: " + label_name + " is not this session's allocation");
+                    }
+
+                    const std::expected<void, std::string> freed = api.deallocate(hit->value);
+                    if (!freed)
+                    {
+                        if (freed.error() == "not this session's allocation")
+                        {
+                            throw std::runtime_error("dealloc: " + label_name + " is not this session's allocation");
+                        }
+                        throw std::runtime_error("dealloc: " + freed.error());
+                    }
+                });
         }
 
         // Stores the address of a successful scan under `name`: into the label
@@ -588,6 +853,115 @@ namespace slopkit::script
             {
                 throw std::runtime_error("mem.write: " + written.error());
             }
+        }
+
+        // Reads `size` bytes for one of the typed globals: the same seam as
+        // `mem.read`, but every failure names the function the script called.
+        std::vector<std::byte> read_for(const std::string& function, std::uint64_t address, std::size_t size)
+        {
+            if (!api.read)
+            {
+                throw std::runtime_error(function + ": no target is attached");
+            }
+            std::expected<std::vector<std::byte>, std::string> bytes = api.read(address, size);
+            if (!bytes)
+            {
+                throw std::runtime_error(function + ": " + bytes.error());
+            }
+            return std::move(*bytes);
+        }
+
+        void write_for(const std::string& function, std::uint64_t address, std::span<const std::byte> bytes)
+        {
+            if (!api.write)
+            {
+                throw std::runtime_error(function + ": no target is attached");
+            }
+            const std::expected<void, std::string> written = api.write(address, bytes);
+            if (!written)
+            {
+                throw std::runtime_error(function + ": " + written.error());
+            }
+        }
+
+        // The narrowest type that holds a plain Lua value, so `write(addr, v)`
+        // needs no token for the common cases; a float writes `f32`.
+        std::string infer_token(const sol::object& value)
+        {
+            lua_State* state = lua.lua_state();
+            value.push(state);
+            const bool        is_integer = lua_isinteger(state, -1) != 0;
+            const lua_Integer integer    = is_integer ? lua_tointeger(state, -1) : 0;
+            lua_pop(state, 1);
+
+            if (!is_integer)
+            {
+                return "f32";
+            }
+            if (integer >= 0)
+            {
+                const std::uint64_t unsigned_value = static_cast<std::uint64_t>(integer);
+                if (unsigned_value <= 0xFF)
+                {
+                    return "u8";
+                }
+                if (unsigned_value <= 0xFFFF)
+                {
+                    return "u16";
+                }
+                if (unsigned_value <= 0xFFFFFFFF)
+                {
+                    return "u32";
+                }
+                return "u64";
+            }
+            if (integer >= -128)
+            {
+                return "i8";
+            }
+            if (integer >= -0x8000)
+            {
+                return "i16";
+            }
+            if (integer >= -0x80000000LL)
+            {
+                return "i32";
+            }
+            return "i64";
+        }
+
+        // Encodes a Lua value for `write`: an integer token keeps the exact 64
+        // bits of a Lua integer, everything else goes through `encode_number`.
+        std::expected<std::vector<std::byte>, std::string> encode_value(const std::string& token,
+                                                                        const sol::object& value)
+        {
+            lua_State* state = lua.lua_state();
+            value.push(state);
+            const bool        is_integer = lua_isinteger(state, -1) != 0;
+            const lua_Integer integer    = is_integer ? lua_tointeger(state, -1) : 0;
+            const double      number     = is_integer ? 0.0 : lua_tonumber(state, -1);
+            lua_pop(state, 1);
+
+            if (is_integer && is_integer_token(token))
+            {
+                return encode_integer(token, static_cast<std::uint64_t>(integer));
+            }
+            return encode_number(token, is_integer ? static_cast<double>(integer) : number);
+        }
+
+        // Little-endian pointer for an `expression` dereference.
+        static std::expected<std::uint64_t, std::string> decode_pointer_value(std::span<const std::byte> bytes)
+        {
+            if (bytes.empty() || bytes.size() > sizeof(std::uint64_t))
+            {
+                return std::unexpected(std::string {"the target returned a bad pointer width"});
+            }
+            std::uint64_t value = 0;
+            for (std::size_t i = 0; i < bytes.size(); ++i)
+            {
+                value |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(bytes[i])) << (8 * i);
+            }
+            return value;
         }
 
         std::string read_string(std::uint64_t address, std::size_t limit)
