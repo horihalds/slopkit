@@ -47,6 +47,7 @@ namespace
                 row.bytes = std::span<const std::byte>(code.data() + (instruction.address - base), instruction.length);
                 row.address_bytes = instruction.address_bytes;
                 row.addresses     = instruction.addresses;
+                row.memory        = instruction.memory;
                 row.text          = instruction.text;
                 row.valid         = instruction.valid && row.bytes.size() == instruction.length;
                 rows.push_back(std::move(row));
@@ -213,7 +214,7 @@ TEST_CASE("address operands are re-emitted position-independently", "[script][ho
         const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
 
         REQUIRE(target.trampoline_lines.size() == 1);
-        CHECK(target.trampoline_lines[0] == "MOV RAX, [0x%X]");
+        CHECK(target.trampoline_lines[0] == "MOV RAX, qword ptr [0x%X]");
         REQUIRE(target.covered[0].address_args.size() == 1);
         CHECK(target.covered[0].address_args[0] == 0x401000);
     }
@@ -247,7 +248,7 @@ TEST_CASE("address operands are re-emitted position-independently", "[script][ho
 
         CHECK(target.trampoline_lines[0] == "MOV RAX, RBX");
         CHECK(target.covered[0].address_args.empty());
-        CHECK(target.trampoline_lines[1] == "MOV RAX, [0x%X]");
+        CHECK(target.trampoline_lines[1] == "MOV RAX, qword ptr [0x%X]");
         REQUIRE(target.covered[1].address_args.size() == 1);
         CHECK(target.covered[1].address_args[0] == 0x301);
     }
@@ -284,6 +285,91 @@ TEST_CASE("a trampoline that does not re-encode is refused", "[script][hook]")
     std::string reason;
     CHECK_FALSE(script::build_hook(candidate, reason).has_value());
     CHECK(reason.find("cannot be re-encoded") != std::string::npos);
+}
+
+TEST_CASE("a memory operand the listing prints without a size is re-encoded with one", "[script][hook]")
+{
+    // INC [RBX+1C] (FF 43 1C): the listing prints no size keyword and the
+    // instruction has no register sibling, so without the operand's recorded
+    // width the encoder rejects the re-encoded trampoline.
+    const Listing listing({0xFF, 0x43, 0x1C, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                           0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          0x1000);
+
+    std::string              reason;
+    const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
+
+    REQUIRE(target.trampoline_lines.size() == 3);
+    CHECK(target.trampoline_lines[0] == "INC dword ptr [RBX+1C]");
+    CHECK(target.original.size() == 5);
+}
+
+TEST_CASE("a size the listing prints is not spelled twice", "[script][hook]")
+{
+    // MOVZX EAX, byte ptr [RBX] (0F B6 03): the decoder prints the size because
+    // the destination register cannot imply it, so the generator leaves it.
+    const Listing listing({0x0F, 0xB6, 0x03, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                           0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          0x1000);
+
+    std::string              reason;
+    const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
+
+    REQUIRE_FALSE(target.trampoline_lines.empty());
+    CHECK(target.trampoline_lines[0] == "MOVZX EAX, byte ptr [RBX]");
+}
+
+TEST_CASE("a byte-width memory operand keeps its size across the re-encode", "[script][hook]")
+{
+    // INC byte ptr [RBX] (FE 03): the listing prints no keyword and dword is the
+    // default, so the recorded width is the only thing that stops the re-encode
+    // from widening the operand.
+    const Listing listing({0xFE, 0x03, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                           0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          0x1000);
+
+    std::string              reason;
+    const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
+
+    REQUIRE_FALSE(target.trampoline_lines.empty());
+    CHECK(target.trampoline_lines[0] == "INC byte ptr [RBX]");
+}
+
+TEST_CASE("a hook on an ambiguous-size memory operand installs", "[script][hook]")
+{
+    ScriptFixture                    fixture(0x200);
+    const std::initializer_list<int> bytes = {0xFF, 0x43, 0x1C, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+                                              0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+    fixture.fake.put(0x10, bytes);
+
+    const Listing listing(bytes, fixture.fake.address(0x10));
+    REQUIRE(listing.rows.size() >= 3);
+
+    script::HookCandidate candidate = candidate_at(listing, 0, "test.so");
+
+    std::string                             reason;
+    const std::optional<script::HookTarget> target = script::build_hook(candidate, reason);
+    REQUIRE(target.has_value());
+    REQUIRE(target->trampoline_lines.front() == "INC dword ptr [RBX+1C]");
+    const std::string source = script::render(*target);
+    REQUIRE(script::check_syntax(source).has_value());
+
+    const script::LifecycleResult activated = fixture.engine.run_lifecycle(source, "activate");
+    INFO(activated.message);
+    REQUIRE(activated.ok);
+
+    REQUIRE(fixture.fake.allocations.size() == 1);
+    const std::uint64_t cave        = fixture.fake.allocations.begin()->first;
+    const auto          cave_offset = static_cast<std::size_t>(cave - kScriptBase);
+    // The cave opens with the stub, then the re-encoded INC keeps its dword form
+    // (FF 43 1C), then the two NOPs, then the jump back.
+    CHECK(fixture.fake.bytes[cave_offset] == std::byte {0x90});
+    CHECK(fixture.fake.bytes[cave_offset + 1] == std::byte {0xFF});
+    CHECK(fixture.fake.bytes[cave_offset + 2] == std::byte {0x43});
+    CHECK(fixture.fake.bytes[cave_offset + 3] == std::byte {0x1C});
+    CHECK(fixture.fake.bytes[cave_offset + 4] == std::byte {0x90});
+    CHECK(fixture.fake.bytes[cave_offset + 5] == std::byte {0x90});
+    CHECK(fixture.fake.bytes[cave_offset + 6] == std::byte {0xE9});
 }
 
 TEST_CASE("the rendered script carries the generated facts", "[script][hook]")

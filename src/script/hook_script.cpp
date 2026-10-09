@@ -7,6 +7,7 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -31,6 +32,92 @@ namespace slopkit::script
                 character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
             }
             return text;
+        }
+
+        // The assembler's name for a memory operand of `width` bytes, as the
+        // listing prints it (`dword ptr`). A width the assembler cannot name
+        // comes back empty.
+        [[nodiscard]] std::optional<std::string_view> size_keyword(unsigned width)
+        {
+            switch (width)
+            {
+            case 1:
+                return "byte";
+            case 2:
+                return "word";
+            case 4:
+                return "dword";
+            case 6:
+                return "fword";
+            case 8:
+                return "qword";
+            case 10:
+                return "tbyte";
+            case 16:
+                return "oword";
+            case 32:
+                return "ymmword";
+            case 64:
+                return "zmmword";
+            default:
+                return std::nullopt;
+            }
+        }
+
+        // Whether the listing already spells the operand's size before its `[`
+        // (`MOVZX EAX, byte ptr [RBX]`), so the generator does not add a second
+        // keyword where the decoder printed one.
+        [[nodiscard]] bool size_is_spelled(std::string_view text, std::size_t offset)
+        {
+            std::size_t end = offset;
+            while (end > 0 && text[end - 1] == ' ')
+            {
+                --end;
+            }
+            return end >= 3 && lower_ascii(std::string {text.substr(end - 3, 3)}) == "ptr";
+        }
+
+        // One rewritten listing line. `verify` keeps the decoded absolute
+        // addresses so the generator can prove the line re-encodes; otherwise
+        // every address slice becomes a `0x%X` placeholder the runtime fills. A
+        // memory operand the listing prints without a size keyword (`INC [RBX+1C]`)
+        // gains the explicit size its `MemoryRef` records, which the encoder needs
+        // because no sibling operand spells the width.
+        [[nodiscard]] std::string rewrite_line(const HookRow& row, bool verify)
+        {
+            std::string out;
+            out.reserve(row.text.size() + row.memory.size() * 8);
+
+            std::size_t position   = 0;
+            std::size_t address_at = 0;
+            std::size_t memory_at  = 0;
+            while (position < row.text.size())
+            {
+                if (address_at < row.addresses.size() && row.addresses[address_at].offset == position)
+                {
+                    const disasm::AddressRef& reference = row.addresses[address_at];
+                    out += verify ? std::format("0x{:X}", reference.address) : std::string {"0x%X"};
+                    position += reference.length;
+                    ++address_at;
+                    continue;
+                }
+                if (memory_at < row.memory.size() && row.memory[memory_at].offset == position)
+                {
+                    const disasm::MemoryRef& operand = row.memory[memory_at];
+                    ++memory_at;
+                    if (!size_is_spelled(row.text, position))
+                    {
+                        if (const std::optional<std::string_view> keyword = size_keyword(operand.width))
+                        {
+                            out += *keyword;
+                            out += " ptr ";
+                        }
+                    }
+                }
+                out += row.text[position];
+                ++position;
+            }
+            return out;
         }
 
         // The rows are decoded from one contiguous cache, so the next row starts
@@ -207,14 +294,11 @@ namespace slopkit::script
             // The listing prints every address absolute. Re-emit each operand as
             // `0x%X` with its runtime value passed as `site ± delta`, so the
             // trampoline keeps pointing at the same data after ASLR moves the
-            // module.
-            std::string line        = row.text;
-            std::string verify_line = row.text;
-            for (auto reference = row.addresses.rbegin(); reference != row.addresses.rend(); ++reference)
-            {
-                line.replace(reference->offset, reference->length, "0x%X");
-                verify_line.replace(reference->offset, reference->length, std::format("0x{:X}", reference->address));
-            }
+            // module. A memory operand the listing printed without a size gains
+            // its explicit size, so the re-encode cannot fall back to a width
+            // the encoder has to guess.
+            std::string line        = rewrite_line(row, false);
+            std::string verify_line = rewrite_line(row, true);
             for (const disasm::AddressRef& reference : row.addresses)
             {
                 const std::int64_t delta =

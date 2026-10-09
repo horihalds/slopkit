@@ -330,11 +330,13 @@ target.
   displacement is module-relative and stays literal, so a rebased module still
   matches. The window is whole instructions from the selected row until a 5-byte near
   jump fits; an address operand is re-emitted as `0x%X` with its runtime `site ± delta`
-  argument, so the trampoline stays position-independent after ASLR; and the
-  generator proves the rewritten trampoline assembles at the original address with
-  `disasm::assemble_block`, refusing when it does not so a broken hook never reaches
-  the editor. Generation reads only the listing's cached bytes — the UI thread never
-  touches the target.
+  argument, so the trampoline stays position-independent after ASLR; a memory
+  operand the decoder printed without a size keyword (`INC [RBX+1C]`) gains the
+  explicit width its `MemoryRef` records (`INC dword ptr [RBX+1C]`), so the re-encode
+  cannot guess the wrong operand size; and the generator proves the rewritten
+  trampoline assembles at the original address with `disasm::assemble_block`,
+  refusing when it does not so a broken hook never reaches the editor. Generation
+  reads only the listing's cached bytes — the UI thread never touches the target.
 - A registered symbol resolves like a module name in any address expression, in
   both the worker's resolve job and the deref-free UI parsers. `expr::evaluate`
   takes the snapshot as an argument and looks a base up as **module name → symbol

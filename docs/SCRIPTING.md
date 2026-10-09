@@ -312,9 +312,12 @@ checkbox's verdict is exactly the helper's.
 - Every address the replaced instructions print is re-emitted
   position-independently: a `%X` placeholder in `trampoline` is filled from the
   matching `trampoline_args` entry, a `site`-relative delta, so a rebased module
-  still reads the same data. The generator proves the rewritten trampoline assembles
-  before the script reaches the editor and refuses with a reason when an instruction
-  cannot be re-encoded.
+  still reads the same data. A memory operand the listing left without a size is
+  re-emitted with its explicit width (`INC [RBX+1C]` becomes
+  `INC dword ptr [RBX+1C]`), so a width the decoder could infer is not lost on the
+  re-encode. The generator proves the rewritten trampoline assembles before the
+  script reaches the editor and refuses with a reason when an instruction cannot be
+  re-encoded.
 
 The hook window is whole instructions: the selected instruction **plus as many
 following instructions as needed** for a 5-byte near jump to fit, so an instruction

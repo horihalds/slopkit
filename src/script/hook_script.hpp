@@ -19,6 +19,7 @@ namespace slopkit::script
         std::span<const std::byte>            bytes;         // the encoding, from the cache
         std::span<const disasm::AddressBytes> address_bytes; // where its printed addresses sit
         std::span<const disasm::AddressRef>   addresses;     // the printed address slices
+        std::span<const disasm::MemoryRef>    memory;        // the memory operands its text prints
         std::string                           text;          // as the listing prints it, addresses absolute
         bool                                  valid {};      // false for a `.byte` row
     };

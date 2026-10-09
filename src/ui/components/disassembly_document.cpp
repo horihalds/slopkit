@@ -814,6 +814,7 @@ namespace slopkit::ui::components
             row.bytes         = cached_bytes(instruction.address, instruction.length);
             row.address_bytes = instruction.address_bytes;
             row.addresses     = instruction.addresses;
+            row.memory        = instruction.memory;
             row.text          = instruction.text;
             row.valid         = instruction.valid && row.bytes.size() == instruction.length;
             rows.push_back(std::move(row));
