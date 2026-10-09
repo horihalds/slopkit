@@ -239,7 +239,7 @@ namespace slopkit::ui::panels
         auto* fast_row   = new QHBoxLayout();
         fast_scan_check_ = new QCheckBox(tr("Fast Scan"));
         fast_scan_check_->setChecked(true);
-        alignment_edit_ = new QLineEdit(QStringLiteral("4"));
+        alignment_edit_ = new QLineEdit(QString::number(default_alignment(scan::ValueType::int32)));
         alignment_edit_->setPlaceholderText(tr("Alignment"));
         alignment_edit_->setFont(mono_font());
         alignment_edit_->setMaximumWidth(96);
@@ -363,6 +363,7 @@ namespace slopkit::ui::panels
                 this,
                 [this]
                 {
+                    apply_default_alignment();
                     update_value_inputs();
                 });
         connect(fast_scan_check_,
@@ -384,6 +385,18 @@ namespace slopkit::ui::panels
         value_upper_edit_->setEnabled(wants_value);
         value_upper_edit_->setVisible(type == scan::ScanType::value_between);
         alignment_edit_->setEnabled(fast_scan_check_->isChecked());
+    }
+
+    void ScannerPanel::apply_default_alignment()
+    {
+        const scan::ValueType type     = current_value_type();
+        const QString         current  = alignment_edit_->text().trimmed();
+        const QString         previous = QString::number(default_alignment(alignment_value_type_));
+        if (current.isEmpty() || current == previous)
+        {
+            alignment_edit_->setText(QString::number(default_alignment(type)));
+        }
+        alignment_value_type_ = type;
     }
 
     void ScannerPanel::convert_value_base_fields(bool to_hex)

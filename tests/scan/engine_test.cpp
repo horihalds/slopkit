@@ -333,6 +333,180 @@ TEST_CASE("refinement scans narrow the result set and undo restores it", "[scan]
     }
 }
 
+TEST_CASE("every refinement type keeps the same addresses over a mutated buffer", "[scan]")
+{
+    // Runs a first scan over the initial values, rewrites the buffer and returns
+    // the addresses the given refinement keeps.
+    const auto refine = [](ScanType type) -> std::vector<std::uint64_t>
+    {
+        auto                              bytes = std::make_shared<std::vector<std::byte>>(32);
+        const std::array<std::int32_t, 8> before {10, 20, 30, 40, 50, 60, 70, 80};
+        const std::array<std::int32_t, 8> after {15, 20, 25, 40, 55, 60, 65, 80};
+        for (std::size_t i = 0; i < before.size(); ++i)
+        {
+            write_int32(*bytes, i * 4, before[i]);
+        }
+
+        ScanEngine engine;
+        ScanConfig unknown       = refine_config(ScanType::unknown_initial_value, ValueType::int32);
+        unknown.filter.alignment = 4;
+        engine.first_scan(unknown, mutable_source(bytes));
+        REQUIRE(wait(engine).hit_count == 8);
+
+        for (std::size_t i = 0; i < after.size(); ++i)
+        {
+            write_int32(*bytes, i * 4, after[i]);
+        }
+
+        engine.next_scan(refine_config(type, ValueType::int32));
+        const auto snapshot = wait(engine);
+        REQUIRE(snapshot.state == ScanState::done);
+
+        std::vector<std::uint64_t> addresses;
+        for (const auto& hit : snapshot.hits)
+        {
+            addresses.push_back(hit.address);
+        }
+        return addresses;
+    };
+
+    CHECK(refine(ScanType::increased) == std::vector<std::uint64_t> {kBase, kBase + 16});
+    CHECK(refine(ScanType::decreased) == std::vector<std::uint64_t> {kBase + 8, kBase + 24});
+    CHECK(refine(ScanType::changed) == std::vector<std::uint64_t> {kBase, kBase + 8, kBase + 16, kBase + 24});
+    CHECK(refine(ScanType::unchanged) == std::vector<std::uint64_t> {kBase + 4, kBase + 12, kBase + 20, kBase + 28});
+}
+
+TEST_CASE("a refinement over a single hit stays a single hit", "[scan]")
+{
+    auto bytes = std::make_shared<std::vector<std::byte>>(16);
+    write_int32(*bytes, 0, 15);
+
+    ScanEngine engine;
+    engine.first_scan(exact_config(ValueType::int32, 15), mutable_source(bytes));
+    REQUIRE(wait(engine).hit_count == 1);
+
+    write_int32(*bytes, 0, 20);
+    engine.next_scan(refine_config(ScanType::increased, ValueType::int32));
+    const auto snapshot = wait(engine);
+
+    REQUIRE(snapshot.state == ScanState::done);
+    REQUIRE(snapshot.hit_count == 1);
+    CHECK(snapshot.hits[0].address == kBase);
+    CHECK(snapshot.progress == Approx(1.0f));
+}
+
+TEST_CASE("a refinement that rejects everything finishes empty", "[scan]")
+{
+    auto bytes = std::make_shared<std::vector<std::byte>>(32);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        write_int32(*bytes, i * 4, 42);
+    }
+
+    ScanEngine engine;
+    engine.first_scan(exact_config(ValueType::int32, 42), mutable_source(bytes));
+    REQUIRE(wait(engine).hit_count == 8);
+
+    // No value changes, so an `increased` refinement drops every hit.
+    engine.next_scan(refine_config(ScanType::increased, ValueType::int32));
+    const auto snapshot = wait(engine);
+
+    CHECK(snapshot.state == ScanState::done);
+    CHECK(snapshot.hit_count == 0);
+    CHECK(snapshot.hits.empty());
+    CHECK(snapshot.progress == Approx(1.0f));
+    CHECK_FALSE(snapshot.truncated);
+}
+
+TEST_CASE("a refinement over a truncated result set reports the full count", "[scan]")
+{
+    auto bytes = std::make_shared<std::vector<std::byte>>(32);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        write_int32(*bytes, i * 4, 11);
+    }
+
+    ScanEngine engine;
+    ScanConfig unknown       = refine_config(ScanType::unknown_initial_value, ValueType::int32);
+    unknown.filter.alignment = 4;
+    engine.first_scan(unknown, mutable_source(bytes));
+    REQUIRE(wait(engine).hit_count == 8);
+
+    // The refinement keeps all eight but the lowered cap stores only three.
+    engine.set_max_stored_hits(3);
+    engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
+    const auto snapshot = wait(engine);
+
+    REQUIRE(snapshot.state == ScanState::done);
+    CHECK(snapshot.hit_count == 8);
+    CHECK(snapshot.truncated);
+    CHECK(snapshot.hits.size() == 3);
+}
+
+TEST_CASE("a cancelled refinement keeps the previous result set", "[scan]")
+{
+    auto bytes = std::make_shared<std::vector<std::byte>>(32);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        write_int32(*bytes, i * 4, 10);
+    }
+
+    auto blocking = std::make_shared<std::atomic<bool>>(false);
+    auto released = std::make_shared<std::atomic<bool>>(false);
+
+    slopkit::scan::MemorySource source = mutable_source(bytes);
+    const auto                  inner  = source.read;
+    source.read = [inner, blocking, released](std::uint64_t address,
+                                              std::size_t   size) -> std::expected<std::vector<std::byte>, AccessError>
+    {
+        if (blocking->load(std::memory_order_relaxed))
+        {
+            for (int i = 0; i < 2000 && !released->load(std::memory_order_relaxed); ++i)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        return inner(address, size);
+    };
+
+    ScanEngine engine;
+    engine.first_scan(exact_config(ValueType::int32, 10), source);
+    REQUIRE(wait(engine).hit_count == 8);
+
+    blocking->store(true, std::memory_order_relaxed);
+    engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
+    REQUIRE(engine.is_running());
+    engine.cancel();
+    released->store(true, std::memory_order_relaxed);
+
+    const auto snapshot = wait(engine);
+    CHECK(snapshot.state == ScanState::cancelled);
+    CHECK(engine.result_count() == 8);
+    CHECK(snapshot.hit_count == 8);
+}
+
+TEST_CASE("a refinement works over a read-only source", "[scan]")
+{
+    // mutable_source exposes only read(), so the batch path has to fall back.
+    auto bytes = std::make_shared<std::vector<std::byte>>(32);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        write_int32(*bytes, i * 4, 10);
+    }
+
+    ScanEngine engine;
+    engine.first_scan(exact_config(ValueType::int32, 10), mutable_source(bytes));
+    REQUIRE(wait(engine).hit_count == 8);
+
+    write_int32(*bytes, 0, 20);
+    engine.next_scan(refine_config(ScanType::changed, ValueType::int32));
+    const auto snapshot = wait(engine);
+
+    REQUIRE(snapshot.state == ScanState::done);
+    REQUIRE(snapshot.hit_count == 1);
+    CHECK(snapshot.hits[0].address == kBase);
+}
+
 TEST_CASE("undo with no history keeps the result set", "[scan]")
 {
     std::vector<std::byte> bytes(8);
@@ -414,6 +588,109 @@ TEST_CASE("resetting the engine returns it to the constructed state", "[scan]")
     // A following first scan still works.
     engine.first_scan(exact_config(ValueType::int32, 10), source);
     CHECK(wait(engine).hit_count == 8);
+}
+
+TEST_CASE("a first scan continues past an unreadable hole", "[scan]")
+{
+    constexpr std::size_t kTotal   = 3u << 20; // a 3 MiB readable region
+    constexpr std::size_t kHoleAt  = 1u << 20; // with a 1 MiB hole in the middle
+    constexpr std::size_t kHoleEnd = 2u << 20;
+
+    auto bytes = std::make_shared<std::vector<std::byte>>(kTotal);
+    write_int32(*bytes, 0, 15);        // before the hole
+    write_int32(*bytes, kHoleAt, 15);  // inside the hole: cannot be read
+    write_int32(*bytes, kHoleEnd, 15); // immediately after the hole
+
+    ScanConfig config       = exact_config(ValueType::int32, 15);
+    config.filter.alignment = 4;
+
+    ScanEngine engine;
+    engine.first_scan(config, hole_source(bytes, kBase, kBase + kHoleAt, kBase + kHoleEnd));
+    const auto snapshot = wait(engine);
+
+    REQUIRE(snapshot.state == ScanState::done);
+    REQUIRE(snapshot.hit_count == 2);
+    REQUIRE(snapshot.hits.size() == 2);
+    CHECK(snapshot.hits[0].address == kBase);
+    CHECK(snapshot.hits[1].address == kBase + kHoleEnd);
+    CHECK(snapshot.progress == Approx(1.0f));
+}
+
+TEST_CASE("a needle overlapping the unreadable hole is not found", "[scan]")
+{
+    constexpr std::size_t kTotal   = 3u << 20;
+    constexpr std::size_t kHoleAt  = 1u << 20;
+    constexpr std::size_t kHoleEnd = 2u << 20;
+
+    auto bytes = std::make_shared<std::vector<std::byte>>(kTotal);
+    // One window straddles the hole's first byte, one sits fully inside it.
+    write_int32(*bytes, kHoleAt - 2, 15);
+    write_int32(*bytes, kHoleAt + 16, 15);
+
+    ScanConfig config       = exact_config(ValueType::int32, 15);
+    config.filter.alignment = 4;
+
+    ScanEngine engine;
+    engine.first_scan(config, hole_source(bytes, kBase, kBase + kHoleAt, kBase + kHoleEnd));
+    CHECK(wait(engine).hit_count == 0);
+}
+
+TEST_CASE("a hole spanning chunk and shard boundaries is bridged", "[scan]")
+{
+    constexpr std::size_t kShardBytes = 1u << 25; // matches ScanEngine's shard size
+    constexpr std::size_t kTotal      = kShardBytes + (1u << 20);
+    constexpr std::size_t kHoleAt     = kShardBytes - (1u << 19);
+    constexpr std::size_t kHoleEnd    = kShardBytes + (1u << 19);
+
+    auto bytes = std::make_shared<std::vector<std::byte>>(kTotal);
+    write_int32(*bytes, 0, 15);            // the first shard
+    write_int32(*bytes, kHoleAt - 8, 15);  // the last hit before the hole
+    write_int32(*bytes, kHoleEnd + 8, 15); // the first hit after it, in the next shard
+
+    ScanConfig config       = exact_config(ValueType::int32, 15);
+    config.filter.alignment = 4;
+
+    ScanEngine engine;
+    engine.first_scan(config, hole_source(bytes, kBase, kBase + kHoleAt, kBase + kHoleEnd));
+    const auto snapshot = wait(engine);
+
+    REQUIRE(snapshot.state == ScanState::done);
+    REQUIRE(snapshot.hit_count == 3);
+    CHECK(snapshot.hits[0].address == kBase);
+    CHECK(snapshot.hits[1].address == kBase + kHoleAt - 8);
+    CHECK(snapshot.hits[2].address == kBase + kHoleEnd + 8);
+}
+
+TEST_CASE("a fully unreadable region still terminates", "[scan]")
+{
+    // A 4 MiB wholly unreadable region with alignment 1: without page probing
+    // this would cost four million one-byte reads and trip the wait() timeout.
+    // Probing keeps it at one read per page.
+    constexpr std::size_t kTotal = 4u << 20;
+
+    slopkit::scan::MemorySource source;
+    source.read = [](std::uint64_t, std::size_t) -> std::expected<std::vector<std::byte>, AccessError>
+    {
+        return std::unexpected(AccessError::not_found);
+    };
+    source.regions = []()
+    {
+        RegionInfo region;
+        region.start    = kBase;
+        region.end      = kBase + kTotal;
+        region.readable = true;
+        return std::vector<RegionInfo> {region};
+    };
+
+    ScanConfig config       = exact_config(ValueType::int32, 15);
+    config.filter.alignment = 1;
+
+    ScanEngine engine;
+    engine.first_scan(config, source);
+    const auto snapshot = wait(engine);
+
+    CHECK(snapshot.state == ScanState::done);
+    CHECK(snapshot.hit_count == 0);
 }
 
 TEST_CASE("scan throughput", "[.perf]")

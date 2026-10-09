@@ -1,9 +1,11 @@
 #include "scan/engine.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <expected>
 #include <format>
+#include <span>
 #include <utility>
 
 #include "core/log.hpp"
@@ -22,6 +24,12 @@ namespace slopkit::scan
         // A first scan is partitioned into ~32 MB shards that workers pull in
         // parallel; shards are independent, so this is only about load balance.
         constexpr std::size_t kShardBytes = 1u << 25;
+
+        // When a whole chunk read fails there is no readable prefix to resume
+        // after, so the cursor probes forward one page at a time to find where
+        // reading resumes. This keeps a wholly unreadable region at one read per
+        // page instead of one read per candidate (alignment can be 1).
+        constexpr std::uint64_t kProbeBytes = 4096;
 
         // How often the worker publishes progress, to limit lock churn.
         constexpr std::size_t kPublishEveryCandidate = 1024;
@@ -305,10 +313,273 @@ namespace slopkit::scan
                     ++result.unreadable_chunks;
                 }
 
-                scanned.fetch_add(chunk, std::memory_order_relaxed);
-                cursor += chunk;
+                std::uint64_t next = cursor + chunk;
+                if (bytes.size() < read_size)
+                {
+                    // The read stopped early. Resume at the first candidate on the
+                    // grid whose window is not fully inside the bytes we already
+                    // have, so a window straddling a hole is re-checked and nothing
+                    // past the hole is skipped; never advance by less than the
+                    // alignment, so the cursor always progresses.
+                    std::uint64_t covered = cursor + bytes.size();
+                    if (bytes.empty())
+                    {
+                        // Nothing was read: probe forward a page at a time to find
+                        // where reading resumes, capped at this chunk. A wholly
+                        // unreadable chunk therefore costs one read per page, not
+                        // one per candidate.
+                        const std::uint64_t chunk_end = cursor + chunk;
+                        std::uint64_t       probe     = cursor;
+                        while (probe < chunk_end)
+                        {
+                            probe               = std::min<std::uint64_t>(probe + kProbeBytes, chunk_end);
+                            const bool readable = [&]
+                            {
+                                if (source.read_into)
+                                {
+                                    std::array<std::byte, 64> scratch {};
+                                    const std::size_t         probe_size = std::min<std::size_t>(size, scratch.size());
+                                    try
+                                    {
+                                        const auto count =
+                                            source.read_into(probe, std::span<std::byte>(scratch.data(), probe_size));
+                                        return count && *count > 0;
+                                    }
+                                    catch (...)
+                                    {
+                                        return false;
+                                    }
+                                }
+                                try
+                                {
+                                    const auto data = source.read(probe, size);
+                                    return data && !data->empty();
+                                }
+                                catch (...)
+                                {
+                                    return false;
+                                }
+                            }();
+                            if (readable)
+                            {
+                                covered = probe;
+                                break;
+                            }
+                        }
+                        if (probe >= chunk_end && covered <= cursor)
+                        {
+                            covered = chunk_end;
+                        }
+                    }
+
+                    std::uint64_t resume = alignment;
+                    if (covered > cursor)
+                    {
+                        const std::uint64_t available = covered - cursor;
+                        if (available >= size)
+                        {
+                            const std::uint64_t last_start = available - size;
+                            resume                         = last_start - (last_start % alignment) + alignment;
+                        }
+                        else
+                        {
+                            resume = available;
+                        }
+                    }
+                    resume = std::max<std::uint64_t>(resume, alignment);
+                    next   = std::min<std::uint64_t>(cursor + chunk, cursor + resume);
+                }
+                scanned.fetch_add(next - cursor, std::memory_order_relaxed);
+                cursor = next;
             }
             return result;
+        }
+
+        // A refinement reads the candidates in bounded, address-sorted runs, so
+        // a dense result set costs one target read per run instead of one per
+        // candidate. The run's read window is [begin, end) and it covers the
+        // hits in [first, last].
+        struct NextBatch
+        {
+            std::uint64_t begin {};
+            std::uint64_t end {};
+            std::size_t   first {};
+            std::size_t   last {};
+        };
+
+        constexpr std::size_t kNextBatchBytes = 4 * 1024;
+
+        // Groups address-sorted hits into runs whose read window stays within
+        // kNextBatchBytes; a single candidate wider than that forms its own run.
+        std::vector<NextBatch> build_batches(const std::vector<ScanHit>& hits, std::size_t width)
+        {
+            std::vector<NextBatch> batches;
+            std::size_t            index = 0;
+            while (index < hits.size())
+            {
+                NextBatch batch;
+                batch.begin = hits[index].address;
+                batch.end   = hits[index].address + width;
+                batch.first = index;
+                batch.last  = index;
+                while (batch.last + 1 < hits.size())
+                {
+                    const std::size_t   candidate     = batch.last + 1;
+                    const std::uint64_t candidate_end = hits[candidate].address + width;
+                    if (candidate_end - batch.begin > kNextBatchBytes)
+                    {
+                        break;
+                    }
+                    batch.end  = std::max(batch.end, candidate_end);
+                    batch.last = candidate;
+                }
+                batches.push_back(batch);
+                index = batch.last + 1;
+            }
+            return batches;
+        }
+
+        // The read-only state each refinement worker shares.
+        struct NextContext
+        {
+            const ScanConfig*           config {};
+            const std::vector<ScanHit>* hits {};
+            const MemorySource*         source {};
+            bool                        refinement {};
+            std::size_t                 width {};
+            std::size_t                 cap {};
+            std::atomic<std::size_t>*   stored {};
+            std::atomic<std::size_t>*   scanned {};
+            std::atomic<std::size_t>*   found {};
+            std::atomic<bool>*          truncated {};
+            std::atomic<std::size_t>*   unreadable {};
+        };
+
+        // Compares one candidate read out of the batch buffer and records it,
+        // updating the shared counters exactly like the old per-candidate loop.
+        void record_next_hit(const NextContext&         ctx,
+                             const ScanHit&             hit,
+                             std::span<const std::byte> window,
+                             std::vector<ScanHit>&      out)
+        {
+            const bool keep = ctx.refinement
+                                ? matches_refinement(ctx.config->type, ctx.config->value_type, hit.value, window)
+                                : matches(ctx.config->type,
+                                          ctx.config->value_type,
+                                          window,
+                                          ctx.config->value,
+                                          ctx.config->value_upper,
+                                          ctx.config->hex);
+            ctx.scanned->fetch_add(1, std::memory_order_relaxed);
+            if (!keep)
+            {
+                return;
+            }
+            ctx.found->fetch_add(1, std::memory_order_relaxed);
+            if (ctx.stored->fetch_add(1, std::memory_order_relaxed) < ctx.cap)
+            {
+                out.push_back(ScanHit {hit.address, std::vector<std::byte>(window.begin(), window.end()), hit.value});
+            }
+            else
+            {
+                ctx.truncated->store(true, std::memory_order_relaxed);
+            }
+        }
+
+        // Refines hits[first..last] with one read of their whole window. A short
+        // or failed read still matches the candidates fully inside the readable
+        // prefix and retries the rest in halves, so one unmapped address cannot
+        // discard its neighbours; a lone candidate that stays unreadable is
+        // counted and dropped, exactly like the old per-candidate path.
+        void refine_range(const NextContext&      ctx,
+                          std::size_t             first,
+                          std::size_t             last,
+                          std::vector<std::byte>& buffer,
+                          std::vector<ScanHit>&   out)
+        {
+            const auto&         hits  = *ctx.hits;
+            const std::uint64_t begin = hits[first].address;
+            std::uint64_t       end   = begin + ctx.width;
+            for (std::size_t i = first; i <= last; ++i)
+            {
+                end = std::max(end, hits[i].address + ctx.width);
+            }
+            const std::size_t span = static_cast<std::size_t>(end - begin);
+
+            std::size_t readable = 0;
+            if (ctx.source->read_into)
+            {
+                if (buffer.size() < span)
+                {
+                    buffer.resize(span);
+                }
+                std::expected<std::size_t, process::AccessError> count;
+                try
+                {
+                    count = ctx.source->read_into(begin, std::span<std::byte>(buffer.data(), span));
+                }
+                catch (...)
+                {
+                    count = std::unexpected(process::AccessError::internal);
+                }
+                if (count && *count > 0)
+                {
+                    readable = *count;
+                }
+            }
+            else
+            {
+                std::expected<std::vector<std::byte>, process::AccessError> owned;
+                try
+                {
+                    owned = ctx.source->read(begin, span);
+                }
+                catch (...)
+                {
+                    owned = std::unexpected(process::AccessError::internal);
+                }
+                if (owned && !owned->empty())
+                {
+                    if (buffer.size() < owned->size())
+                    {
+                        buffer.resize(owned->size());
+                    }
+                    std::copy(owned->begin(), owned->end(), buffer.begin());
+                    readable = owned->size();
+                }
+            }
+
+            const std::span<const std::byte> bytes(buffer.data(), std::min(readable, buffer.size()));
+            std::size_t                      split = first;
+            while (split <= last && hits[split].address + ctx.width <= begin + readable)
+            {
+                const std::size_t offset = static_cast<std::size_t>(hits[split].address - begin);
+                record_next_hit(ctx, hits[split], bytes.subspan(offset, ctx.width), out);
+                ++split;
+            }
+            if (split > last)
+            {
+                return;
+            }
+            if (first == last)
+            {
+                // The only candidate could not be read in full.
+                ctx.scanned->fetch_add(1, std::memory_order_relaxed);
+                ctx.unreadable->fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+
+            const std::size_t remaining_first = split == first ? first : split;
+            const std::size_t remaining       = last - remaining_first + 1;
+            if (remaining == 1)
+            {
+                // Only the tail is left; retry it on its own.
+                refine_range(ctx, remaining_first, remaining_first, buffer, out);
+                return;
+            }
+            const std::size_t mid = remaining_first + remaining / 2 - 1;
+            refine_range(ctx, remaining_first, mid, buffer, out);
+            refine_range(ctx, mid + 1, last, buffer, out);
         }
 
     } // namespace
@@ -742,94 +1013,136 @@ namespace slopkit::scan
             return;
         }
 
-        auto              next          = std::make_shared<std::vector<ScanHit>>();
-        const std::size_t total         = previous->hits.size();
-        std::size_t       scanned       = 0;
-        std::size_t       count         = 0;
-        bool              truncated     = false;
-        std::size_t       since_publish = 0;
-        std::size_t       unreadable    = 0;
-        const std::size_t cap           = max_stored_hits_.load();
+        const std::size_t total = previous->hits.size();
+        const std::size_t cap   = max_stored_hits_.load();
+        const std::size_t width =
+            refinement ? (previous->hits.empty() ? 0 : previous->hits.front().value.size()) : size;
 
         {
             const std::lock_guard lock(mutex_);
             publish_running_locked(0, total, 0, false);
         }
 
-        for (const auto& hit : previous->hits)
+        if (total == 0 || width == 0)
         {
-            if (token.stop_requested() || cancel_requested_.load())
-            {
-                const std::lock_guard lock(mutex_);
-                publish_results_locked(ScanState::cancelled, "Scan cancelled; the previous results were kept.");
-                log::info(log::category::scan, std::format("next scan cancelled after {:.1f} ms", elapsed_ms(started)));
-                return;
-            }
+            // Nothing to refine; a zero width is the old loop's "read_size == 0"
+            // case, where every candidate is dropped.
+            finish_success(std::make_shared<std::vector<ScanHit>>(), 0, false, false);
+            log::info(
+                log::category::scan,
+                std::format(
+                    "next scan finished: {} of {} candidate(s) kept in {:.1f} ms", 0, total, elapsed_ms(started)));
+            return;
+        }
 
-            const std::size_t read_size = refinement ? hit.value.size() : size;
-            if (read_size == 0)
-            {
-                ++scanned;
-                continue;
-            }
+        std::atomic<std::size_t> scanned {0};
+        std::atomic<std::size_t> found {0};
+        std::atomic<std::size_t> stored {0};
+        std::atomic<std::size_t> unreadable {0};
+        std::atomic<bool>        truncated {false};
+        std::atomic<bool>        cancelled {false};
 
-            std::expected<std::vector<std::byte>, process::AccessError> data;
-            try
-            {
-                data = source.read(hit.address, read_size);
-            }
-            catch (...)
-            {
-                data = std::unexpected(process::AccessError::internal);
-            }
+        const std::vector<NextBatch> batches = build_batches(previous->hits, width);
 
-            ++scanned;
-            if (data && data->size() >= read_size)
+        NextContext ctx;
+        ctx.config     = &config;
+        ctx.hits       = &previous->hits;
+        ctx.source     = &source;
+        ctx.refinement = refinement;
+        ctx.width      = width;
+        ctx.cap        = cap;
+        ctx.stored     = &stored;
+        ctx.scanned    = &scanned;
+        ctx.found      = &found;
+        ctx.truncated  = &truncated;
+        ctx.unreadable = &unreadable;
+
+        std::atomic<std::size_t>          next_batch {0};
+        std::vector<std::vector<ScanHit>> batch_hits(batches.size());
+
+        const auto work = [&]
+        {
+            std::vector<std::byte> buffer;
+            std::size_t            since_publish = 0;
+            while (!cancelled.load(std::memory_order_relaxed))
             {
-                const std::span<const std::byte> bytes(*data);
-                const auto                       window = bytes.subspan(0, read_size);
-                const bool                       keep =
-                    refinement
-                        ? matches_refinement(config.type, config.value_type, hit.value, window)
-                        : matches(config.type, config.value_type, window, config.value, config.value_upper, config.hex);
-                if (keep)
+                if (token.stop_requested() || cancel_requested_.load())
                 {
-                    ++count;
-                    if (next->size() < cap)
-                    {
-                        next->push_back(
-                            ScanHit {hit.address, std::vector<std::byte>(window.begin(), window.end()), hit.value});
-                    }
-                    else
-                    {
-                        truncated = true;
-                    }
+                    cancelled.store(true, std::memory_order_relaxed);
+                    return;
+                }
+                const std::size_t slot = next_batch.fetch_add(1, std::memory_order_relaxed);
+                if (slot >= batches.size())
+                {
+                    return;
+                }
+                refine_range(ctx, batches[slot].first, batches[slot].last, buffer, batch_hits[slot]);
+
+                since_publish += batches[slot].last - batches[slot].first + 1;
+                if (since_publish >= kPublishEveryCandidate)
+                {
+                    since_publish = 0;
+                    const std::lock_guard lock(mutex_);
+                    publish_running_locked(scanned.load(std::memory_order_relaxed),
+                                           total,
+                                           found.load(std::memory_order_relaxed),
+                                           truncated.load(std::memory_order_relaxed));
                 }
             }
-            else
-            {
-                ++unreadable;
-            }
+        };
 
-            if (++since_publish >= kPublishEveryCandidate)
+        const std::size_t requested = max_threads_.load();
+        const std::size_t automatic = std::clamp<std::size_t>(std::thread::hardware_concurrency(), 1, kMaxScanThreads);
+        const std::size_t wanted    = requested == 0 ? automatic : requested;
+        std::size_t       threads   = std::min<std::size_t>(wanted, kMaxScanThreads);
+        threads                     = std::min<std::size_t>(threads, std::max<std::size_t>(batches.size(), 1));
+
+        if (threads <= 1)
+        {
+            work();
+        }
+        else
+        {
+            std::vector<std::jthread> pool;
+            pool.reserve(threads);
+            for (std::size_t i = 0; i < threads; ++i)
             {
-                since_publish = 0;
-                const std::lock_guard lock(mutex_);
-                publish_running_locked(scanned, total, count, truncated);
+                pool.emplace_back(work);
             }
         }
 
-        finish_success(std::move(next), count, truncated, false);
-        if (unreadable > 0)
+        if (cancelled.load(std::memory_order_relaxed) || token.stop_requested() || cancel_requested_.load())
+        {
+            const std::lock_guard lock(mutex_);
+            publish_results_locked(ScanState::cancelled, "Scan cancelled; the previous results were kept.");
+            log::info(log::category::scan, std::format("next scan cancelled after {:.1f} ms", elapsed_ms(started)));
+            return;
+        }
+
+        const std::size_t count = found.load(std::memory_order_relaxed);
+        auto              next  = std::make_shared<std::vector<ScanHit>>();
+        next->reserve(std::min(count, cap));
+        for (auto& slot : batch_hits)
+        {
+            for (auto& hit : slot)
+            {
+                next->push_back(std::move(hit));
+            }
+        }
+
+        finish_success(std::move(next), count, truncated.load(std::memory_order_relaxed), false);
+
+        const std::size_t unreadable_count = unreadable.load(std::memory_order_relaxed);
+        if (unreadable_count > 0)
         {
             log::debug(log::category::scan,
-                       std::format("next scan: {} unreadable candidate read(s) skipped", unreadable));
+                       std::format("next scan: {} unreadable candidate read(s) skipped", unreadable_count));
         }
         log::info(log::category::scan,
                   std::format("next scan finished: {} of {} candidate(s) kept{} in {:.1f} ms",
                               count,
                               total,
-                              truncated ? " (stored hits truncated)" : "",
+                              truncated.load(std::memory_order_relaxed) ? " (stored hits truncated)" : "",
                               elapsed_ms(started)));
     }
 

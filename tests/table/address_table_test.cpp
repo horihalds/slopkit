@@ -856,6 +856,28 @@ TEST_CASE("a version 3 archive still loads and is re-saved as version 4", "[tabl
     std::filesystem::remove(path);
 }
 
+TEST_CASE("a legacy type=all member loads as a 4-byte scan", "[table]")
+{
+    const auto path = scratch_file("legacy_all.skt");
+    std::filesystem::remove(path);
+    REQUIRE(write_archive(path,
+                          std::vector<ArchiveMember> {
+                              {       .name = "version.txt",                     .text = "slopkit-table 4\n"},
+                              {.name = "entries/health.txt", .text = "type=all hex=0 size=4 expr=\"1234\"\n"},
+                              {         .name = "index.txt",                  .text = "entries/health.txt\n"}
+    })
+                .has_value());
+
+    AddressTable table;
+    REQUIRE(slopkit::table::load(path, table).has_value());
+    std::filesystem::remove(path);
+
+    // The removed "All" entry was a 4-byte integer scan.
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].type == ValueType::int32);
+    CHECK(table.entries()[0].bytes.size() == 4);
+}
+
 TEST_CASE("script rows are edited through the table, not the value path", "[table]")
 {
     AddressTable      table;

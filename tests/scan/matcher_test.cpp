@@ -81,8 +81,6 @@ TEST_CASE("the compiled matcher agrees with the generic comparison", "[scan]")
         {     ValueType::int64,                                            ScanValue {std::int64_t {0}}},
         {     ValueType::int64,                                           ScanValue {std::int64_t {15}}},
         {     ValueType::int64,                                           ScanValue {std::int64_t {-1}}},
-        {       ValueType::all,                                            ScanValue {std::int64_t {0}}},
-        {       ValueType::all,                                           ScanValue {std::int64_t {15}}},
         {   ValueType::float32,                                                         ScanValue {0.0}},
         {   ValueType::float32,                                                        ScanValue {-0.0}},
         {   ValueType::float32,                                                         ScanValue {1.5}},
@@ -208,6 +206,36 @@ TEST_CASE("the matcher handles uniform and floating-point needles", "[scan]")
         {
             CHECK(matcher.find(span, offset, span.size(), 4) == offset);
         }
+    }
+
+    SECTION("a Float needle matches the stored 32-bit value")
+    {
+        std::vector<std::byte> bytes(8);
+
+        const float stored = 3.14f;
+        std::memcpy(bytes.data(), &stored, sizeof(stored));
+
+        ScanConfig float_config;
+        float_config.type       = ScanType::exact_value;
+        float_config.value_type = ValueType::float32;
+        float_config.value      = ScanValue {3.14};
+
+        // The needle is narrowed to float, so the stored 3.14f matches and a
+        // neighbour that differs in the last bits does not.
+        CHECK(Matcher::build(float_config).match(std::span<const std::byte>(bytes).subspan(0, 4)));
+
+        const float neighbour = 3.14001f;
+        std::memcpy(bytes.data(), &neighbour, sizeof(neighbour));
+        CHECK_FALSE(Matcher::build(float_config).match(std::span<const std::byte>(bytes).subspan(0, 4)));
+
+        const double stored_double = 3.14;
+        std::memcpy(bytes.data(), &stored_double, sizeof(stored_double));
+
+        ScanConfig double_config;
+        double_config.type       = ScanType::exact_value;
+        double_config.value_type = ValueType::float64;
+        double_config.value      = ScanValue {3.14};
+        CHECK(Matcher::build(double_config).match(std::span<const std::byte>(bytes)));
     }
 
     SECTION("-0.0 equals 0.0 and NaN never matches")

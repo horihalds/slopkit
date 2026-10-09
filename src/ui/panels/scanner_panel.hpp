@@ -106,6 +106,11 @@ namespace slopkit::ui::panels
         void activate_scan_from_input();
         void update_value_inputs();
 
+        // Rewrites the fast-scan alignment field to the selected value type's
+        // width, but only while the field is blank or still holds the previous
+        // type's default, so a step the user typed explicitly survives.
+        void apply_default_alignment();
+
         // Re-reads and rewrites the value boxes in the other base when the Hex
         // checkbox is toggled, leaving any box it cannot convert as typed.
         void convert_value_base_fields(bool to_hex);
@@ -133,14 +138,17 @@ namespace slopkit::ui::panels
         QWidget*          bottom_band_ {};
         QPointer<QWidget> bottom_row_source_ {};
 
-        QLineEdit* start_edit_ {};
-        QLineEdit* stop_edit_ {};
-        QCheckBox* writable_check_ {};
-        QCheckBox* executable_check_ {};
-        QCheckBox* copy_on_write_check_ {};
-        QCheckBox* fast_scan_check_ {};
-        QLineEdit* alignment_edit_ {};
-        QCheckBox* pause_scanning_check_ {};
+        QLineEdit*      start_edit_ {};
+        QLineEdit*      stop_edit_ {};
+        QCheckBox*      writable_check_ {};
+        QCheckBox*      executable_check_ {};
+        QCheckBox*      copy_on_write_check_ {};
+        QCheckBox*      fast_scan_check_ {};
+        QLineEdit*      alignment_edit_ {};
+        // The value type the alignment field was last defaulted for; a change of
+        // type rewrites the field only while it still holds this type's width.
+        scan::ValueType alignment_value_type_ {scan::ValueType::int32};
+        QCheckBox*      pause_scanning_check_ {};
 
         int progress_percent_ {0};
 

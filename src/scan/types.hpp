@@ -20,7 +20,6 @@ namespace slopkit::scan
         float64,
         string,
         byte_array,
-        all,
     };
 
     // How a candidate is compared with the requested value.
@@ -57,7 +56,6 @@ namespace slopkit::scan
         "Double",
         "String",
         "Array of byte",
-        "All",
     };
 
     inline constexpr const char* kScanTypeNames[] = {
@@ -91,7 +89,7 @@ namespace slopkit::scan
     };
 
     // Width in bytes of a fixed-width value type, or 0 for the dynamically
-    // sized string, byte-array and all types.
+    // sized string and byte-array types.
     [[nodiscard]] constexpr std::size_t value_size(ValueType type) noexcept
     {
         switch (type)
@@ -108,7 +106,6 @@ namespace slopkit::scan
             return 8;
         case ValueType::string:
         case ValueType::byte_array:
-        case ValueType::all:
             return 0;
         }
         return 0;

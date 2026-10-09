@@ -80,7 +80,9 @@ namespace slopkit::table
                 {  "f64",    scan::ValueType::float64},
                 {  "str",     scan::ValueType::string},
                 {"bytes", scan::ValueType::byte_array},
-                {  "all",        scan::ValueType::all},
+                // The removed "All" entry was a 4-byte integer scan; tables
+                // saved while it existed still load as 4 Bytes.
+                {  "all",      scan::ValueType::int32},
             };
             for (const auto& [name, type] : kTypes)
             {
@@ -350,8 +352,6 @@ namespace slopkit::table
             return "str";
         case scan::ValueType::byte_array:
             return "bytes";
-        case scan::ValueType::all:
-            return "all";
         }
         return "i32";
     }

@@ -46,6 +46,49 @@ TEST_CASE("values format back to text", "[scan]")
     CHECK(slopkit::scan::format_value(ValueType::int32, negative, true) == "FFFFFFFF");
 }
 
+TEST_CASE("real values format to the shortest round-trip text", "[scan]")
+{
+    SECTION("a Float prints what the user typed")
+    {
+        const float            stored = 3.14f;
+        std::vector<std::byte> bytes(sizeof(stored));
+        std::memcpy(bytes.data(), &stored, sizeof(stored));
+
+        CHECK(slopkit::scan::format_value(ValueType::float32, bytes, false) == "3.14");
+
+        // format_value -> parse_value -> encode_value reproduces the same bytes.
+        const auto parsed = slopkit::scan::parse_value(ValueType::float32, "3.14", false);
+        REQUIRE(parsed.has_value());
+        CHECK(slopkit::scan::encode_value(ValueType::float32, *parsed) == bytes);
+    }
+
+    SECTION("a Double prints what the user typed")
+    {
+        const double           stored = 3.14;
+        std::vector<std::byte> bytes(sizeof(stored));
+        std::memcpy(bytes.data(), &stored, sizeof(stored));
+
+        CHECK(slopkit::scan::format_value(ValueType::float64, bytes, false) == "3.14");
+    }
+}
+
+TEST_CASE("refinements keep comparing the raw stored bytes", "[scan]")
+{
+    using slopkit::scan::matches_refinement;
+
+    const float            before = 3.14f;
+    const float            after  = 3.15f;
+    std::vector<std::byte> previous(sizeof(before));
+    std::vector<std::byte> current(sizeof(after));
+    std::memcpy(previous.data(), &before, sizeof(before));
+    std::memcpy(current.data(), &after, sizeof(after));
+
+    CHECK(matches_refinement(ScanType::increased, ValueType::float32, previous, current));
+    CHECK(matches_refinement(ScanType::decreased, ValueType::float32, current, previous));
+    CHECK(matches_refinement(ScanType::changed, ValueType::float32, previous, current));
+    CHECK(matches_refinement(ScanType::unchanged, ValueType::float32, previous, previous));
+}
+
 TEST_CASE("editable values convert between bases", "[scan]")
 {
     SECTION("an integer reads decimal and renders bare hex, and back")

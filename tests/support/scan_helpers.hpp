@@ -133,6 +133,68 @@ namespace
         }
     };
 
+    // A one-region source over an owned buffer with an unreadable hole in
+    // [hole_begin, hole_end). A read that would touch the hole returns only the
+    // readable prefix before it, exactly like a short process read.
+    [[maybe_unused]] slopkit::scan::MemorySource hole_source(std::shared_ptr<std::vector<std::byte>> bytes,
+                                                             std::uint64_t                           base,
+                                                             std::uint64_t                           hole_begin,
+                                                             std::uint64_t                           hole_end)
+    {
+        slopkit::scan::MemorySource source;
+        const auto readable_count = [hole_begin, hole_end](std::uint64_t address, std::size_t size) -> std::size_t
+        {
+            const std::uint64_t end  = address + size;
+            std::uint64_t       stop = end;
+            if (address < hole_begin && end > hole_begin)
+            {
+                stop = hole_begin; // the read stops at the hole
+            }
+            else if (address >= hole_begin && address < hole_end)
+            {
+                stop = address; // starting inside the hole reads nothing
+            }
+            return static_cast<std::size_t>(stop - address);
+        };
+        source.read = [bytes, base, readable_count](
+                          std::uint64_t address, std::size_t size) -> std::expected<std::vector<std::byte>, AccessError>
+        {
+            if (address < base || address - base + size > bytes->size())
+            {
+                return std::unexpected(AccessError::not_found);
+            }
+            const auto        offset = static_cast<std::size_t>(address - base);
+            const std::size_t count  = readable_count(address, size);
+            return std::vector<std::byte>(bytes->begin() + static_cast<std::ptrdiff_t>(offset),
+                                          bytes->begin() + static_cast<std::ptrdiff_t>(offset + count));
+        };
+        source.read_into =
+            [bytes, base, readable_count](std::uint64_t        address,
+                                          std::span<std::byte> buffer) -> std::expected<std::size_t, AccessError>
+        {
+            if (address < base || address - base + buffer.size() > bytes->size())
+            {
+                return std::unexpected(AccessError::not_found);
+            }
+            const auto        offset = static_cast<std::size_t>(address - base);
+            const std::size_t count  = readable_count(address, buffer.size());
+            std::copy_n(bytes->begin() + static_cast<std::ptrdiff_t>(offset),
+                        static_cast<std::ptrdiff_t>(count),
+                        buffer.begin());
+            return count;
+        };
+        source.regions = [bytes, base]()
+        {
+            RegionInfo region;
+            region.start    = base;
+            region.end      = base + bytes->size();
+            region.readable = true;
+            region.writable = true;
+            return std::vector<RegionInfo> {region};
+        };
+        return source;
+    }
+
     [[maybe_unused]] ScanConfig exact_config(ValueType type, std::int64_t value)
     {
         ScanConfig config;
@@ -140,6 +202,63 @@ namespace
         config.value_type = type;
         config.value      = value;
         return config;
+    }
+
+    [[maybe_unused]] ScanConfig refine_config(ScanType type, ValueType value_type)
+    {
+        ScanConfig config;
+        config.type       = type;
+        config.value_type = value_type;
+        return config;
+    }
+
+    // Read-call and byte counters a counting_source wrapper fills in.
+    struct ReadCounter
+    {
+        std::atomic<std::size_t> read_calls {0};
+        std::atomic<std::size_t> read_into_calls {0};
+        std::atomic<std::size_t> bytes_read {0};
+    };
+
+    // Wraps `inner` and counts the read calls and bytes it hands out, so a test
+    // can assert that a refinement coalesces its candidates into a few reads.
+    [[maybe_unused]] slopkit::scan::MemorySource counting_source(slopkit::scan::MemorySource  inner,
+                                                                 std::shared_ptr<ReadCounter> counter)
+    {
+        slopkit::scan::MemorySource source;
+        if (inner.read)
+        {
+            auto read   = inner.read;
+            source.read = [read, counter](std::uint64_t address,
+                                          std::size_t   size) -> std::expected<std::vector<std::byte>, AccessError>
+            {
+                counter->read_calls.fetch_add(1, std::memory_order_relaxed);
+                auto result = read(address, size);
+                if (result)
+                {
+                    counter->bytes_read.fetch_add(result->size(), std::memory_order_relaxed);
+                }
+                return result;
+            };
+        }
+        if (inner.read_into)
+        {
+            auto read_into   = inner.read_into;
+            source.read_into = [read_into,
+                                counter](std::uint64_t        address,
+                                         std::span<std::byte> buffer) -> std::expected<std::size_t, AccessError>
+            {
+                counter->read_into_calls.fetch_add(1, std::memory_order_relaxed);
+                auto result = read_into(address, buffer);
+                if (result)
+                {
+                    counter->bytes_read.fetch_add(*result, std::memory_order_relaxed);
+                }
+                return result;
+            };
+        }
+        source.regions = inner.regions;
+        return source;
     }
 
     // Restores the process-wide log level on scope exit.

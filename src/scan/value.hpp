@@ -68,8 +68,8 @@ namespace slopkit::scan
                                           std::span<const std::byte> previous,
                                           std::span<const std::byte> current);
 
-    // The width the engine scans with. Fixed types use their size, string and
-    // byte-array use the parsed value's length, and `all` is scanned as 4 bytes.
+    // The width the engine scans with. Fixed types use their size, and string
+    // and byte-array use the parsed value's length.
     [[nodiscard]] std::size_t effective_size(ValueType type, const ScanValue& value) noexcept;
 
 } // namespace slopkit::scan

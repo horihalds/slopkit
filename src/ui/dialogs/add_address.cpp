@@ -268,10 +268,6 @@ namespace slopkit::ui::dialogs
         const auto  type    = static_cast<scan::ValueType>(type_combo_->currentIndex());
         const bool  dynamic = type == scan::ValueType::string || type == scan::ValueType::byte_array;
         std::size_t size    = scan::value_size(type);
-        if (type == scan::ValueType::all)
-        {
-            size = 4;
-        }
         if (dynamic && !parse_size(size_edit_->text().toStdString(), size))
         {
             log::warning(log::category::ui,

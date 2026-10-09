@@ -179,3 +179,84 @@ TEST_CASE("scanned bytes advance monotonically during a scan", "[scan]")
     CHECK(snapshot.scanned_bytes == snapshot.total_bytes);
     CHECK(snapshot.progress == Approx(1.0f));
 }
+
+TEST_CASE("a parallel refinement matches the sequential one", "[scan]")
+{
+    // 1 MiB of dense `int32 == 7`, so the result set spans hundreds of batches.
+    constexpr std::size_t  kBytes = 1u << 20;
+    std::vector<std::byte> buffer(kBytes);
+    for (std::size_t offset = 0; offset + sizeof(std::int32_t) <= kBytes; offset += 4)
+    {
+        write_int32(buffer, offset, 7);
+    }
+    const std::size_t expected = kBytes / 4;
+    const auto        source   = slopkit::scan::make_buffer_source(buffer, kBase);
+
+    std::vector<std::uint64_t> reference;
+    {
+        ScanEngine engine;
+        engine.set_max_threads(1);
+        engine.first_scan(exact_config(ValueType::int32, 7), source);
+        REQUIRE(wait(engine).hit_count == expected);
+
+        engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
+        const auto snapshot = wait(engine);
+        REQUIRE(snapshot.state == ScanState::done);
+        REQUIRE(snapshot.result_hits != nullptr);
+        for (const auto& hit : *snapshot.result_hits)
+        {
+            reference.push_back(hit.address);
+        }
+        REQUIRE(reference.size() == expected);
+    }
+
+    for (const std::size_t threads : {std::size_t {2}, std::size_t {4}, std::size_t {8}})
+    {
+        ScanEngine engine;
+        engine.set_max_threads(threads);
+        engine.first_scan(exact_config(ValueType::int32, 7), source);
+        REQUIRE(wait(engine).hit_count == expected);
+
+        engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
+        const auto snapshot = wait(engine);
+        REQUIRE(snapshot.state == ScanState::done);
+        CHECK(snapshot.hit_count == expected);
+        REQUIRE(snapshot.result_hits != nullptr);
+
+        std::vector<std::uint64_t> addresses;
+        for (const auto& hit : *snapshot.result_hits)
+        {
+            addresses.push_back(hit.address);
+        }
+        CHECK(addresses == reference);
+    }
+}
+
+TEST_CASE("a refinement coalesces its reads into 4 KiB batches", "[scan]")
+{
+    constexpr std::size_t  kBytes = 1u << 20;
+    std::vector<std::byte> buffer(kBytes);
+    for (std::size_t offset = 0; offset + sizeof(std::int32_t) <= kBytes; offset += 4)
+    {
+        write_int32(buffer, offset, 7);
+    }
+
+    auto       counter = std::make_shared<ReadCounter>();
+    const auto source  = counting_source(slopkit::scan::make_buffer_source(buffer, kBase), counter);
+
+    ScanEngine engine;
+    engine.first_scan(exact_config(ValueType::int32, 7), source);
+    REQUIRE(wait(engine).hit_count == kBytes / 4);
+
+    counter->read_calls.store(0);
+    counter->read_into_calls.store(0);
+
+    engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
+    const auto snapshot = wait(engine);
+    REQUIRE(snapshot.state == ScanState::done);
+    CHECK(snapshot.hit_count == kBytes / 4);
+
+    // One read per 4 KiB batch, not one per candidate, and no fallback reads.
+    CHECK(counter->read_into_calls.load() <= kBytes / (4 * 1024) + 1);
+    CHECK(counter->read_calls.load() == 0);
+}

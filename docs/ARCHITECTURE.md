@@ -106,6 +106,36 @@ each defines a `plugins::support::PluginProfile` and returns
 `plugins::support::entry<kProfile>(host)`, which fills the vtable from the shared
 `slopkit_plugin_support` library.
 
+## Scanning
+
+`scan::ScanEngine` (`src/scan/engine.cpp`) runs value scans on its own worker
+thread, never on the UI thread, over a `scan::MemorySource` built from the
+attached session. A **first scan** splits the filtered address space into shards
+and scans them in parallel: each shard reads the target in 4 MiB chunks with a
+small overlap window straddling the chunk boundary and matches every aligned
+candidate with `scan::Matcher`. A short or failed read no longer skips the rest of
+a chunk — the cursor resumes at the first candidate whose window is not fully
+inside the readable prefix (back-tracking by the value width, and never advancing
+by less than the alignment), so an unreadable hole inside an otherwise readable
+region is bridged and the hits past it are still found. When a whole read fails
+there is no prefix to resume after, so the cursor probes forward one page at a
+time to find where reading resumes; a wholly unreadable stretch therefore costs
+one read per page instead of one read per candidate.
+
+A **next scan** refines the previous, address-sorted result set with
+`matches_refinement` (compared on the stored bytes) or a value comparison, and
+never touches the target one candidate at a time: candidates are grouped into
+address-sorted runs whose read window stays within 4 KiB, each run is read once per
+worker with `MemorySource::read_into` — or the legacy `read()` when the source
+exposes no `read_into` — and every candidate is matched out of that one buffer. A
+wide single hit forms its own run, so a sparse result set degrades to the old
+per-candidate cost. A short or failed run read is resolved by matching the
+candidates fully inside the readable prefix and retrying the remainder in halved
+sub-runs down to one candidate; a candidate that still cannot be read alone is
+counted unreadable and dropped. Runs are claimed from one atomic cursor over the
+worker pool (`max_threads_`), and their hits are collected per run index and
+concatenated in run order, so the result set — same addresses, same order — is
+identical for any thread count.
 
 ## The debugger
 

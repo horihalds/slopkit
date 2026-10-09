@@ -100,7 +100,6 @@ namespace slopkit::scan
             case ValueType::int16:
                 return 16;
             case ValueType::int32:
-            case ValueType::all:
                 return 32;
             case ValueType::int64:
                 return 64;
@@ -227,7 +226,6 @@ namespace slopkit::scan
                 return value;
             }
             case ValueType::int32:
-            case ValueType::all:
             {
                 std::int32_t value {};
                 std::memcpy(&value, bytes.data(), sizeof(value));
@@ -323,7 +321,6 @@ namespace slopkit::scan
         case ValueType::int16:
         case ValueType::int32:
         case ValueType::int64:
-        case ValueType::all:
         {
             auto value = integer_value(type, text, hex);
             if (!value)
@@ -404,7 +401,12 @@ namespace slopkit::scan
             {
                 return {};
             }
-            return std::format("{}", read_real(bytes, type));
+            // Format at the stored width so the shortest decimal that reads
+            // back to the same bits is printed: a Float scan of 3.14 shows
+            // "3.14", not the double promotion 3.140000104904175.
+            float value {};
+            std::memcpy(&value, bytes.data(), sizeof(value));
+            return std::format("{}", value);
         }
         case ValueType::float64:
         {
@@ -418,7 +420,6 @@ namespace slopkit::scan
         case ValueType::int16:
         case ValueType::int32:
         case ValueType::int64:
-        case ValueType::all:
         {
             if (bytes.size() < value_size(type))
             {
@@ -524,8 +525,13 @@ namespace slopkit::scan
             {
                 return false;
             }
+            // Compare at the stored width, exactly like Matcher::build does, so
+            // a Float needle of 3.14 matches 3.14f rather than only the doubles
+            // that happen to round-trip through 32 bits.
             const double current = read_real(candidate, value_type);
-            const double wanted  = std::get<double>(value);
+            const double wanted  = value_type == ValueType::float32
+                                     ? static_cast<double>(static_cast<float>(std::get<double>(value)))
+                                     : std::get<double>(value);
             switch (scan_type)
             {
             case ScanType::exact_value:
@@ -635,10 +641,6 @@ namespace slopkit::scan
         if (type == ValueType::byte_array && std::holds_alternative<std::vector<std::byte>>(value))
         {
             return std::get<std::vector<std::byte>>(value).size();
-        }
-        if (type == ValueType::all)
-        {
-            return 4;
         }
         return value_size(type);
     }

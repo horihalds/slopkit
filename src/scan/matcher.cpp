@@ -33,7 +33,6 @@ namespace slopkit::scan
             case ValueType::int16:
             case ValueType::int32:
             case ValueType::int64:
-            case ValueType::all:
                 if (const auto* integer = std::get_if<std::int64_t>(&config.value))
                 {
                     matcher.kind_           = Kind::exact_integer;
@@ -42,6 +41,14 @@ namespace slopkit::scan
                 }
                 break;
             case ValueType::float32:
+                // Compare at the stored width: a Float scan for 3.14 must match
+                // the bytes of 3.14f, whose value as a double is 3.140000104904175.
+                if (const auto* real = std::get_if<double>(&config.value))
+                {
+                    matcher.kind_        = Kind::exact_real;
+                    matcher.real_needle_ = static_cast<double>(static_cast<float>(*real));
+                }
+                break;
             case ValueType::float64:
                 if (const auto* real = std::get_if<double>(&config.value))
                 {
@@ -115,7 +122,6 @@ namespace slopkit::scan
             return value == static_cast<std::int16_t>(integer_needle_);
         }
         case ValueType::int32:
-        case ValueType::all:
         {
             std::int32_t value {};
             std::memcpy(&value, candidate.data(), sizeof(value));

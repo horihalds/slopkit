@@ -1371,3 +1371,61 @@ TEST_CASE("toggling the scanner Hex box converts the typed values", "[ui]")
         CHECK(value->text() == QStringLiteral("12Z"));
     }
 }
+
+// The scanner's value-type dropdown, located by its first entry.
+static QComboBox* scanner_value_type_combo(QWidget& panel)
+{
+    for (auto* combo : panel.findChildren<QComboBox*>())
+    {
+        if (combo->count() > 0 && combo->itemText(0) == QStringLiteral("Byte"))
+        {
+            return combo;
+        }
+    }
+    return nullptr;
+}
+
+TEST_CASE("the value type drives the fast-scan alignment", "[ui]")
+{
+    application();
+
+    FakeAccess                   access;
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x3000;
+    region.readable = true;
+    access.regions  = {region};
+
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    attach_app_session(worker);
+
+    slopkit::ui::panels::ScannerPanel panel {worker, target};
+
+    auto* type      = scanner_value_type_combo(panel);
+    auto* alignment = address_field(panel, "Alignment");
+    REQUIRE(type != nullptr);
+    REQUIRE(alignment != nullptr);
+
+    // It starts on 4 Bytes with the matching step, and All is gone.
+    CHECK(type->currentText() == QStringLiteral("4 Bytes"));
+    CHECK(type->findText(QStringLiteral("All")) == -1);
+    CHECK(alignment->text() == QStringLiteral("4"));
+
+    type->setCurrentText(QStringLiteral("Byte"));
+    CHECK(alignment->text() == QStringLiteral("1"));
+    type->setCurrentText(QStringLiteral("2 Bytes"));
+    CHECK(alignment->text() == QStringLiteral("2"));
+    type->setCurrentText(QStringLiteral("4 Bytes"));
+    CHECK(alignment->text() == QStringLiteral("4"));
+    type->setCurrentText(QStringLiteral("Float"));
+    CHECK(alignment->text() == QStringLiteral("4"));
+    type->setCurrentText(QStringLiteral("8 Bytes"));
+    CHECK(alignment->text() == QStringLiteral("8"));
+
+    // A step the user typed explicitly survives a later type change.
+    type->setCurrentText(QStringLiteral("4 Bytes"));
+    alignment->setText(QStringLiteral("16"));
+    type->setCurrentText(QStringLiteral("Byte"));
+    CHECK(alignment->text() == QStringLiteral("16"));
+}
