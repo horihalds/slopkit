@@ -452,9 +452,9 @@ target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)
 
 include(Catch)
 # Widget tests run headless through the offscreen QPA platform. A pathological
-# hang must fail within a minute (the slowest legitimate case is ~2s) instead of
+# hang must fail within 15 s (the slowest legitimate case is ~2 s) instead of
 # blocking the whole suite.
-catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+catch_discover_tests(slopkit_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
 
 # --- install ---------------------------------------------------------------
 

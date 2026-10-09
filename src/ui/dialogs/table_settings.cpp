@@ -104,6 +104,15 @@ namespace slopkit::ui::dialogs
         refresh_target();
     }
 
+    TableSettingsDialog::~TableSettingsDialog()
+    {
+        // Hiding the dialog takes the focus off the edits, so QLineEdit emits
+        // editingFinished while this object's most-derived type is already gone;
+        // Qt aborts such a slot call. Drop the connections before ~QDialog runs.
+        disconnect(target_edit_, nullptr, this, nullptr);
+        disconnect(exe_path_edit_, nullptr, this, nullptr);
+    }
+
     void TableSettingsDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);

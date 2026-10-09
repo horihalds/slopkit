@@ -148,7 +148,7 @@ docs that hold the detail behind this map.
   `src/sandbox/main.cpp`; the fixture plugins are separate libraries, so a change
   anywhere can trigger a large rebuild.
 - Widget tests run headless via `QT_QPA_PLATFORM=offscreen`; set it when running
-  `slopkit_tests` directly. CTest enforces a 60s timeout per test.
+  `slopkit_tests` directly. CTest enforces a 15s timeout per test.
 - A test fake driven from a worker thread keeps its state behind a lock and
   exposes snapshot accessors instead of public fields, so the test thread never
   reads a record mid-write — see `tests/support/fake_debug.hpp`.

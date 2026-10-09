@@ -46,7 +46,7 @@ The suite is Catch2, wired into CTest:
 ctest --test-dir build --output-on-failure
 ```
 
-For a targeted run, ctest sets `QT_QPA_PLATFORM=offscreen` and the 60 s timeout
+For a targeted run, ctest sets `QT_QPA_PLATFORM=offscreen` and the 15 s timeout
 for you:
 
 ```sh
@@ -106,6 +106,12 @@ ctest --test-dir build -R "<test name>" --output-on-failure
 If it passes alone, check [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) — it owns
 the accepted flakes and their lone-run commands. Add a newly accepted flake there
 in the same commit; a failure that also happens alone is a regression, not a flake.
+
+A case whose reported `Test time` equals the timeout did not hang: its process
+crashed and left a forked child holding CTest's output pipe open, so CTest kept
+draining the pipe until the timeout expired. Check
+`coredumpctl list | grep slopkit_tests` for the core that names the case, then
+rerun it alone as above.
 
 ## Definition of done
 

@@ -32,6 +32,7 @@ namespace slopkit::ui::dialogs
         TableSettingsDialog(table::AddressTable&           table,
                             const process::AttachedTarget& target,
                             QWidget*                       parent = nullptr);
+        ~TableSettingsDialog() override;
 
         // Re-renders the attached-process card; cheap when nothing changed.
         void refresh_target();

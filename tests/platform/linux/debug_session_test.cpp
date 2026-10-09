@@ -11,6 +11,7 @@
 
 #include <sched.h>
 #include <signal.h>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -53,9 +54,19 @@ namespace
         template<class Body>
         explicit ChildProcess(Body body)
         {
-            const pid_t pid = ::fork();
+            const pid_t parent = ::getpid();
+            const pid_t pid    = ::fork();
             if (pid == 0)
             {
+                // CTest drains this process's output pipe until EOF; a target
+                // that outlives an aborted case keeps that pipe open and would
+                // park the case on the per-test timeout. Die with the test
+                // process instead.
+                ::prctl(PR_SET_PDEATHSIG, SIGKILL);
+                if (::getppid() != parent)
+                {
+                    ::_exit(0); // the parent died between fork() and prctl()
+                }
                 body();
                 ::_exit(0);
             }
@@ -416,7 +427,10 @@ TEST_CASE("debug session arms a hardware watch after its own interrupt", "[debug
 
     REQUIRE(stop.has_value());
     CHECK(stop->reason == StopReason::interrupt);
-    INFO("arm error: " << static_cast<int>(armed.error()));
+    if (!armed)
+    {
+        INFO("arm error: " << static_cast<int>(armed.error()));
+    }
     CHECK(armed.has_value());
     CHECK(detached);
 }
@@ -471,7 +485,10 @@ TEST_CASE("debug session arms a hardware watch on a threaded target", "[debug_se
 
     REQUIRE(stop.has_value());
     CHECK(stop->reason == StopReason::interrupt);
-    INFO("arm error: " << static_cast<int>(armed.error()));
+    if (!armed)
+    {
+        INFO("arm error: " << static_cast<int>(armed.error()));
+    }
     CHECK(armed.has_value());
     CHECK(detached);
 }
