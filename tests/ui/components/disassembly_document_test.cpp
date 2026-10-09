@@ -1030,6 +1030,26 @@ TEST_CASE("a `.byte` row cannot be hooked", "[ui]")
     CHECK(analysis.reason.find("not a fully decoded instruction") != std::string::npos);
 }
 
+TEST_CASE("a row covered by a session patch cannot be hooked", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3}); // PUSH RBP; MOV RBP, RSP; RET
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    CHECK(fixture.document.nop_instruction(0));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    fixture.document.ensure_rows(3);
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("already patched") != std::string::npos);
+}
+
 TEST_CASE("a detached target cannot be hooked", "[ui]")
 {
     DocFixture fixture;
