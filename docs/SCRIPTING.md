@@ -243,8 +243,12 @@ row is created until you click **Add**. The generated script follows one shape:
    — and wildcards only the bytes of *absolute* address fields, so a rebased module
    still matches while a relative branch or rip-relative displacement stays
    literal. A miss returns `false, "<reason>"`.
-2. It checks the bytes at the hit against the recorded originals and refuses when
-   they differ, so a site someone else already hooked is not hooked twice.
+2. It turns the hit into the hook site — the window's first byte, `match +
+   kMatchOffset` bytes into the pattern — and publishes that address as
+   `hook_site_<rva>`, then checks the bytes at the site against the recorded
+   originals and refuses when they differ, so a site someone else already hooked
+   is not hooked twice. Every refusal drops the labels it published, so a refused
+   activation leaves no stale hook state behind.
 3. It `alloc`s one code cave beside the site, writes the placeholder `kHookCode`
    (your code), then the `kTrampoline` — the instructions the hook overwrites,
    re-encoded so their addresses keep working — then a jump back to the first byte
@@ -252,8 +256,8 @@ row is created until you click **Add**. The generated script follows one shape:
 4. It writes a near jump to the cave over the site and pads every leftover byte of
    the window with `NOP` (`90`), returning `true` only once every write succeeded.
 
-`deactivate()` writes the recorded original bytes back, `dealloc`s the cave and
-`ulabel`s both names.
+`deactivate()` writes the recorded original bytes back at `hook_site_<rva>`,
+`dealloc`s the cave and `ulabel`s both names.
 
 The hook window is whole instructions: the selected instruction **plus as many
 following instructions as needed** for a 5-byte near jump to fit, so an instruction
@@ -269,8 +273,11 @@ still reads the same data. The generator proves the rewritten trampoline assembl
 before the script reaches the editor and refuses with a reason when an instruction
 cannot be re-encoded.
 
-The script keeps its state in two labels, `hook_site_<rva>` and `hook_cave_<rva>`
-(both reachable through Go To by name), and records:
+The script keeps its state in two script-local labels — `hook_site_<rva>`, the
+hooked window's first byte, and `hook_cave_<rva>`, the stub. Being labels they
+resolve only inside this script; the UI's address fields resolve only a name a
+script registers as a symbol (see [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md)).
+Alongside them the script records:
 
 - `kModule` — the owning module, or nothing outside a module (then the scan is not
   restricted and the whole address space is searched);

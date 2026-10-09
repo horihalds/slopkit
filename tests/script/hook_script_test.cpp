@@ -309,6 +309,16 @@ TEST_CASE("the rendered script carries the generated facts", "[script][hook]")
     CHECK(source.find("out of the site's jump reach") != std::string::npos);
     CHECK(source.find("function activate()") != std::string::npos);
     CHECK(source.find("function deactivate()") != std::string::npos);
+    // The site is published under the label deactivate() reads, not left as the
+    // match address aobscan stored.
+    CHECK(source.find("slabel(kSiteName, site)") != std::string::npos);
+    // A refusal after the cave was mapped frees it and drops both labels.
+    CHECK(
+        source.find("if not ok then\n        dealloc(kCaveName)\n        ulabel(kCaveName)\n        ulabel(kSiteName)")
+        != std::string::npos);
+    CHECK(source.find("if not ok2 then\n        dealloc(kCaveName)") != std::string::npos);
+    CHECK(source.find("if not ok3 then\n        dealloc(kCaveName)") != std::string::npos);
+    CHECK(source.find("if not ok4 then\n        dealloc(kCaveName)") != std::string::npos);
     CHECK(source.find("mem.write_bytes(site, kOriginal)") != std::string::npos);
     CHECK(source.find("dealloc(kCaveName)") != std::string::npos);
     CHECK(script::check_syntax(source).has_value());
@@ -397,6 +407,117 @@ TEST_CASE("the generated script activates and deactivates against a target", "[s
     CHECK(fixture.fake.allocations.empty());
 }
 
+TEST_CASE("deactivate restores the hooked site, not the pattern match", "[script][hook]")
+{
+    // A hook on a row with decoded neighbours on both sides: the window starts
+    // seven bytes into the match, so restoring at the match address would
+    // corrupt the bytes before the site and leave the jump behind.
+    const std::initializer_list<int> bytes = {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x83, 0xC4,
+                                              0x28, 0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+
+    const auto restores_at_the_site = [&bytes](const std::string& module)
+    {
+        ScriptFixture fixture(0x200);
+        fixture.fake.put(0x10, bytes);
+
+        constexpr std::size_t        base_offset  = 0x10;
+        constexpr std::size_t        listing_size = 20;
+        const std::vector<std::byte> before(fixture.fake.bytes.begin() + static_cast<std::ptrdiff_t>(base_offset),
+                                            fixture.fake.bytes.begin()
+                                                + static_cast<std::ptrdiff_t>(base_offset + listing_size));
+
+        const Listing listing(bytes, fixture.fake.address(0x10));
+        REQUIRE(listing.rows.size() >= 4);
+
+        script::HookCandidate candidate = candidate_at(listing, 2, module);
+
+        std::string                             reason;
+        const std::optional<script::HookTarget> target = script::build_hook(candidate, reason);
+        REQUIRE(target.has_value());
+        // The premise the old template got wrong: the match is not the site.
+        REQUIRE(target->pattern_offset > 0);
+
+        const std::string source = script::render(*target);
+        REQUIRE(script::check_syntax(source).has_value());
+
+        const std::uint64_t match       = fixture.fake.address(0x10);
+        const std::uint64_t site        = match + target->pattern_offset;
+        const auto          site_offset = static_cast<std::size_t>(site - kScriptBase);
+
+        const script::LifecycleResult activated = fixture.engine.run_lifecycle(source, "activate");
+        INFO(activated.message);
+        REQUIRE(activated.ok);
+
+        // The jump sits at the site and the match keeps its first byte.
+        CHECK(fixture.fake.bytes[site_offset] == std::byte {0xE9});
+        CHECK(fixture.fake.bytes[base_offset] == std::byte {0x48});
+        for (std::size_t offset = 5; offset < target->original.size(); ++offset)
+        {
+            CHECK(fixture.fake.bytes[site_offset + offset] == std::byte {0x90});
+        }
+        REQUIRE(fixture.fake.allocations.size() == 1);
+        REQUIRE_FALSE(fixture.fake.allocate_requests.empty());
+        CHECK(fixture.fake.allocate_requests.front().first == site);
+
+        const script::LifecycleResult deactivated = fixture.engine.run_lifecycle(source, "deactivate");
+        INFO(deactivated.message);
+        REQUIRE(deactivated.ok);
+        // The whole listing region is byte-identical to the snapshot: the write
+        // landed on the window, not on the bytes between the match and the site.
+        for (std::size_t index = 0; index < before.size(); ++index)
+        {
+            CHECK(fixture.fake.bytes[base_offset + index] == before[index]);
+        }
+        CHECK(fixture.fake.allocations.empty());
+    };
+
+    SECTION("a module-qualified target")
+    {
+        restores_at_the_site("test.so");
+    }
+
+    SECTION("a module-less target")
+    {
+        restores_at_the_site("");
+    }
+}
+
+TEST_CASE("a refused activation frees the cave and drops the site label", "[script][hook]")
+{
+    ScriptFixture fixture(0x200);
+    fixture.fake.put(0x10, {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x83, 0xC4,
+                            0x28, 0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90});
+
+    const Listing listing({0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x83, 0xC4,
+                           0x28, 0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          fixture.fake.address(0x10));
+    REQUIRE(listing.rows.size() >= 4);
+
+    script::HookCandidate candidate = candidate_at(listing, 0, "test.so");
+
+    std::string        reason;
+    script::HookTarget target = *script::build_hook(candidate, reason);
+    // The trampoline is copied verbatim into the script, so an instruction the
+    // assembler cannot encode makes `assemble(cave, kTrampoline)` fail after the
+    // cave was mapped.
+    REQUIRE_FALSE(target.trampoline_lines.empty());
+    target.trampoline_lines.front() = "frobnicate";
+
+    const std::string source = script::render(target);
+
+    const script::LifecycleResult activated = fixture.engine.run_lifecycle(source, "activate");
+    INFO(activated.message);
+    CHECK_FALSE(activated.ok);
+    CHECK(activated.message.find("the trampoline:") != std::string::npos);
+    // The cleanup: the cave mapping is freed, not left behind.
+    CHECK(fixture.fake.allocations.empty());
+
+    const script::LifecycleResult deactivated = fixture.engine.run_lifecycle(source, "deactivate");
+    INFO(deactivated.message);
+    CHECK_FALSE(deactivated.ok);
+    CHECK(deactivated.message.find("this hook's site is not known anymore") != std::string::npos);
+}
+
 TEST_CASE("activate refuses a cave that is out of the site's reach", "[script][hook]")
 {
     ScriptFixture fixture(0x200);
@@ -424,7 +545,8 @@ TEST_CASE("activate refuses a cave that is out of the site's reach", "[script][h
 
     const std::string   source = script::render(*target);
     // The same chunk string keeps the labels across the two runs.
-    const std::string   probe  = source + "\nfunction cave_still_labeled() return label(kCaveName) ~= 0 end\n";
+    const std::string   probe  = source + "\nfunction cave_still_labeled() return label(kCaveName) ~= 0 end\n"
+                               + "function site_still_labeled() return label(kSiteName) ~= 0 end\n";
     const std::uint64_t site   = fixture.fake.address(0x10);
 
     const script::LifecycleResult activated = fixture.engine.run_lifecycle(probe, "activate");
@@ -440,7 +562,9 @@ TEST_CASE("activate refuses a cave that is out of the site's reach", "[script][h
     }
     CHECK(fixture.fake.allocations.empty());
 
-    // The cave's label is gone: the probe reports `true` only while it resolves.
-    const script::LifecycleResult labeled = fixture.engine.run_lifecycle(probe, "cave_still_labeled");
-    CHECK_FALSE(labeled.ok);
+    // Both labels are gone: a probe reports `true` only while it resolves.
+    const script::LifecycleResult cave_labeled = fixture.engine.run_lifecycle(probe, "cave_still_labeled");
+    CHECK_FALSE(cave_labeled.ok);
+    const script::LifecycleResult site_labeled = fixture.engine.run_lifecycle(probe, "site_still_labeled");
+    CHECK_FALSE(site_labeled.ok);
 }

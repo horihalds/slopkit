@@ -322,7 +322,8 @@ namespace slopkit::script
         out += "-- activate() finds the instruction with an AoB pattern, maps a code cave in the\n";
         out += "-- target, writes your code plus the instructions the hook replaces into it, then\n";
         out += "-- jumps the site into the cave; deactivate() restores the original bytes and frees\n";
-        out += "-- the cave.\n";
+        out += "-- the cave. The hook's state lives in the two labels kSiteName (the hooked address)\n";
+        out += "-- and kCaveName (the stub); activate() publishes them and deactivate() forgets them.\n";
         if (window > target.instruction_length)
         {
             out += std::format("-- The window covers {} bytes: the selected instruction plus the next ones,\n"
@@ -397,9 +398,13 @@ namespace slopkit::script
         out += "    if not found then\n";
         out += std::format("        return false, {}\n", missed);
         out += "    end\n";
+        out += "    -- `match` is where the pattern starts; the window it stands for begins\n";
+        out += "    -- kMatchOffset bytes in, and that site is what deactivate() restores.\n";
         out += "    local site = match + kMatchOffset\n";
+        out += "    slabel(kSiteName, site)\n";
         out += "    for i = 0, kWindow - 1 do\n";
         out += "        if read_u8(site + i) ~= kOriginal:byte(i + 1) then\n";
+        out += "            ulabel(kSiteName)\n";
         out +=
             "            return false, string.format(\"the bytes at 0x%X are not the expected instruction\", site)\n";
         out += "        end\n";
@@ -411,18 +416,39 @@ namespace slopkit::script
         out += "    if span > kReach then\n";
         out += "        dealloc(kCaveName)\n";
         out += "        ulabel(kCaveName)\n";
+        out += "        ulabel(kSiteName)\n";
         out += "        return false, string.format(\"the cave at 0x%X is out of the site's jump reach\", cave)\n";
         out += "    end\n\n";
         out += "    local ok, hook_len = assemble(cave, kHookCode)\n";
-        out += "    if not ok then return false, \"the hook code: \" .. hook_len end\n";
+        out += "    if not ok then\n";
+        out += "        dealloc(kCaveName)\n";
+        out += "        ulabel(kCaveName)\n";
+        out += "        ulabel(kSiteName)\n";
+        out += "        return false, \"the hook code: \" .. hook_len\n";
+        out += "    end\n";
         out +=
             std::format("    local ok2, tramp_len = assemble(cave + hook_len, kTrampoline{})\n", trampoline_arguments);
-        out += "    if not ok2 then return false, \"the trampoline: \" .. tramp_len end\n";
+        out += "    if not ok2 then\n";
+        out += "        dealloc(kCaveName)\n";
+        out += "        ulabel(kCaveName)\n";
+        out += "        ulabel(kSiteName)\n";
+        out += "        return false, \"the trampoline: \" .. tramp_len\n";
+        out += "    end\n";
         out += "    local ok3, back_len = assemble(cave + hook_len + tramp_len, \"jmp 0x%X\", site + kWindow)\n";
-        out += "    if not ok3 then return false, \"the jump back: \" .. back_len end\n\n";
+        out += "    if not ok3 then\n";
+        out += "        dealloc(kCaveName)\n";
+        out += "        ulabel(kCaveName)\n";
+        out += "        ulabel(kSiteName)\n";
+        out += "        return false, \"the jump back: \" .. back_len\n";
+        out += "    end\n\n";
         out += "    -- The site jumps into the cave; every leftover byte is padded with NOP.\n";
         out += "    local ok4, jmp_len = assemble(site, \"jmp 0x%X\", cave)\n";
-        out += "    if not ok4 then return false, \"the jump to the cave: \" .. jmp_len end\n";
+        out += "    if not ok4 then\n";
+        out += "        dealloc(kCaveName)\n";
+        out += "        ulabel(kCaveName)\n";
+        out += "        ulabel(kSiteName)\n";
+        out += "        return false, \"the jump to the cave: \" .. jmp_len\n";
+        out += "    end\n";
         out += "    if jmp_len < kWindow then\n";
         out += "        mem.write_bytes(site + jmp_len, kPadding:sub(1, kWindow - jmp_len))\n";
         out += "    end\n";
