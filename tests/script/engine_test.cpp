@@ -271,3 +271,165 @@ TEST_CASE("script engine edge cases at the seam", "[script]")
         CHECK(result.error.find("address is not mapped") != std::string::npos);
     }
 }
+
+TEST_CASE("script engine runs a lifecycle hook", "[script]")
+{
+    using slopkit::script::kActivateHook;
+    using slopkit::script::kDeactivateHook;
+
+    ScriptFixture fixture;
+
+    SECTION("a hook returning nothing succeeds")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() end", kActivateHook);
+
+        REQUIRE(result.ok);
+        CHECK(result.error.empty());
+        CHECK(result.message.empty());
+    }
+
+    SECTION("a hook returning true succeeds")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() return true end", kActivateHook);
+
+        REQUIRE(result.ok);
+        CHECK(result.error.empty());
+        CHECK(result.message.empty());
+    }
+
+    SECTION("a non-boolean first value is treated as success")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() return 1 end", kActivateHook);
+
+        REQUIRE(result.ok);
+        CHECK(result.message.empty());
+    }
+
+    SECTION("a success may carry a message")
+    {
+        const auto result =
+            fixture.engine.run_lifecycle(R"(function activate() return true, "prepared" end)", kActivateHook);
+
+        REQUIRE(result.ok);
+        CHECK(result.message == "prepared");
+    }
+
+    SECTION("false refuses and the second value is the message")
+    {
+        const auto result =
+            fixture.engine.run_lifecycle(R"(function activate() return false, "no target object" end)", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.empty());
+        CHECK(result.message == "no target object");
+    }
+
+    SECTION("false alone refuses without a message")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() return false end", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.empty());
+        CHECK(result.message.empty());
+    }
+
+    SECTION("a scalar reason is rendered as its Lua text")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() return false, 42 end", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.message == "42");
+    }
+
+    SECTION("the hook's print lines are captured")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() print('hi') end", kActivateHook);
+
+        REQUIRE(result.ok);
+        REQUIRE(result.output.size() == 1);
+        CHECK(result.output[0] == "hi");
+    }
+
+    SECTION("a missing hook is reported")
+    {
+        const auto result = fixture.engine.run_lifecycle("-- nothing to see", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error == "activate() is not defined");
+    }
+
+    SECTION("a non-function global is reported")
+    {
+        const auto result = fixture.engine.run_lifecycle("activate = 1", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error == "activate() is not defined");
+    }
+
+    SECTION("a chunk error never reaches the hook")
+    {
+        const auto result = fixture.engine.run_lifecycle(R"(
+print('loading')
+function activate() print('activated') end
+error('boom')
+)",
+                                                         kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("boom") != std::string::npos);
+        REQUIRE(result.output.size() == 1);
+        CHECK(result.output[0] == "loading");
+    }
+
+    SECTION("the deactivate route calls deactivate, not activate")
+    {
+        const auto result = fixture.engine.run_lifecycle(R"(
+function activate() return false, "called activate" end
+function deactivate() return true end
+)",
+                                                         kDeactivateHook);
+
+        REQUIRE(result.ok);
+        CHECK(result.message.empty());
+    }
+
+    SECTION("the state survives and run() still behaves")
+    {
+        REQUIRE(fixture.engine.run_lifecycle("helper = 7\nfunction activate() end", kActivateHook).ok);
+
+        const RunResult result = fixture.engine.run("return helper + 35");
+
+        REQUIRE(result.ok);
+        CHECK(result.returned == "42");
+    }
+}
+
+TEST_CASE("script engine guards a runaway lifecycle hook", "[script]")
+{
+    using slopkit::script::kActivateHook;
+
+    SECTION("the instruction budget aborts the hook")
+    {
+        EngineConfig config;
+        config.instruction_budget = 2000;
+        ScriptFixture fixture(0x100, config);
+
+        const auto result = fixture.engine.run_lifecycle("function activate() while true do end end", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("instruction budget") != std::string::npos);
+    }
+
+    SECTION("the wall-clock deadline aborts the hook")
+    {
+        EngineConfig config;
+        config.instruction_budget = 10'000'000'000;
+        config.timeout_seconds    = 0.0;
+        ScriptFixture fixture(0x100, config);
+
+        const auto result = fixture.engine.run_lifecycle("function activate() while true do end end", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("time budget") != std::string::npos);
+    }
+}

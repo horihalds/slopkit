@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <format>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <QFormLayout>
@@ -20,6 +21,24 @@
 
 namespace slopkit::ui::dialogs
 {
+
+    namespace
+    {
+        // The activate/deactivate skeleton a new script starts from; the address
+        // list runs these two globals from the row's Active checkbox.
+        constexpr std::string_view kScriptSkeleton = R"(-- Runs when this row's Active checkbox is ticked.
+-- Return true once the target is ready, or false with an optional message to
+-- refuse, e.g. return false, "why": a refused tick leaves the checkbox off.
+function activate()
+    return true
+end
+
+-- Runs when the checkbox is unticked; undo whatever activate() did.
+function deactivate()
+    return true
+end
+)";
+    } // namespace
 
     AddScriptDialog::AddScriptDialog(table::AddressTable& table, QWidget* parent) : QDialog(parent), table_(table)
     {
@@ -41,7 +60,6 @@ namespace slopkit::ui::dialogs
         script_edit_ = new QPlainTextEdit(this);
         script_edit_->setObjectName(QStringLiteral("script_edit"));
         script_edit_->setFont(mono_font());
-        script_edit_->setPlaceholderText(QStringLiteral("print(mem.read(0x4000, \"u32\"))"));
         script_edit_->setMinimumHeight(240);
         layout->addWidget(script_edit_, 1);
 
@@ -69,7 +87,7 @@ namespace slopkit::ui::dialogs
         setWindowTitle(tr("Add Script"));
         commit_button_->setText(tr("Add"));
         description_edit_->setText(tr("New script"));
-        script_edit_->clear();
+        script_edit_->setPlainText(to_qstring(kScriptSkeleton));
         status_->clear_status();
     }
 

@@ -52,6 +52,15 @@ namespace slopkit::ui::panels
         {
             return one_line(text.substr(0, text.find('\n')));
         }
+
+        // A script's own output is the run's payload: one record per line.
+        void log_script_lines(const std::vector<std::string>& lines)
+        {
+            for (const std::string& line : lines)
+            {
+                log::info(log::category::script, one_line(line));
+            }
+        }
     } // namespace
 
     AddressListPanel::AddressListPanel(table::AddressTable&     table,
@@ -104,6 +113,14 @@ namespace slopkit::ui::panels
                     set_status(message, is_error);
                 });
 
+        connect(model_,
+                &models::AddressTableModel::scriptActiveRequested,
+                this,
+                [this](std::size_t row, bool wanted)
+                {
+                    toggle_script_active(row, wanted);
+                });
+
         table_view_->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(table_view_,
                 &QWidget::customContextMenuRequested,
@@ -136,6 +153,32 @@ namespace slopkit::ui::panels
     {
         model_->refresh();
         maybe_resolve_expressions();
+
+        // The engine and a script's globals are dropped with the target, so a
+        // ticked script row would be a lie once it detaches. Clearing the flag
+        // is itself the transition record, so the sweep is a no-op afterwards.
+        if (target_.valid())
+        {
+            return;
+        }
+        bool cleared = false;
+        for (std::size_t row = 0; row < table_.size(); ++row)
+        {
+            table::AddressEntry& entry = table_.entries()[row];
+            if (entry.kind != table::EntryKind::script || !entry.active)
+            {
+                continue;
+            }
+            entry.active = false;
+            cleared      = true;
+            log::info(log::category::script,
+                      std::format("script '{}' deactivated: the target detached", entry.description));
+            model_->note_entry_changed(row);
+        }
+        if (cleared)
+        {
+            set_status(tr("Scripts deactivated: the target detached."), false);
+        }
     }
 
     std::vector<ui::LiveRequest> AddressListPanel::next_live_request()
@@ -473,7 +516,16 @@ namespace slopkit::ui::panels
             return;
         }
 
-        auto& entry  = table_.entries()[static_cast<std::size_t>(row)];
+        const std::size_t index = static_cast<std::size_t>(row);
+        if (table_.entries()[index].kind == table::EntryKind::script)
+        {
+            // A script row toggles through its hooks, exactly like the checkable
+            // Active cell, rather than flipping the flag in place.
+            toggle_script_active(index, !table_.entries()[index].active);
+            return;
+        }
+
+        auto& entry  = table_.entries()[index];
         entry.active = !entry.active;
         log::info(log::category::ui, entry.active ? "entry active" : "entry inactive");
         set_status(entry.active ? tr("Entry active.") : tr("Entry inactive."), false);
@@ -542,6 +594,7 @@ namespace slopkit::ui::panels
         const bool submitted = worker_.submit_script(id,
                                                      entry.description,
                                                      entry.script,
+                                                     std::string {},
                                                      8,
                                                      [this, id](process::JobResult&& result)
                                                      {
@@ -564,11 +617,7 @@ namespace slopkit::ui::panels
         script_job_.reset();
 
         const auto& ran = std::get<process::ScriptResult>(result);
-        // The script's own output is the run's payload: one record per line.
-        for (const std::string& line : ran.run.output)
-        {
-            log::info(log::category::script, one_line(line));
-        }
+        log_script_lines(ran.run.output);
 
         if (ran.run.ok)
         {
@@ -582,6 +631,144 @@ namespace slopkit::ui::panels
         const std::string message = error_message(ran.run.error);
         log::warning(log::category::script, message);
         set_status(tr("Script failed: %1").arg(to_qstring(message)), true);
+    }
+
+    void AddressListPanel::toggle_script_active(std::size_t row, bool wanted)
+    {
+        if (!table_.valid_index(row) || table_.entries()[row].kind != table::EntryKind::script)
+        {
+            return;
+        }
+
+        // Any refusal must snap the clicked box back to the table's state.
+        const auto revert = [this, row]
+        {
+            model_->note_entry_changed(row);
+        };
+
+        // The hook touches the target, so it needs a live session; the worker
+        // re-checks this before it runs anything.
+        if (!target_.valid())
+        {
+            log::warning(log::category::script, "activate refused: no attached target");
+            set_status(tr("Activate needs an attached target."), true);
+            revert();
+            return;
+        }
+        if (script_job_.has_value())
+        {
+            log::warning(log::category::script, "activate refused: a script is already running");
+            set_status(tr("A script is already running."), true);
+            revert();
+            return;
+        }
+
+        const table::AddressEntry& entry = table_.entries()[row];
+        const process::JobId       id    = worker_.next_job_id();
+        script_job_                      = id;
+        const std::string hook   = wanted ? std::string(script::kActivateHook) : std::string(script::kDeactivateHook);
+        const std::string action = wanted ? "activating" : "deactivating";
+        log::info(log::category::script, std::format("{} script '{}'", action, entry.description));
+        set_status(wanted ? tr("Activating…") : tr("Deactivating…"), false);
+
+        const std::uint64_t entry_id  = entry.id;
+        const bool          submitted = worker_.submit_script(id,
+                                                              entry.description,
+                                                              entry.script,
+                                                              hook,
+                                                              8,
+                                                              [this, id, entry_id, wanted](process::JobResult&& job)
+                                                              {
+                                                         finish_script_active(id, entry_id, wanted, std::move(job));
+                                                              });
+        if (!submitted)
+        {
+            script_job_.reset();
+            log::warning(log::category::script, "activate refused: the access worker is not accepting jobs");
+            set_status(tr("The script job could not be started."), true);
+            revert();
+        }
+    }
+
+    void AddressListPanel::finish_script_active(process::JobId       id,
+                                                std::uint64_t        entry_id,
+                                                bool                 wanted,
+                                                process::JobResult&& result)
+    {
+        if (script_job_ != id)
+        {
+            return; // a later job superseded this one
+        }
+        script_job_.reset();
+
+        const auto& ran = std::get<process::ScriptResult>(result);
+        if (!ran.lifecycle.has_value())
+        {
+            return; // a plain run's completion, not ours
+        }
+        const script::LifecycleResult& outcome = *ran.lifecycle;
+        log_script_lines(outcome.output);
+
+        // A reorder or a delete may have landed between the click and the
+        // completion, so the row is re-located by its entry id.
+        std::optional<std::size_t> row;
+        for (std::size_t index = 0; index < table_.size(); ++index)
+        {
+            if (table_.entries()[index].id == entry_id)
+            {
+                row = index;
+                break;
+            }
+        }
+
+        const char* action = wanted ? "activate" : "deactivate";
+
+        if (outcome.ok)
+        {
+            if (row.has_value())
+            {
+                table_.entries()[*row].active = wanted;
+                model_->note_entry_changed(*row);
+            }
+            log::info(log::category::script,
+                      std::format("script '{}' {}: {}",
+                                  ran.description,
+                                  wanted ? "activated" : "deactivated",
+                                  outcome.message.empty() ? "ok" : outcome.message));
+            if (outcome.message.empty())
+            {
+                set_status(wanted ? tr("Script active.") : tr("Script inactive."), false);
+            }
+            else
+            {
+                const QString pattern = wanted ? tr("Script active: %1") : tr("Script inactive: %1");
+                set_status(pattern.arg(to_qstring(outcome.message)), false);
+            }
+            return;
+        }
+
+        // Failure: the flag stays as it was, so the box snaps back.
+        if (row.has_value())
+        {
+            model_->note_entry_changed(*row);
+        }
+        std::string reason = outcome.message;
+        if (reason.empty())
+        {
+            reason = error_message(outcome.error);
+        }
+        if (reason.empty())
+        {
+            log::warning(log::category::script, std::format("script '{}' {} failed", ran.description, action));
+            set_status(wanted ? tr("Activate failed.") : tr("Deactivate failed."), true);
+        }
+        else
+        {
+            log::warning(log::category::script,
+                         std::format("script '{}' {} failed: {}", ran.description, action, reason));
+            const QString pattern = wanted ? tr("Activate failed: %1") : tr("Deactivate failed: %1");
+            set_status(pattern.arg(to_qstring(reason)), true);
+        }
     }
 
     void AddressListPanel::report_status(std::string_view message, bool is_error)

@@ -46,9 +46,10 @@ TEST_CASE("the add-script dialog appends a script entry", "[ui]")
     REQUIRE(editor_of(dialog) != nullptr);
     REQUIRE(commit_of(dialog) != nullptr);
 
-    // The add mode suggests a description and starts from an empty script.
+    // The add mode suggests a description and starts from the hook skeleton.
     CHECK(description_of(dialog)->text() == QStringLiteral("New script"));
-    CHECK(editor_of(dialog)->toPlainText().isEmpty());
+    CHECK(editor_of(dialog)->toPlainText().contains(QStringLiteral("function activate()")));
+    CHECK(editor_of(dialog)->toPlainText().contains(QStringLiteral("function deactivate()")));
 
     // An empty description is refused and appends nothing.
     description_of(dialog)->clear();
@@ -116,7 +117,7 @@ TEST_CASE("the edit-script dialog falls back to add mode for a value row", "[ui]
     dialog.edit_entry(0);
 
     CHECK(description_of(dialog)->text() == QStringLiteral("New script"));
-    CHECK(editor_of(dialog)->toPlainText().isEmpty());
+    CHECK(editor_of(dialog)->toPlainText().contains(QStringLiteral("function activate()")));
 
     description_of(dialog)->setText(QStringLiteral("helper"));
     editor_of(dialog)->setPlainText(QStringLiteral("return 1"));
@@ -125,4 +126,25 @@ TEST_CASE("the edit-script dialog falls back to add mode for a value row", "[ui]
     REQUIRE(table.size() == 2);
     CHECK(table.entries()[1].kind == EntryKind::script);
     CHECK(table.entries()[1].script == "return 1");
+}
+
+TEST_CASE("committing the untouched add form stores the hook skeleton", "[ui]")
+{
+    application();
+
+    AddressTable    table;
+    AddScriptDialog dialog {table};
+    dialog.show();
+
+    // The skeleton names both hooks and shows the refusal form.
+    const QString skeleton = editor_of(dialog)->toPlainText();
+    CHECK(skeleton.contains(QStringLiteral("function activate()")));
+    CHECK(skeleton.contains(QStringLiteral("function deactivate()")));
+    CHECK(skeleton.contains(QStringLiteral("return false, \"why\"")));
+
+    commit_of(dialog)->click();
+
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].kind == EntryKind::script);
+    CHECK(table.entries()[0].script == skeleton.toStdString());
 }

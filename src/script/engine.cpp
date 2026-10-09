@@ -62,6 +62,40 @@ namespace slopkit::script
             install_memory();
         }
 
+        // The VM-instruction hook that turns the instruction budget and the
+        // wall-clock deadline into an abort.
+        static void budget_hook(lua_State* hooked, lua_Debug*)
+        {
+            auto* self = *static_cast<Impl**>(lua_getextraspace(hooked));
+            self->ticks += 1;
+            if (self->ticks * kHookInstructionCount > self->config.instruction_budget)
+            {
+                luaL_error(hooked, "%s", kBudgetError);
+            }
+            if (std::chrono::steady_clock::now() > self->deadline)
+            {
+                luaL_error(hooked, "%s", kDeadlineError);
+            }
+        }
+
+        // Runs `body` (which makes exactly one protected call) under a fresh
+        // instruction/time budget and always removes the hook afterwards. The
+        // call's result is returned; a failing call leaves `valid()` false and
+        // its error on the stack.
+        template<typename Body>
+        sol::protected_function_result call_guarded(Body&& body)
+        {
+            ticks            = 0;
+            deadline         = std::chrono::steady_clock::now()
+                             + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                   std::chrono::duration<double>(config.timeout_seconds));
+            lua_State* state = lua.lua_state();
+            lua_sethook(state, &Impl::budget_hook, LUA_MASKCOUNT, kHookInstructionCount);
+            sol::protected_function_result result = body();
+            lua_sethook(state, nullptr, 0, 0);
+            return result;
+        }
+
         // `print` appends one line per call to the run's output instead of
         // writing to stdout.
         void install_print()
@@ -232,7 +266,6 @@ namespace slopkit::script
 
         RunResult result;
         impl.output.clear();
-        impl.ticks = 0;
 
         sol::load_result loaded = impl.lua.load(chunk, "@script");
         if (!loaded.valid())
@@ -242,28 +275,12 @@ namespace slopkit::script
             return result;
         }
 
-        impl.deadline = std::chrono::steady_clock::now()
-                      + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                            std::chrono::duration<double>(impl.config.timeout_seconds));
-
-        auto hook = [](lua_State* hooked, lua_Debug*)
-        {
-            auto* self = *static_cast<Impl**>(lua_getextraspace(hooked));
-            self->ticks += 1;
-            if (self->ticks * kHookInstructionCount > self->config.instruction_budget)
-            {
-                luaL_error(hooked, "%s", kBudgetError);
-            }
-            if (std::chrono::steady_clock::now() > self->deadline)
-            {
-                luaL_error(hooked, "%s", kDeadlineError);
-            }
-        };
-
-        lua_sethook(state, hook, LUA_MASKCOUNT, kHookInstructionCount);
         sol::protected_function        function = loaded;
-        sol::protected_function_result call     = function();
-        lua_sethook(state, nullptr, 0, 0);
+        sol::protected_function_result call     = impl.call_guarded(
+            [&function]
+            {
+                return function();
+            });
 
         result.output = std::move(impl.output);
 
@@ -287,6 +304,85 @@ namespace slopkit::script
         }
 
         result.ok = true;
+        return result;
+    }
+
+    LifecycleResult Engine::run_lifecycle(std::string_view chunk, std::string_view function)
+    {
+        Impl&      impl  = *impl_;
+        lua_State* state = impl.lua.lua_state();
+
+        LifecycleResult result;
+        impl.output.clear();
+
+        sol::load_result loaded = impl.lua.load(chunk, "@script");
+        if (!loaded.valid())
+        {
+            const sol::error error = loaded;
+            result.error           = error.what();
+            result.output          = std::move(impl.output);
+            return result;
+        }
+
+        // The chunk runs first so its globals -- the hooks among them -- are
+        // defined; a chunk that raises never reaches its hook.
+        sol::protected_function        chunk_function = loaded;
+        sol::protected_function_result chunk_call     = impl.call_guarded(
+            [&chunk_function]
+            {
+                return chunk_function();
+            });
+        if (!chunk_call.valid())
+        {
+            const sol::error error = chunk_call;
+            result.error           = error.what();
+            result.output          = std::move(impl.output);
+            return result;
+        }
+
+        sol::object hook = impl.lua[std::string(function)];
+        if (hook.get_type() != sol::type::function)
+        {
+            result.error  = std::string(function) + "() is not defined";
+            result.output = std::move(impl.output);
+            return result;
+        }
+
+        sol::protected_function        hook_function = hook;
+        sol::protected_function_result hook_call     = impl.call_guarded(
+            [&hook_function]
+            {
+                return hook_function();
+            });
+
+        result.output = std::move(impl.output);
+
+        if (!hook_call.valid())
+        {
+            const sol::error error = hook_call;
+            result.error           = error.what();
+            return result;
+        }
+
+        // Nothing, or a truthy first value, is a success; an explicit `false` is
+        // a refusal. A second return value is the message either way.
+        result.ok = true;
+        if (hook_call.return_count() > 0)
+        {
+            const sol::object verdict = hook_call.get<sol::object>(0);
+            if (verdict.get_type() == sol::type::boolean && !verdict.as<bool>())
+            {
+                result.ok = false;
+            }
+        }
+        if (hook_call.return_count() > 1)
+        {
+            const sol::object reason = hook_call.get<sol::object>(1);
+            reason.push(state);
+            result.message = to_text(state, -1);
+            lua_pop(state, 1); // the value pushed above
+        }
+
         return result;
     }
 

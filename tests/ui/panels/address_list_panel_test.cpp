@@ -850,3 +850,352 @@ TEST_CASE("a failing script reports its first error line once", "[ui]")
     }
     CHECK(failures == 1);
 }
+
+namespace
+{
+    // The status text and its error flag, fed by the panel's signal.
+    struct ScriptStatus
+    {
+        QString text;
+        bool    is_error {false};
+    };
+
+    void watch_script_status(slopkit::ui::panels::AddressListPanel& panel, ScriptStatus& status)
+    {
+        QObject::connect(&panel,
+                         &slopkit::ui::panels::AddressListPanel::statusChanged,
+                         [&status](const QString& text, bool error)
+                         {
+                             status.text     = text;
+                             status.is_error = error;
+                         });
+    }
+} // namespace
+
+TEST_CASE("the script row's Active checkbox runs activate and deactivate", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper",
+                             R"(
+function activate() return true, "prepared" end
+function deactivate() return true end
+)") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+    attach_app_session(worker);
+
+    const QModelIndex active_index = model->index(0, slopkit::ui::models::AddressTableModel::active);
+    REQUIRE(model->data(active_index, Qt::CheckStateRole).toInt() == Qt::Unchecked);
+
+    // Ticking submits one activate job and leaves the flag for the verdict.
+    CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole));
+    CHECK(status.text == QStringLiteral("Activating…"));
+    CHECK_FALSE(table.entries()[0].active);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.text != QStringLiteral("Activating…");
+                    }));
+    CHECK_FALSE(status.is_error);
+    CHECK(status.text == QStringLiteral("Script active: prepared"));
+    CHECK(table.entries()[0].active);
+    CHECK(model->data(active_index, Qt::CheckStateRole).toInt() == Qt::Checked);
+
+    // Unticking runs deactivate() and clears the flag again.
+    CHECK_FALSE(model->setData(active_index, Qt::Unchecked, Qt::CheckStateRole));
+    CHECK(status.text == QStringLiteral("Deactivating…"));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.text != QStringLiteral("Deactivating…");
+                    }));
+    CHECK_FALSE(status.is_error);
+    CHECK(status.text == QStringLiteral("Script inactive."));
+    CHECK_FALSE(table.entries()[0].active);
+}
+
+TEST_CASE("a refused activation reverts the checkbox", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "function activate() return false, \"blocked\" end") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+    attach_app_session(worker);
+
+    const QModelIndex active_index = model->index(0, slopkit::ui::models::AddressTableModel::active);
+    CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.text != QStringLiteral("Activating…");
+                    }));
+
+    CHECK(status.is_error);
+    CHECK(status.text == QStringLiteral("Activate failed: blocked"));
+    CHECK_FALSE(table.entries()[0].active);
+    CHECK(model->data(active_index, Qt::CheckStateRole).toInt() == Qt::Unchecked);
+}
+
+TEST_CASE("a script without the hook reports the refusal", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "return 1") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+    attach_app_session(worker);
+
+    CHECK_FALSE(model->setData(
+        model->index(0, slopkit::ui::models::AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.text != QStringLiteral("Activating…");
+                    }));
+
+    CHECK(status.is_error);
+    CHECK(status.text == QStringLiteral("Activate failed: activate() is not defined"));
+    CHECK_FALSE(table.entries()[0].active);
+}
+
+TEST_CASE("toggling a script row without a target is refused", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target; // nothing is attached
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "function activate() return true end") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+
+    CHECK_FALSE(model->setData(
+        model->index(0, slopkit::ui::models::AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
+
+    CHECK(status.is_error);
+    CHECK(status.text == QStringLiteral("Activate needs an attached target."));
+    CHECK_FALSE(table.entries()[0].active);
+}
+
+TEST_CASE("a second script toggle while one is in flight is refused", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "function activate() return true end") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+    attach_app_session(worker);
+
+    const QModelIndex active_index = model->index(0, slopkit::ui::models::AddressTableModel::active);
+    CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole)); // in flight
+    CHECK(status.text == QStringLiteral("Activating…"));
+    CHECK_FALSE(model->setData(active_index, Qt::Unchecked, Qt::CheckStateRole)); // refused
+
+    CHECK(status.is_error);
+    CHECK(status.text == QStringLiteral("A script is already running."));
+
+    // Let the first job finish so nothing is left pending.
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.text != QStringLiteral("A script is already running.");
+                    }));
+    CHECK(status.text == QStringLiteral("Script active."));
+    CHECK(table.entries()[0].active);
+}
+
+TEST_CASE("the Active command routes a script row through its hooks", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "function activate() return true end") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+    attach_app_session(worker);
+
+    table.set_selected(0);
+    panel.toggle_active_selected();
+
+    CHECK(status.text == QStringLiteral("Activating…"));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.text != QStringLiteral("Activating…");
+                    }));
+    CHECK(status.text == QStringLiteral("Script active."));
+    CHECK(table.entries()[0].active);
+}
+
+TEST_CASE("the Active command still flips a value row directly", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+
+    table.set_selected(0);
+    panel.toggle_active_selected();
+
+    CHECK(table.entries()[0].active);
+    CHECK(status.text == QStringLiteral("Entry active."));
+}
+
+TEST_CASE("detaching clears active script rows only once", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target; // detached
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    REQUIRE(table.add_script("helper", "function activate() return true end") == 1);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    // A row left ticked while the target goes away would be a lie.
+    table.entries()[0].active = true;
+    table.entries()[1].active = true;
+
+    const auto detached_records = [&records]
+    {
+        int count = 0;
+        for (const slopkit::log::Record& record : records)
+        {
+            if (record.category == "script" && record.message.find("target detached") != std::string::npos)
+            {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    panel.refresh();
+
+    CHECK(table.entries()[0].active); // value rows keep their flag
+    CHECK_FALSE(table.entries()[1].active);
+    CHECK(status.text == QStringLiteral("Scripts deactivated: the target detached."));
+    CHECK(detached_records() == 1);
+
+    // The second tick finds nothing left to clear and writes no record.
+    panel.refresh();
+    CHECK(detached_records() == 1);
+}
+
+TEST_CASE("a script completion for a deleted row is harmless", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "function activate() return true end") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+    attach_app_session(worker);
+
+    CHECK_FALSE(model->setData(
+        model->index(0, slopkit::ui::models::AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
+
+    // The row vanishes between the click and the verdict.
+    table.remove(0);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return status.text != QStringLiteral("Activating…");
+                    }));
+    CHECK(status.text == QStringLiteral("Script active."));
+    CHECK(table.empty());
+}

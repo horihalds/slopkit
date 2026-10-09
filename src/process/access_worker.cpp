@@ -359,8 +359,12 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
-    bool AccessWorker::submit_script(
-        JobId id, std::string description, std::string chunk, std::size_t pointer_size, JobCallback on_done)
+    bool AccessWorker::submit_script(JobId       id,
+                                     std::string description,
+                                     std::string chunk,
+                                     std::string function,
+                                     std::size_t pointer_size,
+                                     JobCallback on_done)
     {
         Request request;
         request.kind         = JobKind::script;
@@ -368,6 +372,7 @@ namespace slopkit::process
         request.pointer_size = pointer_size;
         request.description  = std::move(description);
         request.chunk        = std::move(chunk);
+        request.function     = std::move(function);
         request.on_done      = std::move(on_done);
         return submit(std::move(request));
     }
@@ -824,19 +829,44 @@ namespace slopkit::process
         // message it shows and logs.
         if (!session_ || !engine_)
         {
-            result.run.error = "no target is attached";
+            if (request.function.empty())
+            {
+                result.run.error = "no target is attached";
+            }
+            else
+            {
+                result.lifecycle.emplace();
+                result.lifecycle->error = "no target is attached";
+            }
             log::debug(log::category::process,
                        std::format("script '{}' refused: no attached target", request.description));
             return result;
         }
 
         script_pointer_size_ = request.pointer_size == 0 ? sizeof(void*) : request.pointer_size;
+
+        if (request.function.empty())
+        {
+            log::debug(log::category::process,
+                       std::format("running script '{}' ({} byte(s))", request.description, request.chunk.size()));
+            result.run = engine_->run(request.chunk);
+            log::debug(
+                log::category::process,
+                std::format("script '{}' finished: {}", request.description, result.run.ok ? "ok" : result.run.error));
+            return result;
+        }
+
         log::debug(log::category::process,
-                   std::format("running script '{}' ({} byte(s))", request.description, request.chunk.size()));
-        result.run = engine_->run(request.chunk);
-        log::debug(
-            log::category::process,
-            std::format("script '{}' finished: {}", request.description, result.run.ok ? "ok" : result.run.error));
+                   std::format("running script '{}' hook '{}' ({} byte(s))",
+                               request.description,
+                               request.function,
+                               request.chunk.size()));
+        result.lifecycle = engine_->run_lifecycle(request.chunk, request.function);
+        log::debug(log::category::process,
+                   std::format("script '{}' hook '{}' finished: {}",
+                               request.description,
+                               request.function,
+                               result.lifecycle->ok ? "ok" : result.lifecycle->error));
         return result;
     }
 

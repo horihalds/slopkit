@@ -32,7 +32,32 @@ namespace
         worker.submit_script(worker.next_job_id(),
                              "helper",
                              std::move(chunk),
+                             std::string {},
                              pointer_size,
+                             [&](JobResult&& job)
+                             {
+                                 result = std::get<ScriptResult>(std::move(job));
+                                 done   = true;
+                             });
+        pump(worker,
+             [&]
+             {
+                 return done;
+             });
+        return result;
+    }
+
+    // Submits one lifecycle job for `function` (activate/deactivate) and returns
+    // its result once the completion arrived.
+    ScriptResult run_lifecycle(AccessWorker& worker, std::string chunk, std::string function)
+    {
+        ScriptResult result;
+        bool         done = false;
+        worker.submit_script(worker.next_job_id(),
+                             "helper",
+                             std::move(chunk),
+                             std::move(function),
+                             8,
                              [&](JobResult&& job)
                              {
                                  result = std::get<ScriptResult>(std::move(job));
@@ -830,4 +855,59 @@ TEST_CASE("a script job after detach reports the failure instead of running", "[
 
     CHECK_FALSE(result.run.ok);
     CHECK(result.run.error == "no target is attached");
+}
+
+TEST_CASE("a lifecycle job fills the verdict and leaves the plain run empty", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+    REQUIRE(attach_target(worker));
+
+    SECTION("an activate that refuses reports its message")
+    {
+        const ScriptResult result = run_lifecycle(
+            worker, R"(function activate() return false, "blocked" end)", std::string {slopkit::script::kActivateHook});
+
+        CHECK_FALSE(result.run.ok);
+        CHECK(result.run.output.empty());
+        REQUIRE(result.lifecycle.has_value());
+        CHECK_FALSE(result.lifecycle->ok);
+        CHECK(result.lifecycle->message == "blocked");
+        CHECK(result.lifecycle->error.empty());
+    }
+
+    SECTION("a plain job still fills run and leaves lifecycle empty")
+    {
+        const ScriptResult result = run_script(worker, "print('x') return 1");
+
+        REQUIRE(result.run.ok);
+        CHECK(result.run.returned == "1");
+        CHECK_FALSE(result.lifecycle.has_value());
+    }
+
+    SECTION("a deactivate job runs the deactivate half")
+    {
+        const ScriptResult result = run_lifecycle(worker,
+                                                  R"(
+function activate() return false, "wrong half" end
+function deactivate() return true end
+)",
+                                                  std::string {slopkit::script::kDeactivateHook});
+
+        REQUIRE(result.lifecycle.has_value());
+        CHECK(result.lifecycle->ok);
+    }
+}
+
+TEST_CASE("a lifecycle job is refused without an attached target", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    const ScriptResult result =
+        run_lifecycle(worker, "function activate() return true end", std::string {slopkit::script::kActivateHook});
+
+    REQUIRE(result.lifecycle.has_value());
+    CHECK_FALSE(result.lifecycle->ok);
+    CHECK(result.lifecycle->error == "no target is attached");
 }

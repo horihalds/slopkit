@@ -185,17 +185,34 @@ target.
   is captured into `RunResult::output` — bounded by `kMaxOutputLines` and
   `kMaxOutputLine` — instead of writing to stdout, and a scalar `return` is
   rendered into `RunResult::returned`.
-- Running a script is an `AccessWorker` job (`JobKind::script` → `ScriptResult`),
-  so the chunk touches the target on the worker thread and the UI only submits and
+- Besides `run(chunk)`, the engine exposes `run_lifecycle(chunk, function)`, which
+  runs the chunk and then calls its named global (`activate` / `deactivate`),
+  returning a `script::LifecycleResult`. The chunk runs first, so a chunk error
+  never reaches the hook; a missing or non-function global reports
+  `<name>() is not defined`. The hook's first return value decides the verdict —
+  nothing or a truthy value succeeds, an explicit `false` refuses — and a second
+  return value is the message either way. Both entry points share the instruction
+  budget, the wall-clock deadline and the `print` capture, and the globals persist
+  between calls exactly as for `run()`.
+- Running a script is an `AccessWorker` job (`JobKind::script` → `ScriptResult`):
+  `submit_script` takes an optional hook name, so an empty name runs the whole
+  chunk (the address list's `Run Script`) and a name runs `run_lifecycle()`. Either
+  way the chunk touches the target on the worker thread and the UI only submits and
   handles the completion. The address list logs the printed lines under the
   `script` category, logs the first error exactly once and reports a short outcome
-  in the status line; a run without an attached target is refused.
+  in the status line; a script row's `Active` checkbox drives the lifecycle jobs
+  (a tick submits the `activate` job, an untick the `deactivate` one), the flag is
+  written only when the verdict accepts, and a refusal snaps the box back and
+  reaches the status line as `Activate failed: <message>` / `Deactivate failed:
+  <message>`. A run or toggle without an attached target is refused.
 - A runaway chunk is aborted by the instruction budget and the wall-clock deadline
   in `script::EngineConfig`, checked from a `lua_sethook` installed for the run; the
   abort is an ordinary Lua error that leaves both the state and the session usable.
 
 A script entry has no address and no value, never takes part in the freeze pass
-(`Active` does not apply to it) and renders read-only in the grid: the Type column
-says `script`, the Address and Value cells stay blank and no cell is editable.
-`File > Add Script…`, the row menu's `Run Script` and `Edit Script…` are the only
-new UI.
+(its `Active` flag drives the lifecycle hooks instead of a freeze writer) and
+renders read-only in the grid apart from that leading `Active` checkbox: the Type
+column says `script`, the Address and Value cells stay blank and no other cell is
+editable. `File > Add Script…`, the row menu's `Run Script` and `Edit Script…` and
+the `Active` checkbox are the only new UI; `Add Script…` seeds the two hooks as a
+commented skeleton.

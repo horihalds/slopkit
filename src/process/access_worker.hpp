@@ -134,12 +134,15 @@ namespace slopkit::process
     };
 
     // Outcome of running one script entry: the chunk's own run result plus the
-    // entry's description so the caller can name it in its log record.
+    // entry's description so the caller can name it in its log record. A
+    // lifecycle job (`submit_script` with a hook name) fills `lifecycle`
+    // instead of `run`.
     struct ScriptResult
     {
-        JobId             id {};
-        std::string       description;
-        script::RunResult run;
+        JobId                                  id {};
+        std::string                            description;
+        script::RunResult                      run;
+        std::optional<script::LifecycleResult> lifecycle;
     };
 
     struct MemoryMapResult
@@ -217,10 +220,16 @@ namespace slopkit::process
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
         // Runs `chunk` as a Lua script against the attached target, with
-        // `pointer_size` as the target's pointer width. The engine and its state
-        // outlive the job, so globals persist between runs on one session.
-        bool submit_script(
-            JobId id, std::string description, std::string chunk, std::size_t pointer_size, JobCallback on_done);
+        // `pointer_size` as the target's pointer width. An empty `function` runs
+        // the whole chunk (the Run Script command); otherwise the chunk runs and
+        // its named `activate`/`deactivate` global is called. The engine and its
+        // state outlive the job, so globals persist between runs on one session.
+        bool submit_script(JobId       id,
+                           std::string description,
+                           std::string chunk,
+                           std::string function,
+                           std::size_t pointer_size,
+                           JobCallback on_done);
         // Stops / resumes the attached target through the worker's session. `pid`
         // must match that session, so a stale target between the click and the
         // job is refused instead of stopped.
@@ -282,6 +291,7 @@ namespace slopkit::process
             std::size_t                  pointer_size {};
             std::string                  description;
             std::string                  chunk;
+            std::string                  function;
             JobCallback                  on_done;
         };
 

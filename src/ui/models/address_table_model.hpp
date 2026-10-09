@@ -86,8 +86,16 @@ namespace slopkit::ui::models
         // text or colour changed.
         void apply_live_readings(std::span<const LiveReading> readings);
 
+        // Repaints one row after the panel changed its entry (the script Active
+        // flag, which the panel owns because it must run the hook first).
+        void note_entry_changed(std::size_t row);
+
     signals:
         void statusChanged(const QString& message, bool is_error);
+
+        // A script row's Active checkbox was clicked; the panel runs the hook
+        // and owns the resulting flag.
+        void scriptActiveRequested(std::size_t row, bool wanted);
 
     private:
         bool                          write_value_at(int row, const QString& text);

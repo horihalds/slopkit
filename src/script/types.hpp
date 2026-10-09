@@ -6,6 +6,7 @@
 #include <functional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace slopkit::script
@@ -17,6 +18,11 @@ namespace slopkit::script
     inline constexpr std::size_t kMaxOutputLines = 1000;
     inline constexpr std::size_t kMaxOutputLine  = 4096;
 
+    // The lifecycle hooks an address row's Active checkbox drives: ticking runs
+    // `activate`, unticking runs `deactivate`.
+    inline constexpr std::string_view kActivateHook   = "activate";
+    inline constexpr std::string_view kDeactivateHook = "deactivate";
+
     // The outcome of one chunk: whether it ran to completion, the message of the
     // first error when it did not, the script's captured `print` lines in order
     // and the rendered scalar it returned (empty when the chunk returned
@@ -27,6 +33,18 @@ namespace slopkit::script
         std::string              error;
         std::vector<std::string> output;
         std::string              returned;
+    };
+
+    // The outcome of calling a script's `activate`/`deactivate` hook: `ok` is
+    // the verdict the checkbox follows, `error` the chunk or hook failure text,
+    // `message` the reason the hook itself returned when it refused, and
+    // `output` the chunk's captured `print` lines.
+    struct LifecycleResult
+    {
+        bool                     ok {false};
+        std::string              error;
+        std::string              message;
+        std::vector<std::string> output;
     };
 
     // The memory seam a script may touch. The owner (the access worker) fills

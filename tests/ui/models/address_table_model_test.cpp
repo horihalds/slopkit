@@ -273,29 +273,73 @@ TEST_CASE("the address-table model renders a script row as read-only", "[ui]")
     CHECK(model.data(model.index(1, AddressTableModel::address), Qt::DisplayRole).toString().isEmpty());
     CHECK(model.data(model.index(1, AddressTableModel::value), Qt::DisplayRole).toString().isEmpty());
 
-    // A script row has no Active checkbox and no editable cell.
-    CHECK_FALSE(model.data(model.index(1, AddressTableModel::active), Qt::CheckStateRole).isValid());
-    CHECK(model.data(model.index(0, AddressTableModel::active), Qt::CheckStateRole).isValid());
+    // The Active cell of a script row carries the checkbox and reflects the
+    // entry's flag; every other cell stays non-editable.
+    CHECK(model.data(model.index(1, AddressTableModel::active), Qt::CheckStateRole).toInt() == Qt::Unchecked);
+    CHECK(model.flags(model.index(1, AddressTableModel::active)) & Qt::ItemIsUserCheckable);
     for (int column = 0; column < model.columnCount(); ++column)
     {
         const QModelIndex index = model.index(1, column);
         CHECK_FALSE(model.flags(index) & Qt::ItemIsEditable);
-        CHECK_FALSE(model.flags(index) & Qt::ItemIsUserCheckable);
         CHECK(model.flags(index) & Qt::ItemIsSelectable);
+        if (column != static_cast<int>(AddressTableModel::active))
+        {
+            CHECK_FALSE(model.flags(index) & Qt::ItemIsUserCheckable);
+        }
     }
     // A value row keeps both.
     CHECK(model.flags(model.index(0, AddressTableModel::description)) & Qt::ItemIsEditable);
     CHECK(model.flags(model.index(0, AddressTableModel::active)) & Qt::ItemIsUserCheckable);
 
-    // Every edit is refused, so no write job can be submitted for a script row.
+    // The Active checkbox is a request, not a write: the model asks the panel
+    // and leaves the flag for the verdict, then repaints the cell.
+    std::size_t requested_row  = 99;
+    bool        requested_want = false;
+    int         requests       = 0;
+    QObject::connect(&model,
+                     &AddressTableModel::scriptActiveRequested,
+                     [&](std::size_t row, bool wanted)
+                     {
+                         requested_row  = row;
+                         requested_want = wanted;
+                         ++requests;
+                     });
+    int         changes = 0;
+    QModelIndex changed_first;
+    QModelIndex changed_last;
+    QObject::connect(&model,
+                     &QAbstractItemModel::dataChanged,
+                     [&](const QModelIndex& first, const QModelIndex& last, const QList<int>&)
+                     {
+                         changed_first = first;
+                         changed_last  = last;
+                         ++changes;
+                     });
+
+    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
+    CHECK(requests == 1);
+    CHECK(requested_row == 1);
+    CHECK(requested_want);
+    CHECK_FALSE(table.entries()[1].active); // unchanged until the verdict
+    CHECK(changes == 1);
+    CHECK(changed_first.row() == 1);
+    CHECK(changed_last.row() == 1);
+
+    // Every other edit is still refused, so no write job can be submitted.
     CHECK_FALSE(model.setData(model.index(1, AddressTableModel::description), QStringLiteral("other"), Qt::EditRole));
     CHECK_FALSE(model.setData(model.index(1, AddressTableModel::value), QStringLiteral("1"), Qt::EditRole));
-    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
     CHECK(table.entries()[1].description == "helper");
-    CHECK_FALSE(table.entries()[1].active);
+
+    // note_entry_changed repaints exactly that row.
+    changes = 0;
+    model.note_entry_changed(1);
+    CHECK(changes == 1);
+    CHECK(changed_first.row() == 1);
+    CHECK(changed_last.row() == 1);
+    CHECK(changed_last.column() == model.columnCount() - 1);
 
     // The live pass reads only the value row.
-    const auto requests = model.next_live_request();
-    REQUIRE(requests.size() == 1);
-    CHECK(requests[0].address == 0x1040);
+    const auto requests2 = model.next_live_request();
+    REQUIRE(requests2.size() == 1);
+    CHECK(requests2[0].address == 0x1040);
 }

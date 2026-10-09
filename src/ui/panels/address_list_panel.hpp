@@ -189,6 +189,12 @@ namespace slopkit::ui::panels
         // Applies one script job's completion: logs the printed lines and the
         // failure, and reports the outcome in the status line.
         void finish_script(process::JobId id, process::JobResult&& result);
+        // Runs a script row's activate()/deactivate() hook for the clicked
+        // checkbox; the flag is written once the verdict arrives.
+        void toggle_script_active(std::size_t row, bool wanted);
+        // Applies one activate/deactivate completion: logs the output, writes the
+        // flag the checkbox follows and reports verdict or refusal.
+        void finish_script_active(process::JobId id, std::uint64_t entry_id, bool wanted, process::JobResult&& result);
 
         table::AddressTable&                  table_;
         process::AccessWorker&                worker_;

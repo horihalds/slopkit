@@ -128,7 +128,7 @@ namespace slopkit::ui::models
             }
             break;
         case Qt::CheckStateRole:
-            if (index.column() == active && !is_script(entry))
+            if (index.column() == active)
             {
                 return entry.active ? Qt::Checked : Qt::Unchecked;
             }
@@ -148,7 +148,7 @@ namespace slopkit::ui::models
         case Qt::ToolTipRole:
             if (index.column() == active)
             {
-                return is_script(entry) ? tr("Script entries run on demand")
+                return is_script(entry) ? tr("Runs activate() when ticked and deactivate() when unticked")
                                         : tr("Continuously write this value back to the target");
             }
             if (index.column() == address && !entry.expression.empty())
@@ -213,7 +213,12 @@ namespace slopkit::ui::models
         if (const auto row = static_cast<std::size_t>(index.row());
             row < table_.size() && is_script(table_.entries()[row]))
         {
-            // A script row is edited through its dialog, never in the grid.
+            // A script row is edited through its dialog, never in the grid;
+            // only its Active checkbox is interactive.
+            if (index.column() == active)
+            {
+                item_flags |= Qt::ItemIsUserCheckable;
+            }
             return item_flags;
         }
         switch (index.column())
@@ -335,6 +340,14 @@ namespace slopkit::ui::models
 
         if (is_script(table_.entries()[row]))
         {
+            if (role == Qt::CheckStateRole && index.column() == active)
+            {
+                // The panel runs the hook and writes the flag once the verdict
+                // arrives; repaint so the box snaps back until then.
+                emit scriptActiveRequested(row, value.toInt() == Qt::Checked);
+                emit dataChanged(index, index);
+                return false;
+            }
             // A script row is read-only in the grid: nothing here can submit a
             // write job for it.
             return false;
@@ -600,6 +613,16 @@ namespace slopkit::ui::models
     {
         const auto entries = table_.entries();
         last_entries_.assign(entries.begin(), entries.end());
+    }
+
+    void AddressTableModel::note_entry_changed(std::size_t row)
+    {
+        note_table_changed();
+        if (row < static_cast<std::size_t>(rowCount()))
+        {
+            const int first = static_cast<int>(row);
+            emit      dataChanged(index(first, 0), index(first, column_count - 1));
+        }
     }
 
 } // namespace slopkit::ui::models

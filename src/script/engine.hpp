@@ -29,6 +29,13 @@ namespace slopkit::script
         // `RunResult::error`; nothing is thrown and the state stays usable.
         [[nodiscard]] RunResult run(std::string_view chunk);
 
+        // Runs `chunk` and then its named global function (`kActivateHook` /
+        // `kDeactivateHook`). A chunk error never reaches the hook; a missing
+        // or non-function global is reported as `error`; a hook returning
+        // nothing or a `true` first value succeeds, while `false` fails with an
+        // optional second return value as `message`. Nothing is thrown.
+        [[nodiscard]] LifecycleResult run_lifecycle(std::string_view chunk, std::string_view function);
+
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;
