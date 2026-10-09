@@ -208,6 +208,13 @@ target.
 - A runaway chunk is aborted by the instruction budget and the wall-clock deadline
   in `script::EngineConfig`, checked from a `lua_sethook` installed for the run; the
   abort is an ordinary Lua error that leaves both the state and the session usable.
+- The worker remembers every script whose `activate` verdict was accepted — its
+  description and the exact chunk that ran — beside the engine, and forgets it when
+  a `deactivate` verdict is accepted. As the worker stops (quitting slopkit), it
+  runs each remembered chunk's `deactivate` hook once, in activation order, while
+  the session and the engine's globals are still alive. The verdict is ignored — no
+  retry and no box to write on the way out — and each result is logged once under
+  `script`, so an activated script is undone before the target is released.
 
 A script entry has no address and no value, never takes part in the freeze pass
 (its `Active` flag drives the lifecycle hooks instead of a freeze writer) and

@@ -89,7 +89,7 @@ docs that hold the detail behind this map.
 - Live values: `ui::LiveValues` batches every registered `LiveSurface` request into one worker job per interval.
 - Debug: `debug::Controller` → `debug::Worker` job thread → `debug::PluginBackend` → plugin `debug_*` → `platform::DebugSession`/`ptrace`; `drain()` applies results; start is gated by `ui::DebugSessionGate`.
 - Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; a drag reorders rows through `AddressTable::move`; `.skt` is a ZIP archive (`table/serializer.cpp` over `table/table_zip.cpp`), opened via `MainWindow::open_table_request()`.
-- Scripts: the address list's `Run Script` and a script row's `Active` checkbox submit `AccessWorker::submit_script`; the checkbox passes the `activate`/`deactivate` hook name and the worker calls `script::Engine::run_lifecycle`. The worker's `script::Engine` (one per attached session) runs the chunk with `print` captured, logs the printed lines under the `script` category and reports the outcome in the status line.
+- Scripts: the address list's `Run Script` and a script row's `Active` checkbox submit `AccessWorker::submit_script`; the checkbox passes the `activate`/`deactivate` hook name and the worker calls `script::Engine::run_lifecycle`. The worker's `script::Engine` (one per attached session) runs the chunk with `print` captured, logs the printed lines under the `script` category and reports the outcome in the status line. It also deactivates a still-active script — running its `deactivate` hook and ignoring the verdict — when it stops, before the session is released.
 
 ## 4. Conventions
 

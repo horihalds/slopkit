@@ -301,6 +301,15 @@ namespace slopkit::process
             JobResult   result;
         };
 
+        // One script this session activated: the source that ran and the
+        // description the caller gave it. Kept so the chunk's `deactivate`
+        // global can still be called while the engine's globals are alive.
+        struct ActiveScript
+        {
+            std::string description;
+            std::string chunk;
+        };
+
         void                    run(std::stop_token token);
         JobResult               execute(Request& request);
         bool                    submit(Request request);
@@ -315,6 +324,13 @@ namespace slopkit::process
         WriteResult             do_write(const Request& request);
         FreezeResult            do_freeze(const Request& request);
         ScriptResult            do_script(const Request& request);
+        // Folds a finished lifecycle verdict into the tracked set: an accepted
+        // `activate` remembers the chunk, an accepted `deactivate` forgets it.
+        void                    remember_lifecycle(const Request& request, const ScriptResult& result);
+        // Runs the `deactivate` hook of every script this session still has
+        // active and ignores each verdict; called once from run() as the worker
+        // stops, while engine_ and the session are still alive.
+        void                    deactivate_active_scripts();
         // The seam a script sees the target through. Its lambdas read the
         // worker's current session, so one engine stays valid across attaches.
         script::MemoryApi       memory_api();
@@ -328,9 +344,12 @@ namespace slopkit::process
         std::condition_variable       cv_;
         std::deque<Request>           requests_;
         std::deque<Completion>        completions_;
-        CompletionHook                completion_hook_;         // guarded by mutex_
-        std::optional<Session>        session_;                 // worker thread only
-        std::optional<script::Engine> engine_;                  // worker thread only, follows session_
+        CompletionHook                completion_hook_; // guarded by mutex_
+        std::optional<Session>        session_;         // worker thread only
+        std::optional<script::Engine> engine_;          // worker thread only, follows session_
+        // The scripts this session activated, in activation order. It shares the
+        // engine's lifetime: cleared wherever engine_ is dropped or replaced.
+        std::vector<ActiveScript>     active_scripts_;          // worker thread only, follows engine_
         std::size_t                   script_pointer_size_ {8}; // worker thread only
         std::atomic<bool>             attached_ {false};
         std::atomic<JobId>            next_id_ {1};

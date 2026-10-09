@@ -70,6 +70,58 @@ namespace
              });
         return result;
     }
+
+    // Submits one lifecycle job for a named script and returns its result.
+    ScriptResult
+    run_lifecycle_as(AccessWorker& worker, std::string description, std::string chunk, std::string function)
+    {
+        ScriptResult result;
+        bool         done = false;
+        worker.submit_script(worker.next_job_id(),
+                             std::move(description),
+                             std::move(chunk),
+                             std::move(function),
+                             8,
+                             [&](JobResult&& job)
+                             {
+                                 result = std::get<ScriptResult>(std::move(job));
+                                 done   = true;
+                             });
+        pump(worker,
+             [&]
+             {
+                 return done;
+             });
+        return result;
+    }
+
+    // The captured records of one category, in order.
+    std::vector<slopkit::log::Record> category_records(const std::vector<slopkit::log::Record>& records,
+                                                       std::string_view                         category)
+    {
+        std::vector<slopkit::log::Record> filtered;
+        for (const slopkit::log::Record& record : records)
+        {
+            if (record.category == category)
+            {
+                filtered.push_back(record);
+            }
+        }
+        return filtered;
+    }
+
+    // True when any record's message contains `text`.
+    bool any_message_contains(const std::vector<slopkit::log::Record>& records, std::string_view text)
+    {
+        for (const slopkit::log::Record& record : records)
+        {
+            if (record.message.find(text) != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 } // namespace
 
 TEST_CASE("submissions do not block and completions arrive after the job finishes", "[process]")
@@ -910,4 +962,221 @@ TEST_CASE("a lifecycle job is refused without an attached target", "[process]")
     REQUIRE(result.lifecycle.has_value());
     CHECK_FALSE(result.lifecycle->ok);
     CHECK(result.lifecycle->error == "no target is attached");
+}
+
+TEST_CASE("an active script is deactivated when the worker stops", "[process]")
+{
+    GatedAccess access {false};
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    {
+        AccessWorker worker {access};
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult result = run_lifecycle(worker,
+                                                  R"(
+function activate() return true end
+function deactivate()
+    print("shutdown marker")
+    return true, "gone"
+end
+)",
+                                                  std::string {slopkit::script::kActivateHook});
+        REQUIRE(result.lifecycle.has_value());
+        REQUIRE(result.lifecycle->ok);
+    }
+
+    // The worker thread stopped and ran the hook while the engine was alive:
+    // its printed line and its accepted verdict both reached the log.
+    const auto script = category_records(records, "script");
+    CHECK(any_message_contains(script, "shutdown marker"));
+    CHECK(any_message_contains(script, "script 'helper' deactivated: gone"));
+}
+
+TEST_CASE("a refusing deactivate at shutdown logs one warning and still stops the worker", "[process]")
+{
+    GatedAccess access {false};
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    {
+        AccessWorker worker {access};
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult result = run_lifecycle(worker,
+                                                  R"(
+function activate() return true end
+function deactivate() return false, "nope" end
+)",
+                                                  std::string {slopkit::script::kActivateHook});
+        REQUIRE(result.lifecycle.has_value());
+        REQUIRE(result.lifecycle->ok);
+    }
+
+    // The refusal changed nothing and was not retried: exactly one record, a
+    // warning carrying the hook's message.
+    const auto script = category_records(records, "script");
+    REQUIRE(script.size() == 1);
+    CHECK(script[0].level == slopkit::log::Level::warning);
+    CHECK(script[0].message == "script 'helper' deactivate failed: nope");
+}
+
+TEST_CASE("the shutdown deactivation runs in activation order", "[process]")
+{
+    GatedAccess access {false};
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    {
+        AccessWorker worker {access};
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult first = run_lifecycle_as(worker,
+                                                    "first",
+                                                    R"(
+function activate() return true end
+function deactivate() print("first-out") return true end
+)",
+                                                    std::string {slopkit::script::kActivateHook});
+        REQUIRE(first.lifecycle.has_value());
+        REQUIRE(first.lifecycle->ok);
+
+        const ScriptResult second = run_lifecycle_as(worker,
+                                                     "second",
+                                                     R"(
+function activate() return true end
+function deactivate() print("second-out") return true end
+)",
+                                                     std::string {slopkit::script::kActivateHook});
+        REQUIRE(second.lifecycle.has_value());
+        REQUIRE(second.lifecycle->ok);
+    }
+
+    const auto  script    = category_records(records, "script");
+    std::size_t first_at  = script.size();
+    std::size_t second_at = script.size();
+    for (std::size_t i = 0; i < script.size(); ++i)
+    {
+        if (script[i].message == "first-out")
+        {
+            first_at = i;
+        }
+        if (script[i].message == "second-out")
+        {
+            second_at = i;
+        }
+    }
+    REQUIRE(first_at < script.size());
+    REQUIRE(second_at < script.size());
+    CHECK(first_at < second_at);
+}
+
+TEST_CASE("an unticked script is not deactivated again when the worker stops", "[process]")
+{
+    GatedAccess access {false};
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    const std::string chunk = R"(
+function activate() return true end
+function deactivate() print("must not run") return true end
+)";
+
+    {
+        AccessWorker worker {access};
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult activated = run_lifecycle(worker, chunk, std::string {slopkit::script::kActivateHook});
+        REQUIRE(activated.lifecycle.has_value());
+        REQUIRE(activated.lifecycle->ok);
+
+        const ScriptResult deactivated = run_lifecycle(worker, chunk, std::string {slopkit::script::kDeactivateHook});
+        REQUIRE(deactivated.lifecycle.has_value());
+        REQUIRE(deactivated.lifecycle->ok);
+    }
+
+    CHECK(category_records(records, "script").empty());
+}
+
+TEST_CASE("a detached target is not deactivated when the worker stops", "[process]")
+{
+    GatedAccess access {false};
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    {
+        AccessWorker worker {access};
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult activated = run_lifecycle(worker,
+                                                     R"(
+function activate() return true end
+function deactivate() print("must not run") return true end
+)",
+                                                     std::string {slopkit::script::kActivateHook});
+        REQUIRE(activated.lifecycle.has_value());
+        REQUIRE(activated.lifecycle->ok);
+
+        bool detached = false;
+        worker.submit_detach(worker.next_job_id(),
+                             [&](JobResult&&)
+                             {
+                                 detached = true;
+                             });
+        REQUIRE(pump(worker,
+                     [&]
+                     {
+                         return detached;
+                     }));
+    }
+
+    CHECK(category_records(records, "script").empty());
+}
+
+TEST_CASE("a refused activate leaves nothing to deactivate when the worker stops", "[process]")
+{
+    GatedAccess access {false};
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    {
+        AccessWorker worker {access};
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult refused = run_lifecycle(worker,
+                                                   R"(
+function activate() return false, "blocked" end
+function deactivate() print("must not run") return true end
+)",
+                                                   std::string {slopkit::script::kActivateHook});
+        REQUIRE(refused.lifecycle.has_value());
+        REQUIRE_FALSE(refused.lifecycle->ok);
+    }
+
+    CHECK(category_records(records, "script").empty());
 }

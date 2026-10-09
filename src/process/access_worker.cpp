@@ -70,6 +70,23 @@ namespace slopkit::process
             }
             return value;
         }
+
+        // A log record is one line (docs/LOGGING.md), so a printed string or a
+        // Lua error that carries a newline is flattened before it is logged.
+        std::string one_line(std::string_view text)
+        {
+            std::string line {text};
+            std::ranges::replace(line, '\n', ' ');
+            std::ranges::replace(line, '\r', ' ');
+            return line;
+        }
+
+        // The interesting part of a Lua error: its message, without the
+        // traceback that follows it.
+        std::string error_message(std::string_view text)
+        {
+            return one_line(text.substr(0, text.find('\n')));
+        }
     } // namespace
 
     AccessWorker::AccessWorker(ProcessAccess& access) : access_(access)
@@ -154,6 +171,11 @@ namespace slopkit::process
                 completion_hook_();
             }
         }
+
+        // Both loop exits (the stopping_ check at the top and the mid-job
+        // break) land here, so the hooks always run before the thread returns
+        // and the destructor's join makes the caller's exit wait for them.
+        deactivate_active_scripts();
     }
 
     bool AccessWorker::submit(Request request)
@@ -564,6 +586,7 @@ namespace slopkit::process
                 // synchronous attach that cleared the target first.
                 session_.reset();
                 engine_.reset();
+                active_scripts_.clear();
                 attached_ = false;
             }
             return result;
@@ -603,6 +626,7 @@ namespace slopkit::process
         // every run against this target and dropped with the session.
         script_pointer_size_ = 8;
         engine_.emplace(memory_api());
+        active_scripts_.clear();
         attached_ = true;
         return result;
     }
@@ -862,12 +886,83 @@ namespace slopkit::process
                                request.function,
                                request.chunk.size()));
         result.lifecycle = engine_->run_lifecycle(request.chunk, request.function);
+        remember_lifecycle(request, result);
         log::debug(log::category::process,
                    std::format("script '{}' hook '{}' finished: {}",
                                request.description,
                                request.function,
                                result.lifecycle->ok ? "ok" : result.lifecycle->error));
         return result;
+    }
+
+    void AccessWorker::remember_lifecycle(const Request& request, const ScriptResult& result)
+    {
+        // A plain run or a refusal leaves the tracked set alone, so it mirrors
+        // the Active checkbox: only an accepted hook changes it.
+        if (!result.lifecycle.has_value() || !result.lifecycle->ok)
+        {
+            return;
+        }
+
+        if (request.function == script::kActivateHook)
+        {
+            active_scripts_.push_back(ActiveScript {.description = request.description, .chunk = request.chunk});
+        }
+        else if (request.function == script::kDeactivateHook)
+        {
+            std::erase_if(active_scripts_,
+                          [&](const ActiveScript& script)
+                          {
+                              return script.description == request.description;
+                          });
+        }
+    }
+
+    void AccessWorker::deactivate_active_scripts()
+    {
+        if (!engine_ || active_scripts_.empty())
+        {
+            return;
+        }
+
+        // The verdict cannot be acted on: nobody is left to follow a refusal
+        // and the exit must not be delayed by trying again.
+        std::vector<ActiveScript> pending = std::move(active_scripts_);
+        active_scripts_.clear();
+
+        for (const ActiveScript& script : pending)
+        {
+            log::debug(log::category::process,
+                       std::format("deactivating script '{}' before shutdown", script.description));
+            const script::LifecycleResult outcome =
+                engine_->run_lifecycle(script.chunk, std::string {script::kDeactivateHook});
+            for (const std::string& line : outcome.output)
+            {
+                log::info(log::category::script, one_line(line));
+            }
+            if (outcome.ok)
+            {
+                log::info(log::category::script,
+                          std::format("script '{}' deactivated: {}",
+                                      script.description,
+                                      outcome.message.empty() ? "ok" : outcome.message));
+                continue;
+            }
+            std::string reason = outcome.message;
+            if (reason.empty())
+            {
+                reason = error_message(outcome.error);
+            }
+            if (reason.empty())
+            {
+                log::warning(log::category::script, std::format("script '{}' deactivate failed", script.description));
+            }
+            else
+            {
+                log::warning(log::category::script,
+                             std::format("script '{}' deactivate failed: {}", script.description, reason));
+            }
+        }
     }
 
     SuspendResult AccessWorker::do_suspend(const Request& request)
@@ -947,6 +1042,7 @@ namespace slopkit::process
         // The Lua state belongs to the session: dropping it drops the script
         // globals, so a later attach starts from a clean state.
         engine_.reset();
+        active_scripts_.clear();
         attached_ = false;
         return AttachResult {};
     }
