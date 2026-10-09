@@ -17,6 +17,7 @@ Read the routing table first, then only the file it points at.
 | Add or change a log record | [`docs/LOGGING.md`](docs/LOGGING.md) | Log levels, categories, message style |
 | A test failed in a full run | [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) | Accepted flakes and their lone-run commands |
 | The product, install or headless CLI | [`README.md`](README.md) | User overview, dependency list, flags |
+| Write, verify or debug a Lua script against a target | [`docs/SCRIPTING.md`](docs/SCRIPTING.md) | End-user scripting walkthrough and the Lua API |
 
 ## Working rules
 

@@ -46,4 +46,11 @@ namespace slopkit::script
         std::unique_ptr<Impl> impl_;
     };
 
+    // Compiles `chunk` (chunk name `@script`, exactly as a run uses) and runs
+    // nothing: an empty result means valid Lua, otherwise the compiler's own
+    // message ("script:3: 'end' expected ..."). It uses its own throwaway Lua
+    // state that binds no library and no `mem` table, so no target is touched
+    // and no session is needed.
+    [[nodiscard]] std::expected<void, std::string> check_syntax(std::string_view chunk);
+
 } // namespace slopkit::script

@@ -9,8 +9,12 @@
 #include <QString>
 
 class QLineEdit;
-class QPlainTextEdit;
 class QPushButton;
+
+namespace slopkit::ui::components
+{
+    class ScriptEditor;
+} // namespace slopkit::ui::components
 
 namespace slopkit::ui::widgets
 {
@@ -42,14 +46,17 @@ namespace slopkit::ui::dialogs
 
     private:
         void commit();
+        // Compiles the editor's text without running it and reports the verdict.
+        void verify();
 
         table::AddressTable&       table_;
         std::optional<std::size_t> editing_;
 
-        QLineEdit*            description_edit_ {};
-        QPlainTextEdit*       script_edit_ {};
-        QPushButton*          commit_button_ {};
-        widgets::StatusLabel* status_ {};
+        QLineEdit*                description_edit_ {};
+        components::ScriptEditor* script_edit_ {};
+        QPushButton*              commit_button_ {};
+        QPushButton*              verify_button_ {};
+        widgets::StatusLabel*     status_ {};
     };
 
 } // namespace slopkit::ui::dialogs

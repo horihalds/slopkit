@@ -61,6 +61,10 @@ namespace slopkit::ui
         theme.syntax_register  = rgb(0.46f, 0.74f, 0.98f);
         theme.syntax_immediate = rgb(0.86f, 0.63f, 0.95f);
         theme.syntax_module    = rgb(0.52f, 0.83f, 0.60f);
+        theme.syntax_keyword   = rgb(0.94f, 0.58f, 0.42f);
+        theme.syntax_string    = rgb(0.85f, 0.82f, 0.55f);
+        theme.syntax_comment   = rgb(0.50f, 0.55f, 0.62f);
+        theme.syntax_number    = rgb(0.90f, 0.65f, 0.98f);
         return theme;
     }
 
@@ -83,6 +87,10 @@ namespace slopkit::ui
         theme.syntax_register  = rgb(0.13f, 0.35f, 0.78f);
         theme.syntax_immediate = rgb(0.55f, 0.18f, 0.62f);
         theme.syntax_module    = rgb(0.10f, 0.45f, 0.25f);
+        theme.syntax_keyword   = rgb(0.70f, 0.20f, 0.10f);
+        theme.syntax_string    = rgb(0.35f, 0.35f, 0.05f);
+        theme.syntax_comment   = rgb(0.45f, 0.48f, 0.55f);
+        theme.syntax_number    = rgb(0.45f, 0.15f, 0.60f);
         return theme;
     }
 

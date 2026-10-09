@@ -38,7 +38,9 @@ string literals.
 - `scan` — the scan engine and matcher lifecycle.
 - `table` — the address table and its files.
 - `script` — a Lua script entry: run submit/execute/complete, the lines it printed,
-  its first error, and each `alloc`/`dealloc` of target memory.
+  its first error, each `alloc`/`dealloc` of target memory, and the dialog's
+  compile-only syntax check (an info line when it passes, a warning when it does
+  not).
 - `debug` — the opt-in debug session: start/stop, stops, software and hardware
   breakpoint arming and every debug failure.
 - `ui` — user actions in the Qt layer.

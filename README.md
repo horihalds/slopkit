@@ -21,7 +21,7 @@ table or merge the file.
 | Process list | Browse running processes, see which plugin claims each one, inspect it and attach/detach. | Implemented |
 | Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans, keeping the shown hits up to date with live memory. | Implemented |
 | Address list | Track found addresses, edit and freeze their values, watch them refresh live, and save or reopen the table. | Implemented |
-| Lua scripts | Keep one-off Lua scripts beside the table as script entries, run them against the attached target through a small memory API (`mem.read`, `mem.write`, byte and string reads), publish named 64-bit values with `rsymbol` / `ssymbol` / `usymbol` that any address field then resolves, keep script-local `rlabel` / `slabel` / `ulabel` labels and locate a wildcard byte pattern with `aobscan`, and see what they printed and what failed. | Implemented (Add Script / Run Script) |
+| Lua scripts | Keep one-off Lua scripts beside the table as script entries, edit them in a Lua-highlighting, line-numbered editor and verify the source before running it, run them against the attached target through a small memory API (`mem.read`, `mem.write`, byte and string reads), publish named 64-bit values with `rsymbol` / `ssymbol` / `usymbol` that any address field then resolves, keep script-local `rlabel` / `slabel` / `ulabel` labels and locate a wildcard byte pattern with `aobscan`, rename one inline from its `Description` cell, and see what they printed and what failed. | Implemented (Add Script / Run Script) |
 | Memory browser | Hex dump of live memory around a chosen address, refreshed automatically, beside a live disassembly listing and the Debugger pane. | Implemented |
 | Practice target | A separate `slopkit-sandbox` process exposing values of every scan type; launch it from `Help > Launch Practice Target` and attach to practise the scanner. | Implemented |
 | Disassembler | Instruction decoding (Zydis) of live memory. | Implemented (Memory Viewer pane) |
@@ -75,6 +75,7 @@ configure time and the docdir carries the `README.md`, `docs/` files and font li
 - [`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md) — fast lookup of where components live and the project conventions.
 - [`docs/TESTING.md`](docs/TESTING.md) — configure, build, install, test and diagnose commands and recipes.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — host/plugin split, the `ProcessAccess` seam, plugin discovery and writing a plugin.
+- [`docs/SCRIPTING.md`](docs/SCRIPTING.md) — the end-user guide to address-table Lua scripts, the memory API and worked examples.
 - [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — UI and design rules for the project.
 - [`docs/LOGGING.md`](docs/LOGGING.md) — logging conventions.
 - [`src/plugin/plugin_api.h`](src/plugin/plugin_api.h) — the C plugin ABI.

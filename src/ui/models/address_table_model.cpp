@@ -213,11 +213,17 @@ namespace slopkit::ui::models
         if (const auto row = static_cast<std::size_t>(index.row());
             row < table_.size() && is_script(table_.entries()[row]))
         {
-            // A script row is edited through its dialog, never in the grid;
-            // only its Active checkbox is interactive.
+            // A script row's source is edited through its dialog, never in the
+            // grid; its Description renames the entry inline and its Active
+            // checkbox is interactive, so no other cell is editable and no write
+            // job can be submitted for one.
             if (index.column() == active)
             {
                 item_flags |= Qt::ItemIsUserCheckable;
+            }
+            else if (index.column() == description)
+            {
+                item_flags |= Qt::ItemIsEditable;
             }
             return item_flags;
         }
@@ -348,8 +354,27 @@ namespace slopkit::ui::models
                 emit dataChanged(index, index);
                 return false;
             }
-            // A script row is read-only in the grid: nothing here can submit a
-            // write job for it.
+            if (role == Qt::EditRole && index.column() == description)
+            {
+                // Renaming a script works like renaming a value row; a blank
+                // name is refused, exactly as the script dialog refuses one.
+                const QString name = value.toString().trimmed();
+                if (name.isEmpty())
+                {
+                    emit statusChanged(tr("Description must not be empty."), true);
+                    return false;
+                }
+                if (table_.set_description(row, name.toStdString()))
+                {
+                    note_table_changed();
+                    emit dataChanged(index, index);
+                    emit statusChanged(tr("Script renamed."), false);
+                    return true;
+                }
+                return false;
+            }
+            // Every other script cell is refused in the grid: nothing here can
+            // submit a write job, a freeze pass or a live read for it.
             return false;
         }
 

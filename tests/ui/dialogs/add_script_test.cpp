@@ -9,6 +9,7 @@
 
 #include "support/ui_helpers.hpp"
 #include "table/address_table.hpp"
+#include "ui/components/script_editor.hpp"
 #include "ui/dialogs/add_script.hpp"
 
 namespace
@@ -31,6 +32,21 @@ namespace
     QPushButton* commit_of(AddScriptDialog& dialog)
     {
         return dialog.findChild<QPushButton*>(QStringLiteral("commit_button"));
+    }
+
+    QPushButton* verify_of(AddScriptDialog& dialog)
+    {
+        return dialog.findChild<QPushButton*>(QStringLiteral("verify_button"));
+    }
+
+    slopkit::ui::components::ScriptEditor* script_editor_of(AddScriptDialog& dialog)
+    {
+        return dialog.findChild<slopkit::ui::components::ScriptEditor*>(QStringLiteral("script_edit"));
+    }
+
+    slopkit::ui::widgets::StatusLabel* status_of(AddScriptDialog& dialog)
+    {
+        return dialog.findChild<slopkit::ui::widgets::StatusLabel*>();
     }
 } // namespace
 
@@ -147,4 +163,65 @@ TEST_CASE("committing the untouched add form stores the hook skeleton", "[ui]")
     REQUIRE(table.size() == 1);
     CHECK(table.entries()[0].kind == EntryKind::script);
     CHECK(table.entries()[0].script == skeleton.toStdString());
+}
+
+TEST_CASE("the verify button checks the source without changing the entry", "[ui]")
+{
+    application();
+
+    AddressTable    table;
+    AddScriptDialog dialog {table};
+    dialog.show();
+
+    REQUIRE(verify_of(dialog) != nullptr);
+    REQUIRE(script_editor_of(dialog) != nullptr);
+    REQUIRE(status_of(dialog) != nullptr);
+
+    // The untouched skeleton compiles; nothing is appended and nothing closes.
+    verify_of(dialog)->click();
+    CHECK(table.empty());
+    CHECK(dialog.isVisible());
+    CHECK(script_editor_of(dialog)->error_line() == 0);
+    CHECK(status_of(dialog)->text() == QStringLiteral("Syntax OK."));
+
+    // Broken source reports the compiler's message and marks the offending line.
+    script_editor_of(dialog)->setPlainText(QStringLiteral("local x = 1\nlocal y = )\n"));
+    verify_of(dialog)->click();
+    CHECK(table.empty());
+    CHECK(dialog.isVisible());
+    CHECK(script_editor_of(dialog)->error_line() == 2);
+    CHECK(status_of(dialog)->text().contains(QStringLiteral("script:2:")));
+
+    // Editing the source clears the verdict and the mark.
+    script_editor_of(dialog)->setPlainText(QStringLiteral("return 1"));
+    CHECK(script_editor_of(dialog)->error_line() == 0);
+    CHECK(status_of(dialog)->text().isEmpty());
+}
+
+TEST_CASE("verifying in edit mode leaves the entry unchanged", "[ui]")
+{
+    application();
+
+    AddressTable      table;
+    const std::size_t row = table.add_script("helper", "return 1");
+
+    AddScriptDialog dialog {table};
+    dialog.edit_entry(row);
+    dialog.show();
+
+    // A valid edit verifies but is not written.
+    script_editor_of(dialog)->setPlainText(QStringLiteral("return 2"));
+    verify_of(dialog)->click();
+    CHECK(status_of(dialog)->text() == QStringLiteral("Syntax OK."));
+    CHECK(table.entries()[row].script == "return 1");
+    CHECK(table.entries()[row].description == "helper");
+    CHECK(dialog.isVisible());
+
+    // A rejected verdict writes nothing either.
+    script_editor_of(dialog)->setPlainText(QStringLiteral("return ("));
+    verify_of(dialog)->click();
+    CHECK(table.entries()[row].script == "return 1");
+    CHECK(table.entries()[row].description == "helper");
+    CHECK(dialog.isVisible());
+    CHECK(script_editor_of(dialog)->error_line() > 0);
 }

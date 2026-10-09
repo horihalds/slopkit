@@ -1,6 +1,8 @@
 #include "ui/dialogs/add_script.hpp"
 
+#include <cctype>
 #include <cstddef>
+#include <expected>
 #include <format>
 #include <string>
 #include <string_view>
@@ -9,14 +11,17 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLineEdit>
-#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QVBoxLayout>
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "script/engine.hpp"
+#include "ui/components/script_editor.hpp"
 #include "ui/components/widgets.hpp"
-#include "ui/fonts.hpp"
 #include "ui/text.hpp"
 
 namespace slopkit::ui::dialogs
@@ -38,6 +43,44 @@ function deactivate()
     return true
 end
 )";
+
+        // The 1-based line a Lua compiler message points at, or 0 when it names
+        // none. A chunk error reads `script:<line>: <message>`.
+        [[nodiscard]] int error_line_from_message(std::string_view message)
+        {
+            for (std::size_t i = 0; i + 1 < message.size(); ++i)
+            {
+                if (message[i] != ':')
+                {
+                    continue;
+                }
+
+                const std::size_t start = i + 1;
+                std::size_t       end   = start;
+                while (end < message.size() && std::isdigit(static_cast<unsigned char>(message[end])))
+                {
+                    ++end;
+                }
+                if (end > start && end < message.size() && message[end] == ':')
+                {
+                    return std::stoi(std::string(message.substr(start, end - start)));
+                }
+            }
+            return 0;
+        }
+
+        // A log line is one line, so a compiler message is flattened.
+        [[nodiscard]] std::string single_line(std::string text)
+        {
+            for (char& ch : text)
+            {
+                if (ch == '\n' || ch == '\r')
+                {
+                    ch = ' ';
+                }
+            }
+            return text;
+        }
     } // namespace
 
     AddScriptDialog::AddScriptDialog(table::AddressTable& table, QWidget* parent) : QDialog(parent), table_(table)
@@ -57,10 +100,8 @@ end
         form->addRow(tr("Description"), description_edit_);
         layout->addLayout(form);
 
-        script_edit_ = new QPlainTextEdit(this);
+        script_edit_ = new components::ScriptEditor(this);
         script_edit_->setObjectName(QStringLiteral("script_edit"));
-        script_edit_->setFont(mono_font());
-        script_edit_->setMinimumHeight(240);
         layout->addWidget(script_edit_, 1);
 
         status_ = new widgets::StatusLabel(this);
@@ -69,14 +110,27 @@ end
         auto* buttons  = new QHBoxLayout();
         commit_button_ = new widgets::PrimaryButton(tr("Add"), this);
         commit_button_->setObjectName(QStringLiteral("commit_button"));
+        verify_button_ = widgets::secondary_button(tr("Verify"), this);
+        verify_button_->setObjectName(QStringLiteral("verify_button"));
         auto* close_button = widgets::secondary_button(tr("Close"), this);
         buttons->addWidget(commit_button_);
+        buttons->addWidget(verify_button_);
         buttons->addWidget(close_button);
         buttons->addStretch(1);
         layout->addLayout(buttons);
 
         connect(commit_button_, &QPushButton::clicked, this, &AddScriptDialog::commit);
+        connect(verify_button_, &QPushButton::clicked, this, &AddScriptDialog::verify);
         connect(close_button, &QPushButton::clicked, this, &QDialog::close);
+        // Editing the source makes a previous verdict stale.
+        connect(script_edit_,
+                &QPlainTextEdit::textChanged,
+                this,
+                [this]
+                {
+                    script_edit_->set_error_line(0);
+                    status_->clear_status();
+                });
 
         reset_for_add();
     }
@@ -88,6 +142,7 @@ end
         commit_button_->setText(tr("Add"));
         description_edit_->setText(tr("New script"));
         script_edit_->setPlainText(to_qstring(kScriptSkeleton));
+        script_edit_->set_error_line(0);
         status_->clear_status();
     }
 
@@ -104,7 +159,40 @@ end
         commit_button_->setText(tr("Save"));
         description_edit_->setText(to_qstring(table_.entries()[row].description));
         script_edit_->setPlainText(to_qstring(table_.entries()[row].script));
+        script_edit_->set_error_line(0);
         status_->clear_status();
+    }
+
+    void AddScriptDialog::verify()
+    {
+        const std::string                      source = script_edit_->toPlainText().toStdString();
+        const std::expected<void, std::string> result = script::check_syntax(source);
+
+        if (result.has_value())
+        {
+            script_edit_->set_error_line(0);
+            status_->set_status(widgets::StatusKind::success, tr("Syntax OK."));
+            log::info(log::category::script, "syntax check passed");
+            return;
+        }
+
+        // The compiler's own message is the feedback; the line it names (if any)
+        // is marked and the caret is moved to it.
+        status_->set_status(widgets::StatusKind::error, to_qstring(result.error()));
+
+        const int line = error_line_from_message(result.error());
+        script_edit_->set_error_line(line);
+        if (line > 0)
+        {
+            const QTextBlock block = script_edit_->document()->findBlockByNumber(line - 1);
+            if (block.isValid())
+            {
+                script_edit_->setTextCursor(QTextCursor(block));
+                script_edit_->centerCursor();
+            }
+        }
+
+        log::warning(log::category::script, std::format("syntax check failed: {}", single_line(result.error())));
     }
 
     void AddScriptDialog::commit()

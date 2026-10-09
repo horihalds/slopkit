@@ -247,7 +247,7 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     CHECK(table.entries()[0].description == "second");
 }
 
-TEST_CASE("the address-table model renders a script row as read-only", "[ui]")
+TEST_CASE("the address-table model edits only a script row's Description and Active cells", "[ui]")
 {
     application();
 
@@ -274,14 +274,22 @@ TEST_CASE("the address-table model renders a script row as read-only", "[ui]")
     CHECK(model.data(model.index(1, AddressTableModel::value), Qt::DisplayRole).toString().isEmpty());
 
     // The Active cell of a script row carries the checkbox and reflects the
-    // entry's flag; every other cell stays non-editable.
+    // entry's flag; its Description renames it inline, and every other cell
+    // (address, type, value) stays non-editable.
     CHECK(model.data(model.index(1, AddressTableModel::active), Qt::CheckStateRole).toInt() == Qt::Unchecked);
     CHECK(model.flags(model.index(1, AddressTableModel::active)) & Qt::ItemIsUserCheckable);
     for (int column = 0; column < model.columnCount(); ++column)
     {
         const QModelIndex index = model.index(1, column);
-        CHECK_FALSE(model.flags(index) & Qt::ItemIsEditable);
         CHECK(model.flags(index) & Qt::ItemIsSelectable);
+        if (column == static_cast<int>(AddressTableModel::description))
+        {
+            CHECK(model.flags(index) & Qt::ItemIsEditable);
+        }
+        else
+        {
+            CHECK_FALSE(model.flags(index) & Qt::ItemIsEditable);
+        }
         if (column != static_cast<int>(AddressTableModel::active))
         {
             CHECK_FALSE(model.flags(index) & Qt::ItemIsUserCheckable);
@@ -325,10 +333,33 @@ TEST_CASE("the address-table model renders a script row as read-only", "[ui]")
     CHECK(changed_first.row() == 1);
     CHECK(changed_last.row() == 1);
 
-    // Every other edit is still refused, so no write job can be submitted.
-    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::description), QStringLiteral("other"), Qt::EditRole));
+    // Renaming a script row works like renaming a value row: the name is
+    // trimmed, written to the table and reported with a dataChanged.
+    changes       = 0;
+    changed_first = QModelIndex();
+    changed_last  = QModelIndex();
+    CHECK(model.setData(model.index(1, AddressTableModel::description), QStringLiteral("  renamed  "), Qt::EditRole));
+    CHECK(table.entries()[1].description == "renamed");
+    CHECK(changes == 1);
+    CHECK(changed_first.row() == 1);
+    CHECK(changed_first.column() == static_cast<int>(AddressTableModel::description));
+
+    // A blank or whitespace-only name is refused and keeps the old one.
+    bool blank_refused = false;
+    QObject::connect(&model,
+                     &AddressTableModel::statusChanged,
+                     [&](const QString&, bool error)
+                     {
+                         blank_refused = error;
+                     });
+    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::description), QStringLiteral("   "), Qt::EditRole));
+    CHECK(blank_refused);
+    CHECK(table.entries()[1].description == "renamed");
+
+    // No other script cell can be written, so no write job can be submitted.
     CHECK_FALSE(model.setData(model.index(1, AddressTableModel::value), QStringLiteral("1"), Qt::EditRole));
-    CHECK(table.entries()[1].description == "helper");
+    CHECK_FALSE(model.setData(model.index(1, AddressTableModel::address), QStringLiteral("1000"), Qt::EditRole));
+    CHECK(table.entries()[1].description == "renamed");
 
     // note_entry_changed repaints exactly that row.
     changes = 0;

@@ -1046,6 +1046,26 @@ namespace slopkit::script
         return result;
     }
 
+    std::expected<void, std::string> check_syntax(std::string_view chunk)
+    {
+        lua_State* state = luaL_newstate();
+        if (state == nullptr)
+        {
+            return std::unexpected(std::string {"the Lua state could not be created"});
+        }
+
+        const char* data   = chunk.empty() ? "" : chunk.data();
+        const int   status = luaL_loadbufferx(state, data, chunk.size(), "@script", nullptr);
+
+        std::expected<void, std::string> result;
+        if (status != LUA_OK)
+        {
+            result = std::unexpected(to_text(state, -1));
+        }
+        lua_close(state); // the loaded function (or the error) dies with the state
+        return result;
+    }
+
     LifecycleResult Engine::run_lifecycle(std::string_view chunk, std::string_view function)
     {
         Impl&      impl  = *impl_;

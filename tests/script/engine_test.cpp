@@ -591,3 +591,44 @@ TEST_CASE("script engine reports symbol argument errors", "[script]")
         CHECK(fixture.symbols.lookup("hp") == 2);
     }
 }
+
+TEST_CASE("script syntax check compiles without running", "[script]")
+{
+    SECTION("the dialog's hook skeleton is accepted")
+    {
+        const std::string skeleton = "function activate()\n"
+                                     "    return true\n"
+                                     "end\n"
+                                     "\n"
+                                     "function deactivate()\n"
+                                     "    return true\n"
+                                     "end\n";
+        CHECK(slopkit::script::check_syntax(skeleton).has_value());
+    }
+
+    SECTION("a multi-line chunk with tabs and quotes is accepted")
+    {
+        const std::string chunk = "\tlocal name = 'hi'\n\tprint(\"a\\tb\", name) -- note\n";
+        CHECK(slopkit::script::check_syntax(chunk).has_value());
+    }
+
+    SECTION("an empty chunk and a comment-only chunk are accepted")
+    {
+        CHECK(slopkit::script::check_syntax("").has_value());
+        CHECK(slopkit::script::check_syntax("-- nothing to do\n").has_value());
+    }
+
+    SECTION("a missing end is rejected with the offending line")
+    {
+        const auto result = slopkit::script::check_syntax("local x = 1\nlocal y = )\n");
+
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("script:2:") != std::string::npos);
+    }
+
+    SECTION("a chunk that would fail at runtime is still accepted")
+    {
+        CHECK(slopkit::script::check_syntax(R"(error("boom"))").has_value());
+        CHECK(slopkit::script::check_syntax(R"(mem.read(0xDEAD, "u32"))").has_value());
+    }
+}

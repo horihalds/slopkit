@@ -112,22 +112,12 @@ namespace
 
     [[maybe_unused]] void check_all_roles_defined(const slopkit::ui::Theme& theme)
     {
-        const QColor roles[] = {theme.background,
-                                theme.surface,
-                                theme.surface_hover,
-                                theme.text,
-                                theme.text_muted,
-                                theme.accent,
-                                theme.accent_hover,
-                                theme.accent_active,
-                                theme.on_accent,
-                                theme.border,
-                                theme.success,
-                                theme.warning,
-                                theme.error,
-                                theme.syntax_register,
-                                theme.syntax_immediate,
-                                theme.syntax_module};
+        const QColor roles[] = {
+            theme.background,     theme.surface,         theme.surface_hover,    theme.text,
+            theme.text_muted,     theme.accent,          theme.accent_hover,     theme.accent_active,
+            theme.on_accent,      theme.border,          theme.success,          theme.warning,
+            theme.error,          theme.syntax_register, theme.syntax_immediate, theme.syntax_module,
+            theme.syntax_keyword, theme.syntax_string,   theme.syntax_comment,   theme.syntax_number};
         for (const QColor& role : roles)
         {
             CHECK(role.isValid());

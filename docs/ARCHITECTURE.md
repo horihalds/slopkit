@@ -182,6 +182,12 @@ target.
   like its `Session` — and dropped on detach, so a script's globals survive
   between runs on one target and never outlive it. `sol2` and the Lua headers are
   included only by `script/engine.cpp`, so no public header depends on them.
+- `script::check_syntax(source)` is a target-free compile check: it loads the
+  source into a throwaway `lua_State` (opened and closed within the call, with no
+  library bound and no `mem` table) under the same `@script` chunk name a run
+  uses, so it rejects exactly what the Lua compiler rejects and reports the same
+  `script:<line>: <message>` text a run would — nothing is ever executed, so the
+  check needs no session and is safe on the UI thread.
 - `script::MemoryApi` is the seam to the target: the `pointer_size`/`read`/`write`
   `std::function`s plus a `regions` supplier returning every mapped region
   (`MemoryRegion {base, size, readable, module}`), which the worker builds from its
@@ -315,8 +321,10 @@ target.
 
 A script entry has no address and no value, never takes part in the freeze pass
 (its `Active` flag drives the lifecycle hooks instead of a freeze writer) and
-renders read-only in the grid apart from that leading `Active` checkbox: the Type
-column says `script`, the Address and Value cells stay blank and no other cell is
-editable. `File > Add Script…`, the row menu's `Run Script` and `Edit Script…` and
-the `Active` checkbox are the only new UI; `Add Script…` seeds the two hooks as a
-commented skeleton.
+renders read-only in the grid apart from its leading `Active` checkbox and its
+`Description` cell: the Type column says `script`, the Address and Value cells
+stay blank and no other cell is editable, so a `Description` edit renames the
+entry exactly as it renames a value row and can never submit a write job.
+`File > Add Script…`, the row menu's `Run Script` and `Edit Script…`, the
+`Active` checkbox and the Add/Edit Script dialog's compile-only `Verify` button
+are the only new UI; `Add Script…` seeds the two hooks as a commented skeleton.

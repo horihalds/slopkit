@@ -1199,3 +1199,56 @@ TEST_CASE("a script completion for a deleted row is harmless", "[ui]")
     CHECK(status.text == QStringLiteral("Script active."));
     CHECK(table.empty());
 }
+
+TEST_CASE("the address list renames a script row from its Description cell", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    // Seed a table file with one script row so a rename can be saved and read back.
+    const auto      path = std::filesystem::path(SLOPKIT_TMP_DIR) / "address_list_panel_test" / "script_rename.skt";
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    std::filesystem::remove(path);
+
+    slopkit::table::AddressTable seed;
+    REQUIRE(seed.add_script("helper", "return 1") == 0);
+    REQUIRE(slopkit::table::save(path, seed).has_value());
+
+    slopkit::table::AddressTable          table;
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(panel.load_table(QString::fromStdString(path.string())));
+    REQUIRE(table.size() == 1);
+
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+    const QModelIndex description = model->index(0, slopkit::ui::models::AddressTableModel::description);
+
+    // The Description cell is editable and a double-click opens the editor,
+    // exactly as it does for a value row.
+    CHECK(model->flags(description) & Qt::ItemIsEditable);
+    CHECK(view->editTriggers().testFlag(QAbstractItemView::DoubleClicked));
+    CHECK(view->editTriggers().testFlag(QAbstractItemView::EditKeyPressed));
+    panel.show();
+    view->setCurrentIndex(description);
+    view->edit(description);
+    CHECK(view->viewport()->findChild<QLineEdit*>() != nullptr); // the editor opened
+
+    // Committing a name renames the entry and survives a Save Table / reopen.
+    CHECK(model->setData(description, QStringLiteral("renamed"), Qt::EditRole));
+    CHECK(table.entries()[0].description == "renamed");
+
+    panel.save_table();
+    slopkit::table::AddressTable reloaded;
+    REQUIRE(slopkit::table::load(path, reloaded).has_value());
+    REQUIRE(reloaded.size() == 1);
+    CHECK(reloaded.entries()[0].description == "renamed");
+
+    std::filesystem::remove(path);
+}

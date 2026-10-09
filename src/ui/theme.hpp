@@ -28,6 +28,12 @@ namespace slopkit::ui
         QColor syntax_register;
         QColor syntax_immediate;
         QColor syntax_module;
+        // The script editor's Lua source roles: a keyword, a string, a comment
+        // and a number literal.
+        QColor syntax_keyword;
+        QColor syntax_string;
+        QColor syntax_comment;
+        QColor syntax_number;
     };
 
     [[nodiscard]] Theme dark_theme();
