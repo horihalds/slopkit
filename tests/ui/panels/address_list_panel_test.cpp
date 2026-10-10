@@ -171,17 +171,18 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
                         return table.entries()[0].address == 0x300004;
                     }));
 
-    // A failing resolve keeps the last good address and reports the reason, now
-    // naming the level and the address.
+    // A failing resolve keeps the last good address and is dropped silently:
+    // the reason never reaches the status line.
     access.unreadable->insert(module_base);
     table.entries()[0].expression = "app+0+8";
     status.clear();
     panel.refresh();
-    REQUIRE(pump_ui(worker,
-                    [&]
-                    {
-                        return status.contains(QStringLiteral("the address 100000 at level 1 is not readable"));
-                    }));
+    for (int attempt = 0; attempt < 20; ++attempt)
+    {
+        worker.drain();
+        QApplication::processEvents();
+    }
+    CHECK(status.isEmpty());
     CHECK(table.entries()[0].address == 0x300004);
 }
 

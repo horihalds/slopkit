@@ -267,9 +267,8 @@ namespace slopkit::ui::panels
                     return; // detached between submit and completion
                 }
 
-                auto    entries = table_.entries();
-                bool    changed = false;
-                QString first_error;
+                auto entries = table_.entries();
+                bool changed = false;
                 for (const process::ResolveItemResult& item : resolved.items)
                 {
                     const auto request = std::find_if(submitted_requests.begin(),
@@ -293,17 +292,10 @@ namespace slopkit::ui::panels
                     {
                         continue;
                     }
-                    if (item.address.has_value())
+                    if (item.address.has_value() && entry->address != *item.address)
                     {
-                        if (entry->address != *item.address)
-                        {
-                            entry->address = *item.address;
-                            changed        = true;
-                        }
-                    }
-                    else if (first_error.isEmpty())
-                    {
-                        first_error = QString::fromStdString(item.error);
+                        entry->address = *item.address;
+                        changed        = true;
                     }
                 }
 
@@ -311,16 +303,11 @@ namespace slopkit::ui::panels
                 {
                     model_->refresh();
                 }
-                if (!first_error.isEmpty())
-                {
-                    set_status(tr("Expression resolve failed: %1").arg(first_error), true);
-                }
             });
         if (!submitted)
         {
             resolve_job_.reset();
             resolving_ = false;
-            set_status(tr("Expression resolve could not be started."), true);
         }
     }
 
