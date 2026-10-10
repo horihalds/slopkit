@@ -73,6 +73,19 @@ namespace slopkit::platform
         // every thread. Idempotent.
         [[nodiscard]] std::expected<void, process::AccessError>               detach();
 
+        // The single-thread window the allocation path borrows: it seizes and
+        // stops exactly `tid` and leaves every other thread of the target
+        // running. Refused while any window is already open, and the group
+        // attach above is refused while a thread window is open.
+        [[nodiscard]] std::expected<void, process::AccessError> attach_thread(process::ProcessId tid);
+        // Hands one borrowed thread back: no debug register is touched (this
+        // window never programs any) and a signal the thread stopped only to
+        // hand over is delivered. Idempotent for a tid it does not hold.
+        [[nodiscard]] std::expected<void, process::AccessError> detach_thread(process::ProcessId tid);
+        // The threads the current window holds: one donor for a thread window,
+        // the whole thread group for a debug window.
+        [[nodiscard]] std::vector<process::ProcessId>           attached_threads() const;
+
         // Runs the group (or steps over the armed trap at `resume_address`) and
         // returns the first stop the debugger should report.
         [[nodiscard]] std::expected<StopStatus, process::AccessError> resume(std::uint64_t resume_address);
@@ -124,6 +137,10 @@ namespace slopkit::platform
         process::ProcessId                           leader_ {};
         process::ProcessId                           current_ {};
         bool                                         attached_ {};
+        // True while `attach` seized the whole group, false for the
+        // single-thread window: the two never coexist and only the group window
+        // owns the debug registers.
+        bool                                         group_window_ {};
         MemAccess&                                   memory_;
         ForeignSignalPolicy                          policy_ {ForeignSignalPolicy::suppress};
     };

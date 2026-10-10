@@ -90,6 +90,27 @@ namespace slopkit::platform
     [[nodiscard]] std::expected<void, process::AccessError>
     set_register(process::ProcessId tid, std::string_view name, std::uint64_t value);
 
+    // Where a stopped thread sits relative to a system call. `none` means the
+    // stop is not a syscall stop; it does not distinguish a thread parked
+    // inside a call, so `/proc/<pid>/task/<tid>/syscall` is the field that
+    // decides whether a thread may be borrowed.
+    enum class SyscallState
+    {
+        unknown, // the kernel did not answer
+        none,    // the stop is not a syscall entry or exit
+        entry,
+        exit,
+    };
+    [[nodiscard]] SyscallState syscall_state(process::ProcessId tid);
+
+    // The whole `NT_PRSTATUS` register file as it is, and its wholesale
+    // write-back: the fields the per-name setter does not name (orig_rax, cs,
+    // ss) survive a hand-back this way.
+    [[nodiscard]] std::expected<std::vector<std::byte>, process::AccessError>
+                                                            read_registers_raw(process::ProcessId tid);
+    [[nodiscard]] std::expected<void, process::AccessError> write_registers_raw(process::ProcessId         tid,
+                                                                                std::span<const std::byte> raw);
+
     // Word-granular target words through PTRACE_PEEKDATA/PTRACE_POKEDATA.
     [[nodiscard]] std::expected<std::uint64_t, process::AccessError> peek_data(process::ProcessId tid,
                                                                                std::uint64_t      address);

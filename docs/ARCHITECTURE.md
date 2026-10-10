@@ -166,8 +166,12 @@ beside the normal access path rather than in it, so the read/write path stays
 - `platform::DebugSession` is the shared debugger core: it seizes the thread
   group, owns the 64 software / 4 hardware breakpoint slots and the wait loop,
   and both `linux-proc` and `wine-proton` implement the ABI 1.4 `debug_*`
-  operations as thin wrappers over it. Its `ForeignSignalPolicy` decides what
-  happens to a stop the debugger did not ask for: `suppress` resumes with signal
+  operations as thin wrappers over it. It also offers a **single-thread window**
+  (`attach_thread` / `detach_thread`) beside the group one: the allocation path
+  borrows one donor through it and never seizes the group, the two windows refuse
+  while the other is open, and only the group window owns the debug registers.
+  Its `ForeignSignalPolicy` decides what happens to a stop the debugger did not
+  ask for: `suppress` resumes with signal
   0 (what `linux-proc` uses), while `forward` re-delivers the signal to the
   target's own handler and keeps waiting (`wine-proton`, because Wine's runtime
   signals the target constantly). A target *killed* by a signal is still reported
@@ -325,32 +329,53 @@ target.
 - `dealloc(name)` resolves `name` through the same label-then-symbol chain and
   unmaps exactly the mapping an `alloc` of the **same session** created there; a
   foreign address is never unmapped (`dealloc: <name> is not this session's
-  allocation`), so a typo cannot destroy one of the target's own mappings. The
-  allocation belongs to the target and disappears with a detach.
+  allocation`), so a typo cannot destroy one of the target's own mappings. Because
+  the mapping belongs to the target and its lifetime is the target's, the address
+  is re-checked immediately before the remote `munmap`: `/proc/<pid>/maps` must
+  still show an anonymous read-write-execute region covering the whole recorded
+  size there, and a page the target has taken back with a mapping of its own is
+  refused with the reason (`the target no longer holds an anonymous writable
+  executable mapping of <size> bytes at <address>`) instead of unmapped. Coverage
+  rather than an exact region is what is checked, because the kernel merges
+  neighbouring mappings with equal flags. The allocation belongs to the target and
+  disappears with a detach.
 - Allocation runs a remote `mmap`/`munmap` syscall inside the target through the
-  plugin's existing ptrace `DebugSession`: the target's thread group is stopped,
-  the syscall is executed with the whole register file saved and restored, and the
-  group is resumed, so the target is left exactly as it was found and the only
-  intended change is the new mapping. **No instruction of the target's own code
-  ever runs for it**: the call is planted at a `syscall` instruction that the
-  Zydis-backed decoder confirms starts at that exact address inside a *file-backed*
-  executable region — never in the target's own anonymous generated code — and the
-  thread is resumed with `PTRACE_SYSCALL`, so the kernel stops it at the syscall's
-  entry and exit and the instruction behind the gadget is never reached. The
-  result is read from RAX only at the verified exit stop, and only when the entry
-  stop of the same call was seen first; a stop that is neither (a signal, a trap,
-  an interrupt, a syscall of the target's own) is handled explicitly — a signal is
-  handed to the target's own handler — under a bounded budget that ends in a
-  refusal instead of a fabricated address. The near search runs its few
-  `MAP_FIXED_NOREPLACE` candidates inside that one attach window, and a candidate
-  the kernel refuses only moves the search on. Handing the target back is part of
-  the call: every thread the window stopped is resumed, a thread that stopped only
-  to hand its own signal over is detached **with that signal** instead of losing
-  it, and `/proc/<pid>/task/<tid>/stat` confirms that none is left in a traced
-  stop — otherwise the failure is reported with the tid. A debug session and an
-  allocation never overlap — each refuses while the other holds the target. Each
-  `alloc`/`dealloc` writes one `script`-category debug record (address, size,
-  outcome).
+  plugin's ptrace `DebugSession`: the window borrows **exactly one** target thread,
+  never the thread group, so the target's own waiters keep running and a wait the
+  window does not own cannot be perturbed. The donor is the lowest-numbered thread
+  that is not the thread-group leader, with the leader falling back only for a
+  target that has no other thread, and running threads are tried first. Before the
+  call is planted the donor must be **provably outside a system call** — the field
+  `/proc/<pid>/task/<tid>/syscall` decides, because an interrupt stop reports
+  `none` from `PTRACE_GET_SYSCALL_INFO` whether or not a call is in flight — and a
+  thread that is inside one is released again and the next candidate tried; when no
+  thread qualifies the call is refused with the reason rather than taking over the
+  return path of a call the target started (Wine parks its main thread in
+  `ioctl`/ntsync, which is exactly the thread the window must never borrow). The
+  syscall is executed with the donor's whole raw `NT_PRSTATUS` register file saved
+  and written back wholesale, so fields the per-name setter does not name survive
+  the hand-back, and a planted call still sitting at its syscall-entry stop is
+  disarmed first (the number is rewritten to `getpid`) so no give-up path can leave
+  a `mmap`/`munmap` armed. **No instruction of the target's own code ever runs for
+  it**: the call is planted at a `syscall` instruction that the Zydis-backed
+  decoder confirms starts at that exact address inside a *file-backed* executable
+  region — never in the target's own anonymous generated code — and the thread is
+  resumed with `PTRACE_SYSCALL`, so the kernel stops it at the syscall's entry and
+  exit and the instruction behind the gadget is never reached. The result is read
+  from RAX only at the verified exit stop, and only when the entry stop of the same
+  call was seen first; a stop that is neither (a signal, a trap, an interrupt, a
+  syscall of the target's own) is handled explicitly — a signal is handed to the
+  target's own handler — under a bounded budget that ends in a refusal instead of a
+  fabricated address. The near search runs its few `MAP_FIXED_NOREPLACE`
+  candidates inside that one borrow window, and a candidate the kernel refuses only
+  moves the search on. Handing the target back is part of the call: the exact
+  register file is written back, a thread that stopped only to hand its own signal
+  over is detached **with that signal** instead of losing it, and
+  `/proc/<pid>/task/<tid>/stat` confirms the donor is not left in a traced stop —
+  otherwise the failure is reported with the tid. A debug session and an allocation
+  never overlap — each refuses while the other holds the target. Each `alloc`/
+  `dealloc` writes `script`-category debug records naming the borrowed thread, why
+  it was chosen (or why the call was refused) and the outcome (address, size).
 - `validate(address[, size_bytes])` answers whether `[address, address + size)`
   is mapped **and readable** in the target, returning a Lua boolean; `size_bytes`
   defaults to `1` and is probed in bounded chunks, stopping at the first chunk

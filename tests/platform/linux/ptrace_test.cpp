@@ -1,10 +1,13 @@
 #include <catch2/catch.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include <csignal>
 #include <sys/types.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -102,6 +105,47 @@ TEST_CASE("ptrace seizes, stops and round-trips registers", "[ptrace]")
 
     // An unknown register name is refused instead of silently ignored.
     CHECK_FALSE(slopkit::platform::set_register(child.pid(), "not-a-register", 1).has_value());
+
+    CHECK(slopkit::platform::detach(child.pid()).has_value());
+}
+
+TEST_CASE("ptrace round-trips the whole register file, not only named fields", "[ptrace]")
+{
+    ChildProcess child;
+    REQUIRE(child.valid());
+
+    REQUIRE(slopkit::platform::seize(child.pid()).has_value());
+    REQUIRE(slopkit::platform::interrupt(child.pid()).has_value());
+    REQUIRE(slopkit::platform::wait(std::array {child.pid()}).has_value());
+
+    // The raw NT_PRSTATUS file is the whole register set, including the fields
+    // the per-name setter does not name.
+    const auto raw = slopkit::platform::read_registers_raw(child.pid());
+    REQUIRE(raw.has_value());
+    REQUIRE(raw->size() == sizeof(user_regs_struct));
+
+    // Writing the same bytes back leaves the file byte-identical: the allocation
+    // window relies on this to put a borrowed thread back exactly.
+    CHECK(slopkit::platform::write_registers_raw(child.pid(), *raw).has_value());
+    const auto again = slopkit::platform::read_registers_raw(child.pid());
+    REQUIRE(again.has_value());
+    CHECK(*again == *raw);
+
+    // The number the kernel will execute lives in orig_rax and is part of the
+    // file: the setter has to be able to rewrite it to disarm a planted call.
+    CHECK(slopkit::platform::set_register(child.pid(), "ORIG_RAX", 0x7FFF'FFFF'FFFF'FFFFULL).has_value());
+    const auto disarmed = slopkit::platform::read_registers_raw(child.pid());
+    REQUIRE(disarmed.has_value());
+    CHECK(*disarmed != *raw);
+
+    // Writing the captured file back puts the original value in place.
+    CHECK(slopkit::platform::write_registers_raw(child.pid(), *raw).has_value());
+    const auto restored = slopkit::platform::read_registers_raw(child.pid());
+    REQUIRE(restored.has_value());
+    CHECK(*restored == *raw);
+
+    // A buffer that is not the whole file is refused instead of read past.
+    CHECK_FALSE(slopkit::platform::write_registers_raw(child.pid(), std::span<const std::byte> {}).has_value());
 
     CHECK(slopkit::platform::detach(child.pid()).has_value());
 }

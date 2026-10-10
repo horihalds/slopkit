@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <span>
 #include <string_view>
@@ -41,6 +42,7 @@ namespace slopkit::platform
         // The signal PTRACE_O_TRACESYSGOOD marks syscall stops with, and the
         // PTRACE_GET_SYSCALL_INFO ops that classify one as entry or exit.
         constexpr int              kSyscallTrap          = SIGTRAP | 0x80;
+        constexpr std::uint8_t     kSyscallInfoNone      = 0;
         constexpr std::uint8_t     kSyscallInfoEntry     = 1;
         constexpr std::uint8_t     kSyscallInfoExit      = 2;
         constexpr long             kWordSize             = static_cast<long>(sizeof(std::uint64_t));
@@ -137,7 +139,12 @@ namespace slopkit::platform
                 || set("rsi", raw.rsi) || set("rdi", raw.rdi) || set("rbp", raw.rbp) || set("rsp", raw.rsp)
                 || set("r8", raw.r8) || set("r9", raw.r9) || set("r10", raw.r10) || set("r11", raw.r11)
                 || set("r12", raw.r12) || set("r13", raw.r13) || set("r14", raw.r14) || set("r15", raw.r15)
-                || set("rip", raw.rip) || set("rflags", raw.eflags) || set("eflags", raw.eflags);
+                || set("rip", raw.rip) || set("rflags", raw.eflags)
+                || set("eflags", raw.eflags)
+                // The number the kernel will actually execute: at a syscall
+                // entry stop RAX holds -ENOSYS and ORIG_RAX the number, so a
+                // caller that must disarm a planted call writes this one.
+                || set("orig_rax", raw.orig_rax);
         }
 
         // True at a syscall's entry stop, false at its exit stop, unset when
@@ -472,6 +479,59 @@ namespace slopkit::platform
         }
 
         iovec iov {&*raw, sizeof(*raw)};
+        if (::ptrace(PTRACE_SETREGSET, static_cast<pid_t>(tid), reinterpret_cast<void*>(NT_PRSTATUS), &iov) == -1)
+        {
+            return fail(errno);
+        }
+        return {};
+    }
+
+    SyscallState syscall_state(process::ProcessId tid)
+    {
+        SyscallInfo info;
+        if (::ptrace(kPtraceGetSyscallInfo, static_cast<pid_t>(tid), reinterpret_cast<void*>(sizeof(info)), &info)
+            == -1)
+        {
+            return SyscallState::unknown;
+        }
+        switch (info.op)
+        {
+        case kSyscallInfoEntry:
+            return SyscallState::entry;
+        case kSyscallInfoExit:
+            return SyscallState::exit;
+        case kSyscallInfoNone:
+            return SyscallState::none;
+        default:
+            return SyscallState::unknown;
+        }
+    }
+
+    std::expected<std::vector<std::byte>, process::AccessError> read_registers_raw(process::ProcessId tid)
+    {
+        const auto raw = read_raw_registers(tid);
+        if (!raw)
+        {
+            return std::unexpected(raw.error());
+        }
+        std::vector<std::byte> bytes(sizeof(user_regs_struct));
+        std::memcpy(bytes.data(), &*raw, sizeof(user_regs_struct));
+        return bytes;
+    }
+
+    std::expected<void, process::AccessError> write_registers_raw(process::ProcessId         tid,
+                                                                  std::span<const std::byte> raw)
+    {
+        if (raw.size() != sizeof(user_regs_struct))
+        {
+            return std::unexpected(process::AccessError::invalid_argument);
+        }
+        user_regs_struct registers {};
+        std::memcpy(&registers, raw.data(), sizeof(registers));
+
+        // One wholesale write, so a field the per-name setter does not name
+        // (orig_rax, cs, ss) is restored with the rest.
+        iovec iov {&registers, sizeof(registers)};
         if (::ptrace(PTRACE_SETREGSET, static_cast<pid_t>(tid), reinterpret_cast<void*>(NT_PRSTATUS), &iov) == -1)
         {
             return fail(errno);

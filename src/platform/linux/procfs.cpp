@@ -362,6 +362,42 @@ namespace slopkit::platform
         return rest.front();
     }
 
+    std::optional<std::int64_t> read_thread_syscall(process::ProcessId pid, process::ProcessId tid)
+    {
+        const auto raw = read_file(proc_entry(pid, "task/" + std::to_string(tid) + "/syscall"));
+        if (!raw)
+        {
+            return std::nullopt;
+        }
+
+        // The first field is the syscall number while the thread is inside a
+        // call and -1 while it is not; "running" and any other word say the
+        // same thing, so both are reported as -1.
+        const auto field = first_token(trim(*raw));
+        if (field.empty())
+        {
+            return std::nullopt;
+        }
+        if (field == "running")
+        {
+            return std::int64_t {-1};
+        }
+
+        std::int64_t number = 0;
+        const auto   parsed = std::from_chars(field.data(), field.data() + field.size(), number);
+        if (parsed.ec != std::errc {} || parsed.ptr != field.data() + field.size())
+        {
+            return std::nullopt;
+        }
+        return number;
+    }
+
+    std::string read_thread_wchan(process::ProcessId pid, process::ProcessId tid)
+    {
+        const auto raw = read_file(proc_entry(pid, "task/" + std::to_string(tid) + "/wchan"));
+        return raw ? std::string(trim(*raw)) : std::string {};
+    }
+
     process::ModuleKind classify_region(const MappedRegion& region)
     {
         if (region.path.empty() || region.path.front() == '[')

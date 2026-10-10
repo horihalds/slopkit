@@ -45,6 +45,13 @@ namespace slopkit::platform
     // The single-letter state of one thread from /proc/<pid>/task/<tid>/stat:
     // 't' means it sits in a ptrace stop. `std::nullopt` when the thread is gone.
     [[nodiscard]] std::optional<char>              read_thread_state(process::ProcessId pid, process::ProcessId tid);
+    // The syscall number a thread is inside, from
+    // /proc/<pid>/task/<tid>/syscall: a number while it is in a call and -1
+    // while it is not. `std::nullopt` when the file cannot be read (the thread
+    // is gone, or the caller may not look).
+    [[nodiscard]] std::optional<std::int64_t>      read_thread_syscall(process::ProcessId pid, process::ProcessId tid);
+    // The kernel symbol a thread is parked on, for the window's log records.
+    [[nodiscard]] std::string                      read_thread_wchan(process::ProcessId pid, process::ProcessId tid);
 
     // Pure parsers, exposed so they can be tested against fixtures.
     [[nodiscard]] std::optional<ProcessStatus> parse_status(std::string_view text);

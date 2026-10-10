@@ -64,6 +64,52 @@ QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "name1,name2,*glob*"
 - Never run broad tags like `[ui]` through the binary directly: the full set
   exceeds the tool timeout. Use `./tools/test.sh`.
 
+## Manually verify allocation against a Proton game
+
+The allocation window's blast radius against a real Proton target cannot be
+reproduced in a unit test, so it has a manual recipe; the suite models the hazard
+with a multi-threaded child instead (see
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+
+Use the script the reporter used and drive it from the script panel:
+
+```lua
+function activate()
+    alloc("test_12223", 8)
+    return true
+end
+
+function deactivate()
+    dealloc("test_12223")
+    return true
+end
+```
+
+With Dying Light The Beast running under GE-Proton11:
+
+1. Point slopkit at the `wine-proton` process, tick the script's row and wait for
+   `activated: ok`.
+2. Wait a few seconds with the game running.
+3. Untick the row and wait for `deactivated: ok`.
+4. Repeat the tick/untick cycle at least five times; the game must keep running.
+
+Check three logs after the run:
+
+- `~/.local/state/slopkit/slopkit.log` — every cycle shows `activated: ok` and
+  `deactivated: ok`, and the window's `script`-category debug records name the
+  borrowed thread id.
+- The Proton log (`steam-<appid>.log`; the reporter's was
+  `/home/user/steam-3008130.log`) — it must not end with
+  `warn:seh:dispatch_exception backtrace: --- Exception 0x80000003`. That
+  `EXCEPTION_BREAKPOINT` in `engine_core_x64_rwdi.dll` was the crash signature the
+  single-thread window removes.
+- The per-run game log under the prefix's
+  `drive_c/users/steamuser/Documents/Dying Light The Beast/out/logs/crash_<stamp>.log`
+  — a new `crash_*` file means the run still died.
+
+A refusal is a valid outcome: `alloc`/`dealloc` reporting that no target thread is
+outside a system call leaves the game running, which is the intended trade.
+
 ## Diagnose a build or a run
 
 - `tools/verify.sh` prints only the `warning:`/`error:`/`FAILED` lines of its

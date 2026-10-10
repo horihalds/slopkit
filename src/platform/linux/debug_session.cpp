@@ -1,5 +1,6 @@
 #include "platform/linux/debug_session.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -74,7 +75,13 @@ namespace slopkit::platform
         const std::lock_guard lock(mutex_);
         if (attached_)
         {
-            return leader_;
+            if (group_window_)
+            {
+                return leader_;
+            }
+            // A single-thread window is open: the group window and the thread
+            // window never overlap.
+            return std::unexpected(process::AccessError::permission_denied);
         }
         if (const auto status = read_status(pid_); status && status->tracer_pid != 0)
         {
@@ -141,10 +148,11 @@ namespace slopkit::platform
             }
         }
 
-        tids_     = std::move(tids);
-        leader_   = pid_;
-        current_  = pid_;
-        attached_ = true;
+        tids_         = std::move(tids);
+        leader_       = pid_;
+        current_      = pid_;
+        attached_     = true;
+        group_window_ = true;
         return leader_;
     }
 
@@ -153,6 +161,7 @@ namespace slopkit::platform
         std::vector<process::ProcessId>                     tids;
         std::vector<std::pair<std::uint64_t, std::uint8_t>> restore;
         process::ProcessId                                  leader {};
+        bool                                                group = false;
         {
             const std::lock_guard lock(mutex_);
             if (!attached_)
@@ -161,14 +170,19 @@ namespace slopkit::platform
             }
             tids   = tids_;
             leader = leader_;
-            for (const auto& slot : software_)
+            group  = group_window_;
+            if (group)
             {
-                if (slot.armed && slot.size > 0)
+                for (const auto& slot : software_)
                 {
-                    restore.emplace_back(slot.address, static_cast<std::uint8_t>(slot.original & 0xFF));
+                    if (slot.armed && slot.size > 0)
+                    {
+                        restore.emplace_back(slot.address, static_cast<std::uint8_t>(slot.original & 0xFF));
+                    }
                 }
             }
-            attached_ = false;
+            attached_     = false;
+            group_window_ = false;
         }
 
         // Restore the original bytes so no int3 is left in the target, then
@@ -204,9 +218,14 @@ namespace slopkit::platform
                 }
             }
 
-            if (const auto cleared = platform::clear_debug_registers(tid); !cleared && result.has_value())
+            // Only the group window programs DR0-DR3; the target's own debug
+            // registers are never the thread window's to zero.
+            if (group)
             {
-                result = std::unexpected(cleared.error());
+                if (const auto cleared = platform::clear_debug_registers(tid); !cleared && result.has_value())
+                {
+                    result = std::unexpected(cleared.error());
+                }
             }
             const auto detached = platform::detach(tid, signal);
             if (!detached && result.has_value())
@@ -223,6 +242,112 @@ namespace slopkit::platform
             hardware_ = {};
         }
         return result;
+    }
+
+    std::expected<void, process::AccessError> DebugSession::attach_thread(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (attached_)
+            {
+                // One window at a time: a group window or another donor is
+                // already open.
+                return std::unexpected(process::AccessError::permission_denied);
+            }
+        }
+        if (const auto status = read_status(pid_); status && status->tracer_pid != 0)
+        {
+            return std::unexpected(process::AccessError::permission_denied);
+        }
+
+        if (const auto seized = platform::seize(tid); !seized)
+        {
+            return std::unexpected(seized.error());
+        }
+        if (const auto interrupted = platform::interrupt(tid); !interrupted)
+        {
+            (void)platform::detach(tid);
+            return std::unexpected(interrupted.error());
+        }
+
+        // Wait for the stop the interrupt asked for, handing the thread its own
+        // signal if it stopped for one, so no signal of the target's is
+        // swallowed before the window is even open.
+        const std::array<process::ProcessId, 1> one {tid};
+        for (;;)
+        {
+            const auto stop = platform::wait(one);
+            if (!stop)
+            {
+                (void)platform::detach(tid);
+                return std::unexpected(stop.error());
+            }
+            if (stop->reason == StopReason::signal_stop)
+            {
+                if (const auto resumed = platform::cont(tid, stop->signal); !resumed)
+                {
+                    (void)platform::detach(tid);
+                    return std::unexpected(resumed.error());
+                }
+                continue;
+            }
+            break;
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            tids_         = {tid};
+            leader_       = 0;
+            current_      = tid;
+            attached_     = true;
+            group_window_ = false;
+        }
+        return {};
+    }
+
+    std::expected<void, process::AccessError> DebugSession::detach_thread(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_ || group_window_)
+            {
+                // A group window is handed back whole by detach().
+                return {};
+            }
+            const auto found = std::find(tids_.begin(), tids_.end(), tid);
+            if (found == tids_.end())
+            {
+                return {};
+            }
+            tids_.erase(found);
+            if (tids_.empty())
+            {
+                attached_     = false;
+                group_window_ = false;
+                leader_       = 0;
+                current_      = 0;
+            }
+        }
+
+        // A thread that stopped only to hand its own signal over carries it out
+        // of the window: detaching without it would cancel the signal and leave
+        // the target's handler waiting for something that never arrives. No
+        // debug register is cleared because this window never programs one.
+        int signal = 0;
+        if (const auto pending = platform::poll_stop(tid); pending && pending->has_value())
+        {
+            if (pending->value().reason == StopReason::signal_stop)
+            {
+                signal = pending->value().signal;
+            }
+        }
+        return platform::detach(tid, signal);
+    }
+
+    std::vector<process::ProcessId> DebugSession::attached_threads() const
+    {
+        const std::lock_guard lock(mutex_);
+        return tids_;
     }
 
     std::expected<StopStatus, process::AccessError> DebugSession::resume(std::uint64_t resume_address)
