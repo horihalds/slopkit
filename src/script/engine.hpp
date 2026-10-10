@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,15 +15,17 @@ namespace slopkit::script
     // The outcome of one `update` tick: `ran` says the chunk defined and called
     // a hook of its own, `ok` whether the tick succeeded (the chunk ran and the
     // hook, when there was one, accepted), `error` the chunk or hook failure
-    // text, `message` the reason the hook returned when it refused, and `output`
-    // the tick's captured `print` lines.
+    // text, `message` the reason the hook returned when it refused, `output` the
+    // tick's captured `print` lines, and `interval_ms` what the run last passed
+    // to `update_interval` (unset when it declared none).
     struct UpdateResult
     {
-        bool                     ran {};    // the chunk defined an `update` of its own
-        bool                     ok {true}; // a `false` verdict means the tick failed
-        std::string              error;     // a chunk or hook error
-        std::string              message;   // the hook's own reason for a refusal
-        std::vector<std::string> output;    // the lines the tick printed (not logged)
+        bool                         ran {};      // the chunk defined an `update` of its own
+        bool                         ok {true};   // a `false` verdict means the tick failed
+        std::string                  error;       // a chunk or hook error
+        std::string                  message;     // the hook's own reason for a refusal
+        std::vector<std::string>     output;      // the lines the tick printed (not logged)
+        std::optional<std::uint64_t> interval_ms; // what this run passed to `update_interval`
     };
 
     // One Lua state with the `mem` table bound over a `MemoryApi`, the
@@ -54,7 +58,9 @@ namespace slopkit::script
         // `kDeactivateHook`). A chunk error never reaches the hook; a missing
         // or non-function global is reported as `error`; a hook returning
         // nothing or a `true` first value succeeds, while `false` fails with an
-        // optional second return value as `message`. Nothing is thrown.
+        // optional second return value as `message`. Nothing is thrown. The
+        // value the run declared through `update_interval` comes back in
+        // `interval_ms`.
         [[nodiscard]] LifecycleResult run_lifecycle(std::string_view chunk, std::string_view function);
 
         // Runs `chunk` and then calls its own `kUpdateHook` global, if the chunk
@@ -63,7 +69,8 @@ namespace slopkit::script
         // global left behind by another script never is). A chunk error never
         // reaches the hook; the verdict maps exactly like `run_lifecycle`. The
         // tick's captured `print` lines come back in `output` for the tests and
-        // are not meant for the Log window.
+        // are not meant for the Log window, and the value the run declared
+        // through `update_interval` comes back in `interval_ms`.
         [[nodiscard]] UpdateResult run_update(std::string_view chunk);
 
     private:

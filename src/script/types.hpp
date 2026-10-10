@@ -43,14 +43,16 @@ namespace slopkit::script
 
     // The outcome of calling a script's `activate`/`deactivate` hook: `ok` is
     // the verdict the checkbox follows, `error` the chunk or hook failure text,
-    // `message` the reason the hook itself returned when it refused, and
-    // `output` the chunk's captured `print` lines.
+    // `message` the reason the hook itself returned when it refused, `output`
+    // the chunk's captured `print` lines, and `interval_ms` what the run last
+    // passed to `update_interval` (unset when it declared none).
     struct LifecycleResult
     {
-        bool                     ok {false};
-        std::string              error;
-        std::string              message;
-        std::vector<std::string> output;
+        bool                         ok {false};
+        std::string                  error;
+        std::string                  message;
+        std::vector<std::string>     output;
+        std::optional<std::uint64_t> interval_ms;
     };
 
     // One mapped region of the target: where it starts, how big it is, whether

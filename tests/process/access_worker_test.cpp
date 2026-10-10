@@ -1098,6 +1098,126 @@ function update() return false, "nope" end
         CHECK_FALSE(any_message_contains(category_records(records, "script"), "undone"));
     }
 
+    SECTION("a long declared interval is skipped after its first tick")
+    {
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult slow = run_lifecycle_as(worker,
+                                                   "slow",
+                                                   "function activate() update_interval(60000) end\n"
+                                                   "function update() slow_ticks = (slow_ticks or 0) + 1 end",
+                                                   std::string {slopkit::script::kActivateHook});
+        REQUIRE(slow.lifecycle.has_value());
+        REQUIRE(slow.lifecycle->ok);
+        const ScriptResult fast = run_lifecycle_as(worker,
+                                                   "fast",
+                                                   "function activate() end\n"
+                                                   "function update() fast_ticks = (fast_ticks or 0) + 1 end",
+                                                   std::string {slopkit::script::kActivateHook});
+        REQUIRE(fast.lifecycle.has_value());
+        REQUIRE(fast.lifecycle->ok);
+
+        // The first tick follows activation, so both scripts run once.
+        const ScriptUpdatesResult first = run_updates(worker);
+        CHECK(first.updated == 2);
+        CHECK(first.failed.empty());
+
+        // Immediately after, only the undeclared script is due again.
+        const ScriptUpdatesResult second = run_updates(worker);
+        CHECK(second.updated == 1);
+        CHECK(second.failed.empty());
+        CHECK(run_script(worker, "return fast_ticks .. ',' .. slow_ticks").run.returned == "2,1");
+    }
+
+    SECTION("a short declared interval ticks again once it elapses")
+    {
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult poller = run_lifecycle_as(worker,
+                                                     "poller",
+                                                     "function activate() update_interval(30) end\n"
+                                                     "function update() poller_ticks = (poller_ticks or 0) + 1 end",
+                                                     std::string {slopkit::script::kActivateHook});
+        REQUIRE(poller.lifecycle.has_value());
+        REQUIRE(poller.lifecycle->ok);
+
+        const ScriptUpdatesResult first = run_updates(worker);
+        CHECK(first.updated == 1);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds {60});
+
+        const ScriptUpdatesResult second = run_updates(worker);
+        CHECK(second.updated == 1);
+        CHECK(run_script(worker, "return poller_ticks").run.returned == "2");
+    }
+
+    SECTION("an interval re-tuned by update takes effect on the next pass")
+    {
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult tuner = run_lifecycle_as(worker,
+                                                    "tuner",
+                                                    "function activate() update_interval(0) end\n"
+                                                    "function update() update_interval(60000) "
+                                                    "tuner_ticks = (tuner_ticks or 0) + 1 end",
+                                                    std::string {slopkit::script::kActivateHook});
+        REQUIRE(tuner.lifecycle.has_value());
+        REQUIRE(tuner.lifecycle->ok);
+
+        const ScriptUpdatesResult first = run_updates(worker);
+        CHECK(first.updated == 1);
+
+        // `update` re-declared 60000, so the next pass leaves the script alone.
+        const ScriptUpdatesResult second = run_updates(worker);
+        CHECK(second.updated == 0);
+        CHECK(second.failed.empty());
+        CHECK(run_script(worker, "return tuner_ticks").run.returned == "1");
+    }
+
+    SECTION("a failed first tick of a gated script is still deactivated once")
+    {
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult failing = run_lifecycle_as(worker,
+                                                      "failing",
+                                                      "function activate() update_interval(60000) return true end\n"
+                                                      "function deactivate() return true end\n"
+                                                      "function update() return false, \"nope\" end",
+                                                      std::string {slopkit::script::kActivateHook});
+        REQUIRE(failing.lifecycle.has_value());
+        REQUIRE(failing.lifecycle->ok);
+        CHECK(worker.active_scripts() == 1);
+
+        const ScriptUpdatesResult result = run_updates(worker);
+
+        CHECK(result.updated == 0);
+        REQUIRE(result.failed.size() == 1);
+        CHECK(result.failed[0].description == "failing");
+        CHECK(result.failed[0].reason == "nope");
+        CHECK(worker.active_scripts() == 0);
+    }
+
+    SECTION("a declared interval does not block an explicit deactivate")
+    {
+        REQUIRE(attach_target(worker));
+
+        const std::string chunk = "function activate() update_interval(60000) return true end\n"
+                                  "function deactivate() deactivated = true return true end";
+
+        const ScriptResult activated =
+            run_lifecycle_as(worker, "slow", chunk, std::string {slopkit::script::kActivateHook});
+        REQUIRE(activated.lifecycle.has_value());
+        REQUIRE(activated.lifecycle->ok);
+        CHECK(worker.active_scripts() == 1);
+
+        const ScriptResult deactivated =
+            run_lifecycle_as(worker, "slow", chunk, std::string {slopkit::script::kDeactivateHook});
+        REQUIRE(deactivated.lifecycle.has_value());
+        REQUIRE(deactivated.lifecycle->ok);
+        CHECK(worker.active_scripts() == 0);
+        CHECK(run_script(worker, "return deactivated and 'yes' or 'no'").run.returned == "yes");
+    }
+
     SECTION("the active-script count mirrors attach, activate and detach")
     {
         CHECK(worker.active_scripts() == 0);
@@ -1159,7 +1279,10 @@ TEST_CASE("an active script is deactivated when the worker stops", "[process]")
 
         const ScriptResult result = run_lifecycle(worker,
                                                   R"(
-function activate() return true end
+function activate()
+    update_interval(60000)
+    return true
+end
 function deactivate()
     print("shutdown marker")
     return true, "gone"

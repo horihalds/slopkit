@@ -403,6 +403,51 @@ function deactivate() return true end
         REQUIRE(result.ok);
         CHECK(result.returned == "42");
     }
+
+    SECTION("the run reports the interval the chunk declared")
+    {
+        const auto result =
+            fixture.engine.run_lifecycle("update_interval(1000)\nfunction activate() end", kActivateHook);
+
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 1000);
+    }
+
+    SECTION("activate can declare the interval")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() update_interval(250) end", kActivateHook);
+
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 250);
+    }
+
+    SECTION("a run that declares nothing reports no interval")
+    {
+        const auto result = fixture.engine.run_lifecycle("function activate() end", kActivateHook);
+
+        REQUIRE(result.ok);
+        CHECK_FALSE(result.interval_ms.has_value());
+    }
+
+    SECTION("update_interval(0) reports zero, meaning every pass")
+    {
+        const auto result = fixture.engine.run_lifecycle("update_interval(0)\nfunction activate() end", kActivateHook);
+
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 0);
+    }
+
+    SECTION("a chunk that declares but defines no hook still reports the interval")
+    {
+        const auto result = fixture.engine.run_lifecycle("update_interval(1000)", kActivateHook);
+
+        CHECK_FALSE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 1000);
+    }
 }
 
 TEST_CASE("script engine guards a runaway lifecycle hook", "[script]")
@@ -539,6 +584,48 @@ error('boom')
 
         REQUIRE(result.ok);
         CHECK(result.returned == "42");
+    }
+
+    SECTION("the tick reports the interval the hook declared")
+    {
+        const auto result = fixture.engine.run_update("function update() update_interval(1000) end");
+
+        REQUIRE(result.ran);
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 1000);
+    }
+
+    SECTION("a chunk that declares with no hook of its own still reports the interval")
+    {
+        const auto result = fixture.engine.run_update("update_interval(500)");
+
+        CHECK_FALSE(result.ran);
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 500);
+    }
+
+    SECTION("the last call wins across the chunk and the hook")
+    {
+        const auto result = fixture.engine.run_update(R"(
+update_interval(1000)
+function update() update_interval(250) end
+)");
+
+        REQUIRE(result.ran);
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 250);
+    }
+
+    SECTION("a tick that declares nothing reports no interval")
+    {
+        const auto result = fixture.engine.run_update("function update() end");
+
+        REQUIRE(result.ran);
+        REQUIRE(result.ok);
+        CHECK_FALSE(result.interval_ms.has_value());
     }
 }
 
@@ -726,6 +813,79 @@ TEST_CASE("script engine reports symbol argument errors", "[script]")
         CHECK_FALSE(fixture.engine.run(R"(ssymbol("hp", 1.5))").ok);
         CHECK(fixture.engine.run(R"(ssymbol("hp", 2))").ok);
         CHECK(fixture.symbols.lookup("hp") == 2);
+    }
+}
+
+TEST_CASE("script engine validates and reports update_interval", "[script]")
+{
+    ScriptFixture fixture;
+
+    SECTION("a fractional value is refused with the function name")
+    {
+        const RunResult result = fixture.engine.run("update_interval(1.5)");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("update_interval: the value must be a whole number of milliseconds")
+              != std::string::npos);
+    }
+
+    SECTION("a negative value is refused")
+    {
+        const RunResult result = fixture.engine.run("update_interval(-1)");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("update_interval: the value must be a whole number of milliseconds")
+              != std::string::npos);
+    }
+
+    SECTION("a non-number value is refused")
+    {
+        const RunResult result = fixture.engine.run(R"(update_interval("fast"))");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("update_interval: the value must be a whole number of milliseconds")
+              != std::string::npos);
+    }
+
+    SECTION("no argument behaves as every pass and never raises")
+    {
+        const auto result = fixture.engine.run_update("update_interval()\nfunction update() end");
+
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 0);
+    }
+
+    SECTION("a value at the top of the range is accepted")
+    {
+        const auto result = fixture.engine.run_update("update_interval(math.maxinteger)\nfunction update() end");
+
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == static_cast<std::uint64_t>(9223372036854775807LL));
+    }
+
+    SECTION("the engine stays usable after an update_interval error")
+    {
+        CHECK_FALSE(fixture.engine.run("update_interval(1.5)").ok);
+
+        const auto result = fixture.engine.run_lifecycle("update_interval(42)\nfunction activate() end",
+                                                         slopkit::script::kActivateHook);
+
+        REQUIRE(result.ok);
+        REQUIRE(result.interval_ms.has_value());
+        CHECK(*result.interval_ms == 42);
+    }
+
+    SECTION("a declared value never leaks into the next chunk")
+    {
+        const auto first = fixture.engine.run_update("update_interval(1000)\nfunction update() end");
+        REQUIRE(first.interval_ms.has_value());
+        CHECK(*first.interval_ms == 1000);
+
+        const auto second = fixture.engine.run_update("function update() end");
+        REQUIRE(second.ok);
+        CHECK_FALSE(second.interval_ms.has_value());
     }
 }
 

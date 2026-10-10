@@ -1092,7 +1092,10 @@ namespace slopkit::process
 
         if (request.function == script::kActivateHook)
         {
-            active_scripts_.push_back(ActiveScript {.description = request.description, .chunk = request.chunk});
+            active_scripts_.push_back(ActiveScript {.description = request.description,
+                                                    .chunk       = request.chunk,
+                                                    .interval_ms = result.lifecycle->interval_ms,
+                                                    .last_tick   = std::nullopt});
         }
         else if (request.function == script::kDeactivateHook)
         {
@@ -1103,6 +1106,26 @@ namespace slopkit::process
                           });
         }
         active_script_count_ = active_scripts_.size();
+    }
+
+    void AccessWorker::note_script_tick(std::string_view                      description,
+                                        const std::optional<std::uint64_t>&   interval_ms,
+                                        std::chrono::steady_clock::time_point now)
+    {
+        // The pass iterates a copy, so the record is looked up again here. A
+        // script that deactivated itself in this pass has no record left.
+        const auto found = std::ranges::find(active_scripts_, description, &ActiveScript::description);
+        if (found == active_scripts_.end())
+        {
+            return;
+        }
+        found->last_tick = now;
+        // Only a tick that declared an interval re-tunes the cadence; one that
+        // declared nothing keeps the value its `activate` left behind.
+        if (interval_ms)
+        {
+            found->interval_ms = interval_ms;
+        }
     }
 
     void AccessWorker::deactivate_active_scripts()
@@ -1176,8 +1199,21 @@ namespace slopkit::process
         // Iterate a copy: a failing script erases itself from the tracked set,
         // and every other script must still be ticked in activation order.
         const std::vector<ActiveScript> pending = active_scripts_;
+        const auto                      now     = std::chrono::steady_clock::now();
         for (const ActiveScript& script : pending)
         {
+            // A script's own declared interval only ever slows it down: the pass
+            // still arrives at the Settings interval, and a script that has not
+            // reached its own cadence is left alone while the others tick on.
+            if (script.last_tick && script.interval_ms)
+            {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - *script.last_tick);
+                if (elapsed.count() >= 0 && static_cast<std::uint64_t>(elapsed.count()) < *script.interval_ms)
+                {
+                    continue; // this script's own cadence has not elapsed yet
+                }
+            }
+
             const script::UpdateResult outcome = engine_->run_update(script.chunk);
             // `outcome.output` is dropped on purpose: a hook that runs at the
             // user's interval cannot feed the Log window without flooding it.
@@ -1190,6 +1226,7 @@ namespace slopkit::process
                 {
                     ++result.updated;
                 }
+                note_script_tick(script.description, outcome.interval_ms, now);
                 continue;
             }
 

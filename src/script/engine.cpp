@@ -135,6 +135,10 @@ namespace slopkit::script
         std::optional<std::string> labels_owner;
 
         std::vector<std::string>              output;
+        // What this run last passed to `update_interval`; unset when it declared
+        // none. Reset at the top of every entry point so a value never leaks
+        // from one run (or one chunk) into the next.
+        std::optional<std::uint64_t>          declared_interval_ms;
         std::size_t                           ticks {0};
         std::chrono::steady_clock::time_point deadline;
 
@@ -148,6 +152,7 @@ namespace slopkit::script
             install_memory();
             install_typed_access();
             install_symbols();
+            install_update_interval();
             install_labels();
             install_resolution();
             install_allocation();
@@ -383,7 +388,11 @@ namespace slopkit::script
 
         // Turns a Lua value into a symbol value: `rsymbol` with no argument means
         // 0, and anything else must be an integral number in `0 .. 2^64-1`.
-        std::uint64_t value_argument(const std::string& function, const sol::optional<sol::object>& value)
+        // `expected` names the requirement in the error, so a caller with its own
+        // wording (`update_interval`) can keep `rsymbol`/`slabel` unchanged.
+        std::uint64_t value_argument(const std::string&                function,
+                                     const sol::optional<sol::object>& value,
+                                     std::string_view                  expected = "a 64-bit unsigned integer")
         {
             if (!value)
             {
@@ -391,7 +400,7 @@ namespace slopkit::script
             }
             if (value->get_type() != sol::type::number)
             {
-                throw std::runtime_error(function + ": the value must be a 64-bit unsigned integer");
+                throw std::runtime_error(function + ": the value must be " + std::string(expected));
             }
 
             lua_State* state = lua.lua_state();
@@ -414,7 +423,7 @@ namespace slopkit::script
             lua_pop(state, 1);
             if (!valid)
             {
-                throw std::runtime_error(function + ": the value must be a 64-bit unsigned integer");
+                throw std::runtime_error(function + ": the value must be " + std::string(expected));
             }
             return result;
         }
@@ -513,6 +522,20 @@ namespace slopkit::script
                                  {
                                      throw std::runtime_error("usymbol: " + removed.error());
                                  }
+                             });
+        }
+
+        // Binds `update_interval(milliseconds)`: how often this script's `update`
+        // hook asks to run. The last call in a run wins, so a script can re-tune
+        // its cadence from the chunk, `activate` or `update`; 0 means "due on
+        // every pass".
+        void install_update_interval()
+        {
+            lua.set_function("update_interval",
+                             [this](sol::optional<sol::object> milliseconds)
+                             {
+                                 declared_interval_ms =
+                                     value_argument("update_interval", milliseconds, "a whole number of milliseconds");
                              });
         }
 
@@ -1398,6 +1421,7 @@ namespace slopkit::script
 
         RunResult result;
         impl.output.clear();
+        impl.declared_interval_ms.reset();
         impl.begin_chunk(chunk);
 
         sol::load_result loaded = impl.lua.load(chunk, "@script");
@@ -1467,6 +1491,7 @@ namespace slopkit::script
 
         LifecycleResult result;
         impl.output.clear();
+        impl.declared_interval_ms.reset();
         impl.begin_chunk(chunk);
 
         sol::load_result loaded = impl.lua.load(chunk, "@script");
@@ -1497,8 +1522,9 @@ namespace slopkit::script
         sol::object hook = impl.lua[std::string(function)];
         if (hook.get_type() != sol::type::function)
         {
-            result.error  = std::string(function) + "() is not defined";
-            result.output = std::move(impl.output);
+            result.error       = std::string(function) + "() is not defined";
+            result.output      = std::move(impl.output);
+            result.interval_ms = impl.declared_interval_ms;
             return result;
         }
 
@@ -1509,7 +1535,8 @@ namespace slopkit::script
                 return hook_function();
             });
 
-        result.output = std::move(impl.output);
+        result.output      = std::move(impl.output);
+        result.interval_ms = impl.declared_interval_ms;
 
         if (!hook_call.valid())
         {
@@ -1534,6 +1561,7 @@ namespace slopkit::script
 
         UpdateResult result;
         impl.output.clear();
+        impl.declared_interval_ms.reset();
         impl.begin_chunk(chunk);
 
         // Another script may have left an `update` global behind, so remember
@@ -1563,6 +1591,7 @@ namespace slopkit::script
             result.error           = error.what();
             result.ok              = false;
             result.output          = std::move(impl.output);
+            result.interval_ms     = impl.declared_interval_ms;
             return result;
         }
 
@@ -1571,7 +1600,8 @@ namespace slopkit::script
         {
             // The chunk defines no hook of its own: skipped silently and the
             // tick counts as a success.
-            result.output = std::move(impl.output);
+            result.output      = std::move(impl.output);
+            result.interval_ms = impl.declared_interval_ms;
             return result;
         }
 
@@ -1585,7 +1615,8 @@ namespace slopkit::script
                 return hook_function();
             });
 
-        result.output = std::move(impl.output);
+        result.output      = std::move(impl.output);
+        result.interval_ms = impl.declared_interval_ms;
 
         if (!hook_call.valid())
         {

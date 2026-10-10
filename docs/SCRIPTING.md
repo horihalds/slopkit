@@ -15,7 +15,7 @@ The chunk runs first, then the named global is called with no arguments.
 | --- | --- | --- |
 | `activate()` | the box is ticked | refused: `activate() is not defined` |
 | `deactivate()` | the box is unticked, on detach, and on quit | refused: `deactivate() is not defined` |
-| `update()` | once per `Live update` interval while the box stays ticked | ignored silently |
+| `update()` | once per `Live update` interval, or the script's own `update_interval()`, while the box stays ticked | ignored silently |
 
 The verdict is the same vocabulary for all three: nothing or a truthy first value
 accepts, an explicit `false` refuses, and a second return value is the message
@@ -23,18 +23,33 @@ either way. A refusal of `activate`/`deactivate` leaves the flag as it was, snap
 the box back and reports `Activate failed: <message>` / `Deactivate failed:
 <message>`.
 
-`update` runs in activation order and follows the `Live update` toggle and
-interval from Settings; there is no separate interval and no per-row toggle. It
-runs even when the address list displays nothing to read, because a ticked script
-drives the target rather than reporting a value. A successful tick writes nothing
-at all — not the hook's `print`ed lines, not the status line, not the log — while a
-failed tick (a chunk error, a hook error, a budget abort or a `false` verdict)
-switches the script off: its `deactivate()` runs, the `Active` box clears, and one
-`warning` `script '<description>' update failed: <reason>` plus `Update failed:
-<reason>` on the status line says why. Other ticked scripts keep running. The
-chunk is re-run every tick, so top-level code runs at the interval: put per-tick
-work in `update`, defined as `function update() … end` so a global left behind by
-another script is never mistaken for yours.
+`update` runs in activation order while the box stays ticked; the Settings
+`Live update` toggle and interval stay the ceiling, and there is no per-row
+toggle. A script can ask for a slower cadence with the global
+`update_interval(milliseconds)`, callable from the chunk, `activate` or `update`:
+
+```lua
+function activate()
+    update_interval(1000) -- poll the target at most once a second
+end
+```
+
+Only a whole, non-negative number is accepted; anything else raises
+`update_interval: the value must be a whole number of milliseconds` and leaves the
+script untouched. The last call in a run wins, so `update` can re-tune the cadence
+on the fly; `0` — and declaring nothing at all — means "due on every pass", and a
+value smaller than the Settings interval cannot tick faster than it. The first
+tick follows activation, then one tick per declared interval. `update` runs even
+when the address list displays nothing to read, because a ticked script drives the
+target rather than reporting a value. A successful tick writes nothing at all —
+not the hook's `print`ed lines, not the status line, not the log — while a failed
+tick (a chunk error, a hook error, a budget abort or a `false` verdict) switches
+the script off: its `deactivate()` runs, the `Active` box clears, and one `warning`
+`script '<description>' update failed: <reason>` plus `Update failed: <reason>` on
+the status line says why. Other ticked scripts keep running. The chunk is re-run
+every tick, so top-level code runs at the interval: put per-tick work in `update`,
+defined as `function update() … end` so a global left behind by another script is
+never mistaken for yours.
 
 A ticked script is a promise that outlives a click: detaching clears its flag, and
 quitting slopkit runs `deactivate()` for every script still ticked before the

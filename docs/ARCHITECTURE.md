@@ -420,21 +420,24 @@ target.
   `script` includes `expr/resolver.hpp`, not the other way round.
 - Besides `run(chunk)`, the engine exposes `run_lifecycle(chunk, function)`, which
   runs the chunk and then calls its named global (`activate` / `deactivate`),
-  returning a `script::LifecycleResult`. The chunk runs first, so a chunk error
+  returning a `script::LifecycleResult {ok, error, message, output, interval_ms}`.
+  The chunk runs first, so a chunk error
   never reaches the hook; a missing or non-function global reports
   `<name>() is not defined`. The hook's first return value decides the verdict —
   nothing or a truthy value succeeds, an explicit `false` refuses — and a second
    return value is the message either way. Both entry points share the instruction
    budget, the wall-clock deadline and the `print` capture, and the globals persist
-   between calls exactly as for `run()`.
+   between calls exactly as for `run()`; `interval_ms` is what the run last passed
+   to the `update_interval(milliseconds)` global, unset when it declared none.
 - `run_update(chunk)` is the third entry point: it runs the chunk and then calls the
   global `update` only when *this* chunk defined one — it compares the global's
   `lua_topointer` identity before and after the chunk run, so an `update` left
   behind by another script is never called and a hook-less chunk is a silent skip
   rather than the `update() is not defined` error the lifecycle path would report.
-  It returns a `script::UpdateResult {ran, ok, error, message, output}`; the verdict
-  maps exactly like `run_lifecycle`, a chunk error leaves `ran == false` with the
-  error set, and a refusal or error sets `ok == false`.
+  It returns a `script::UpdateResult {ran, ok, error, message, output, interval_ms}`;
+  the verdict maps exactly like `run_lifecycle`, a chunk error leaves `ran == false`
+  with the error set, and a refusal or error sets `ok == false`. `interval_ms` is what
+  the run last passed to `update_interval`, so a tick can re-tune the cadence.
 - Running a script is an `AccessWorker` job (`JobKind::script` → `ScriptResult`):
   `submit_script` takes an optional hook name, so an empty name runs the whole
   chunk (the address list's `Run Script`) and a name runs `run_lifecycle()`. Either
@@ -449,7 +452,14 @@ target.
 - The ticked scripts' per-interval hooks are one more worker job
   (`JobKind::script_update` → `ScriptUpdatesResult`): `submit_script_updates` runs
   `Engine::run_update` for every remembered script in activation order inside one
-  job. A script whose chunk defines no `update` of its own is skipped silently; a
+  job. Each remembered script also carries the interval its accepted `activate`
+  declared through `update_interval` and the time of its last tick
+  (`ActiveScript::interval_ms`, `last_tick`); a script whose declared interval has
+  not elapsed since its last tick is skipped in place, while the others keep
+  ticking, so a slow script never holds up a fast one. Because the pass still
+  arrives at the Settings `Live update` interval, a declared value below it only
+  means "due on every pass" and the global cadence stays the ceiling. A script whose
+  chunk defines no `update` of its own is skipped silently; a
   failed tick runs that script's `deactivate` hook in the same job, forgets it and
   reports one `{description, reason}` in the result — the reason is the hook's
   message, or the error text when it did not refuse with one. The tick's captured

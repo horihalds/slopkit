@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -335,8 +336,14 @@ namespace slopkit::process
         // global can still be called while the engine's globals are alive.
         struct ActiveScript
         {
-            std::string description;
-            std::string chunk;
+            std::string                                          description;
+            std::string                                          chunk;
+            // What the accepted `activate` last passed to `update_interval`;
+            // absent (or 0) means the script is due on every pass.
+            std::optional<std::uint64_t>                         interval_ms;
+            // When its `update` last ran; unset means it has not ticked yet and
+            // is due on the first pass after activation.
+            std::optional<std::chrono::steady_clock::time_point> last_tick;
         };
 
         void                    run(std::stop_token token);
@@ -357,6 +364,13 @@ namespace slopkit::process
         // Folds a finished lifecycle verdict into the tracked set: an accepted
         // `activate` remembers the chunk, an accepted `deactivate` forgets it.
         void                    remember_lifecycle(const Request& request, const ScriptResult& result);
+        // Records that one tracked script's `update` just ran: re-arms its
+        // cadence from `now` and adopts a newly declared interval, so a script
+        // that re-tunes itself in `update` takes effect from the next pass. Does
+        // nothing when the record is gone.
+        void                    note_script_tick(std::string_view                      description,
+                                                 const std::optional<std::uint64_t>&   interval_ms,
+                                                 std::chrono::steady_clock::time_point now);
         // Runs the `deactivate` hook of every script this session still has
         // active and ignores each verdict; called once from run() as the worker
         // stops, while engine_ and the session are still alive.
