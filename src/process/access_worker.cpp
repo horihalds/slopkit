@@ -257,6 +257,11 @@ namespace slopkit::process
         return attached_.load();
     }
 
+    std::size_t AccessWorker::active_scripts() const noexcept
+    {
+        return active_script_count_.load();
+    }
+
     JobId AccessWorker::next_job_id() noexcept
     {
         return next_id_.fetch_add(1);
@@ -422,6 +427,15 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_script_updates(JobId id, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::script_update;
+        request.id      = id;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_suspend(JobId id, ProcessId pid, JobCallback on_done)
     {
         Request request;
@@ -477,6 +491,8 @@ namespace slopkit::process
             return "freeze";
         case JobKind::script:
             return "script";
+        case JobKind::script_update:
+            return "script-update";
         case JobKind::suspend:
             return "suspend";
         case JobKind::resume:
@@ -515,6 +531,8 @@ namespace slopkit::process
             return do_freeze(request);
         case JobKind::script:
             return do_script(request);
+        case JobKind::script_update:
+            return do_script_updates();
         case JobKind::suspend:
             return do_suspend(request);
         case JobKind::resume:
@@ -609,7 +627,7 @@ namespace slopkit::process
                 // synchronous attach that cleared the target first.
                 session_.reset();
                 engine_.reset();
-                active_scripts_.clear();
+                clear_active_scripts();
                 attached_ = false;
             }
             return result;
@@ -649,7 +667,7 @@ namespace slopkit::process
         // every run against this target and dropped with the session.
         script_pointer_size_ = 8;
         engine_.emplace(memory_api(), symbol_api());
-        active_scripts_.clear();
+        clear_active_scripts();
         attached_ = true;
         return result;
     }
@@ -1084,6 +1102,7 @@ namespace slopkit::process
                               return script.description == request.description;
                           });
         }
+        active_script_count_ = active_scripts_.size();
     }
 
     void AccessWorker::deactivate_active_scripts()
@@ -1096,41 +1115,105 @@ namespace slopkit::process
         // The verdict cannot be acted on: nobody is left to follow a refusal
         // and the exit must not be delayed by trying again.
         std::vector<ActiveScript> pending = std::move(active_scripts_);
-        active_scripts_.clear();
+        clear_active_scripts();
 
         for (const ActiveScript& script : pending)
         {
-            log::debug(log::category::process,
-                       std::format("deactivating script '{}' before shutdown", script.description));
-            const script::LifecycleResult outcome =
-                engine_->run_lifecycle(script.chunk, std::string {script::kDeactivateHook});
-            for (const std::string& line : outcome.output)
-            {
-                log::info(log::category::script, one_line(line));
-            }
+            deactivate_and_report(script, "before shutdown");
+        }
+    }
+
+    void AccessWorker::deactivate_and_report(const ActiveScript& script, std::string_view why)
+    {
+        log::debug(log::category::process, std::format("deactivating script '{}' {}", script.description, why));
+        const script::LifecycleResult outcome =
+            engine_->run_lifecycle(script.chunk, std::string {script::kDeactivateHook});
+        for (const std::string& line : outcome.output)
+        {
+            log::info(log::category::script, one_line(line));
+        }
+        if (outcome.ok)
+        {
+            log::info(log::category::script,
+                      std::format("script '{}' deactivated: {}",
+                                  script.description,
+                                  outcome.message.empty() ? "ok" : outcome.message));
+            return;
+        }
+        std::string reason = outcome.message;
+        if (reason.empty())
+        {
+            reason = error_message(outcome.error);
+        }
+        if (reason.empty())
+        {
+            log::warning(log::category::script, std::format("script '{}' deactivate failed", script.description));
+        }
+        else
+        {
+            log::warning(log::category::script,
+                         std::format("script '{}' deactivate failed: {}", script.description, reason));
+        }
+    }
+
+    void AccessWorker::clear_active_scripts()
+    {
+        active_scripts_.clear();
+        active_script_count_ = 0;
+    }
+
+    ScriptUpdatesResult AccessWorker::do_script_updates()
+    {
+        ScriptUpdatesResult result;
+
+        // Nothing to tick without a target; the pass is simply not due, so no
+        // record is written either.
+        if (!session_ || !engine_)
+        {
+            return result;
+        }
+
+        // Iterate a copy: a failing script erases itself from the tracked set,
+        // and every other script must still be ticked in activation order.
+        const std::vector<ActiveScript> pending = active_scripts_;
+        for (const ActiveScript& script : pending)
+        {
+            const script::UpdateResult outcome = engine_->run_update(script.chunk);
+            // `outcome.output` is dropped on purpose: a hook that runs at the
+            // user's interval cannot feed the Log window without flooding it.
+
             if (outcome.ok)
             {
-                log::info(log::category::script,
-                          std::format("script '{}' deactivated: {}",
-                                      script.description,
-                                      outcome.message.empty() ? "ok" : outcome.message));
+                // A script without an `update` of its own is a silent skip, so
+                // only a hook that actually ran counts as updated.
+                if (outcome.ran)
+                {
+                    ++result.updated;
+                }
                 continue;
             }
+
+            // The tick failed: undo whatever activate() did and stop tracking
+            // the script, in this same job. The UI clears the tick from this
+            // completion, so it must not submit a deactivate of its own.
+            deactivate_and_report(script, "after a failed update");
+            std::erase_if(active_scripts_,
+                          [&](const ActiveScript& tracked)
+                          {
+                              return tracked.description == script.description;
+                          });
+            active_script_count_ = active_scripts_.size();
+
             std::string reason = outcome.message;
             if (reason.empty())
             {
                 reason = error_message(outcome.error);
             }
-            if (reason.empty())
-            {
-                log::warning(log::category::script, std::format("script '{}' deactivate failed", script.description));
-            }
-            else
-            {
-                log::warning(log::category::script,
-                             std::format("script '{}' deactivate failed: {}", script.description, reason));
-            }
+            result.failed.push_back(
+                ScriptUpdateFailure {.description = script.description, .reason = std::move(reason)});
         }
+
+        return result;
     }
 
     SuspendResult AccessWorker::do_suspend(const Request& request)
@@ -1210,7 +1293,7 @@ namespace slopkit::process
         // The Lua state belongs to the session: dropping it drops the script
         // globals, so a later attach starts from a clean state.
         engine_.reset();
-        active_scripts_.clear();
+        clear_active_scripts();
         attached_ = false;
         return AttachResult {};
     }

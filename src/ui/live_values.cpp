@@ -41,6 +41,14 @@ namespace slopkit::ui
         }
     }
 
+    void LiveValues::add_ticker(LiveTicker* ticker)
+    {
+        if (ticker != nullptr)
+        {
+            tickers_.push_back(ticker);
+        }
+    }
+
     void LiveValues::refresh_from_settings()
     {
         const Settings& values = settings_.values();
@@ -88,57 +96,76 @@ namespace slopkit::ui
         }
         logged_idle_ = false;
 
-        if (pending_.has_value())
-        {
-            return; // One pass in flight; skip this tick instead of queueing.
-        }
-
         const auto now = std::chrono::steady_clock::now();
         if (!force_next_ && now - last_submit_ < std::chrono::milliseconds(interval_ms_))
         {
             return;
         }
 
-        std::vector<process::ReadManyItem> items;
-        std::vector<std::size_t>           counts;
-        std::vector<std::size_t>           ids;
-        counts.reserve(surfaces_.size());
-        for (LiveSurface* surface : surfaces_)
+        bool submitted = false;
+
+        // The read pass goes first, so a slow tick can only delay one batched
+        // read. It is skipped while one is in flight, but that must not stop the
+        // tickers below.
+        if (!pending_.has_value())
         {
-            std::vector<LiveRequest> requests = surface->next_live_request();
-            for (const LiveRequest& request : requests)
+            std::vector<process::ReadManyItem> items;
+            std::vector<std::size_t>           counts;
+            std::vector<std::size_t>           ids;
+            counts.reserve(surfaces_.size());
+            for (LiveSurface* surface : surfaces_)
             {
-                items.push_back(process::ReadManyItem {.address = request.address, .size = request.size});
-                ids.push_back(request.id);
+                std::vector<LiveRequest> requests = surface->next_live_request();
+                for (const LiveRequest& request : requests)
+                {
+                    items.push_back(process::ReadManyItem {.address = request.address, .size = request.size});
+                    ids.push_back(request.id);
+                }
+                counts.push_back(requests.size());
             }
-            counts.push_back(requests.size());
+
+            if (!items.empty())
+            {
+                const process::JobId job_id = worker_.next_job_id();
+                pending_                    = job_id;
+                pending_counts_             = std::move(counts);
+                pending_ids_                = std::move(ids);
+
+                const bool accepted =
+                    worker_.submit_read_many(job_id,
+                                             std::move(items),
+                                             [this, job_id](process::JobResult&& result)
+                                             {
+                                                 apply(job_id, std::get<process::ReadManyResult>(std::move(result)));
+                                             });
+                if (accepted)
+                {
+                    submitted = true;
+                }
+                else
+                {
+                    pending_.reset();
+                    pending_counts_.clear();
+                    pending_ids_.clear();
+                    log::warning(log::category::ui, "live read unavailable");
+                }
+            }
         }
 
-        if (items.empty())
+        // The tickers follow the read pass on the same interval; each applies
+        // its own in-flight and spacing rules, so a busy one is simply not ready.
+        const std::chrono::milliseconds interval {interval_ms_};
+        for (LiveTicker* ticker : tickers_)
         {
-            return; // Nothing displayed to read.
+            submitted = ticker->tick(interval) || submitted;
         }
 
-        const process::JobId job_id = worker_.next_job_id();
-        pending_                    = job_id;
-        pending_counts_             = std::move(counts);
-        pending_ids_                = std::move(ids);
-        last_submit_                = now;
-        force_next_                 = false;
-
-        const bool submitted =
-            worker_.submit_read_many(job_id,
-                                     std::move(items),
-                                     [this, job_id](process::JobResult&& result)
-                                     {
-                                         apply(job_id, std::get<process::ReadManyResult>(std::move(result)));
-                                     });
-        if (!submitted)
+        // Advance the cadence only when a job actually went out, so a value that
+        // appears later is read at once instead of waiting out the interval.
+        if (submitted)
         {
-            pending_.reset();
-            pending_counts_.clear();
-            pending_ids_.clear();
-            log::warning(log::category::ui, "live read unavailable");
+            last_submit_ = now;
+            force_next_  = false;
         }
     }
 

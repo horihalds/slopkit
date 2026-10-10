@@ -30,8 +30,9 @@ namespace slopkit::ui::dialogs
 
     namespace
     {
-        // The activate/deactivate skeleton a new script starts from; the address
-        // list runs these two globals from the row's Active checkbox.
+        // The hook skeleton a new script starts from; the address list runs
+        // these globals from the row's Active checkbox, and the live cadence
+        // calls `update` while it stays ticked.
         constexpr std::string_view kScriptSkeleton = R"(-- Runs when this row's Active checkbox is ticked.
 -- Return true once the target is ready, or false with an optional message to
 -- refuse, e.g. return false, "why": a refused tick leaves the checkbox off.
@@ -43,6 +44,12 @@ end
 function deactivate()
     return true
 end
+
+-- Runs on the Live update interval while the checkbox stays ticked;
+-- define it to keep a value fresh. Return false with a reason to refuse.
+-- function update()
+--     return true
+-- end
 )";
 
         // The 1-based line a Lua compiler message points at, or 0 when it names

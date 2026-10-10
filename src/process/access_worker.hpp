@@ -146,6 +146,23 @@ namespace slopkit::process
         std::optional<script::LifecycleResult> lifecycle;
     };
 
+    // One ticked script whose `update` tick failed. The worker has already run
+    // its `deactivate` hook and stopped ticking it, so the caller only has to
+    // clear the row's tick and say why.
+    struct ScriptUpdateFailure
+    {
+        std::string description;
+        std::string reason; // the hook's own message, or the error text
+    };
+
+    // Outcome of one update pass: how many ticked scripts ran an accepted
+    // `update`, and the failures the worker deactivated, in activation order.
+    struct ScriptUpdatesResult
+    {
+        std::size_t                      updated {}; // scripts that ran an `update`
+        std::vector<ScriptUpdateFailure> failed;     // in activation order
+    };
+
     struct MemoryMapResult
     {
         std::vector<ModuleInfo>    modules;
@@ -173,6 +190,7 @@ namespace slopkit::process
                                    ReadManyResult,
                                    WriteResult,
                                    ScriptResult,
+                                   ScriptUpdatesResult,
                                    FreezeResult,
                                    SuspendResult,
                                    MemoryMapResult,
@@ -231,6 +249,11 @@ namespace slopkit::process
                            std::string function,
                            std::size_t pointer_size,
                            JobCallback on_done);
+        // Runs the `update` hook of every script this session has active, in
+        // activation order, inside one job. A script that fails is deactivated
+        // in the same job and reported in the result, so the caller must not
+        // submit a deactivate of its own.
+        bool submit_script_updates(JobId id, JobCallback on_done);
         // Stops / resumes the attached target through the worker's session. `pid`
         // must match that session, so a stale target between the click and the
         // job is refused instead of stopped.
@@ -252,6 +275,10 @@ namespace slopkit::process
         // Atomic mirror of the worker-owned session slot.
         [[nodiscard]] bool attached() const noexcept;
 
+        // Atomic mirror of the number of active scripts, so a caller on another
+        // thread can skip a job while nothing would be ticked.
+        [[nodiscard]] std::size_t active_scripts() const noexcept;
+
         // Monotonic ids for call sites.
         [[nodiscard]] JobId next_job_id() noexcept;
 
@@ -269,6 +296,7 @@ namespace slopkit::process
             write,
             freeze,
             script,
+            script_update,
             suspend,
             resume,
             detach,
@@ -325,6 +353,7 @@ namespace slopkit::process
         WriteResult             do_write(const Request& request);
         FreezeResult            do_freeze(const Request& request);
         ScriptResult            do_script(const Request& request);
+        ScriptUpdatesResult     do_script_updates();
         // Folds a finished lifecycle verdict into the tracked set: an accepted
         // `activate` remembers the chunk, an accepted `deactivate` forgets it.
         void                    remember_lifecycle(const Request& request, const ScriptResult& result);
@@ -332,6 +361,13 @@ namespace slopkit::process
         // active and ignores each verdict; called once from run() as the worker
         // stops, while engine_ and the session are still alive.
         void                    deactivate_active_scripts();
+        // Runs and reports one tracked script's `deactivate` hook under the
+        // `script` category, with the same wording whether the tick failed or
+        // the worker is shutting down. engine_ must be alive.
+        void                    deactivate_and_report(const ActiveScript& script, std::string_view why);
+        // Forgets every tracked script and zeroes the atomic mirror; used
+        // wherever the engine is dropped or replaced.
+        void                    clear_active_scripts();
         // The seam a script sees the target through. Its lambdas read the
         // worker's current session, so one engine stays valid across attaches.
         script::MemoryApi       memory_api();
@@ -357,6 +393,9 @@ namespace slopkit::process
         std::vector<ActiveScript>     active_scripts_;          // worker thread only, follows engine_
         std::size_t                   script_pointer_size_ {8}; // worker thread only
         std::atomic<bool>             attached_ {false};
+        // Mirror of active_scripts_.size(); it cannot share the vector's name,
+        // so the accessor keeps the `active_scripts()` spelling callers use.
+        std::atomic<std::size_t>      active_script_count_ {0};
         std::atomic<JobId>            next_id_ {1};
         bool                          stopping_ {false}; // guarded by mutex_
 

@@ -435,6 +435,143 @@ TEST_CASE("script engine guards a runaway lifecycle hook", "[script]")
     }
 }
 
+TEST_CASE("script engine runs an update hook", "[script]")
+{
+    ScriptFixture fixture;
+
+    SECTION("a chunk that defines its own hook has it called")
+    {
+        const auto result = fixture.engine.run_update("function update() print('tick') end");
+
+        REQUIRE(result.ran);
+        REQUIRE(result.ok);
+        CHECK(result.error.empty());
+        REQUIRE(result.output.size() == 1);
+        CHECK(result.output[0] == "tick");
+    }
+
+    SECTION("a chunk without a hook of its own is a silent skip")
+    {
+        const auto result = fixture.engine.run_update("local x = 1");
+
+        CHECK_FALSE(result.ran);
+        CHECK(result.ok);
+        CHECK(result.error.empty());
+        CHECK(result.message.empty());
+        CHECK(result.output.empty());
+    }
+
+    SECTION("a global left behind by another chunk is never called")
+    {
+        const auto first = fixture.engine.run_update("ticked = 0\nfunction update() ticked = ticked + 1 end");
+        REQUIRE(first.ran);
+        REQUIRE(first.ok);
+        CHECK(fixture.engine.run("return ticked").returned == "1");
+
+        // The second chunk defines no hook of its own, so the lingering global
+        // from the first chunk must not be called for it.
+        const auto second = fixture.engine.run_update("ticked = ticked + 10");
+        CHECK_FALSE(second.ran);
+        CHECK(second.ok);
+        CHECK(second.error.empty());
+        CHECK(fixture.engine.run("return ticked").returned == "11");
+    }
+
+    SECTION("the chunk runs before the hook")
+    {
+        const auto result = fixture.engine.run_update(R"(
+seen = 0
+function update() seen = seen + 1 end
+)");
+
+        REQUIRE(result.ran);
+        CHECK(fixture.engine.run("return seen").returned == "1");
+    }
+
+    SECTION("false refuses and the second value is the message")
+    {
+        const auto result = fixture.engine.run_update(R"(function update() return false, "why" end)");
+
+        CHECK(result.ran);
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.empty());
+        CHECK(result.message == "why");
+    }
+
+    SECTION("a truthy first value succeeds")
+    {
+        const auto result = fixture.engine.run_update("function update() return true end");
+
+        REQUIRE(result.ran);
+        REQUIRE(result.ok);
+        CHECK(result.message.empty());
+    }
+
+    SECTION("a hook error is reported")
+    {
+        const auto result = fixture.engine.run_update("function update() error('boom') end");
+
+        CHECK(result.ran);
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("boom") != std::string::npos);
+    }
+
+    SECTION("a chunk error never reaches the hook")
+    {
+        const auto result = fixture.engine.run_update(R"(
+print('loading')
+function update() print('ticked') end
+error('boom')
+)");
+
+        CHECK_FALSE(result.ran);
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("boom") != std::string::npos);
+        REQUIRE(result.output.size() == 1);
+        CHECK(result.output[0] == "loading");
+    }
+
+    SECTION("the state survives and run() still behaves")
+    {
+        REQUIRE(fixture.engine.run_update("helper = 7\nfunction update() end").ok);
+
+        const RunResult result = fixture.engine.run("return helper + 35");
+
+        REQUIRE(result.ok);
+        CHECK(result.returned == "42");
+    }
+}
+
+TEST_CASE("script engine guards a runaway update hook", "[script]")
+{
+    SECTION("the instruction budget aborts the hook")
+    {
+        EngineConfig config;
+        config.instruction_budget = 2000;
+        ScriptFixture fixture(0x100, config);
+
+        const auto result = fixture.engine.run_update("function update() while true do end end");
+
+        CHECK(result.ran);
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("instruction budget") != std::string::npos);
+    }
+
+    SECTION("the wall-clock deadline aborts the hook")
+    {
+        EngineConfig config;
+        config.instruction_budget = 10'000'000'000;
+        config.timeout_seconds    = 0.0;
+        ScriptFixture fixture(0x100, config);
+
+        const auto result = fixture.engine.run_update("function update() while true do end end");
+
+        CHECK(result.ran);
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("time budget") != std::string::npos);
+    }
+}
+
 TEST_CASE("script engine registers and sets symbols", "[script]")
 {
     ScriptFixture fixture;
@@ -602,7 +739,13 @@ TEST_CASE("script syntax check compiles without running", "[script]")
                                      "\n"
                                      "function deactivate()\n"
                                      "    return true\n"
-                                     "end\n";
+                                     "end\n"
+                                     "\n"
+                                     "-- Runs on the Live update interval while the checkbox stays ticked;\n"
+                                     "-- define it to keep a value fresh. Return false with a reason to refuse.\n"
+                                     "-- function update()\n"
+                                     "--     return true\n"
+                                     "-- end\n";
         CHECK(slopkit::script::check_syntax(skeleton).has_value());
     }
 

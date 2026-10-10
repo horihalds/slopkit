@@ -5,6 +5,7 @@
 namespace
 {
     using slopkit::process::ScriptResult;
+    using slopkit::process::ScriptUpdatesResult;
 
     // Attaches the fake target on the worker and waits for the completion.
     bool attach_target(AccessWorker& worker)
@@ -87,6 +88,25 @@ namespace
                                  result = std::get<ScriptResult>(std::move(job));
                                  done   = true;
                              });
+        pump(worker,
+             [&]
+             {
+                 return done;
+             });
+        return result;
+    }
+
+    // Submits one update pass and returns its result once the completion arrived.
+    ScriptUpdatesResult run_updates(AccessWorker& worker)
+    {
+        ScriptUpdatesResult result;
+        bool                done = false;
+        worker.submit_script_updates(worker.next_job_id(),
+                                     [&](JobResult&& job)
+                                     {
+                                         result = std::get<ScriptUpdatesResult>(std::move(job));
+                                         done   = true;
+                                     });
         pump(worker,
              [&]
              {
@@ -962,6 +982,165 @@ TEST_CASE("a lifecycle job is refused without an attached target", "[process]")
     REQUIRE(result.lifecycle.has_value());
     CHECK_FALSE(result.lifecycle->ok);
     CHECK(result.lifecycle->error == "no target is attached");
+}
+
+TEST_CASE("a script update pass ticks every active script", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    SECTION("without a target the pass reports an empty result")
+    {
+        const ScriptUpdatesResult result = run_updates(worker);
+
+        CHECK(result.updated == 0);
+        CHECK(result.failed.empty());
+    }
+
+    SECTION("two active scripts are updated in activation order")
+    {
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult first =
+            run_lifecycle_as(worker,
+                             "first",
+                             "function activate() return true end\nfunction update() order = (order or '') .. 'A' end",
+                             std::string {slopkit::script::kActivateHook});
+        REQUIRE(first.lifecycle.has_value());
+        REQUIRE(first.lifecycle->ok);
+        const ScriptResult second =
+            run_lifecycle_as(worker,
+                             "second",
+                             "function activate() return true end\nfunction update() order = (order or '') .. 'B' end",
+                             std::string {slopkit::script::kActivateHook});
+        REQUIRE(second.lifecycle.has_value());
+        REQUIRE(second.lifecycle->ok);
+
+        const ScriptUpdatesResult result = run_updates(worker);
+
+        CHECK(result.updated == 2);
+        CHECK(result.failed.empty());
+        // A later chunk reads what the two hooks left behind: 'AB' proves the
+        // pass kept the activation order.
+        CHECK(run_script(worker, "return order").run.returned == "AB");
+    }
+
+    SECTION("a script without its own update is skipped silently")
+    {
+        REQUIRE(attach_target(worker));
+
+        const ScriptResult ticker =
+            run_lifecycle_as(worker,
+                             "ticker",
+                             "function activate() return true end\nfunction update() ticks = (ticks or 0) + 1 end",
+                             std::string {slopkit::script::kActivateHook});
+        REQUIRE(ticker.lifecycle.has_value());
+        REQUIRE(ticker.lifecycle->ok);
+        const ScriptResult plain = run_lifecycle_as(worker,
+                                                    "plain",
+                                                    "function activate() return true end\nlocal x = 1",
+                                                    std::string {slopkit::script::kActivateHook});
+        REQUIRE(plain.lifecycle.has_value());
+        REQUIRE(plain.lifecycle->ok);
+
+        const ScriptUpdatesResult result = run_updates(worker);
+
+        CHECK(result.updated == 1);
+        CHECK(result.failed.empty());
+        // The hook-less chunk never saw the ticker's lingering global.
+        CHECK(run_script(worker, "return ticks").run.returned == "1");
+    }
+
+    SECTION("a failing update deactivates the script and reports it once")
+    {
+        REQUIRE(attach_target(worker));
+
+        std::vector<slopkit::log::Record> records;
+        SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                                {
+                            records.push_back(record);
+                                                }};
+
+        const ScriptResult activated = run_lifecycle_as(worker,
+                                                        "helper",
+                                                        R"(
+function activate() return true end
+function deactivate()
+    print("undone")
+    return true
+end
+function update() return false, "nope" end
+)",
+                                                        std::string {slopkit::script::kActivateHook});
+        REQUIRE(activated.lifecycle.has_value());
+        REQUIRE(activated.lifecycle->ok);
+        CHECK(worker.active_scripts() == 1);
+
+        const ScriptUpdatesResult result = run_updates(worker);
+
+        CHECK(result.updated == 0);
+        REQUIRE(result.failed.size() == 1);
+        CHECK(result.failed[0].description == "helper");
+        CHECK(result.failed[0].reason == "nope");
+        CHECK(worker.active_scripts() == 0);
+
+        // The same job ran deactivate: its printed line and accepted verdict
+        // both reached the log, exactly like the shutdown path.
+        const auto script = category_records(records, "script");
+        CHECK(any_message_contains(script, "undone"));
+        CHECK(any_message_contains(script, "script 'helper' deactivated: ok"));
+
+        // The next pass no longer ticks the unticked script.
+        records.clear();
+        const ScriptUpdatesResult again = run_updates(worker);
+        CHECK(again.updated == 0);
+        CHECK(again.failed.empty());
+        CHECK_FALSE(any_message_contains(category_records(records, "script"), "undone"));
+    }
+
+    SECTION("the active-script count mirrors attach, activate and detach")
+    {
+        CHECK(worker.active_scripts() == 0);
+
+        REQUIRE(attach_target(worker));
+        CHECK(worker.active_scripts() == 0);
+
+        const std::string chunk = "function activate() return true end\n"
+                                  "function deactivate() return true end\n"
+                                  "function update() end";
+
+        const ScriptResult activated =
+            run_lifecycle_as(worker, "helper", chunk, std::string {slopkit::script::kActivateHook});
+        REQUIRE(activated.lifecycle.has_value());
+        REQUIRE(activated.lifecycle->ok);
+        CHECK(worker.active_scripts() == 1);
+
+        const ScriptResult deactivated =
+            run_lifecycle_as(worker, "helper", chunk, std::string {slopkit::script::kDeactivateHook});
+        REQUIRE(deactivated.lifecycle.has_value());
+        REQUIRE(deactivated.lifecycle->ok);
+        CHECK(worker.active_scripts() == 0);
+
+        const ScriptResult again =
+            run_lifecycle_as(worker, "helper", chunk, std::string {slopkit::script::kActivateHook});
+        REQUIRE(again.lifecycle.has_value());
+        REQUIRE(again.lifecycle->ok);
+        CHECK(worker.active_scripts() == 1);
+
+        bool detached = false;
+        worker.submit_detach(worker.next_job_id(),
+                             [&](JobResult&&)
+                             {
+                                 detached = true;
+                             });
+        REQUIRE(pump(worker,
+                     [&]
+                     {
+                         return detached;
+                     }));
+        CHECK_FALSE(worker.attached());
+        CHECK(worker.active_scripts() == 0);
+    }
 }
 
 TEST_CASE("an active script is deactivated when the worker stops", "[process]")

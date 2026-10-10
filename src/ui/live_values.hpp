@@ -44,6 +44,19 @@ namespace slopkit::ui
         virtual void                                   apply_live_readings(std::span<const LiveReading> readings) = 0;
     };
 
+    // A component that wants work done on the same cadence as the read pass.
+    // It is asked once per interval while a target is attached and the live
+    // update toggle is on, after the read pass has been submitted, so a slow
+    // implementation can only delay one batched read. It applies its own
+    // in-flight and spacing rules.
+    struct LiveTicker
+    {
+        virtual ~LiveTicker() = default;
+
+        // Submits its job when one is due; true when it submitted one now.
+        [[nodiscard]] virtual bool tick(std::chrono::milliseconds interval) = 0;
+    };
+
     // The single owner of the live cadence. It collects the requests of every
     // registered surface on a poll, submits them as one batched worker job and
     // fans the readings back out, so one interval is one job and one session
@@ -62,6 +75,10 @@ namespace slopkit::ui
         // Registers a surface; not owned, registered once at construction.
         void add_surface(LiveSurface* surface);
 
+        // Registers a ticker asked after the read pass; not owned, registered
+        // once at construction.
+        void add_ticker(LiveTicker* ticker);
+
         // Called from MainWindow::on_tick(); submits a pass when the cadence
         // allows it.
         void poll();
@@ -78,6 +95,9 @@ namespace slopkit::ui
         SettingsController&      settings_;
 
         std::vector<LiveSurface*> surfaces_;
+
+        // The tickers asked after the read pass on the same cadence.
+        std::vector<LiveTicker*> tickers_;
 
         // The in-flight pass: the job id, the number of requests per surface and
         // the flat request ids in submission order.

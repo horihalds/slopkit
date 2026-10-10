@@ -75,6 +75,50 @@ namespace slopkit::script
             lua_pop(state, 1); // luaL_tolstring always pushes its result
             return description;
         }
+
+        // The identity of the global `update` in `state`, or nullptr when it is
+        // absent or not a function. `run_update` compares it across the chunk
+        // run, so only the hook the chunk itself defines counts -- a global left
+        // behind by another script never does.
+        const void* update_identity(lua_State* state)
+        {
+            const std::string name {kUpdateHook};
+            lua_getglobal(state, name.c_str());
+            const void* identity = lua_isfunction(state, -1) != 0 ? lua_topointer(state, -1) : nullptr;
+            lua_pop(state, 1);
+            return identity;
+        }
+
+        // The verdict a hook call returns: `ok` is false only for an explicit
+        // `false` first value, and `message` is the second return value when
+        // there is one. Shared by `run_lifecycle` and `run_update` so the two
+        // cannot drift apart.
+        struct HookVerdict
+        {
+            bool        ok {true};
+            std::string message;
+        };
+
+        HookVerdict read_verdict(sol::protected_function_result& call, lua_State* state)
+        {
+            HookVerdict verdict;
+            if (call.return_count() > 0)
+            {
+                const sol::object value = call.get<sol::object>(0);
+                if (value.get_type() == sol::type::boolean && !value.as<bool>())
+                {
+                    verdict.ok = false;
+                }
+            }
+            if (call.return_count() > 1)
+            {
+                const sol::object reason = call.get<sol::object>(1);
+                reason.push(state);
+                verdict.message = to_text(state, -1);
+                lua_pop(state, 1); // the value pushed above
+            }
+            return verdict;
+        }
     } // namespace
 
     struct Engine::Impl
@@ -1476,22 +1520,84 @@ namespace slopkit::script
 
         // Nothing, or a truthy first value, is a success; an explicit `false` is
         // a refusal. A second return value is the message either way.
-        result.ok = true;
-        if (hook_call.return_count() > 0)
+        const HookVerdict verdict = read_verdict(hook_call, state);
+        result.ok                 = verdict.ok;
+        result.message            = verdict.message;
+
+        return result;
+    }
+
+    UpdateResult Engine::run_update(std::string_view chunk)
+    {
+        Impl&      impl  = *impl_;
+        lua_State* state = impl.lua.lua_state();
+
+        UpdateResult result;
+        impl.output.clear();
+        impl.begin_chunk(chunk);
+
+        // Another script may have left an `update` global behind, so remember
+        // what the chunk starts with: only a function this very chunk defines is
+        // its own hook, which is what makes a hook-less chunk a silent skip.
+        const void* before = update_identity(state);
+
+        sol::load_result loaded = impl.lua.load(chunk, "@script");
+        if (!loaded.valid())
         {
-            const sol::object verdict = hook_call.get<sol::object>(0);
-            if (verdict.get_type() == sol::type::boolean && !verdict.as<bool>())
+            const sol::error error = loaded;
+            result.error           = error.what();
+            result.ok              = false;
+            result.output          = std::move(impl.output);
+            return result;
+        }
+
+        sol::protected_function        chunk_function = loaded;
+        sol::protected_function_result chunk_call     = impl.call_guarded(
+            [&chunk_function]
             {
-                result.ok = false;
-            }
-        }
-        if (hook_call.return_count() > 1)
+                return chunk_function();
+            });
+        if (!chunk_call.valid())
         {
-            const sol::object reason = hook_call.get<sol::object>(1);
-            reason.push(state);
-            result.message = to_text(state, -1);
-            lua_pop(state, 1); // the value pushed above
+            const sol::error error = chunk_call;
+            result.error           = error.what();
+            result.ok              = false;
+            result.output          = std::move(impl.output);
+            return result;
         }
+
+        const void* after = update_identity(state);
+        if (after == nullptr || after == before)
+        {
+            // The chunk defines no hook of its own: skipped silently and the
+            // tick counts as a success.
+            result.output = std::move(impl.output);
+            return result;
+        }
+
+        result.ran = true;
+
+        sol::object                    hook          = impl.lua[std::string(kUpdateHook)];
+        sol::protected_function        hook_function = hook;
+        sol::protected_function_result hook_call     = impl.call_guarded(
+            [&hook_function]
+            {
+                return hook_function();
+            });
+
+        result.output = std::move(impl.output);
+
+        if (!hook_call.valid())
+        {
+            const sol::error error = hook_call;
+            result.error           = error.what();
+            result.ok              = false;
+            return result;
+        }
+
+        const HookVerdict verdict = read_verdict(hook_call, state);
+        result.ok                 = verdict.ok;
+        result.message            = verdict.message;
 
         return result;
     }

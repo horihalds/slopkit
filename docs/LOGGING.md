@@ -40,7 +40,9 @@ string literals.
 - `script` — a Lua script entry: run submit/execute/complete, the lines it printed,
   its first error, each `alloc`/`dealloc` of target memory, and the dialog's
   compile-only syntax check (an info line when it passes, a warning when it does
-  not).
+  not). A ticked script's `update` writes nothing on a successful tick and one
+  `warning` when a tick fails and switches the script off; no record is written per
+  tick.
 - `debug` — the opt-in debug session: start/stop, stops, software and hardware
   breakpoint arming and every debug failure.
 - `ui` — user actions in the Qt layer.

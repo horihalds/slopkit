@@ -974,6 +974,131 @@ function deactivate() return true end
     CHECK_FALSE(table.entries()[0].active);
 }
 
+TEST_CASE("a failed update tick clears the Active box and reports it once", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper",
+                             R"(
+function activate() return true end
+function deactivate() return true end
+function update() end
+)") == 0);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    ScriptStatus status;
+    watch_script_status(panel, status);
+    attach_app_session(worker);
+
+    const QModelIndex active_index = model->index(0, slopkit::ui::models::AddressTableModel::active);
+    const auto        failure      = slopkit::process::ScriptUpdateFailure {.description = "helper", .reason = "nope"};
+
+    // True when any captured record's message contains `text`.
+    const auto has_record = [](const std::vector<slopkit::log::Record>& records, std::string_view text)
+    {
+        for (const auto& record : records)
+        {
+            if (record.message.find(text) != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    SECTION("a ticked row is cleared with one warning and a status line")
+    {
+        CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole));
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return table.entries()[0].active;
+                        }));
+        REQUIRE(worker.active_scripts() == 1);
+
+        std::vector<slopkit::log::Record> records;
+        SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                                {
+                            records.push_back(record);
+                                                }};
+
+        panel.note_script_update_failed(failure);
+
+        CHECK_FALSE(table.entries()[0].active);
+        CHECK(model->data(active_index, Qt::CheckStateRole).toInt() == Qt::Unchecked);
+        CHECK(status.is_error);
+        CHECK(status.text == QStringLiteral("Update failed: nope"));
+
+        std::vector<slopkit::log::Record> script_records;
+        for (const auto& record : records)
+        {
+            if (record.category == "script")
+            {
+                script_records.push_back(record);
+            }
+        }
+        REQUIRE(script_records.size() == 1);
+        CHECK(script_records[0].message == "script 'helper' update failed: nope");
+
+        // No deactivate job was submitted: the status stayed on the report and
+        // the worker still tracks the script.
+        CHECK(worker.active_scripts() == 1);
+    }
+
+    SECTION("a failure for a row that is no longer active is only logged")
+    {
+        // The row was never ticked (or a detach already cleared it): the flag
+        // and the status line are left alone, the record is still written.
+        std::vector<slopkit::log::Record> records;
+        SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                                {
+                            records.push_back(record);
+                                                }};
+
+        panel.note_script_update_failed(failure);
+
+        CHECK_FALSE(table.entries()[0].active);
+        CHECK(model->data(active_index, Qt::CheckStateRole).toInt() == Qt::Unchecked);
+        CHECK(status.text.isEmpty());
+        CHECK(has_record(records, "script 'helper' update failed: nope"));
+    }
+
+    SECTION("a manual hook job in flight is not disturbed")
+    {
+        CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole));
+        REQUIRE(status.text == QStringLiteral("Activating…")); // the activate job is in flight
+
+        std::vector<slopkit::log::Record> records;
+        SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                                {
+                            records.push_back(record);
+                                                }};
+
+        panel.note_script_update_failed(failure);
+
+        // The in-flight activate owns the row and the status line.
+        CHECK_FALSE(table.entries()[0].active);
+        CHECK(status.text == QStringLiteral("Activating…"));
+        CHECK(has_record(records, "script 'helper' update failed: nope"));
+
+        REQUIRE(pump_ui(worker,
+                        [&]
+                        {
+                            return table.entries()[0].active;
+                        }));
+    }
+}
+
 TEST_CASE("a refused activation reverts the checkbox", "[ui]")
 {
     application();

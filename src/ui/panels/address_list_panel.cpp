@@ -797,6 +797,48 @@ namespace slopkit::ui::panels
         report_status(std::format("Active write failed: {}", message), true);
     }
 
+    void AddressListPanel::note_script_update_failed(const process::ScriptUpdateFailure& failure)
+    {
+        // The worker already deactivated the script and stopped ticking it, so
+        // only its row's flag and the report are left. The row is located by
+        // description, which is what the worker tracked the script under.
+        std::optional<std::size_t> row;
+        for (std::size_t index = 0; index < table_.size(); ++index)
+        {
+            const table::AddressEntry& entry = table_.entries()[index];
+            if (entry.kind == table::EntryKind::script && entry.description == failure.description)
+            {
+                row = index;
+                break;
+            }
+        }
+
+        // Exactly one warning, whether or not the row is still there to update.
+        if (failure.reason.empty())
+        {
+            log::warning(log::category::script, std::format("script '{}' update failed", failure.description));
+        }
+        else
+        {
+            log::warning(log::category::script,
+                         std::format("script '{}' update failed: {}", failure.description, failure.reason));
+        }
+
+        // A row the detach sweep already cleared, or one whose manual hook job
+        // is in flight, only gets the record: this class must not touch it, and
+        // it must not submit a second deactivate either.
+        if (!row.has_value() || !table_.entries()[*row].active || script_job_.has_value())
+        {
+            return;
+        }
+
+        table_.entries()[*row].active = false;
+        model_->note_entry_changed(*row);
+        set_status(failure.reason.empty() ? tr("Update failed.")
+                                          : tr("Update failed: %1").arg(to_qstring(failure.reason)),
+                   true);
+    }
+
     void AddressListPanel::show_context_menu(const QPoint& position)
     {
         QMenu menu(this);

@@ -95,6 +95,11 @@ namespace slopkit::ui::panels
         // Reports an active-toggle failure raised outside the panel.
         void report_active_error(std::string_view message);
 
+        // A ticked script's `update` failed and the worker already ran its
+        // deactivate: clear its Active box and report the reason. No deactivate
+        // job is submitted here.
+        void note_script_update_failed(const process::ScriptUpdateFailure& failure);
+
         // Polled by the window's tick.
         void refresh();
 

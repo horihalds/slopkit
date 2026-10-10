@@ -22,9 +22,12 @@ namespace slopkit::script
     inline constexpr std::size_t kMaxOutputLine  = 4096;
 
     // The lifecycle hooks an address row's Active checkbox drives: ticking runs
-    // `activate`, unticking runs `deactivate`.
+    // `activate`, unticking runs `deactivate`. While the box stays ticked the
+    // live cadence calls `update` once per interval -- but only when the script's
+    // own chunk defines it.
     inline constexpr std::string_view kActivateHook   = "activate";
     inline constexpr std::string_view kDeactivateHook = "deactivate";
+    inline constexpr std::string_view kUpdateHook     = "update";
 
     // The outcome of one chunk: whether it ran to completion, the message of the
     // first error when it did not, the script's captured `print` lines in order

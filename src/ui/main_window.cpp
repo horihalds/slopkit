@@ -41,6 +41,7 @@
 #include "ui/panels/debug_controls.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
+#include "ui/script_updates.hpp"
 #include "ui/settings.hpp"
 #include "ui/text.hpp"
 #include "ui/theme.hpp"
@@ -412,6 +413,17 @@ namespace slopkit::ui
         live_values_->add_surface(found_list_);
         live_values_->add_surface(address_list_);
         live_values_->add_surface(memory_view_.get());
+
+        // The ticked scripts' `update` hooks share that cadence, after the read
+        // pass; a failed tick was already deactivated by the worker, so the
+        // address list only clears the row and reports the reason.
+        script_updates_ = std::make_unique<ScriptUpdates>(worker_);
+        script_updates_->set_failure_handler(
+            [this](const process::ScriptUpdateFailure& failure)
+            {
+                address_list_->note_script_update_failed(failure);
+            });
+        live_values_->add_ticker(script_updates_.get());
         connect(memory_view_.get(),
                 &dialogs::MemoryViewerDialog::liveRefreshRequested,
                 live_values_,

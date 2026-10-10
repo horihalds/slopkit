@@ -65,6 +65,7 @@ namespace slopkit::debug
 namespace slopkit::ui
 {
     class LiveValues;
+    class ScriptUpdates;
     class SettingsController;
 
     // The application window: menu bar, status bar and the three split zones. It
@@ -232,6 +233,10 @@ namespace slopkit::ui
         // The one live-pass coordinator; owns the cadence the three surfaces
         // follow and submits a single batched read per interval.
         LiveValues* live_values_ {};
+
+        // The ticked scripts' `update` pass, registered with live_values_ so it
+        // shares the interval and the toggle.
+        std::unique_ptr<ScriptUpdates> script_updates_;
 
         // In-flight freeze job, if any; one at a time.
         std::optional<process::JobId> freeze_pending_;

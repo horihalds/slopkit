@@ -387,6 +387,30 @@ namespace
         }
     };
 
+    // A live ticker that records how often it was asked, with which interval,
+    // and whether it claimed to have submitted, so the coordinator's cadence and
+    // gating can be asserted directly.
+    class StubLiveTicker : public slopkit::ui::LiveTicker
+    {
+    public:
+        int                       calls {0};
+        int                       submits {0};
+        bool                      submits_now {false};
+        std::chrono::milliseconds last_interval {0};
+
+        bool tick(std::chrono::milliseconds interval) override
+        {
+            ++calls;
+            last_interval = interval;
+            if (submits_now)
+            {
+                ++submits;
+                return true;
+            }
+            return false;
+        }
+    };
+
     // Adds an int32 entry with the given stored bytes.
     [[maybe_unused]] void
     add_int32(slopkit::table::AddressTable& table, std::uint64_t address, std::byte stored = std::byte {1})

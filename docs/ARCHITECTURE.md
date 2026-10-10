@@ -276,8 +276,8 @@ target.
   value)` and `ulabel(name)` — with identical arguments, naming and error wording,
   but the registry is the engine's own and a label only exists inside the script
   source that registered it: the engine drops the labels whenever a run is handed a
-  *different* chunk, so a script's own `activate`/`deactivate` hooks share its
-  labels while two scripts never do. Labels never reach `script::SymbolTable` or
+  *different* chunk, so a script's own `activate`/`deactivate`/`update` hooks share
+  its labels while two scripts never do. Labels never reach `script::SymbolTable` or
   the address table's own resolution; a value that must outlive another script's
   run belongs in a global symbol (`ssymbol`).
 - A chunk reads the names it knows back through `label(name)` (its own labels
@@ -424,9 +424,17 @@ target.
   never reaches the hook; a missing or non-function global reports
   `<name>() is not defined`. The hook's first return value decides the verdict —
   nothing or a truthy value succeeds, an explicit `false` refuses — and a second
-  return value is the message either way. Both entry points share the instruction
-  budget, the wall-clock deadline and the `print` capture, and the globals persist
-  between calls exactly as for `run()`.
+   return value is the message either way. Both entry points share the instruction
+   budget, the wall-clock deadline and the `print` capture, and the globals persist
+   between calls exactly as for `run()`.
+- `run_update(chunk)` is the third entry point: it runs the chunk and then calls the
+  global `update` only when *this* chunk defined one — it compares the global's
+  `lua_topointer` identity before and after the chunk run, so an `update` left
+  behind by another script is never called and a hook-less chunk is a silent skip
+  rather than the `update() is not defined` error the lifecycle path would report.
+  It returns a `script::UpdateResult {ran, ok, error, message, output}`; the verdict
+  maps exactly like `run_lifecycle`, a chunk error leaves `ran == false` with the
+  error set, and a refusal or error sets `ok == false`.
 - Running a script is an `AccessWorker` job (`JobKind::script` → `ScriptResult`):
   `submit_script` takes an optional hook name, so an empty name runs the whole
   chunk (the address list's `Run Script`) and a name runs `run_lifecycle()`. Either
@@ -438,23 +446,37 @@ target.
   written only when the verdict accepts, and a refusal snaps the box back and
   reaches the status line as `Activate failed: <message>` / `Deactivate failed:
   <message>`. A run or toggle without an attached target is refused.
+- The ticked scripts' per-interval hooks are one more worker job
+  (`JobKind::script_update` → `ScriptUpdatesResult`): `submit_script_updates` runs
+  `Engine::run_update` for every remembered script in activation order inside one
+  job. A script whose chunk defines no `update` of its own is skipped silently; a
+  failed tick runs that script's `deactivate` hook in the same job, forgets it and
+  reports one `{description, reason}` in the result — the reason is the hook's
+  message, or the error text when it did not refuse with one. The tick's captured
+  `print` lines are dropped on purpose, because a hook that runs at the user's
+  interval cannot feed the Log window without flooding it.
 - A runaway chunk is aborted by the instruction budget and the wall-clock deadline
   in `script::EngineConfig`, checked from a `lua_sethook` installed for the run; the
   abort is an ordinary Lua error that leaves both the state and the session usable.
 - The worker remembers every script whose `activate` verdict was accepted — its
   description and the exact chunk that ran — beside the engine, and forgets it when
-  a `deactivate` verdict is accepted. As the worker stops (quitting slopkit), it
+  a `deactivate` verdict is accepted; an atomic count mirror (`active_scripts()`)
+  is refreshed at every change and cleared wherever the engine is dropped, so the UI
+  can skip an update pass while nothing would be ticked. As the worker stops
+  (quitting slopkit), it
   runs each remembered chunk's `deactivate` hook once, in activation order, while
   the session and the engine's globals are still alive. The verdict is ignored — no
   retry and no box to write on the way out — and each result is logged once under
   `script`, so an activated script is undone before the target is released.
 
 A script entry has no address and no value, never takes part in the freeze pass
-(its `Active` flag drives the lifecycle hooks instead of a freeze writer) and
+(its `Active` flag drives the lifecycle hooks and the per-interval `update`
+instead of a freeze writer) and
 renders read-only in the grid apart from its leading `Active` checkbox and its
 `Description` cell: the Type column says `script`, the Address and Value cells
 stay blank and no other cell is editable, so a `Description` edit renames the
 entry exactly as it renames a value row and can never submit a write job.
 `File > Add Script…`, the row menu's `Run Script` and `Edit Script…`, the
 `Active` checkbox and the Add/Edit Script dialog's compile-only `Verify` button
-are the only new UI; `Add Script…` seeds the two hooks as a commented skeleton.
+are the only new UI; `Add Script…` seeds the three hooks as a commented skeleton
+(the `update` stub commented out, since the hook is optional).

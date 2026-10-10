@@ -86,6 +86,7 @@ TEST_CASE("the add-script dialog appends a script entry", "[ui]")
     CHECK(description_of(dialog)->text() == QStringLiteral("New script"));
     CHECK(editor_of(dialog)->toPlainText().contains(QStringLiteral("function activate()")));
     CHECK(editor_of(dialog)->toPlainText().contains(QStringLiteral("function deactivate()")));
+    CHECK(editor_of(dialog)->toPlainText().contains(QStringLiteral("-- function update()")));
 
     // An empty description is refused and appends nothing.
     description_of(dialog)->clear();
@@ -172,10 +173,12 @@ TEST_CASE("committing the untouched add form stores the hook skeleton", "[ui]")
     AddScriptDialog dialog {table};
     dialog.show();
 
-    // The skeleton names both hooks and shows the refusal form.
+    // The skeleton names all three hooks and shows the refusal form; the
+    // optional `update` hook is seeded commented out.
     const QString skeleton = editor_of(dialog)->toPlainText();
     CHECK(skeleton.contains(QStringLiteral("function activate()")));
     CHECK(skeleton.contains(QStringLiteral("function deactivate()")));
+    CHECK(skeleton.contains(QStringLiteral("-- function update()")));
     CHECK(skeleton.contains(QStringLiteral("return false, \"why\"")));
 
     commit_of(dialog)->click();
