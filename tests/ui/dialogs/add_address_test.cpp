@@ -270,7 +270,70 @@ TEST_CASE("a pointer-chain expression resolves through the worker before the ent
     CHECK(add->isEnabled());
 }
 
-TEST_CASE("an invalid address keeps the add address dialog open", "[ui]")
+TEST_CASE("an unresolvable expression is still added", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    AddAddressDialog               dialog {table, worker};
+
+    auto* address = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* add     = button_labelled(dialog, QStringLiteral("Add"));
+    REQUIRE(address != nullptr);
+    REQUIRE(add != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+
+    // `not-an-address` parses as a bare base token but does not resolve: it is a
+    // resolve failure, so the row is added unresolved instead of refused.
+    address->setText(QStringLiteral("not-an-address"));
+    add->click();
+
+    CHECK_FALSE(dialog.isVisible());
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries().front().expression == "not-an-address");
+    CHECK(table.entries().front().address == 0);
+}
+
+TEST_CASE("a pointer chain with no target is still added unresolved", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    AddAddressDialog               dialog {table, worker};
+
+    auto* address = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* add     = button_labelled(dialog, QStringLiteral("Add"));
+    REQUIRE(address != nullptr);
+    REQUIRE(add != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+
+    address->setText(QStringLiteral("[120000+10]"));
+    add->click();
+
+    // The add waits for the worker resolve, then lands unresolved (no session).
+    CHECK_FALSE(add->isEnabled());
+    CHECK(table.size() == 0);
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table.size() == 1;
+                    }));
+    CHECK_FALSE(dialog.isVisible());
+    CHECK(table.entries().front().expression == "[120000+10]");
+    CHECK(table.entries().front().address == 0);
+    CHECK(add->isEnabled());
+}
+
+TEST_CASE("a malformed address keeps the add address dialog open", "[ui]")
 {
     ensure_application();
 
@@ -289,12 +352,132 @@ TEST_CASE("an invalid address keeps the add address dialog open", "[ui]")
     dialog.show();
     QApplication::processEvents();
 
-    address->setText(QStringLiteral("not-an-address"));
+    address->setText(QStringLiteral("app+"));
     add->click();
 
     CHECK(dialog.isVisible());
     CHECK(table.size() == 0);
     CHECK(status->text().contains(QStringLiteral("Address:")));
+
+    address->clear();
+    add->click();
+
+    CHECK(dialog.isVisible());
+    CHECK(table.size() == 0);
+    CHECK(status->text().contains(QStringLiteral("Address:")));
+}
+
+TEST_CASE("the add address dialog previews the resolved address and value", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    attach_session(worker);
+    // Little-endian, as a real target stores an int32 of 42.
+    (*access.memory)[0x100010] = {std::byte {42}, std::byte {0}, std::byte {0}, std::byte {0}};
+
+    AddAddressDialog dialog {table, worker};
+    dialog.set_modules({module_image("app", 0x100000, 0x1000)});
+
+    auto* address = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* hex     = dialog.findChild<QCheckBox*>(QStringLiteral("hex_check"));
+    auto* preview = dialog.findChild<QLabel*>(QStringLiteral("preview_label"));
+    REQUIRE(address != nullptr);
+    REQUIRE(hex != nullptr);
+    REQUIRE(preview != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+
+    // The debounce resolves the deref-free text, then the worker reads the value.
+    address->setText(QStringLiteral("APP+0x10"));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return preview->text().contains(QStringLiteral("42"));
+                    }));
+    CHECK(preview->text().contains(QStringLiteral("app+10")));
+
+    // The hex toggle re-formats the same bytes, with no new read.
+    hex->setChecked(true);
+    CHECK(preview->text().contains(QStringLiteral("0000002A")));
+}
+
+TEST_CASE("the add address dialog previews an unresolved expression", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    AddAddressDialog               dialog {table, worker};
+
+    auto* address = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* add     = button_labelled(dialog, QStringLiteral("Add"));
+    auto* preview = dialog.findChild<QLabel*>(QStringLiteral("preview_label"));
+    REQUIRE(address != nullptr);
+    REQUIRE(add != nullptr);
+    REQUIRE(preview != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+
+    address->setText(QStringLiteral("not-an-address"));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return preview->text().contains(QStringLiteral("unknown module or literal"));
+                    }));
+
+    // Add still produces a row while the expression is unresolved.
+    add->click();
+    CHECK_FALSE(dialog.isVisible());
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries().front().expression == "not-an-address");
+    CHECK(table.entries().front().address == 0);
+}
+
+TEST_CASE("the add address dialog clears and re-resolves the preview", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    AddAddressDialog               dialog {table, worker};
+    dialog.set_modules({module_image("app", 0x100000, 0x1000)});
+
+    auto* address = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* preview = dialog.findChild<QLabel*>(QStringLiteral("preview_label"));
+    REQUIRE(address != nullptr);
+    REQUIRE(preview != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+
+    address->setText(QStringLiteral("APP+0x10"));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return preview->text().contains(QStringLiteral("app+10"));
+                    }));
+
+    // Reopening clears the preview.
+    dialog.hide();
+    dialog.show();
+    QApplication::processEvents();
+    CHECK(preview->text().isEmpty());
+
+    // A new module map re-resolves the current text against the new base.
+    address->setText(QStringLiteral("game+0x10"));
+    dialog.set_modules({module_image("game", 0x200000, 0x1000)});
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return preview->text().contains(QStringLiteral("game+10"));
+                    }));
 }
 
 TEST_CASE("an invalid dynamic size keeps the add address dialog open", "[ui]")
