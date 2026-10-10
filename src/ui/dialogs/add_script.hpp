@@ -8,6 +8,7 @@
 #include <QDialog>
 #include <QString>
 
+class QKeyEvent;
 class QLineEdit;
 class QPushButton;
 
@@ -47,6 +48,11 @@ namespace slopkit::ui::dialogs
         // shown and committing replaces them. A row that is not a script entry
         // leaves the dialog in add mode.
         void edit_entry(std::size_t row);
+
+    protected:
+        // `Esc` belongs to the editor: it swallows the key so the dialog is
+        // only closed by its buttons or the window-manager close button.
+        void keyPressEvent(QKeyEvent* event) override;
 
     private:
         void commit();

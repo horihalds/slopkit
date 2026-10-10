@@ -10,6 +10,7 @@
 
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTextBlock>
@@ -86,7 +87,6 @@ end
     AddScriptDialog::AddScriptDialog(table::AddressTable& table, QWidget* parent) : QDialog(parent), table_(table)
     {
         setWindowTitle(tr("Add Script"));
-        setMinimumWidth(520);
 
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(10, 10, 10, 10);
@@ -133,6 +133,19 @@ end
                 });
 
         reset_for_add();
+    }
+
+    void AddScriptDialog::keyPressEvent(QKeyEvent* event)
+    {
+        // The popups inside the editor consume `Esc` first; a key that reaches
+        // here must not let QDialog's default reject() discard the edits.
+        if (event->key() == Qt::Key_Escape)
+        {
+            event->accept();
+            return;
+        }
+
+        QDialog::keyPressEvent(event);
     }
 
     void AddScriptDialog::reset_for_add()

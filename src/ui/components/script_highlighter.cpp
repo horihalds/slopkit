@@ -4,6 +4,7 @@
 #include <QTextCharFormat>
 #include <QTextDocument>
 
+#include "script/api_catalog.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::components
@@ -53,21 +54,27 @@ namespace slopkit::ui::components
             return set;
         }
 
-        // Every global the script engine binds, in one place, so a name is
-        // highlighted iff the engine actually exposes it.
+        // Every global the script API and the Lua standard library define, straight
+        // from the catalogue, so the highlighter cannot drift from the completion
+        // list and a name is highlighted iff the engine actually exposes it.
         const QSet<QString>& api_globals()
         {
-            static const QSet<QString> set {
-                QStringLiteral("mem"),        QStringLiteral("print"),    QStringLiteral("write"),
-                QStringLiteral("read_u8"),    QStringLiteral("read_i8"),  QStringLiteral("read_u16"),
-                QStringLiteral("read_i16"),   QStringLiteral("read_u32"), QStringLiteral("read_i32"),
-                QStringLiteral("read_u64"),   QStringLiteral("read_i64"), QStringLiteral("read_f32"),
-                QStringLiteral("read_f64"),   QStringLiteral("aobscan"),  QStringLiteral("alloc"),
-                QStringLiteral("dealloc"),    QStringLiteral("rsymbol"),  QStringLiteral("ssymbol"),
-                QStringLiteral("usymbol"),    QStringLiteral("rlabel"),   QStringLiteral("slabel"),
-                QStringLiteral("ulabel"),     QStringLiteral("label"),    QStringLiteral("symbol"),
-                QStringLiteral("expression"),
-            };
+            static const QSet<QString> set = []
+            {
+                QSet<QString> names;
+                for (const script::ApiEntry& entry : script::api_catalog())
+                {
+                    if (entry.name.find('.') == std::string_view::npos)
+                    {
+                        names.insert(QString::fromUtf8(entry.name.data(), static_cast<int>(entry.name.size())));
+                    }
+                }
+                for (const std::string_view name : script::lua_standard_globals())
+                {
+                    names.insert(QString::fromUtf8(name.data(), static_cast<int>(name.size())));
+                }
+                return names;
+            }();
             return set;
         }
 

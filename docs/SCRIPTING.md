@@ -28,6 +28,29 @@ caret's current line highlighted, and a matched-bracket highlight when the caret
 touches a `)`/`]`/`}` or its opener. `Tab` indents to the next four-space stop,
 `Shift+Tab` removes one stop, and `Enter` keeps the current line's indentation.
 
+The editor opens about 100 mono columns wide and 18 text lines tall — wide
+enough for the `original`/`pattern` lines of a generated hook script — and
+widens further to fit the longest line of the text it is seeded with, up to a
+140-column cap; a longer line keeps horizontal scrolling. The dialog stays
+freely resizable. `Esc` never closes the dialog: it dismisses the completion
+list or the argument hint when one is open and otherwise does nothing, so the
+`Close` button and the window-manager close button are the way out.
+
+While you write, a completion list offers the slopkit API, the Lua standard
+library and the names the script itself defines, each with its signature. It
+opens as you type an identifier, on demand with `Ctrl+Space`, and after a `mem.`
+it lists that table's members. `Up`/`Down` move the highlight, `Tab` or `Enter`
+accepts the highlighted name (adding `()` for a function) and `Esc` closes the
+list without touching the text; a single undo reverts an accepted name. The list
+never opens inside a comment or a string.
+
+While the caret sits inside a call's parentheses, an argument hint shows that
+function's signature with the parameter you are filling emphasised, plus its
+one-line summary. It follows the caret, and disappears when you leave the call,
+when the completion list is open or when the editor loses focus. A call to a
+function the script itself defines hints with that function's own parameter
+list; an unknown call shows nothing.
+
 ### Verify before you run
 
 `Verify` compiles the editor's text **without running it and without touching the

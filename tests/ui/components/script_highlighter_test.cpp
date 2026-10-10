@@ -63,6 +63,23 @@ TEST_CASE("the Lua highlighter colours the script API globals", "[ui]")
     CHECK(colour_at(block, 9, 4) == theme.syntax_number); // 0x10
 }
 
+TEST_CASE("the Lua highlighter colours the API names it used to miss", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    QTextDocument     document;
+    ScriptHighlighter highlighter(&document);
+    document.setPlainText(QStringLiteral("hook.install(kHook)\naobscan(\"hp\", \"48 8B\")\nassemble(p, \"nop\")"));
+    highlighter.rehighlight();
+
+    const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
+
+    CHECK(colour_at(document.findBlockByNumber(0), 0, 4) == theme.syntax_module); // hook
+    CHECK(colour_at(document.findBlockByNumber(1), 0, 7) == theme.syntax_module); // aobscan
+    CHECK(colour_at(document.findBlockByNumber(2), 0, 8) == theme.syntax_module); // assemble
+}
+
 TEST_CASE("the Lua highlighter carries long constructs across blocks", "[ui]")
 {
     application();

@@ -1,12 +1,20 @@
 #include <catch2/catch.hpp>
 
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
+#include <QCoreApplication>
+#include <QFontMetricsF>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QTextDocument>
 
+#include "script/hook_script.hpp"
 #include "support/ui_helpers.hpp"
 #include "table/address_table.hpp"
 #include "ui/components/script_editor.hpp"
@@ -47,6 +55,18 @@ namespace
     slopkit::ui::widgets::StatusLabel* status_of(AddScriptDialog& dialog)
     {
         return dialog.findChild<slopkit::ui::widgets::StatusLabel*>();
+    }
+
+    QPushButton* close_of(AddScriptDialog& dialog)
+    {
+        for (QPushButton* button : dialog.findChildren<QPushButton*>())
+        {
+            if (button->text() == QStringLiteral("Close"))
+            {
+                return button;
+            }
+        }
+        return nullptr;
     }
 } // namespace
 
@@ -251,4 +271,78 @@ TEST_CASE("a prefilled add dialog keeps the generated text editable", "[ui]")
     CHECK(table.entries()[0].kind == EntryKind::script);
     CHECK(table.entries()[0].description == description.toStdString());
     CHECK(table.entries()[0].script == source.toStdString());
+}
+
+TEST_CASE("Escape leaves the add-script dialog open", "[ui]")
+{
+    application();
+
+    AddressTable    table;
+    AddScriptDialog dialog {table};
+    dialog.show();
+
+    bool rejected = false;
+    QObject::connect(&dialog,
+                     &QDialog::rejected,
+                     &dialog,
+                     [&rejected]
+                     {
+                         rejected = true;
+                     });
+
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&dialog, &escape);
+
+    CHECK(dialog.isVisible());
+    CHECK_FALSE(rejected);
+
+    // The Close button is still the way out.
+    REQUIRE(close_of(dialog) != nullptr);
+    close_of(dialog)->click();
+    CHECK_FALSE(dialog.isVisible());
+    CHECK(rejected);
+}
+
+TEST_CASE("the add-script dialog opens wide enough for a hook script", "[ui]")
+{
+    application();
+
+    AddressTable    table;
+    AddScriptDialog dialog {table};
+
+    // A hook script as the generator renders it; 32 original bytes make the
+    // `original = string.char(...)` line the document's longest at ~106 columns.
+    slopkit::script::HookTarget target;
+    target.address            = 0x7F3A1B2C;
+    target.description        = "game.exe+1A2B40";
+    target.module_name        = "game.exe";
+    target.module_rva_text    = "1A2B40";
+    target.pattern            = "48 8B 05 ?? ?? ?? ?? 48 89 03";
+    target.instruction_length = 3;
+    for (int index = 0; index < 32; ++index)
+    {
+        target.original.push_back(static_cast<std::byte>(index));
+    }
+    slopkit::script::HookInstruction covered;
+    covered.text         = "MOV RAX, [RBX+1C]";
+    covered.rewritten    = {"MOV RAX, qword ptr [RBX+0x%X]"};
+    covered.address_args = {0x1C};
+    target.covered.push_back(covered);
+    target.trampoline_lines = {"MOV RAX, qword ptr [RBX+0x%X]"};
+
+    const QString source = QString::fromStdString(slopkit::script::render(target));
+    dialog.reset_for_add(QStringLiteral("Hook game.exe+1A2B40"), source);
+    dialog.show();
+
+    auto* editor = script_editor_of(dialog);
+    REQUIRE(editor != nullptr);
+
+    const int column = static_cast<int>(std::ceil(QFontMetricsF(editor->font()).horizontalAdvance(QLatin1Char(' '))));
+    const int ideal  = static_cast<int>(std::ceil(editor->document()->idealWidth()));
+
+    // The default width shows the hook script's longest line without scrolling
+    // and is wider than the 100-column floor a short script gets.
+    CHECK(editor->sizeHint().width() >= ideal + editor->gutter_width());
+    CHECK(editor->sizeHint().width() > 100 * column);
+    CHECK(dialog.sizeHint().width() >= editor->sizeHint().width());
 }

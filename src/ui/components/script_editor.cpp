@@ -2,21 +2,27 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <utility>
-#include <vector>
 
 #include <QEvent>
+#include <QFocusEvent>
 #include <QFontMetrics>
 #include <QFontMetricsF>
+#include <QHideEvent>
 #include <QKeyEvent>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextEdit>
 #include <QTextFormat>
 
+#include "script/api_catalog.hpp"
+#include "ui/components/script_completion.hpp"
+#include "ui/components/script_context.hpp"
 #include "ui/components/script_highlighter.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
@@ -30,220 +36,18 @@ namespace slopkit::ui::components
         // dialog's own skeleton.
         constexpr int kIndentSize = 4;
 
+        // The opening size: at least this many mono columns, growing with the
+        // document's longest line up to the cap, and this many text lines tall.
+        constexpr int kMinColumns     = 60;
+        constexpr int kDefaultColumns = 100;
+        constexpr int kMaxColumns     = 140;
+        constexpr int kPreferredLines = 18;
+        constexpr int kMinLines       = 12;
+
         [[nodiscard]] bool is_bracket(QChar ch)
         {
             return ch == QLatin1Char('(') || ch == QLatin1Char(')') || ch == QLatin1Char('[') || ch == QLatin1Char(']')
                 || ch == QLatin1Char('{') || ch == QLatin1Char('}');
-        }
-
-        // Matches a long-bracket opener `[=*[` at `index`; returns the offset
-        // just past the second bracket and reports the `=` count, or -1.
-        [[nodiscard]] int long_bracket_open(const QString& text, int index, int* level)
-        {
-            if (index >= text.size() || text.at(index) != QLatin1Char('['))
-            {
-                return -1;
-            }
-            int i  = index + 1;
-            int eq = 0;
-            while (i < text.size() && text.at(i) == QLatin1Char('='))
-            {
-                ++eq;
-                ++i;
-            }
-            if (i < text.size() && text.at(i) == QLatin1Char('['))
-            {
-                *level = eq;
-                return i + 1;
-            }
-            return -1;
-        }
-
-        // The offset just past the matching `]=*]`, or -1 when none follows.
-        [[nodiscard]] int long_bracket_close(const QString& text, int from, int level)
-        {
-            const QString close = QStringLiteral("]") + QString(level, QLatin1Char('=')) + QStringLiteral("]");
-            const int     at    = text.indexOf(close, from);
-            return at < 0 ? -1 : at + close.size();
-        }
-
-        // The offset just past a short string starting at the quote `index`.
-        [[nodiscard]] int short_string_end(const QString& text, int index)
-        {
-            const QChar quote = text.at(index);
-            int         i     = index + 1;
-            while (i < text.size())
-            {
-                const QChar ch = text.at(i);
-                if (ch == QLatin1Char('\\'))
-                {
-                    i += 2;
-                    continue;
-                }
-                if (ch == quote)
-                {
-                    return i + 1;
-                }
-                ++i;
-            }
-            return text.size();
-        }
-
-        // Marks every character that lies outside a comment or a string, so
-        // bracket matching can ignore the ones inside them.
-        [[nodiscard]] std::vector<bool> code_mask(const QString& text)
-        {
-            std::vector<bool> mask(static_cast<std::size_t>(text.size()), true);
-
-            int i = 0;
-            while (i < text.size())
-            {
-                const QChar ch = text.at(i);
-
-                if (ch == QLatin1Char('-') && i + 1 < text.size() && text.at(i + 1) == QLatin1Char('-'))
-                {
-                    int       level = 0;
-                    const int open  = long_bracket_open(text, i + 2, &level);
-                    int       end   = text.size();
-                    if (open >= 0)
-                    {
-                        const int close = long_bracket_close(text, open, level);
-                        end             = close < 0 ? text.size() : close;
-                    }
-                    else
-                    {
-                        end = i;
-                        while (end < text.size() && text.at(end) != QLatin1Char('\n'))
-                        {
-                            ++end;
-                        }
-                    }
-                    for (int j = i; j < end; ++j)
-                    {
-                        mask[static_cast<std::size_t>(j)] = false;
-                    }
-                    i = end;
-                    continue;
-                }
-
-                if (ch == QLatin1Char('['))
-                {
-                    int       level = 0;
-                    const int open  = long_bracket_open(text, i, &level);
-                    if (open >= 0)
-                    {
-                        const int close = long_bracket_close(text, open, level);
-                        const int end   = close < 0 ? text.size() : close;
-                        for (int j = i; j < end; ++j)
-                        {
-                            mask[static_cast<std::size_t>(j)] = false;
-                        }
-                        i = end;
-                        continue;
-                    }
-                }
-
-                if (ch == QLatin1Char('"') || ch == QLatin1Char('\''))
-                {
-                    const int end = short_string_end(text, i);
-                    for (int j = i; j < end; ++j)
-                    {
-                        mask[static_cast<std::size_t>(j)] = false;
-                    }
-                    i = end;
-                    continue;
-                }
-
-                ++i;
-            }
-
-            return mask;
-        }
-
-        // The position of the bracket matching the one at `index`, skipping
-        // brackets inside comments and strings, or -1 when there is none.
-        [[nodiscard]] int matching_bracket(const QString& text, const std::vector<bool>& code, int index)
-        {
-            const QChar ch = text.at(index);
-
-            const std::pair<QChar, QChar> pairs[] = {
-                {QLatin1Char('('), QLatin1Char(')')},
-                {QLatin1Char('['), QLatin1Char(']')},
-                {QLatin1Char('{'), QLatin1Char('}')}
-            };
-            bool  opening = false;
-            QChar open {0};
-            QChar close {0};
-            for (const auto& [first, second] : pairs)
-            {
-                if (ch == first)
-                {
-                    opening = true;
-                    open    = first;
-                    close   = second;
-                    break;
-                }
-                if (ch == second)
-                {
-                    opening = false;
-                    open    = first;
-                    close   = second;
-                    break;
-                }
-            }
-            if (open == QChar {0})
-            {
-                return -1;
-            }
-
-            if (opening)
-            {
-                int depth = 0;
-                for (int i = index; i < text.size(); ++i)
-                {
-                    if (!code[static_cast<std::size_t>(i)])
-                    {
-                        continue;
-                    }
-                    if (text.at(i) == open)
-                    {
-                        ++depth;
-                    }
-                    else if (text.at(i) == close)
-                    {
-                        --depth;
-                        if (depth == 0)
-                        {
-                            return i;
-                        }
-                    }
-                }
-            }
-            else
-            {
-                int depth = 0;
-                for (int i = index; i >= 0; --i)
-                {
-                    if (!code[static_cast<std::size_t>(i)])
-                    {
-                        continue;
-                    }
-                    if (text.at(i) == close)
-                    {
-                        ++depth;
-                    }
-                    else if (text.at(i) == open)
-                    {
-                        --depth;
-                        if (depth == 0)
-                        {
-                            return i;
-                        }
-                    }
-                }
-            }
-
-            return -1;
         }
 
         // An extra selection that paints the single character at `position` in
@@ -292,12 +96,25 @@ namespace slopkit::ui::components
     {
         setFont(mono_font());
         setLineWrapMode(QPlainTextEdit::NoWrap);
-        setMinimumHeight(240);
         setTabStopDistance(QFontMetricsF(font()).horizontalAdvance(QLatin1Char(' ')) * kIndentSize);
 
         gutter_      = new ScriptEditorGutter(this);
         highlighter_ = new ScriptHighlighter(document());
+        completion_  = new ScriptCompletionPopup(this);
+        tip_         = new ScriptCallTip(this);
 
+        connect(this,
+                &QPlainTextEdit::textChanged,
+                this,
+                [this]
+                {
+                    // The longest line and so the size hint follow the text; the
+                    // floor stays put, so an already-shown window is not resized.
+                    longest_columns_.reset();
+                    updateGeometry();
+                    update_completion(true);
+                    refresh_hints();
+                });
         connect(this,
                 &QPlainTextEdit::blockCountChanged,
                 this,
@@ -325,10 +142,80 @@ namespace slopkit::ui::components
                 [this]
                 {
                     update_bands();
+                    update_completion(false);
+                    refresh_hints();
+                });
+        connect(verticalScrollBar(),
+                &QScrollBar::valueChanged,
+                this,
+                [this]
+                {
+                    completion_->hide_popup();
+                    tip_->hide_tip();
+                });
+        connect(horizontalScrollBar(),
+                &QScrollBar::valueChanged,
+                this,
+                [this]
+                {
+                    completion_->hide_popup();
+                    tip_->hide_tip();
                 });
 
         update_gutter_width();
         update_bands();
+        setMinimumSize(minimumSizeHint());
+    }
+
+    QSize ScriptEditor::sizeHint() const
+    {
+        return size_for_lines(std::clamp(longest_line_columns(), kDefaultColumns, kMaxColumns), kPreferredLines);
+    }
+
+    QSize ScriptEditor::minimumSizeHint() const
+    {
+        return size_for_lines(kMinColumns, kMinLines);
+    }
+
+    QSize ScriptEditor::size_for_lines(int columns, int lines) const
+    {
+        const int width  = columns * column_width() + gutter_width_ + content_margin() + 2 * frameWidth();
+        const int height = lines * line_height() + content_margin() + 2 * frameWidth();
+        return QSize(width, height);
+    }
+
+    int ScriptEditor::longest_line_columns() const
+    {
+        if (!longest_columns_.has_value())
+        {
+            int longest = 0;
+            for (QTextBlock block = document()->begin(); block.isValid(); block = block.next())
+            {
+                int columns = 0;
+                for (const QChar character : block.text())
+                {
+                    columns += character == QLatin1Char('\t') ? kIndentSize - (columns % kIndentSize) : 1;
+                }
+                longest = std::max(longest, columns);
+            }
+            longest_columns_ = longest;
+        }
+        return *longest_columns_;
+    }
+
+    int ScriptEditor::column_width() const
+    {
+        return static_cast<int>(std::ceil(QFontMetricsF(font()).horizontalAdvance(QLatin1Char(' '))));
+    }
+
+    int ScriptEditor::line_height() const
+    {
+        return static_cast<int>(std::ceil(QFontMetricsF(font()).lineSpacing()));
+    }
+
+    int ScriptEditor::content_margin() const
+    {
+        return static_cast<int>(std::ceil(document()->documentMargin())) * 2;
     }
 
     void ScriptEditor::set_error_line(int line)
@@ -454,15 +341,11 @@ namespace slopkit::ui::components
 
         if (bracket >= 0)
         {
-            const std::vector<bool> code = code_mask(plain);
-            if (bracket < static_cast<int>(code.size()) && code[static_cast<std::size_t>(bracket)])
+            const int mate = script_context::matching_bracket(plain, bracket);
+            if (mate >= 0)
             {
-                const int mate = matching_bracket(plain, code, bracket);
-                if (mate >= 0)
-                {
-                    selections.append(bracket_selection(document(), bracket, theme));
-                    selections.append(bracket_selection(document(), mate, theme));
-                }
+                selections.append(bracket_selection(document(), bracket, theme));
+                selections.append(bracket_selection(document(), mate, theme));
             }
         }
 
@@ -491,6 +374,43 @@ namespace slopkit::ui::components
 
     void ScriptEditor::keyPressEvent(QKeyEvent* event)
     {
+        // An open completion list owns the navigation and accept keys; `Esc`
+        // closes it and leaves the text (and the dialog) untouched.
+        if (completion_->is_open())
+        {
+            if (event->key() == Qt::Key_Escape)
+            {
+                completion_->hide_popup();
+                event->accept();
+                return;
+            }
+            if (event->key() == Qt::Key_Up)
+            {
+                completion_->move_selection(-1);
+                event->accept();
+                return;
+            }
+            if (event->key() == Qt::Key_Down)
+            {
+                completion_->move_selection(1);
+                event->accept();
+                return;
+            }
+            if (event->key() == Qt::Key_Tab || event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)
+            {
+                accept_completion();
+                event->accept();
+                return;
+            }
+        }
+
+        if (event->key() == Qt::Key_Space && (event->modifiers() & Qt::ControlModifier))
+        {
+            open_completion();
+            event->accept();
+            return;
+        }
+
         if (event->key() == Qt::Key_Backtab
             || (event->key() == Qt::Key_Tab && (event->modifiers() & Qt::ShiftModifier)))
         {
@@ -512,6 +432,138 @@ namespace slopkit::ui::components
         }
 
         QPlainTextEdit::keyPressEvent(event);
+    }
+
+    void ScriptEditor::focusOutEvent(QFocusEvent* event)
+    {
+        completion_->hide_popup();
+        tip_->hide_tip();
+        QPlainTextEdit::focusOutEvent(event);
+    }
+
+    void ScriptEditor::hideEvent(QHideEvent* event)
+    {
+        completion_->hide_popup();
+        tip_->hide_tip();
+        QPlainTextEdit::hideEvent(event);
+    }
+
+    QRect ScriptEditor::caret_rect() const
+    {
+        QRect rect = cursorRect();
+        rect.setWidth(std::max(rect.width(), 1));
+        return rect;
+    }
+
+    void ScriptEditor::update_completion(bool allow_open)
+    {
+        const QString text     = toPlainText();
+        const int     position = textCursor().position();
+
+        const std::optional<script_context::Identifier> identifier = script_context::identifier_at(text, position);
+        const QString                                   receiver   = identifier ? identifier->receiver : QString {};
+        const QString prefix = identifier ? text.mid(identifier->begin, position - identifier->begin) : QString {};
+
+        // Only a caret in code that touches a word (or follows a dot) can open
+        // the list; anything else closes it.
+        if (identifier && (!prefix.isEmpty() || !receiver.isEmpty()))
+        {
+            if (completion_->is_open() || allow_open)
+            {
+                completion_->show_at(caret_rect(), receiver, prefix);
+            }
+            return;
+        }
+        completion_->hide_popup();
+    }
+
+    void ScriptEditor::open_completion()
+    {
+        const QString                                   text       = toPlainText();
+        const int                                       position   = textCursor().position();
+        const std::optional<script_context::Identifier> identifier = script_context::identifier_at(text, position);
+        const QString                                   receiver   = identifier ? identifier->receiver : QString {};
+        const QString prefix = identifier ? text.mid(identifier->begin, position - identifier->begin) : QString {};
+        completion_->show_at(caret_rect(), receiver, prefix);
+        refresh_hints(); // the open list supersedes the hint
+    }
+
+    void ScriptEditor::accept_completion()
+    {
+        const std::optional<QString> name        = completion_->selected_name();
+        const bool                   is_function = completion_->selected_is_function();
+        if (!name.has_value())
+        {
+            completion_->hide_popup();
+            return;
+        }
+
+        const QString                                   text       = toPlainText();
+        const int                                       position   = textCursor().position();
+        const std::optional<script_context::Identifier> identifier = script_context::identifier_at(text, position);
+        if (!identifier.has_value())
+        {
+            completion_->hide_popup();
+            return;
+        }
+
+        QTextCursor cursor = textCursor();
+        // One edit block, so a single Ctrl+Z undoes the name and the inserted
+        // parentheses together.
+        cursor.beginEditBlock();
+        cursor.setPosition(identifier->begin);
+        cursor.setPosition(identifier->end, QTextCursor::KeepAnchor);
+        cursor.insertText(*name);
+        if (is_function && document()->characterAt(cursor.position()) != QLatin1Char('('))
+        {
+            cursor.insertText(QStringLiteral("()"));
+            cursor.movePosition(QTextCursor::Left);
+        }
+        cursor.endEditBlock();
+
+        setTextCursor(cursor);
+        completion_->hide_popup();
+    }
+
+    void ScriptEditor::refresh_hints()
+    {
+        if (completion_->is_open())
+        {
+            tip_->hide_tip();
+            return;
+        }
+
+        const QString                             text     = toPlainText();
+        const int                                 position = textCursor().position();
+        const std::optional<script_context::Call> call     = script_context::enclosing_call(text, position);
+        if (!call.has_value())
+        {
+            tip_->hide_tip();
+            return;
+        }
+
+        // A catalogue function wins (a dotted `mem.read` or a plain global).
+        const QString full = call->receiver.isEmpty() ? call->name : call->receiver + QLatin1Char('.') + call->name;
+        if (const script::ApiEntry* entry = script::find(full.toStdString()))
+        {
+            tip_->show_at(caret_rect(),
+                          QString::fromUtf8(entry->signature.data(), static_cast<int>(entry->signature.size())),
+                          script::parameter_index(entry->signature, static_cast<std::size_t>(call->active_parameter)),
+                          QString::fromUtf8(entry->summary.data(), static_cast<int>(entry->summary.size())));
+            return;
+        }
+
+        // A function the document defines shows its own parameter list.
+        for (const script_context::DocumentName& name : script_context::document_names(text))
+        {
+            if (name.function && name.name == call->name)
+            {
+                tip_->show_at(
+                    caret_rect(), name.signature, static_cast<std::size_t>(call->active_parameter), QString {});
+                return;
+            }
+        }
+        tip_->hide_tip();
     }
 
     void ScriptEditor::indent_lines(int direction)
