@@ -78,8 +78,18 @@ namespace slopkit::platform
         [[nodiscard]] std::expected<StopStatus, process::AccessError> resume(std::uint64_t resume_address);
         // Single-steps one thread and returns the stop it reports.
         [[nodiscard]] std::expected<StopStatus, process::AccessError> step(process::ProcessId tid);
+        // Resumes one thread with a syscall resume and returns the stop it
+        // reports, without the foreign-stop loop `step` runs: a caller with a
+        // policy of its own (the plugin allocation window) owns that.
+        [[nodiscard]] std::expected<StopStatus, process::AccessError> step_syscall(process::ProcessId tid);
+        // Resumes one thread with a syscall resume, delivering `signal` to its
+        // own handler (0 resumes it plainly) and returning without waiting.
+        [[nodiscard]] std::expected<void, process::AccessError> continue_thread(process::ProcessId tid, int signal);
+        // A stop already waiting on one thread, or `std::nullopt` when it is
+        // running on: the non-blocking sibling of the wait `ensure_stopped` does.
+        [[nodiscard]] std::expected<std::optional<StopStatus>, process::AccessError> poll_stop(process::ProcessId tid);
         // Asks a running thread to stop without blocking.
-        [[nodiscard]] std::expected<void, process::AccessError>       interrupt(process::ProcessId tid);
+        [[nodiscard]] std::expected<void, process::AccessError>                      interrupt(process::ProcessId tid);
 
         [[nodiscard]] std::expected<Registers, process::AccessError> registers(process::ProcessId tid);
         [[nodiscard]] std::expected<void, process::AccessError>

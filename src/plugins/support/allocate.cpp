@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -13,10 +14,12 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
 
+#include "disasm/decoder.hpp"
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/ptrace.hpp"
 #include "plugin/plugin_api.h"
@@ -43,6 +46,30 @@ namespace slopkit::plugins::support
         // back to a hint-less mapping. Each attempt is one remote syscall, so a
         // small bound keeps the closed-as-possible search affordable.
         constexpr std::size_t kMaxNearAttempts = 4;
+
+        // How many stops one remote call follows before it is refused. A target
+        // signals itself constantly (Wine's runtime does) and every delivered
+        // signal costs a delivery stop plus the `rt_sigreturn` stops around its
+        // handler, so the bound is generous; the time bounds below are what keep
+        // a signal storm from holding the window.
+        constexpr int kMaxForeignStops = 256;
+
+        // How long one resume may take to report its stop, so a target that never
+        // does is refused instead of left running the planted syscall.
+        constexpr std::chrono::milliseconds kStopWait {200};
+
+        // How long the whole call may take to show its entry and then its exit. A
+        // few delivered signals are harmless, but a target that never lets the
+        // call run is refused rather than waited on.
+        constexpr std::chrono::milliseconds kWindowWait {500};
+
+        // A remote syscall whose stops never verified its entry and exit. Never
+        // becomes an address.
+        constexpr const char* kIncompleteMessage = "the remote syscall did not complete";
+
+        // A mapping is a real address or an error: address 0 is never reported
+        // as a successful allocation.
+        constexpr const char* kNoAddressMessage = "the target returned no address for the mapping";
 
         // A remote syscall that did not return a value. `error` is the target
         // kernel's positive errno when the call itself was refused, or 0 when
@@ -94,10 +121,22 @@ namespace slopkit::plugins::support
             return value > 0 ? static_cast<std::uint64_t>(value) : 4096;
         }
 
-        // Finds the first `0F 05` (SYSCALL) byte pair in an executable region,
-        // scanning ascending so the run is deterministic. The exact byte is a
-        // valid syscall boundary when RIP points straight at it, which is how the
-        // remote call uses it.
+        // True when the bytes at `address` decode as the two-byte `syscall`
+        // instruction, so a bare `0F 05` pair that is part of some other
+        // instruction is not mistaken for a gadget. The remote syscall moves
+        // the x86-64 register set only, so the decode always uses long mode.
+        bool is_syscall_instruction(std::span<const std::byte> code, std::uint64_t address)
+        {
+            const auto decoded = disasm::decode(code, address, disasm::MachineMode::long_64);
+            return decoded.has_value() && decoded->valid && decoded->length == 2 && decoded->text == "SYSCALL";
+        }
+
+        // Finds the first `0F 05` (SYSCALL) byte pair in a file-backed executable
+        // region, scanning ascending so the run is deterministic. Only a real
+        // instruction boundary is accepted: an anonymous executable mapping is
+        // the target's own generated code, where the pair need not be a syscall
+        // at all, and the bytes after a raw pair would otherwise be executed in
+        // the target's own context.
         std::expected<std::uint64_t, AllocationError>
         find_syscall_gadget(Session& session, const std::vector<platform::MappedRegion>& maps)
         {
@@ -106,7 +145,7 @@ namespace slopkit::plugins::support
 
             for (const platform::MappedRegion& region : maps)
             {
-                if (!region.executable)
+                if (!region.executable || region.path.empty())
                 {
                     continue;
                 }
@@ -122,7 +161,9 @@ namespace slopkit::plugins::support
                         for (std::size_t i = 0; i + 1 < usable; ++i)
                         {
                             if (std::to_integer<std::uint8_t>(buffer[i]) == 0x0F
-                                && std::to_integer<std::uint8_t>(buffer[i + 1]) == 0x05)
+                                && std::to_integer<std::uint8_t>(buffer[i + 1]) == 0x05
+                                && is_syscall_instruction(std::span<const std::byte>(buffer.data() + i, usable - i),
+                                                          address + i))
                             {
                                 return address + i;
                             }
@@ -132,29 +173,48 @@ namespace slopkit::plugins::support
                 }
             }
             return std::unexpected(
-                failure(SLOPKIT_ERR_UNSUPPORTED, "no syscall instruction found in the target's executable memory"));
+                failure(SLOPKIT_ERR_UNSUPPORTED, "no syscall instruction found in the target's executable code"));
         }
 
-        void restore_registers(platform::DebugSession& debug, process::ProcessId tid, const platform::Registers& saved)
+        // Puts every register the window borrowed back, so the target's own
+        // context is what its threads resume with. Reports the first one that did
+        // not stick: a target left with a borrowed RIP is a refusal, not a
+        // silent change.
+        std::expected<void, AllocationError>
+        restore_registers(platform::DebugSession& debug, process::ProcessId tid, const platform::Registers& saved)
         {
-            (void)debug.set_register(tid, "RAX", saved.rax);
-            (void)debug.set_register(tid, "RBX", saved.rbx);
-            (void)debug.set_register(tid, "RCX", saved.rcx);
-            (void)debug.set_register(tid, "RDX", saved.rdx);
-            (void)debug.set_register(tid, "RSI", saved.rsi);
-            (void)debug.set_register(tid, "RDI", saved.rdi);
-            (void)debug.set_register(tid, "RBP", saved.rbp);
-            (void)debug.set_register(tid, "RSP", saved.rsp);
-            (void)debug.set_register(tid, "R8", saved.r8);
-            (void)debug.set_register(tid, "R9", saved.r9);
-            (void)debug.set_register(tid, "R10", saved.r10);
-            (void)debug.set_register(tid, "R11", saved.r11);
-            (void)debug.set_register(tid, "R12", saved.r12);
-            (void)debug.set_register(tid, "R13", saved.r13);
-            (void)debug.set_register(tid, "R14", saved.r14);
-            (void)debug.set_register(tid, "R15", saved.r15);
-            (void)debug.set_register(tid, "RFLAGS", saved.rflags);
-            (void)debug.set_register(tid, "RIP", saved.rip);
+            const std::array<std::pair<const char*, std::uint64_t>, 18> registers {
+                {
+                 {"RAX", saved.rax},
+                 {"RBX", saved.rbx},
+                 {"RCX", saved.rcx},
+                 {"RDX", saved.rdx},
+                 {"RSI", saved.rsi},
+                 {"RDI", saved.rdi},
+                 {"RBP", saved.rbp},
+                 {"RSP", saved.rsp},
+                 {"R8", saved.r8},
+                 {"R9", saved.r9},
+                 {"R10", saved.r10},
+                 {"R11", saved.r11},
+                 {"R12", saved.r12},
+                 {"R13", saved.r13},
+                 {"R14", saved.r14},
+                 {"R15", saved.r15},
+                 {"RFLAGS", saved.rflags},
+                 {"RIP", saved.rip},
+                 }
+            };
+            for (const auto& [name, value] : registers)
+            {
+                if (const auto written = debug.set_register(tid, name, value); !written)
+                {
+                    return std::unexpected(failure(SLOPKIT_ERR_IO,
+                                                   std::string("cannot put the target's registers back (thread ")
+                                                       + std::to_string(tid) + ")"));
+                }
+            }
+            return {};
         }
 
         // Seizes and stops the target's thread group once, then runs any number
@@ -162,8 +222,9 @@ namespace slopkit::plugins::support
         // makes a multi-candidate near search affordable: the attach and the
         // syscall-gadget scan dominate the cost, not the individual calls.
         //
-        // Every saved register is put back and the group is detached by the
-        // destructor, whether the calls succeeded or failed.
+        // Every saved register is put back, a pending signal is delivered and
+        // the group is detached by `release`; the destructor is the fallback for
+        // a window that returned early, whether the calls succeeded or failed.
         class RemoteRunner
         {
         public:
@@ -199,19 +260,56 @@ namespace slopkit::plugins::support
 
             ~RemoteRunner()
             {
-                if (!attached_)
-                {
-                    return;
-                }
-                if (saved_)
-                {
-                    restore_registers(session_.debug, leader_, *saved_);
-                }
-                (void)session_.debug.detach();
+                // The fallback for a window that returned early: `release` has
+                // already done this on the paths that report their outcome.
+                (void)release();
             }
 
             RemoteRunner(const RemoteRunner&)            = delete;
             RemoteRunner& operator=(const RemoteRunner&) = delete;
+
+            // Hands the target back the way it was found and reports anything it
+            // could not put right, so a window that cannot let go refuses the
+            // call instead of leaving a stopped target behind.
+            std::expected<void, AllocationError> release()
+            {
+                if (!attached_)
+                {
+                    return {};
+                }
+                attached_ = false;
+
+                if (saved_)
+                {
+                    if (const auto restored = restore_registers(session_.debug, leader_, *saved_); !restored)
+                    {
+                        // The group still has to be let go before the refusal is
+                        // reported.
+                        (void)session_.debug.detach();
+                        return std::unexpected(restored.error());
+                    }
+                }
+
+                // Detaching delivers a signal a thread was only waiting to hand
+                // over, so no pending signal of the target's is cancelled.
+                if (const auto detached = session_.debug.detach(); !detached)
+                {
+                    return std::unexpected(
+                        failure(SLOPKIT_ERR_IO,
+                                std::string("cannot hand the target back (thread ") + std::to_string(leader_) + ")"));
+                }
+
+                for (const auto& thread : platform::read_threads(session_.pid))
+                {
+                    if (platform::read_thread_state(session_.pid, thread.tid) == 't')
+                    {
+                        return std::unexpected(failure(SLOPKIT_ERR_IO,
+                                                       std::string("the target's thread ") + std::to_string(thread.tid)
+                                                           + " is still stopped"));
+                    }
+                }
+                return {};
+            }
 
             [[nodiscard]] bool ready() const noexcept
             {
@@ -230,8 +328,11 @@ namespace slopkit::plugins::support
                 return maps_;
             }
 
-            // Runs one syscall while the group stays stopped. A negative kernel
-            // return is reported as a SyscallRefusal carrying its errno.
+            // Runs one syscall while the group stays stopped, at the kernel's
+            // syscall stops only: the instruction after the gadget (the
+            // follower) never executes, so the target runs none of its own code
+            // for us and no code page is touched. A negative kernel return is
+            // reported as a SyscallRefusal carrying its errno.
             std::expected<std::uint64_t, SyscallRefusal> run(std::uint64_t                       number,
                                                              const std::array<std::uint64_t, 6>& arguments)
             {
@@ -240,6 +341,74 @@ namespace slopkit::plugins::support
                     return std::unexpected(SyscallRefusal {0, error_.message});
                 }
 
+                if (const auto planted = plant(number, arguments); !planted)
+                {
+                    return std::unexpected(planted.error());
+                }
+
+                // Every syscall stop of our call reports RIP at the gadget's
+                // successor, which is what tells our stops from the stop an
+                // interrupted syscall of the target's own produces.
+                const std::uint64_t successor  = gadget_ + 2;
+                const auto          started    = std::chrono::steady_clock::now();
+                bool                entry_seen = false;
+                int                 delivered  = 0;
+
+                for (int attempt = 0; attempt < kMaxForeignStops; ++attempt)
+                {
+                    if (std::chrono::steady_clock::now() - started > kWindowWait)
+                    {
+                        // Even the target's own signals never made room for the
+                        // call: refuse instead of holding the group stopped.
+                        break;
+                    }
+
+                    const auto stop = next_stop(delivered);
+                    delivered       = 0;
+                    if (!stop)
+                    {
+                        return std::unexpected(stop.error());
+                    }
+
+                    if (stop->reason == platform::StopReason::signal_stop)
+                    {
+                        // The target's own signal: hand it to the handler the
+                        // target installed and wait again, instead of taking its
+                        // stop for the syscall's result.
+                        delivered = stop->signal;
+                        continue;
+                    }
+
+                    if (stop->reason == platform::StopReason::syscall && stop->syscall_entry.has_value()
+                        && stop->address == successor)
+                    {
+                        if (*stop->syscall_entry && !entry_seen)
+                        {
+                            // The kernel stopped at our syscall's entry, before
+                            // the syscall runs: the result is read only after
+                            // this stop was seen.
+                            entry_seen = true;
+                            continue;
+                        }
+                        if (!*stop->syscall_entry && entry_seen)
+                        {
+                            return read_result();
+                        }
+                    }
+
+                    // Anything else (a trap, an exit, an interrupt, a syscall of
+                    // the target's own) is foreign: resume and wait again, under
+                    // the bounded budget.
+                }
+                return std::unexpected(SyscallRefusal {0, kIncompleteMessage});
+            }
+
+        private:
+            // Points RIP at the verified gadget with the syscall number and its
+            // arguments: the state every later stop is judged against.
+            std::expected<void, SyscallRefusal> plant(std::uint64_t                       number,
+                                                      const std::array<std::uint64_t, 6>& arguments)
+            {
                 const std::array<std::pair<const char*, std::uint64_t>, 7> registers {
                     {
                      {"RIP", gadget_},
@@ -262,20 +431,22 @@ namespace slopkit::plugins::support
                 {
                     return std::unexpected(SyscallRefusal {0, "cannot set up the remote syscall"});
                 }
+                return {};
+            }
 
-                const auto stop = session_.debug.step(leader_);
-                if (!stop)
-                {
-                    return std::unexpected(SyscallRefusal {0, "the remote syscall did not complete"});
-                }
-
+            // The result of the verified syscall, read only at that stop. A
+            // value the kernel reports as an error is a SyscallRefusal, but a
+            // non-negative one is handed over as it is: for `munmap` zero is
+            // success, so only the caller knows whether it is an address.
+            std::expected<std::uint64_t, SyscallRefusal> read_result()
+            {
                 const auto after = session_.debug.registers(leader_);
                 if (!after)
                 {
                     return std::unexpected(SyscallRefusal {0, "cannot read the syscall result"});
                 }
 
-                const auto value = after->rax;
+                const std::uint64_t value = after->rax;
                 if (static_cast<std::int64_t>(value) < 0)
                 {
                     const auto error = static_cast<int>(-static_cast<std::int64_t>(value));
@@ -288,7 +459,45 @@ namespace slopkit::plugins::support
                 return value;
             }
 
-        private:
+            // Resumes the leader with a syscall resume and waits for its next
+            // stop, which is given a bound of its own so a thread left running the
+            // planted syscall is never waited on forever. `signal` is handed to
+            // the target's own handler when non-zero, so no signal of the target's
+            // is swallowed by the window.
+            std::expected<platform::StopStatus, SyscallRefusal> next_stop(int signal)
+            {
+                if (const auto resumed = session_.debug.continue_thread(leader_, signal); !resumed)
+                {
+                    return std::unexpected(SyscallRefusal {0, kIncompleteMessage});
+                }
+                return await_stop();
+            }
+
+            // Waits for the stop the last resume asked for, bounded so a target
+            // stuck in the handler a delivered signal started can never leave the
+            // window (and the stopped group) waiting forever.
+            std::expected<platform::StopStatus, SyscallRefusal> await_stop()
+            {
+                const auto deadline = std::chrono::steady_clock::now() + kStopWait;
+                for (;;)
+                {
+                    const auto stopped = session_.debug.poll_stop(leader_);
+                    if (!stopped)
+                    {
+                        return std::unexpected(SyscallRefusal {0, kIncompleteMessage});
+                    }
+                    if (stopped->has_value())
+                    {
+                        return **stopped;
+                    }
+                    if (std::chrono::steady_clock::now() >= deadline)
+                    {
+                        return std::unexpected(SyscallRefusal {0, kIncompleteMessage});
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds {1});
+                }
+            }
+
             Session&                            session_;
             process::ProcessId                  leader_ {0};
             bool                                attached_ {false};
@@ -313,6 +522,12 @@ namespace slopkit::plugins::support
             if (!result)
             {
                 return std::unexpected(as_allocation_error(result.error()));
+            }
+            if (const auto released = runner.release(); !released)
+            {
+                // A window that cannot let the target go is a failure of its
+                // own: the target must not be left in its stop.
+                return std::unexpected(released.error());
             }
             return *result;
         }
@@ -476,7 +691,15 @@ namespace slopkit::plugins::support
                                  std::uint64_t flags) -> std::expected<std::uint64_t, SyscallRefusal>
         {
             const std::array<std::uint64_t, 6> arguments {hint, rounded, protection, flags, no_hint, 0};
-            return runner.run(static_cast<std::uint64_t>(SYS_mmap), arguments);
+            const auto                         result = runner.run(static_cast<std::uint64_t>(SYS_mmap), arguments);
+            if (result && *result == 0)
+            {
+                // `mmap` cannot succeed at address 0, so a zero result means the
+                // result was not verified: report it instead of a mapping that
+                // would blame the cave's jump reach later.
+                return std::unexpected(SyscallRefusal {0, kNoAddressMessage});
+            }
+            return result;
         };
 
         std::uint64_t address = 0;
@@ -513,6 +736,13 @@ namespace slopkit::plugins::support
                 return std::unexpected(as_allocation_error(fallback.error()));
             }
             address = *fallback;
+        }
+
+        // The window is let go before the mapping is recorded, so a target the
+        // window could not hand back refuses the call.
+        if (const auto released = runner.release(); !released)
+        {
+            return std::unexpected(released.error());
         }
 
         {

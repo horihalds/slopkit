@@ -416,6 +416,26 @@ TEST_CASE("hook.install refuses a target that cannot allocate", "[script][hook]"
     CHECK(activated.message.find("cannot allocate memory") != std::string::npos);
 }
 
+TEST_CASE("hook.install refuses a cave the allocator did not place", "[script][hook]")
+{
+    ScriptFixture fixture(0x200);
+    prime_hook_site(fixture.fake);
+
+    MemoryApi memory = fixture.fake.api();
+    memory.allocate  = [](std::size_t, std::uint64_t) -> std::expected<std::uint64_t, std::string>
+    {
+        // A host that hands back address zero for a mapping it did not make: the
+        // jump-reach message would blame a distance that never existed.
+        return 0;
+    };
+
+    Engine engine(memory, fixture.symbols.api());
+
+    const script::LifecycleResult activated = engine.run_lifecycle(hook_chunk(), "activate");
+    CHECK_FALSE(activated.ok);
+    CHECK(activated.message.find("the target's allocator returned no address") != std::string::npos);
+}
+
 TEST_CASE("deactivate refuses a site label it never saw", "[script][hook]")
 {
     ScriptFixture fixture(0x200);

@@ -9,9 +9,11 @@
 #include <optional>
 #include <thread>
 
+#include <dlfcn.h>
 #include <sched.h>
 #include <signal.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -164,6 +166,29 @@ namespace
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         return false;
+    }
+
+    // A real `syscall` instruction inside the target's own libc. The child is a
+    // fork of this process, so the address the host resolves is the child's too.
+    std::uint64_t find_syscall_gadget(MemAccess& memory)
+    {
+        auto*      entry = static_cast<std::byte*>(::dlsym(RTLD_DEFAULT, "syscall"));
+        const auto base  = reinterpret_cast<std::uint64_t>(entry);
+
+        std::array<std::byte, 64> bytes {};
+        const auto                read = memory.read(base, bytes);
+        if (!read)
+        {
+            return 0;
+        }
+        for (std::size_t i = 0; i + 1 < read->bytes; ++i)
+        {
+            if (bytes[i] == std::byte {0x0F} && bytes[i + 1] == std::byte {0x05})
+            {
+                return base + i;
+            }
+        }
+        return 0;
     }
 } // namespace
 
@@ -491,6 +516,58 @@ TEST_CASE("debug session arms a hardware watch on a threaded target", "[debug_se
     }
     CHECK(armed.has_value());
     CHECK(detached);
+}
+
+TEST_CASE("debug session runs a remote syscall at its stops", "[debug_session]")
+{
+    ChildProcess child(
+        []
+        {
+            for (;;)
+            {
+                debug_target();
+            }
+        });
+
+    MemAccess    memory(child.pid());
+    DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
+
+    const auto leader = session.attach();
+    REQUIRE(leader.has_value());
+
+    const auto gadget = find_syscall_gadget(memory);
+    REQUIRE(gadget != 0);
+
+    const auto saved = session.registers(*leader);
+    REQUIRE(saved.has_value());
+    REQUIRE(session.set_register(*leader, "RIP", gadget).has_value());
+    REQUIRE(session.set_register(*leader, "RAX", SYS_getpid).has_value());
+
+    // The kernel stops the thread at the syscall's entry, before the syscall
+    // runs and before the instruction after the gadget executes.
+    const auto entry = session.step_syscall(*leader);
+    REQUIRE(entry.has_value());
+    CHECK(entry->reason == StopReason::syscall);
+    CHECK(entry->address == gadget + 2);
+    REQUIRE(entry->syscall_entry.has_value());
+    CHECK(*entry->syscall_entry);
+
+    // Then at its exit, whose RAX is the result of the call we planted.
+    const auto exited = session.step_syscall(*leader);
+    REQUIRE(exited.has_value());
+    CHECK(exited->reason == StopReason::syscall);
+    CHECK(exited->address == gadget + 2);
+    REQUIRE(exited->syscall_entry.has_value());
+    CHECK_FALSE(*exited->syscall_entry);
+
+    const auto result = session.registers(*leader);
+    REQUIRE(result.has_value());
+    CHECK(result->rax == static_cast<std::uint64_t>(child.pid()));
+
+    // The target's own context goes back before it is handed over.
+    REQUIRE(session.set_register(*leader, "RIP", saved->rip).has_value());
+    REQUIRE(session.set_register(*leader, "RAX", saved->rax).has_value());
+    REQUIRE(session.detach().has_value());
 }
 
 TEST_CASE("debug session reports a killed target", "[debug_session]")

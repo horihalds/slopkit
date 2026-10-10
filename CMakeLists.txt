@@ -250,6 +250,9 @@ list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/platform/.*")
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/sandbox/.*")
 # The shared UI library compiles these, so neither the app nor the tests may.
 list(REMOVE_ITEM SLOPKIT_SOURCES ${SLOPKIT_UI_COMMON_SOURCES})
+# The platform library owns the decoder (the plugins need it too), so compiling
+# it into the app as well would define `disasm::decode` twice.
+list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/disasm/decoder\\.cpp$")
 
 add_executable(slopkit ${SLOPKIT_SOURCES})
 target_include_directories(slopkit PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -292,13 +295,17 @@ slopkit_add_icon_resources(slopkit-sandbox)
 
 # --- platform library ------------------------------------------------------
 
-# Linux helpers shared by the plugins and exercised directly by the tests.
+# Linux helpers shared by the plugins and exercised directly by the tests. The
+# Zydis-backed decoder rides along: the plugins' allocation window validates its
+# syscall gadget with it, so the same object serves the app's listing and the
+# bundled plugins instead of two copies.
 file(GLOB_RECURSE SLOPKIT_PLATFORM_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/platform/*.cpp)
+list(APPEND SLOPKIT_PLATFORM_SOURCES ${CMAKE_SOURCE_DIR}/src/disasm/decoder.cpp)
 add_library(slopkit_platform STATIC ${SLOPKIT_PLATFORM_SOURCES})
 target_include_directories(slopkit_platform PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit_platform PRIVATE -Wall -Wextra -fvisibility=hidden)
 set_target_properties(slopkit_platform PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(slopkit_platform PRIVATE slopkit_native)
+target_link_libraries(slopkit_platform PRIVATE slopkit_native PkgConfig::ZYDIS)
 
 # The Process List classifies applications through the platform desktop-entry
 # index, so the application links the shared platform library too.

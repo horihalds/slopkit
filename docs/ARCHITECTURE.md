@@ -96,9 +96,11 @@ host calls:
   else the closest free gap below it, then above it, and only then anywhere. A
   hint the plugin cannot honour is never an error while the mapping succeeds.
   `free_memory` unmaps a block an earlier call of the same session returned;
-  anything else is `SLOPKIT_ERR_NOT_FOUND`. A session whose plugin leaves them
-  null reports `unsupported`, which a script sees as `alloc: the target's plugin
-  cannot allocate memory`.
+  anything else is `SLOPKIT_ERR_NOT_FOUND`. A refusal is always reported as an
+  error and **never as address 0**: an allocation is either a real address or a
+  failure, so no caller can mistake a call that did not happen for a mapping. A
+  session whose plugin leaves them null reports `unsupported`, which a script
+  sees as `alloc: the target's plugin cannot allocate memory`.
 - `validate_memory` — the ABI 1.7 validation operation, left null by a plugin
   that cannot answer directly. It reports whether `[address, address + size)` is
   mapped **and readable**: a non-zero out-value means yes, 0 means no, and an
@@ -329,10 +331,24 @@ target.
   plugin's existing ptrace `DebugSession`: the target's thread group is stopped,
   the syscall is executed with the whole register file saved and restored, and the
   group is resumed, so the target is left exactly as it was found and the only
-  intended change is the new mapping. The near search runs its few
+  intended change is the new mapping. **No instruction of the target's own code
+  ever runs for it**: the call is planted at a `syscall` instruction that the
+  Zydis-backed decoder confirms starts at that exact address inside a *file-backed*
+  executable region — never in the target's own anonymous generated code — and the
+  thread is resumed with `PTRACE_SYSCALL`, so the kernel stops it at the syscall's
+  entry and exit and the instruction behind the gadget is never reached. The
+  result is read from RAX only at the verified exit stop, and only when the entry
+  stop of the same call was seen first; a stop that is neither (a signal, a trap,
+  an interrupt, a syscall of the target's own) is handled explicitly — a signal is
+  handed to the target's own handler — under a bounded budget that ends in a
+  refusal instead of a fabricated address. The near search runs its few
   `MAP_FIXED_NOREPLACE` candidates inside that one attach window, and a candidate
-  the kernel refuses only moves the search on. A debug session and an allocation
-  never overlap — each refuses while the other holds the target. Each
+  the kernel refuses only moves the search on. Handing the target back is part of
+  the call: every thread the window stopped is resumed, a thread that stopped only
+  to hand its own signal over is detached **with that signal** instead of losing
+  it, and `/proc/<pid>/task/<tid>/stat` confirms that none is left in a traced
+  stop — otherwise the failure is reported with the tid. A debug session and an
+  allocation never overlap — each refuses while the other holds the target. Each
   `alloc`/`dealloc` writes one `script`-category debug record (address, size,
   outcome).
 - `validate(address[, size_bytes])` answers whether `[address, address + size)`

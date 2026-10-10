@@ -27,11 +27,36 @@ namespace slopkit::platform
 
     namespace
     {
-        // The kernel's PTRACE_EVENT_STOP, and PTRACE_O_EXITKILL. Defined locally
-        // so the layer does not depend on which header exposes them.
-        constexpr int           kPtraceEventStop = 128;
-        constexpr unsigned long kPtraceOExitKill = 0x00100000UL;
-        constexpr long          kWordSize        = static_cast<long>(sizeof(std::uint64_t));
+        // The kernel's PTRACE_EVENT_STOP, PTRACE_GET_SYSCALL_INFO and the
+        // PTRACE_O_* options. Defined locally so the layer does not depend on
+        // which header exposes them.
+        constexpr int              kPtraceEventStop      = 128;
+        // PTRACE_GET_SYSCALL_INFO, whose request type is the header's own enum.
+        constexpr __ptrace_request kPtraceGetSyscallInfo = static_cast<__ptrace_request>(0x420e);
+        constexpr unsigned long    kPtraceOExitKill      = 0x00100000UL;
+        // PTRACE_O_TRACESYSGOOD: report a syscall stop as SIGTRAP|0x80, so it
+        // cannot be confused with an int3 or a single step. The kernel also
+        // answers PTRACE_GET_SYSCALL_INFO at such a stop.
+        constexpr unsigned long    kPtraceOTraceSysGood  = 0x00000001UL;
+        // The signal PTRACE_O_TRACESYSGOOD marks syscall stops with, and the
+        // PTRACE_GET_SYSCALL_INFO ops that classify one as entry or exit.
+        constexpr int              kSyscallTrap          = SIGTRAP | 0x80;
+        constexpr std::uint8_t     kSyscallInfoEntry     = 1;
+        constexpr std::uint8_t     kSyscallInfoExit      = 2;
+        constexpr long             kWordSize             = static_cast<long>(sizeof(std::uint64_t));
+
+        // The header of the kernel's `struct ptrace_syscall_info`, which is all
+        // this layer reads: `op` says whether the stop is a syscall entry or
+        // exit. The entry's arguments and the exit's result stay unread, the
+        // register file carries what the callers need.
+        struct SyscallInfo
+        {
+            std::uint8_t  op {};
+            std::uint8_t  padding[3] {};
+            std::uint32_t arch {};
+            std::uint64_t instruction_pointer {};
+            std::uint64_t stack_pointer {};
+        };
 
         process::AccessError classify_errno(int value)
         {
@@ -115,6 +140,27 @@ namespace slopkit::platform
                 || set("rip", raw.rip) || set("rflags", raw.eflags) || set("eflags", raw.eflags);
         }
 
+        // True at a syscall's entry stop, false at its exit stop, unset when
+        // the kernel does not answer PTRACE_GET_SYSCALL_INFO.
+        std::optional<bool> syscall_stop_entry(process::ProcessId tid)
+        {
+            SyscallInfo info;
+            if (::ptrace(kPtraceGetSyscallInfo, static_cast<pid_t>(tid), reinterpret_cast<void*>(sizeof(info)), &info)
+                == -1)
+            {
+                return std::nullopt;
+            }
+            if (info.op == kSyscallInfoEntry)
+            {
+                return true;
+            }
+            if (info.op == kSyscallInfoExit)
+            {
+                return false;
+            }
+            return std::nullopt;
+        }
+
         StopStatus make_stop(process::ProcessId tid, int status)
         {
             StopStatus stop;
@@ -145,6 +191,20 @@ namespace slopkit::platform
             if ((status >> 8) == (signal | (kPtraceEventStop << 8)) || signal == SIGSTOP || signal == SIGTSTP)
             {
                 stop.reason = StopReason::interrupt;
+                return stop;
+            }
+
+            // A syscall stop, which PTRACE_O_TRACESYSGOOD marks so it cannot be
+            // taken for a trap. Only the tracer's own syscall resume produces
+            // one.
+            if (signal == kSyscallTrap)
+            {
+                stop.reason        = StopReason::syscall;
+                stop.syscall_entry = syscall_stop_entry(tid);
+                if (const auto registers = get_registers(tid))
+                {
+                    stop.address = registers->rip;
+                }
                 return stop;
             }
 
@@ -231,7 +291,9 @@ namespace slopkit::platform
 
     std::expected<void, process::AccessError> seize(process::ProcessId tid, bool exit_kill)
     {
-        const unsigned long options = exit_kill ? kPtraceOExitKill : 0;
+        // A syscall stop is only ever produced by PTRACE_SYSCALL, which the
+        // debugger itself never issues, so marking them changes nothing else.
+        const unsigned long options = kPtraceOTraceSysGood | (exit_kill ? kPtraceOExitKill : 0);
         if (::ptrace(PTRACE_SEIZE, static_cast<pid_t>(tid), nullptr, reinterpret_cast<void*>(options)) == -1)
         {
             return fail(errno);
@@ -329,13 +391,41 @@ namespace slopkit::platform
         return {};
     }
 
-    std::expected<void, process::AccessError> detach(process::ProcessId tid)
+    std::expected<void, process::AccessError> resume_syscall(process::ProcessId tid, int signal)
     {
-        if (::ptrace(PTRACE_DETACH, static_cast<pid_t>(tid), nullptr, nullptr) == -1)
+        if (::ptrace(
+                PTRACE_SYSCALL, static_cast<pid_t>(tid), nullptr, reinterpret_cast<void*>(static_cast<long>(signal)))
+            == -1)
         {
             return fail(errno);
         }
         return {};
+    }
+
+    std::expected<void, process::AccessError> detach(process::ProcessId tid, int signal)
+    {
+        if (::ptrace(
+                PTRACE_DETACH, static_cast<pid_t>(tid), nullptr, reinterpret_cast<void*>(static_cast<long>(signal)))
+            == -1)
+        {
+            return fail(errno);
+        }
+        return {};
+    }
+
+    std::expected<std::optional<StopStatus>, process::AccessError> poll_stop(process::ProcessId tid)
+    {
+        int         status = 0;
+        const pid_t result = ::waitpid(static_cast<pid_t>(tid), &status, __WALL | WNOHANG);
+        if (result == 0)
+        {
+            return std::optional<StopStatus> {};
+        }
+        if (result < 0)
+        {
+            return fail(errno);
+        }
+        return std::optional<StopStatus> {make_stop(static_cast<process::ProcessId>(result), status)};
     }
 
     std::expected<Registers, process::AccessError> get_registers(process::ProcessId tid)

@@ -18,6 +18,7 @@ namespace slopkit::platform
     {
         breakpoint,  // a software int3 trap or a hardware breakpoint
         single_step, // PTRACE_SINGLESTEP completed
+        syscall,     // PTRACE_SYSCALL reached a syscall entry or exit stop
         interrupt,   // PTRACE_INTERRUPT stopped the thread group
         exited,      // the tracee exited
         signalled,   // the tracee was killed by a signal
@@ -33,6 +34,9 @@ namespace slopkit::platform
         int                          signal {0};
         // The stopped instruction pointer (RIP); 0 for a signal/exit stop.
         std::uint64_t                address {};
+        // Set for a `syscall` stop: true at the syscall entry, false at its
+        // exit. Unset when the kernel does not answer PTRACE_GET_SYSCALL_INFO.
+        std::optional<bool>          syscall_entry;
         // Where a software trap lives: RIP minus the one-byte int3, else 0.
         std::uint64_t                trap_address {};
         // The DR slot that fired, for a hardware breakpoint.
@@ -72,8 +76,14 @@ namespace slopkit::platform
     [[nodiscard]] std::expected<void, process::AccessError> cont(process::ProcessId tid, int signal = 0);
     // Executes exactly one instruction of one thread.
     [[nodiscard]] std::expected<void, process::AccessError> single_step(process::ProcessId tid, int signal = 0);
-    // Detaches, letting the thread run freely again.
-    [[nodiscard]] std::expected<void, process::AccessError> detach(process::ProcessId tid);
+    // Runs one thread until its next syscall entry or exit stop, optionally
+    // delivering `signal` (0 suppresses it). The thread never executes an
+    // instruction of its own between the two stops.
+    [[nodiscard]] std::expected<void, process::AccessError> resume_syscall(process::ProcessId tid, int signal = 0);
+    // Detaches, delivering `signal` to the thread (0 lets it run freely again).
+    [[nodiscard]] std::expected<void, process::AccessError> detach(process::ProcessId tid, int signal = 0);
+    // A pending stop of one thread, or `std::nullopt` when it is running on.
+    [[nodiscard]] std::expected<std::optional<StopStatus>, process::AccessError> poll_stop(process::ProcessId tid);
 
     [[nodiscard]] std::expected<Registers, process::AccessError> get_registers(process::ProcessId tid);
     // Writes one register, named the way the debugger shows it ("RAX", "rip", ...).

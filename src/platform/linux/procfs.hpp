@@ -42,6 +42,9 @@ namespace slopkit::platform
     [[nodiscard]] std::optional<ProcessStatus>     read_status(process::ProcessId pid);
     [[nodiscard]] std::vector<MappedRegion>        read_maps(process::ProcessId pid);
     [[nodiscard]] std::vector<process::ThreadInfo> read_threads(process::ProcessId pid);
+    // The single-letter state of one thread from /proc/<pid>/task/<tid>/stat:
+    // 't' means it sits in a ptrace stop. `std::nullopt` when the thread is gone.
+    [[nodiscard]] std::optional<char>              read_thread_state(process::ProcessId pid, process::ProcessId tid);
 
     // Pure parsers, exposed so they can be tested against fixtures.
     [[nodiscard]] std::optional<ProcessStatus> parse_status(std::string_view text);

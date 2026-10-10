@@ -183,10 +183,32 @@ namespace slopkit::platform
         for (const auto tid : tids)
         {
             // A thread that is still running can be neither cleared nor detached,
-            // and leaving one seized would keep its debug registers programmed.
-            (void)ensure_stopped(tid);
-            (void)platform::clear_debug_registers(tid);
-            const auto detached = platform::detach(tid);
+            // and leaving one seized would keep its debug registers programmed. A
+            // thread that has already gone away cannot be handed back at all.
+            if (const auto stopped = ensure_stopped(tid);
+                !stopped && result.has_value() && stopped.error() != process::AccessError::not_found)
+            {
+                result = std::unexpected(stopped.error());
+            }
+
+            // A thread that stopped only to hand its own signal over carries it
+            // out of the session: detaching without it would cancel the signal
+            // and leave the target's handler waiting for something that never
+            // arrives.
+            int signal = 0;
+            if (const auto pending = platform::poll_stop(tid); pending && pending->has_value())
+            {
+                if (pending->value().reason == StopReason::signal_stop)
+                {
+                    signal = pending->value().signal;
+                }
+            }
+
+            if (const auto cleared = platform::clear_debug_registers(tid); !cleared && result.has_value())
+            {
+                result = std::unexpected(cleared.error());
+            }
+            const auto detached = platform::detach(tid, signal);
             if (!detached && result.has_value())
             {
                 result = std::unexpected(detached.error());
@@ -374,6 +396,58 @@ namespace slopkit::platform
             current_ = stop->tid;
         }
         return stop;
+    }
+
+    std::expected<StopStatus, process::AccessError> DebugSession::step_syscall(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+
+        if (const auto resumed = platform::resume_syscall(tid); !resumed)
+        {
+            return std::unexpected(resumed.error());
+        }
+        const std::array<process::ProcessId, 1> one {tid};
+        const auto                              stop = platform::wait(one);
+        if (!stop)
+        {
+            return std::unexpected(stop.error());
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            current_ = stop->tid;
+        }
+        return stop;
+    }
+
+    std::expected<void, process::AccessError> DebugSession::continue_thread(process::ProcessId tid, int signal)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+        return platform::resume_syscall(tid, signal);
+    }
+
+    std::expected<std::optional<StopStatus>, process::AccessError> DebugSession::poll_stop(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+        return platform::poll_stop(tid);
     }
 
     std::expected<void, process::AccessError> DebugSession::interrupt(process::ProcessId tid)

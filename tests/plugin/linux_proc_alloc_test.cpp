@@ -1,15 +1,18 @@
 #include <catch2/catch.hpp>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <thread>
 #include <vector>
 
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -117,7 +120,8 @@ namespace
         return region.has_value() && region->readable && region->writable && region->executable;
     }
 
-    void wait_for_progress(const AllocChild& child)
+    template<typename Child>
+    void wait_for_progress(const Child& child)
     {
         const std::uint64_t before = child.counter();
         for (int i = 0; i < 200; ++i)
@@ -130,7 +134,490 @@ namespace
         }
         FAIL("the target stopped making progress");
     }
+
+    // A child that maps its own anonymous RWX page and fills it with a decoy:
+    // a `0F 05` pair followed by code that would write a marker into a shared
+    // page. That mapping is the target's generated-code pattern the gadget scan
+    // must never choose: the pair is not a real instruction boundary and the
+    // bytes around it belong to the target, not to a module.
+    class DecoyChild
+    {
+    public:
+        static constexpr std::uint64_t kDecoyAddress = 0x10000000;
+        static constexpr std::size_t   kDecoySize    = 0x1000;
+
+        struct Shared
+        {
+            std::uint64_t marker {};
+            std::uint64_t counter {};
+        };
+
+        DecoyChild()
+        {
+            shared_ = static_cast<Shared*>(
+                ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0));
+            if (shared_ == MAP_FAILED || shared_ == nullptr)
+            {
+                shared_ = nullptr;
+                return;
+            }
+            shared_->marker  = 0;
+            shared_->counter = 0;
+
+            auto* decoy = static_cast<std::byte*>(::mmap(reinterpret_cast<void*>(kDecoyAddress),
+                                                         kDecoySize,
+                                                         PROT_READ | PROT_WRITE | PROT_EXEC,
+                                                         MAP_PRIVATE | MAP_ANONYMOUS,
+                                                         -1,
+                                                         0));
+            if (decoy == MAP_FAILED || decoy == nullptr)
+            {
+                return;
+            }
+            decoy_ = static_cast<std::byte*>(decoy);
+            write_decoy();
+
+            const pid_t pid = ::fork();
+            if (pid == 0)
+            {
+                for (;;)
+                {
+                    shared_->counter = shared_->counter + 1;
+                }
+                ::_exit(0);
+            }
+            if (pid > 0)
+            {
+                pid_ = pid;
+            }
+        }
+
+        ~DecoyChild()
+        {
+            if (pid_ > 0)
+            {
+                ::kill(pid_, SIGKILL);
+                ::waitpid(pid_, nullptr, 0);
+            }
+            if (decoy_ != nullptr)
+            {
+                ::munmap(decoy_, kDecoySize);
+            }
+            if (shared_ != nullptr)
+            {
+                ::munmap(shared_, sizeof(Shared));
+            }
+        }
+
+        DecoyChild(const DecoyChild&)            = delete;
+        DecoyChild& operator=(const DecoyChild&) = delete;
+
+        [[nodiscard]] std::uint32_t pid() const
+        {
+            return static_cast<std::uint32_t>(pid_);
+        }
+
+        [[nodiscard]] std::uint64_t decoy_address() const
+        {
+            return reinterpret_cast<std::uint64_t>(decoy_);
+        }
+
+        // Zero while nothing executed the decoy page: only the follower
+        // instruction could set it.
+        [[nodiscard]] std::uint64_t marker() const
+        {
+            return shared_ != nullptr ? shared_->marker : 0;
+        }
+
+        [[nodiscard]] std::uint64_t counter() const
+        {
+            return shared_ != nullptr ? shared_->counter : 0;
+        }
+
+        // True when the decoy page still holds exactly the bytes written to it,
+        // so no window patched the target's own generated memory either.
+        [[nodiscard]] bool decoy_intact() const
+        {
+            return decoy_ != nullptr && ::memcmp(decoy_, decoy_bytes_.data(), decoy_bytes_.size()) == 0;
+        }
+
+    private:
+        void write_decoy()
+        {
+            // `syscall` ; `mov rax, <&marker>` ; `mov dword ptr [rax], 1` ; `ud2`.
+            const std::uint64_t marker = reinterpret_cast<std::uint64_t>(&shared_->marker);
+            decoy_bytes_[0]            = std::byte {0x0F};
+            decoy_bytes_[1]            = std::byte {0x05};
+            decoy_bytes_[2]            = std::byte {0x48};
+            decoy_bytes_[3]            = std::byte {0xB8};
+            for (std::size_t i = 0; i < 8; ++i)
+            {
+                decoy_bytes_[4 + i] = static_cast<std::byte>(static_cast<unsigned char>(marker >> (8 * i)));
+            }
+            decoy_bytes_[12] = std::byte {0xC7};
+            decoy_bytes_[13] = std::byte {0x00};
+            decoy_bytes_[14] = std::byte {0x01};
+            decoy_bytes_[15] = std::byte {0x00};
+            decoy_bytes_[16] = std::byte {0x00};
+            decoy_bytes_[17] = std::byte {0x00};
+            decoy_bytes_[18] = std::byte {0x0F};
+            decoy_bytes_[19] = std::byte {0x0B};
+            ::memcpy(decoy_, decoy_bytes_.data(), decoy_bytes_.size());
+        }
+
+        pid_t                     pid_ {-1};
+        std::byte*                decoy_ {nullptr};
+        Shared*                   shared_ {nullptr};
+        std::array<std::byte, 20> decoy_bytes_ {};
+    };
+
+    // The two futex operations: the child blocks in a wait, the parent wakes it
+    // again to prove it kept running.
+    constexpr int kFutexWait = 0;
+    constexpr int kFutexWake = 1;
+
+    // A child whose leader is inside a blocking syscall when a window seizes it,
+    // which is the reported Proton target's shape (its main thread sits in
+    // `ioctl`/ntsync while slopkit attaches). The child blocks in a futex wait
+    // and must be making progress again afterwards.
+    class BlockedChild
+    {
+    public:
+        struct Shared
+        {
+            std::uint64_t counter {};
+            std::uint32_t word {};
+        };
+
+        // The counter value the child publishes right before it enters the wait.
+        static constexpr std::uint64_t kInSyscall = 1;
+
+        BlockedChild()
+        {
+            shared_ = static_cast<Shared*>(
+                ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0));
+            if (shared_ == MAP_FAILED || shared_ == nullptr)
+            {
+                shared_ = nullptr;
+                return;
+            }
+            shared_->counter = 0;
+            shared_->word    = 0;
+
+            const pid_t pid = ::fork();
+            if (pid == 0)
+            {
+                // The parent waits for this value before it attaches, so the
+                // block is the last thing the child did.
+                shared_->counter = kInSyscall;
+                ::syscall(SYS_futex, &shared_->word, kFutexWait, 0, nullptr, nullptr, 0);
+                for (;;)
+                {
+                    shared_->counter = shared_->counter + 1;
+                }
+                ::_exit(0);
+            }
+            if (pid > 0)
+            {
+                pid_ = pid;
+            }
+        }
+
+        ~BlockedChild()
+        {
+            if (pid_ > 0)
+            {
+                ::kill(pid_, SIGKILL);
+                ::waitpid(pid_, nullptr, 0);
+            }
+            if (shared_ != nullptr)
+            {
+                ::munmap(shared_, sizeof(Shared));
+            }
+        }
+
+        BlockedChild(const BlockedChild&)            = delete;
+        BlockedChild& operator=(const BlockedChild&) = delete;
+
+        [[nodiscard]] std::uint32_t pid() const
+        {
+            return static_cast<std::uint32_t>(pid_);
+        }
+
+        [[nodiscard]] std::uint64_t counter() const
+        {
+            return shared_ != nullptr ? shared_->counter : 0;
+        }
+
+        // Wakes the child's futex wait.
+        void wake() const
+        {
+            if (shared_ != nullptr)
+            {
+                ::syscall(SYS_futex, &shared_->word, kFutexWake, 1, nullptr, nullptr, 0);
+            }
+        }
+
+    private:
+        pid_t   pid_ {-1};
+        Shared* shared_ {nullptr};
+    };
+
+    // Set before the fork so the child's handler can write to the shared page it
+    // belongs to; the parent's copy stays untouched.
+    volatile std::uint64_t* g_signal_flag = nullptr;
+
+    void mark_signal(int)
+    {
+        if (g_signal_flag != nullptr)
+        {
+            *g_signal_flag = 1;
+        }
+    }
+
+    // A child that handles SIGUSR1 by flagging it in shared memory and then spins
+    // on, so a signal delivered while a window has it stopped can be seen to have
+    // reached the handler the target itself installed.
+    class SignalledChild
+    {
+    public:
+        struct Shared
+        {
+            std::uint64_t ready {};
+            std::uint64_t handled {};
+            std::uint64_t counter {};
+        };
+
+        SignalledChild()
+        {
+            shared_ = static_cast<Shared*>(
+                ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0));
+            if (shared_ == MAP_FAILED || shared_ == nullptr)
+            {
+                shared_ = nullptr;
+                return;
+            }
+            shared_->handled = 0;
+            shared_->counter = 0;
+
+            const pid_t pid = ::fork();
+            if (pid == 0)
+            {
+                g_signal_flag = &shared_->handled;
+                struct sigaction action {};
+                action.sa_handler = mark_signal;
+                ::sigemptyset(&action.sa_mask);
+                ::sigaction(SIGUSR1, &action, nullptr);
+                // The parent signals only once the handler is installed, so no
+                // signal of its stream hits the default action.
+                shared_->ready = 1;
+                for (;;)
+                {
+                    shared_->counter = shared_->counter + 1;
+                }
+                ::_exit(0);
+            }
+            if (pid > 0)
+            {
+                pid_ = pid;
+            }
+        }
+
+        ~SignalledChild()
+        {
+            if (pid_ > 0)
+            {
+                ::kill(pid_, SIGKILL);
+                ::waitpid(pid_, nullptr, 0);
+            }
+            if (shared_ != nullptr)
+            {
+                ::munmap(shared_, sizeof(Shared));
+            }
+        }
+
+        SignalledChild(const SignalledChild&)            = delete;
+        SignalledChild& operator=(const SignalledChild&) = delete;
+
+        [[nodiscard]] std::uint32_t pid() const
+        {
+            return static_cast<std::uint32_t>(pid_);
+        }
+
+        [[nodiscard]] std::uint64_t handled() const
+        {
+            return shared_ != nullptr ? shared_->handled : 0;
+        }
+
+        [[nodiscard]] std::uint64_t counter() const
+        {
+            return shared_ != nullptr ? shared_->counter : 0;
+        }
+
+    private:
+        pid_t   pid_ {-1};
+        Shared* shared_ {nullptr};
+    };
+
+    // True when no thread of `pid` sits in a ptrace stop any more.
+    bool no_traced_stop(std::uint32_t pid)
+    {
+        for (const auto& thread : slopkit::platform::read_threads(pid))
+        {
+            if (slopkit::platform::read_thread_state(pid, thread.tid) == 't')
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    template<typename Child>
+    bool await_counter(const Child& child, std::uint64_t want)
+    {
+        for (int i = 0; i < 200; ++i)
+        {
+            if (child.counter() >= want)
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds {5});
+        }
+        return false;
+    }
 } // namespace
+
+TEST_CASE("allocation completes while the target is inside a syscall", "[linux_proc][alloc]")
+{
+    BlockedChild child;
+    REQUIRE(child.pid() != 0);
+
+    // Attach only once the child reached the wait, and give it a moment to be
+    // inside the kernel, so the window really meets a thread mid-syscall.
+    REQUIRE(await_counter(child, BlockedChild::kInSyscall));
+    std::this_thread::sleep_for(std::chrono::milliseconds {50});
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(child.pid());
+    REQUIRE(session.has_value());
+    REQUIRE(session->supports_allocation());
+
+    constexpr std::size_t page = 0x1000;
+
+    const auto allocated = session->allocate_memory(page, 0);
+    REQUIRE(allocated.has_value());
+    CHECK(*allocated != 0);
+    CHECK((*allocated % page) == 0);
+    CHECK(mapped_rwx(child.pid(), *allocated, page));
+
+    // The interrupted syscall was handed back: the child runs on once woken.
+    child.wake();
+    wait_for_progress(child);
+
+    REQUIRE(session->free_memory(*allocated).has_value());
+    wait_for_progress(child);
+}
+
+TEST_CASE("a signal the target receives during the window reaches its handler", "[linux_proc][alloc]")
+{
+    SignalledChild child;
+    REQUIRE(child.pid() != 0);
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(child.pid());
+    REQUIRE(session.has_value());
+    REQUIRE(session->supports_allocation());
+
+    constexpr std::size_t page = 0x1000;
+
+    // The child installs its handler before it starts counting, so reaching the
+    // first count means a SIGUSR1 is now handled rather than fatal.
+    REQUIRE(await_counter(child, 1));
+
+    // A few signals land while the windows seize the target: each one has to be
+    // handed to the target's own handler rather than cancelled (or swallowed) by
+    // the hand-back. A sustained stream is not what the window is asked to
+    // survive — a target that never lets the call run is refused instead.
+    std::atomic<bool> signalling {true};
+    std::thread       signaller(
+        [&]
+        {
+            for (int i = 0; i < 5 && signalling.load(); ++i)
+            {
+                ::kill(child.pid(), SIGUSR1);
+                std::this_thread::sleep_for(std::chrono::milliseconds {10});
+            }
+        });
+
+    for (int round = 0; round < 4; ++round)
+    {
+        const auto allocated = session->allocate_memory(page, 0);
+        REQUIRE(allocated.has_value());
+        CHECK(*allocated != 0);
+        REQUIRE(session->free_memory(*allocated).has_value());
+    }
+
+    signalling = false;
+    signaller.join();
+
+    bool handler_ran = false;
+    for (int waited = 0; waited < 200 && !handler_ran; ++waited)
+    {
+        handler_ran = child.handled() != 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds {5});
+    }
+    CHECK(handler_ran);
+
+    // No thread is left in a traced stop and the target keeps running by itself.
+    CHECK(no_traced_stop(child.pid()));
+    wait_for_progress(child);
+}
+
+TEST_CASE("the gadget scan never uses the target's own anonymous code", "[linux_proc][alloc]")
+{
+    DecoyChild child;
+    REQUIRE(child.pid() != 0);
+    REQUIRE(child.decoy_address() != 0);
+    REQUIRE(mapped(child.pid(), child.decoy_address(), DecoyChild::kDecoySize));
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(child.pid());
+    REQUIRE(session.has_value());
+    REQUIRE(session->supports_allocation());
+
+    constexpr std::size_t page = 0x1000;
+
+    // The decoy is the child's lowest executable mapping; a scan that only
+    // filtered on `executable` would take its `0F 05` pair as the gadget.
+    auto allocated = session->allocate_memory(page, 0);
+    REQUIRE(allocated.has_value());
+    CHECK(*allocated != 0);
+    CHECK((*allocated % page) == 0);
+    CHECK(mapped_rwx(child.pid(), *allocated, page));
+
+    // Nothing of the decoy page ran and nothing patched it.
+    CHECK(child.marker() == 0);
+    CHECK(child.decoy_intact());
+    wait_for_progress(child);
+
+    REQUIRE(session->free_memory(*allocated).has_value());
+    wait_for_progress(child);
+}
 
 TEST_CASE("linux-proc maps and unmaps target memory through the ABI", "[linux_proc][alloc]")
 {
@@ -153,6 +640,7 @@ TEST_CASE("linux-proc maps and unmaps target memory through the ABI", "[linux_pr
     auto allocated = session->allocate_memory(page, 0);
     REQUIRE(allocated.has_value());
     const std::uint64_t address = *allocated;
+    CHECK(address != 0);
     CHECK((address % page) == 0);
     CHECK(mapped_rwx(child.pid(), address, page));
 

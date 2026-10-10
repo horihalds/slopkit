@@ -154,6 +154,12 @@ namespace slopkit::script::hook
             {
                 return std::unexpected(mapped.error());
             }
+            // A host that hands back address zero did not map anything, and the
+            // jump-reach message would blame a distance that never existed.
+            if (*mapped == 0)
+            {
+                return std::unexpected(std::string {"the target's allocator returned no address"});
+            }
             const std::uint64_t span = site > *mapped ? site - *mapped : *mapped - site;
             if (span > kCaveReach)
             {

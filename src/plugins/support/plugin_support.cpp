@@ -543,6 +543,12 @@ namespace slopkit::plugins::support
             case platform::StopReason::single_step:
                 out.reason = SLOPKIT_STOP_SINGLE_STEP;
                 break;
+            case platform::StopReason::syscall:
+                // Only the allocation window's own syscall resume produces a
+                // syscall stop, and it never reports one through this ABI, which
+                // has no reason of its own for it: it reads as a plain trap.
+                out.reason = SLOPKIT_STOP_SINGLE_STEP;
+                break;
             case platform::StopReason::breakpoint:
                 // A hardware hit names its DR slot; otherwise it is a software
                 // int3 only when the byte just before RIP is still 0xCC.

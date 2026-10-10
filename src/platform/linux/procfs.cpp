@@ -339,6 +339,29 @@ namespace slopkit::platform
         return threads;
     }
 
+    std::optional<char> read_thread_state(process::ProcessId pid, process::ProcessId tid)
+    {
+        const auto raw = read_file(proc_entry(pid, "task/" + std::to_string(tid) + "/stat"));
+        if (!raw)
+        {
+            return std::nullopt;
+        }
+
+        // A thread's name (the second field) may contain spaces and parentheses,
+        // so the state is the first field after the last ')'.
+        const auto close = raw->rfind(')');
+        if (close == std::string::npos)
+        {
+            return std::nullopt;
+        }
+        const auto rest = trim(std::string_view(*raw).substr(close + 1));
+        if (rest.empty())
+        {
+            return std::nullopt;
+        }
+        return rest.front();
+    }
+
     process::ModuleKind classify_region(const MappedRegion& region)
     {
         if (region.path.empty() || region.path.front() == '[')
