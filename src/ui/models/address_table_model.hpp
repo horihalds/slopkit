@@ -50,8 +50,9 @@ namespace slopkit::ui::models
         [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
         bool                        setData(const QModelIndex& index, const QVariant& value, int role) override;
 
-        // Drag-reorder contract: a row can be moved within the list only, and the
-        // drop is forwarded to AddressTable::move so ids and fields stay put.
+        // Drag contract: a row can be moved within the list or nested under
+        // another row, and every drop is forwarded to AddressTable::move_row so
+        // ids, fields and the tree stay put.
         [[nodiscard]] Qt::DropActions supportedDropActions() const override;
         [[nodiscard]] QStringList     mimeTypes() const override;
         [[nodiscard]] QMimeData*      mimeData(const QModelIndexList& indexes) const override;
@@ -62,6 +63,16 @@ namespace slopkit::ui::models
                                                       const QModelIndex& parent) const override;
         bool                          dropMimeData(
             const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) override;
+
+        // Applies a drop of `source` on or beside the row at `target`. With
+        // `nest`, `source` (with its whole subtree) becomes the last child of
+        // `target`; otherwise it is inserted directly in front of `target` and
+        // adopts that row's level. False for a no-op or a move onto the source's
+        // own subtree, and nothing is reported then.
+        bool drop_row(int source, int target, bool nest);
+
+        // The row's nesting depth (0 = top level), for the indent delegate.
+        [[nodiscard]] int depth_at(std::size_t row) const;
 
         // Re-reads the table after a completion or a freeze pass; emits nothing
         // when the entries are unchanged, so an idle poll never repaints.

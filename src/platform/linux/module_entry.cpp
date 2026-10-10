@@ -178,15 +178,9 @@ namespace slopkit::platform
         const auto header = read_header(path);
         if (!header)
         {
-            log::warning(log::category::process, std::format("cannot read the header of {}", path.string()));
             return std::nullopt;
         }
-        auto entry = parse_image_entry(std::span<const std::byte>(header->data.data(), header->size));
-        if (!entry)
-        {
-            log::warning(log::category::process, std::format("cannot parse the image header of {}", path.string()));
-        }
-        return entry;
+        return parse_image_entry(std::span<const std::byte>(header->data.data(), header->size));
     }
 
     std::optional<PeKind> parse_pe_kind(std::span<const std::byte> bytes)

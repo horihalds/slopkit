@@ -13,6 +13,7 @@
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/components/indent_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
 #include "ui/theme.hpp"
@@ -172,6 +173,12 @@ namespace slopkit::ui::models
                 return ui::format_cell_address_full(address_mode_, module_spans_, entry.address);
             }
             break;
+        case widgets::kDepthRole:
+            if (index.column() == description)
+            {
+                return static_cast<int>(table_.depth_of(row));
+            }
+            break;
         default:
             break;
         }
@@ -272,10 +279,38 @@ namespace slopkit::ui::models
         return data;
     }
 
-    bool
-    AddressTableModel::canDropMimeData(const QMimeData* data, Qt::DropAction action, int, int, const QModelIndex&) const
+    bool AddressTableModel::canDropMimeData(
+        const QMimeData* data, Qt::DropAction action, int row, int, const QModelIndex& parent) const
     {
-        return data != nullptr && action == Qt::MoveAction && data->hasFormat(QString::fromLatin1(kRowMimeType));
+        if (data == nullptr || action != Qt::MoveAction || !data->hasFormat(QString::fromLatin1(kRowMimeType)))
+        {
+            return false;
+        }
+        bool      ok     = false;
+        const int source = data->data(QString::fromLatin1(kRowMimeType)).toInt(&ok);
+        const int count  = rowCount();
+        if (!ok || source < 0 || source >= count)
+        {
+            return false;
+        }
+
+        const auto from = static_cast<std::size_t>(source);
+        if (parent.isValid())
+        {
+            // A nest onto the row itself or one of its descendants is refused.
+            const int target = parent.row();
+            if (target < 0 || target >= count)
+            {
+                return false;
+            }
+            return !table_.is_within_subtree(static_cast<std::size_t>(target), from);
+        }
+
+        // An insertion strictly inside the moved subtree cannot happen. The no-op
+        // drops (onto itself, the gap above itself) stay allowed so the drop is
+        // rejected by the move rather than silently swallowed.
+        const int insert = row < 0 ? count : std::clamp(row, 0, count);
+        return !(insert > source && insert < source + static_cast<int>(table_.subtree_size(from)));
     }
 
     bool AddressTableModel::dropMimeData(
@@ -288,48 +323,106 @@ namespace slopkit::ui::models
 
         bool      ok     = false;
         const int source = data->data(QString::fromLatin1(kRowMimeType)).toInt(&ok);
-        const int count  = rowCount();
-        if (!ok || source < 0 || source >= count)
+        if (!ok)
         {
             return false;
         }
 
-        // Qt hands the insertion row (the drop lands "before" it); a drop onto an
-        // item arrives as a valid parent with row == -1.
-        int insert_row = parent.isValid() ? parent.row() : (row >= 0 ? row : count);
-        insert_row     = std::clamp(insert_row, 0, count);
-
-        // The rows after the source shift up by one, so a downward move ends at
-        // one index lower than the insertion row.
-        const int destination = source < insert_row ? insert_row - 1 : insert_row;
-        if (destination == source)
+        // Qt hands a drop onto an item as a valid parent and an insertion between
+        // rows as an insertion row; both go through the one drop path so the view
+        // and this fallback cannot diverge.
+        if (parent.isValid())
         {
-            return false; // Dropped onto itself.
+            return drop_row(source, parent.row(), true);
         }
+        return drop_row(source, row < 0 ? rowCount() : row, false);
+    }
 
-        // beginMoveRows wants the destination child in the pre-move numbering:
-        // one past the final index for a downward move.
-        const int destination_child = source < destination ? destination + 1 : destination;
-        if (!beginMoveRows(QModelIndex(), source, source, QModelIndex(), destination_child))
+    bool AddressTableModel::drop_row(int source, int target, bool nest)
+    {
+        const int count = rowCount();
+        if (source < 0 || source >= count)
+        {
+            return false;
+        }
+        if (nest ? (target < 0 || target >= count) : (target < 0 || target > count))
         {
             return false;
         }
 
-        table_.move(static_cast<std::size_t>(source), static_cast<std::size_t>(destination));
-
-        // The moved and shifted rows now stand for different entries, so their
-        // cached readings are dropped; the next live pass refills them.
-        const int first = std::min(source, destination);
-        const int last  = std::max(source, destination);
-        for (int index = first; index <= last && static_cast<std::size_t>(index) < cells_.size(); ++index)
+        const auto from = static_cast<std::size_t>(source);
+        if (target < count && table_.is_within_subtree(static_cast<std::size_t>(target), from))
         {
-            cells_.cell(static_cast<std::size_t>(index)) = LiveCell {};
+            return false; // Onto the row itself or one of its descendants.
+        }
+
+        // Mirror AddressTable::move_row's landing rule so the move signals can be
+        // opened before the table changes and a no-op never reports a move.
+        const std::size_t landing = static_cast<std::size_t>(target);
+        const std::size_t moved   = table_.subtree_size(from);
+        std::size_t       before  = landing;
+        std::uint64_t     parent  = 0;
+        if (nest)
+        {
+            before = landing + table_.subtree_size(landing);
+            parent = table_.entries()[landing].id;
+        }
+        else if (landing == static_cast<std::size_t>(count))
+        {
+            before = static_cast<std::size_t>(count);
+            parent = table_.entries()[before - 1].parent;
+        }
+        else
+        {
+            parent = table_.entries()[landing].parent;
+        }
+
+        const std::size_t destination = from < before ? before - moved : before;
+        if (destination == from && parent == table_.entries()[from].parent)
+        {
+            return false;
+        }
+
+        const auto moved_rows = static_cast<int>(moved);
+        const auto final_row  = static_cast<int>(destination);
+
+        // A nest that keeps the row in place is a pure re-parent: the row order is
+        // unchanged, so there is no move to announce (beginMoveRows rejects a
+        // zero-distance move) and the repaint below carries the new depth.
+        const bool reorders = final_row != source;
+        if (reorders)
+        {
+            const int destination_child = source < final_row ? final_row + moved_rows : final_row;
+            if (!beginMoveRows(QModelIndex(), source, source + moved_rows - 1, QModelIndex(), destination_child))
+            {
+                return false;
+            }
+        }
+
+        table_.move_row(from, landing, nest);
+
+        // The rows the block passed now stand for different entries: drop their
+        // cached readings so no stale value sticks to a recycled row.
+        const int first = std::min(source, final_row);
+        const int last  = std::max(source, final_row) + moved_rows;
+        for (int row = first; row < last && static_cast<std::size_t>(row) < cells_.size(); ++row)
+        {
+            cells_.cell(static_cast<std::size_t>(row)) = LiveCell {};
         }
 
         note_table_changed();
-        endMoveRows();
-        emit statusChanged(tr("Row moved."), false);
+        if (reorders)
+        {
+            endMoveRows();
+        }
+        emit dataChanged(index(0, 0), index(rowCount() - 1, column_count - 1));
+        emit statusChanged(nest ? tr("Row nested.") : tr("Row moved."), false);
         return true;
+    }
+
+    int AddressTableModel::depth_at(std::size_t row) const
+    {
+        return static_cast<int>(table_.depth_of(row));
     }
 
     bool AddressTableModel::setData(const QModelIndex& index, const QVariant& value, int role)
@@ -623,10 +716,10 @@ namespace slopkit::ui::models
         {
             const auto& current = entries[index];
             const auto& last    = last_entries_[index];
-            if (current.id != last.id || current.active != last.active || current.kind != last.kind
-                || current.description != last.description || current.address != last.address
-                || current.expression != last.expression || current.type != last.type || current.hex != last.hex
-                || current.bytes != last.bytes || current.script != last.script)
+            if (current.id != last.id || current.parent != last.parent || current.active != last.active
+                || current.kind != last.kind || current.description != last.description
+                || current.address != last.address || current.expression != last.expression || current.type != last.type
+                || current.hex != last.hex || current.bytes != last.bytes || current.script != last.script)
             {
                 return false;
             }

@@ -14,6 +14,8 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 
+#include "ui/components/address_table_view.hpp"
+#include "ui/components/indent_delegate.hpp"
 #include "ui/dialogs/add_script.hpp"
 
 TEST_CASE("the address list Value column follows live memory", "[ui]")
@@ -335,6 +337,76 @@ TEST_CASE("the address list delete confirmation follows the address mode", "[ui]
     // Absolute mode switches the confirmation back.
     panel.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(confirmation_text() == QStringLiteral("Delete 1040?"));
+}
+
+TEST_CASE("the address list nests by drag and deletes the whole subtree", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    const auto                   add = [&table](const char* description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description;
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add("parent", 0x1040);
+    add("child", 0x2040);
+    add("grandchild", 0x3040);
+    table.set_selected(0);
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    // The panel builds the nesting-aware view and delegate.
+    auto* view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+    CHECK(view->showDropIndicator());
+    CHECK(dynamic_cast<slopkit::ui::widgets::IndentDelegate*>(view->itemDelegate()) != nullptr);
+
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+
+    // A drag onto a row's middle nests through the model's drop path.
+    CHECK(model->drop_row(1, 0, true));
+    CHECK(model->drop_row(2, 1, true));
+    CHECK(table.depth_of(1) == 1);
+    CHECK(table.depth_of(2) == 2);
+
+    // Deleting the parent names the whole subtree and removes it.
+    table.set_selected(0);
+    QString prompt;
+    QTimer::singleShot(0,
+                       [&prompt]
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               prompt = box->text();
+                               for (QPushButton* button : box->findChildren<QPushButton*>())
+                               {
+                                   if (button->text() == QStringLiteral("Yes"))
+                                   {
+                                       button->click();
+                                       return;
+                                   }
+                               }
+                           }
+                       });
+    panel.delete_selected();
+    CHECK(prompt == QStringLiteral("Delete parent and its 2 children?"));
+    CHECK(table.size() == 0);
 }
 
 TEST_CASE("the address list row menu offers the access watch entries", "[ui]")

@@ -22,7 +22,8 @@
 #include "core/log_categories.hpp"
 #include "scan/types.hpp"
 #include "table/serializer.hpp"
-#include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/components/address_table_view.hpp"
+#include "ui/components/indent_delegate.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/row_menu.hpp"
 #include "ui/dialogs/add_script.hpp"
@@ -74,9 +75,9 @@ namespace slopkit::ui::panels
         layout->setSpacing(6);
 
         model_      = new models::AddressTableModel(table_, worker, target, this);
-        table_view_ = new QTableView(this);
+        table_view_ = new components::AddressTableView(this);
         table_view_->setModel(model_);
-        table_view_->setItemDelegate(new widgets::ElidedTooltipDelegate(table_view_));
+        table_view_->setItemDelegate(new widgets::IndentDelegate(table_view_));
         table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
         table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
         table_view_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
@@ -312,8 +313,6 @@ namespace slopkit::ui::panels
                 }
                 if (!first_error.isEmpty())
                 {
-                    log::warning(log::category::ui,
-                                 std::format("expression resolve failed: {}", first_error.toStdString()));
                     set_status(tr("Expression resolve failed: %1").arg(first_error), true);
                 }
             });
@@ -497,12 +496,16 @@ namespace slopkit::ui::panels
         const auto  address = model_->address_text(entry.address);
         const auto  label   = entry.description.empty() ? address : to_qstring(entry.description);
 
-        if (!widgets::confirm(this, tr("Delete Entry"), tr("Delete %1?").arg(label)))
+        const std::size_t index    = static_cast<std::size_t>(row);
+        const std::size_t children = table_.subtree_size(index) - 1;
+        const QString     question =
+            children == 0 ? tr("Delete %1?").arg(label) : tr("Delete %1 and its %2 children?").arg(label).arg(children);
+        if (!widgets::confirm(this, tr("Delete Entry"), question))
         {
             return;
         }
 
-        table_.remove(static_cast<std::size_t>(row));
+        table_.remove(index);
         set_status(tr("Entry deleted."), false);
     }
 

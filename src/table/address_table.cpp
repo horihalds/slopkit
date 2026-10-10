@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <format>
+#include <iterator>
+#include <unordered_map>
 #include <utility>
 
 #include "core/log.hpp"
@@ -68,16 +70,20 @@ namespace slopkit::table
         {
             return;
         }
-        log::info(log::category::table, std::format("entry removed at index {}", index));
-        entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(index));
-        if (selected_ == static_cast<int>(index))
+        const std::size_t count = subtree_size(index);
+        log::info(log::category::table, std::format("entry removed at index {} ({} row(s))", index, count));
+        entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(index),
+                       entries_.begin() + static_cast<std::ptrdiff_t>(index + count));
+
+        const int first = static_cast<int>(index);
+        const int last  = static_cast<int>(index + count);
+        if (selected_ >= first && selected_ < last)
         {
-            selected_ =
-                entries_.empty() ? -1 : std::min(static_cast<int>(index), static_cast<int>(entries_.size()) - 1);
+            selected_ = entries_.empty() ? -1 : std::min(first, static_cast<int>(entries_.size()) - 1);
         }
-        else if (selected_ > static_cast<int>(index))
+        else if (selected_ >= last)
         {
-            --selected_;
+            selected_ -= static_cast<int>(count);
         }
     }
 
@@ -104,65 +110,227 @@ namespace slopkit::table
 
     void AddressTable::move(std::size_t from, std::size_t to)
     {
-        if (from == to || from >= entries_.size() || to >= entries_.size())
+        if (from >= entries_.size() || to >= entries_.size())
         {
             return;
         }
+        // `to` is the moved row's final index, so a downward move inserts in
+        // front of the row that follows it; an upward move in front of `to`
+        // itself. Both adopt the landing row's level, so a subtree moves whole.
+        move_row(from, from < to ? to + 1 : to, false);
+    }
 
-        AddressEntry moving = std::move(entries_[from]);
-        entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(from));
-        entries_.insert(entries_.begin() + static_cast<std::ptrdiff_t>(to), std::move(moving));
-
-        // The selection follows the moved row; the rows it jumped over shift by
-        // one the other way.
-        if (selected_ == static_cast<int>(from))
+    std::size_t AddressTable::depth_of(std::size_t index) const
+    {
+        if (index >= entries_.size())
         {
-            selected_ = static_cast<int>(to);
-        }
-        else if (from < to && selected_ > static_cast<int>(from) && selected_ <= static_cast<int>(to))
-        {
-            --selected_;
-        }
-        else if (from > to && selected_ >= static_cast<int>(to) && selected_ < static_cast<int>(from))
-        {
-            ++selected_;
+            return 0;
         }
 
-        log::info(log::category::table, std::format("entry moved from {} to {}", from, to));
+        std::size_t   depth   = 0;
+        std::size_t   current = index;
+        std::uint64_t parent  = entries_[current].parent;
+        while (parent != 0)
+        {
+            // A parent always precedes its child, so only look before `current`;
+            // that also makes a corrupt cycle terminate.
+            std::size_t found = entries_.size();
+            for (std::size_t i = 0; i < current; ++i)
+            {
+                if (entries_[i].id == parent)
+                {
+                    found = i;
+                    break;
+                }
+            }
+            if (found == entries_.size())
+            {
+                break;
+            }
+            ++depth;
+            current = found;
+            parent  = entries_[current].parent;
+        }
+        return depth;
+    }
+
+    std::size_t AddressTable::subtree_size(std::size_t index) const
+    {
+        if (index >= entries_.size())
+        {
+            return 0;
+        }
+
+        // Depth-first order keeps every descendant directly after the root, so
+        // the subtree lasts until the next row at the root's depth or above.
+        const std::size_t root_depth = depth_of(index);
+        std::size_t       count      = 1;
+        for (std::size_t i = index + 1; i < entries_.size(); ++i)
+        {
+            if (depth_of(i) <= root_depth)
+            {
+                break;
+            }
+            ++count;
+        }
+        return count;
+    }
+
+    bool AddressTable::is_within_subtree(std::size_t index, std::size_t ancestor) const
+    {
+        if (index >= entries_.size() || ancestor >= entries_.size())
+        {
+            return false;
+        }
+        return index >= ancestor && index < ancestor + subtree_size(ancestor);
+    }
+
+    bool AddressTable::move_row(std::size_t from, std::size_t target, bool nest)
+    {
+        if (from >= entries_.size())
+        {
+            return false;
+        }
+        if (nest ? target >= entries_.size() : target > entries_.size())
+        {
+            return false;
+        }
+        // A drop onto the moved row, one of its descendants or an edge inside
+        // its own subtree would break the tree; refuse it.
+        if (target < entries_.size() && is_within_subtree(target, from))
+        {
+            return false;
+        }
+
+        const std::size_t   count      = subtree_size(from);
+        const std::uint64_t old_parent = entries_[from].parent;
+
+        // Where the block lands: an element position in the original vector and
+        // the parent id the moved root adopts there.
+        std::size_t   before     = 0;
+        std::uint64_t new_parent = 0;
+        if (nest)
+        {
+            before     = target + subtree_size(target);
+            new_parent = entries_[target].id;
+        }
+        else if (target == entries_.size())
+        {
+            // Past the last row: the new row joins the last row's level.
+            before     = entries_.size();
+            new_parent = entries_.back().parent;
+        }
+        else
+        {
+            before     = target;
+            new_parent = entries_[target].parent;
+        }
+
+        // The extraction shifts every position after `from` down by `count`.
+        const std::size_t insertion = from < before ? before - count : before;
+        if (insertion == from && new_parent == old_parent)
+        {
+            return false;
+        }
+
+        std::vector<AddressEntry> block(
+            std::make_move_iterator(entries_.begin() + static_cast<std::ptrdiff_t>(from)),
+            std::make_move_iterator(entries_.begin() + static_cast<std::ptrdiff_t>(from + count)));
+        entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(from),
+                       entries_.begin() + static_cast<std::ptrdiff_t>(from + count));
+        entries_.insert(entries_.begin() + static_cast<std::ptrdiff_t>(insertion),
+                        std::make_move_iterator(block.begin()),
+                        std::make_move_iterator(block.end()));
+        entries_[insertion].parent = new_parent;
+
+        // The selection rides on the moved block; every row the block jumped
+        // over shifts the other way.
+        if (selected_ >= 0)
+        {
+            const int first = static_cast<int>(from);
+            const int last  = static_cast<int>(from + count);
+            if (selected_ >= first && selected_ < last)
+            {
+                selected_ = static_cast<int>(insertion) + (selected_ - first);
+            }
+            else
+            {
+                const int rest = selected_ < first ? selected_ : selected_ - static_cast<int>(count);
+                selected_      = rest < static_cast<int>(insertion) ? rest : rest + static_cast<int>(count);
+            }
+        }
+
+        log::info(log::category::table,
+                  std::format("entry moved from {} to {}{}", from, insertion, nest ? " (nested)" : ""));
+        return true;
     }
 
     MergeSummary AddressTable::merge(std::span<const AddressEntry> incoming)
     {
         MergeSummary summary;
+
+        const auto matches = [](const AddressEntry& candidate, const AddressEntry& entry)
+        {
+            if (candidate.kind != entry.kind)
+            {
+                return false;
+            }
+            if (entry.kind == EntryKind::script)
+            {
+                return candidate.description == entry.description && candidate.script == entry.script;
+            }
+            return candidate.address == entry.address && candidate.type == entry.type
+                && candidate.description == entry.description;
+        };
+
+        // incoming id -> the id it became here, so an incoming child is
+        // re-pointed at its merged copy, or at the existing entry a skipped
+        // duplicate resolved to. An unknown (or unset) parent becomes top level.
+        std::unordered_map<std::uint64_t, std::uint64_t>   id_map;
+        std::vector<std::pair<std::size_t, std::uint64_t>> pending; // (row, incoming parent id)
+
         for (const auto& entry : incoming)
         {
-            const bool exists = std::ranges::any_of(entries_,
-                                                    [&](const AddressEntry& candidate)
-                                                    {
-                                                        if (candidate.kind != entry.kind)
+            if (const auto found = std::ranges::find_if(entries_,
+                                                        [&](const AddressEntry& candidate)
                                                         {
-                                                            return false;
-                                                        }
-                                                        if (entry.kind == EntryKind::script)
-                                                        {
-                                                            return candidate.description == entry.description
-                                                                && candidate.script == entry.script;
-                                                        }
-                                                        return candidate.address == entry.address
-                                                            && candidate.type == entry.type
-                                                            && candidate.description == entry.description;
-                                                    });
-            if (exists)
+                                                            return matches(candidate, entry);
+                                                        });
+                found != entries_.end())
             {
                 ++summary.skipped;
+                if (entry.id != 0)
+                {
+                    id_map[entry.id] = found->id;
+                }
                 continue;
             }
 
             AddressEntry copy = entry;
             copy.id           = next_id_++;
+            copy.parent       = 0;
+            if (entry.id != 0)
+            {
+                id_map[entry.id] = copy.id;
+            }
+            const std::size_t row = entries_.size();
             entries_.push_back(std::move(copy));
+            pending.emplace_back(row, entry.parent);
             ++summary.added;
         }
+
+        for (const auto& [row, incoming_parent] : pending)
+        {
+            if (incoming_parent == 0)
+            {
+                continue;
+            }
+            if (const auto found = id_map.find(incoming_parent); found != id_map.end())
+            {
+                entries_[row].parent = found->second;
+            }
+        }
+
         if (summary.added > 0)
         {
             log::info(log::category::table,

@@ -23,7 +23,8 @@ namespace slopkit::table
     // member extensions that persist the kind live in `entry_name.hpp`.
     struct AddressEntry
     {
-        std::uint64_t          id {}; // Stable identity, assigned by AddressTable::add.
+        std::uint64_t          id {};     // Stable identity, assigned by AddressTable::add.
+        std::uint64_t          parent {}; // The id of the entry this one nests under; 0 = top level.
         bool                   active {false};
         EntryKind              kind {EntryKind::value};
         std::string            description;
@@ -51,6 +52,8 @@ namespace slopkit::table
     {
     public:
         void add(AddressEntry entry);
+        // Erases the whole subtree rooted at `index` and keeps the selection
+        // adjustment, so a parent never leaves orphaned children behind.
         void remove(std::size_t index);
         void clear();
 
@@ -71,11 +74,29 @@ namespace slopkit::table
         // loading so a file load does not log one record per row.
         void replace(std::vector<AddressEntry> entries);
 
-        // Moves the entry at `from` to the final index `to`, keeping its id and
-        // every field and carrying the selection with the row. An equal or
-        // out-of-range pair is a no-op, so a drag onto the same row changes
-        // nothing and logs nothing.
+        // Moves the entry at `from` (with its whole subtree) to the final index
+        // `to`, keeping its id and every field and carrying the selection with
+        // the row. An equal or out-of-range pair is a no-op, so a drag onto the
+        // same row changes nothing and logs nothing. Implemented over `move_row`.
         void move(std::size_t from, std::size_t to);
+
+        // The nesting depth of `index` (0 = top level); 0 for an out-of-range
+        // index.
+        [[nodiscard]] std::size_t depth_of(std::size_t index) const;
+
+        // The rows the subtree rooted at `index` holds, the root included.
+        [[nodiscard]] std::size_t subtree_size(std::size_t index) const;
+
+        // True when `index` is `ancestor` or sits inside its subtree.
+        [[nodiscard]] bool is_within_subtree(std::size_t index, std::size_t ancestor) const;
+
+        // Moves the row at `from` with its subtree. With `nest`, the moved root
+        // becomes the last child of the row at `target`; otherwise it is inserted
+        // directly in front of the row at `target` and adopts that row's parent.
+        // `target == size()` without `nest` appends after the last row at the
+        // last row's level. False when the move is a no-op, `target` is inside
+        // the moved subtree, or a `nest` target is out of range.
+        bool move_row(std::size_t from, std::size_t target, bool nest);
 
         // Appends every incoming entry that is not already present (same address,
         // type and description) with a fresh id. Existing entries, the selection

@@ -13,9 +13,10 @@ namespace slopkit::table
     // Table files are ZIP archives (the `.skt` extension) with a readable inner
     // layout:
     //
-    //   version.txt         the single line `slopkit-table 4`
+    //   version.txt         the single line `slopkit-table 5`
     //   settings.txt        optional; `target="…" exe_path="…" auto_attach=0|1 match_exe_path=0|1`
-    //   index.txt           one entry member per line, in row order
+    //   index.txt           one entry member per line, in row order, a child's line
+    //                       carrying its parent: `entries/<name>.txt parent="entries/<parent>.txt"`
     //   entries/<name>.txt  a value entry:
     //                       `type=i32 hex=0 size=4 expr="game+10"`
     //   entries/<name>.lua  a script entry: the Lua source verbatim
@@ -31,9 +32,11 @@ namespace slopkit::table
     // `expr::parse` accepts as a literal. Both functions return a human-readable
     // message naming the offending member.
     //
-    // The writer emits the current `slopkit-table 4` token; the reader also
-    // accepts `slopkit-table 3`, which predates script entries and therefore has
-    // no `.lua` members.
+    // The writer emits the current `slopkit-table 5` token; the reader also
+    // accepts `slopkit-table 4` (no nesting) and `slopkit-table 3` (no script
+    // entries, so no `.lua` members). A parent named in index.txt must be listed
+    // before its child; the parent id is not stored in an entry body because a
+    // `.lua` body is the script verbatim.
     std::expected<void, std::string> save(const std::filesystem::path& path, const AddressTable& table);
     std::expected<void, std::string> load(const std::filesystem::path& path, AddressTable& table);
 

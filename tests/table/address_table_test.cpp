@@ -290,7 +290,7 @@ TEST_CASE("the archive holds version, index and one member per entry", "[table]"
 
     CHECK(member_names(path)
           == std::vector<std::string> {"version.txt", "entries/health.txt", "entries/armor.txt", "index.txt"});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 4\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
     CHECK(member_text(path, "index.txt") == std::optional<std::string> {"entries/health.txt\nentries/armor.txt\n"});
     CHECK(member_text(path, "entries/health.txt")
           == std::optional<std::string> {"type=i32 hex=0 size=4 expr=\"1234\"\n"});
@@ -504,6 +504,50 @@ TEST_CASE("a damaged archive is rejected with the member name", "[table]")
         CHECK(result.error().find("unknown entry extension") != std::string::npos);
     }
 
+    SECTION("a parent that is not listed")
+    {
+        const auto path = scratch_file("missing_parent.skt");
+        std::filesystem::remove(path);
+        REQUIRE(write_archive(path,
+                              std::vector<ArchiveMember> {
+                                  version,
+                                  body,
+                                  {.name = "entries/armor.txt",.text = "type=i32 hex=0 size=4 expr=\"1\"\n"                                                                },
+                                  {        .name = "index.txt",
+                                    .text = "entries/health.txt\nentries/armor.txt parent=\"entries/ghost.txt\"\n"}
+        })
+                    .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("entries/armor.txt") != std::string::npos);
+        CHECK(result.error().find("missing parent") != std::string::npos);
+    }
+
+    SECTION("a parent listed after the child")
+    {
+        const auto path = scratch_file("late_parent.skt");
+        std::filesystem::remove(path);
+        REQUIRE(write_archive(path,
+                              std::vector<ArchiveMember> {
+                                  version,
+                                  body,
+                                  {.name = "entries/armor.txt",.text = "type=i32 hex=0 size=4 expr=\"1\"\n"                                                                },
+                                  {        .name = "index.txt",
+                                    .text = "entries/health.txt parent=\"entries/armor.txt\"\nentries/armor.txt\n"}
+        })
+                    .has_value());
+
+        AddressTable table;
+        const auto   result = slopkit::table::load(path, table);
+        std::filesystem::remove(path);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().find("entries/health.txt") != std::string::npos);
+        CHECK(result.error().find("later parent") != std::string::npos);
+    }
+
     SECTION("an unknown format token")
     {
         const auto path = scratch_file("unknown_version.skt");
@@ -621,6 +665,182 @@ TEST_CASE("address entries can be moved with stable ids", "[table]")
     single.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
     single.move(0, 0);
     REQUIRE(single.size() == 1);
+}
+
+TEST_CASE("rows nest under a parent and move as a subtree", "[table]")
+{
+    AddressTable table;
+    const auto   add = [&table](const char* description)
+    {
+        auto entry        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        table.add(entry);
+    };
+    add("A");
+    add("B");
+    add("C");
+    add("D");
+
+    const auto descriptions = [&table]
+    {
+        std::vector<std::string> names;
+        for (const AddressEntry& entry : table.entries())
+        {
+            names.push_back(entry.description);
+        }
+        return names;
+    };
+
+    REQUIRE(table.size() == 4);
+    CHECK(table.depth_of(0) == 0);
+    CHECK(table.subtree_size(0) == 1);
+
+    // Drop B onto A's middle: B becomes A's last child.
+    CHECK(table.move_row(1, 0, true));
+    CHECK(descriptions() == std::vector<std::string> {"A", "B", "C", "D"});
+    CHECK(table.entries()[1].parent == table.entries()[0].id);
+    CHECK(table.depth_of(1) == 1);
+    CHECK(table.subtree_size(0) == 2);
+
+    // C dropped onto B nests a level deeper: a three-level chain.
+    CHECK(table.move_row(2, 1, true));
+    CHECK(table.entries()[2].parent == table.entries()[1].id);
+    CHECK(table.depth_of(2) == 2);
+    CHECK(table.depth_of(1) == 1);
+    CHECK(table.depth_of(0) == 0);
+    CHECK(table.subtree_size(0) == 3);
+    CHECK(table.subtree_size(1) == 2);
+    CHECK(table.is_within_subtree(0, 0));
+    CHECK(table.is_within_subtree(1, 0));
+    CHECK(table.is_within_subtree(2, 0));
+    CHECK_FALSE(table.is_within_subtree(3, 0));
+
+    // A drop onto a descendant or onto itself, and the gap above itself, are
+    // refused without changing the table.
+    CHECK_FALSE(table.move_row(0, 1, true));  // A onto its child B
+    CHECK_FALSE(table.move_row(0, 2, true));  // A onto its grandchild C
+    CHECK_FALSE(table.move_row(1, 1, true));  // B onto itself
+    CHECK_FALSE(table.move_row(1, 1, false)); // the gap above itself
+    CHECK(descriptions() == std::vector<std::string> {"A", "B", "C", "D"});
+    CHECK(table.depth_of(1) == 1);
+
+    // D dropped into the gap in front of A returns to the top level.
+    CHECK(table.move_row(3, 0, false));
+    CHECK(descriptions() == std::vector<std::string> {"D", "A", "B", "C"});
+    CHECK(table.depth_of(0) == 0);
+    CHECK(table.depth_of(1) == 0);
+    CHECK(table.depth_of(2) == 1);
+    CHECK(table.depth_of(3) == 2);
+
+    // A whole subtree moves: A (with B and C) in front of D.
+    CHECK(table.move_row(1, 0, false));
+    CHECK(descriptions() == std::vector<std::string> {"A", "B", "C", "D"});
+    CHECK(table.depth_of(0) == 0);
+    CHECK(table.depth_of(3) == 0);
+    CHECK(table.subtree_size(0) == 3);
+
+    // Appending past the last row joins the last row's level, and the selection
+    // rides with the moved subtree.
+    table.set_selected(0);
+    CHECK(table.move_row(0, table.size(), false));
+    CHECK(descriptions() == std::vector<std::string> {"D", "A", "B", "C"});
+    CHECK(table.depth_of(0) == 0);
+    CHECK(table.depth_of(1) == 0);
+    CHECK(table.selected() == 1);
+
+    // Out of range and empty edges are harmless.
+    CHECK_FALSE(table.move_row(9, 0, true));
+    CHECK_FALSE(table.move_row(0, 9, true));
+    CHECK(AddressTable {}.depth_of(0) == 0);
+    CHECK(AddressTable {}.subtree_size(0) == 0);
+}
+
+TEST_CASE("removing a parent removes its whole subtree", "[table]")
+{
+    AddressTable table;
+    const auto   add = [&table](const char* description)
+    {
+        auto entry        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        table.add(entry);
+    };
+    add("A");
+    add("B");
+    add("C");
+    add("D");
+    REQUIRE(table.move_row(1, 0, true)); // B under A
+    REQUIRE(table.move_row(2, 1, true)); // C under B
+    REQUIRE(table.size() == 4);
+
+    // A selection inside the removed subtree clamps to the freed slot.
+    table.set_selected(2);
+    table.remove(0);
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].description == "D");
+    CHECK(table.entries()[0].parent == 0);
+    CHECK(table.selected() == 0);
+
+    // A selection past the subtree shifts down by its size.
+    AddressTable other;
+    auto         entry = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+    entry.description  = "P";
+    other.add(entry);
+    auto child        = make_entry(kBase, ValueType::int32, {2, 0, 0, 0});
+    child.description = "Q";
+    other.add(child);
+    auto tail        = make_entry(kBase, ValueType::int32, {3, 0, 0, 0});
+    tail.description = "R";
+    other.add(tail);
+    REQUIRE(other.move_row(1, 0, true)); // Q under P
+    other.set_selected(2);               // R
+    other.remove(0);                     // removes P and Q
+    REQUIRE(other.size() == 1);
+    CHECK(other.entries()[0].description == "R");
+    CHECK(other.selected() == 0);
+}
+
+TEST_CASE("merge maps incoming parents into the target table", "[table]")
+{
+    SECTION("a merged parent resolves to its copy and a duplicate to the existing entry")
+    {
+        AddressTable table;
+        auto         parent = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        parent.description  = "parent";
+        table.add(parent);
+        const std::uint64_t existing_id = table.entries()[0].id;
+
+        AddressTable incoming;
+        auto         in_parent = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        in_parent.description  = "parent"; // a duplicate of the existing row
+        incoming.add(in_parent);
+        auto in_child        = make_entry(kBase + 4, ValueType::int32, {2, 0, 0, 0});
+        in_child.description = "child";
+        incoming.add(in_child);
+        REQUIRE(incoming.move_row(1, 0, true)); // the child nests under the incoming parent
+
+        const auto summary = table.merge(incoming.entries());
+        CHECK(summary.added == 1);
+        CHECK(summary.skipped == 1);
+        REQUIRE(table.size() == 2);
+        CHECK(table.entries()[0].id == existing_id);
+        CHECK(table.entries()[1].description == "child");
+        // The skipped duplicate parent maps the child onto the existing entry.
+        CHECK(table.entries()[1].parent == existing_id);
+        CHECK(table.depth_of(1) == 1);
+    }
+
+    SECTION("an incoming parent that is not present falls back to the top level")
+    {
+        AddressTable table;
+        auto         orphan = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        orphan.description  = "orphan";
+        orphan.parent       = 4242; // dangles
+        const auto summary  = table.merge(std::span<const AddressEntry>(&orphan, 1));
+        CHECK(summary.added == 1);
+        REQUIRE(table.size() == 1);
+        CHECK(table.entries()[0].parent == 0);
+        CHECK(table.depth_of(0) == 0);
+    }
 }
 
 TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")
@@ -784,7 +1004,7 @@ TEST_CASE("a script entry is stored as a lua member holding only the source", "[
           == std::optional<std::string> {"entries/health.txt\nentries/greet.lua\nentries/armor.txt\n"});
     // The body is the source and nothing else: no header and no added newline.
     CHECK(member_text(path, "entries/greet.lua") == std::optional<std::string> {source});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 4\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
 
     std::filesystem::remove(path);
 }
@@ -833,7 +1053,53 @@ TEST_CASE("a mixed table round-trips its scripts verbatim in row order", "[table
     CHECK(reordered.entries()[2].script == source);
 }
 
-TEST_CASE("a version 3 archive still loads and is re-saved as version 4", "[table]")
+TEST_CASE("a nested table round-trips its hierarchy", "[table]")
+{
+    AddressTable table;
+    auto         parent = make_entry(0x1000, ValueType::int32, {1, 0, 0, 0});
+    parent.description  = "parent";
+    parent.expression   = "1000";
+    table.add(parent);
+
+    CHECK(table.add_script("script-child", "return 1") == 1);
+    auto value_child        = make_entry(0x2000, ValueType::int32, {2, 0, 0, 0});
+    value_child.description = "value child";
+    value_child.expression  = "2000";
+    table.add(value_child);
+
+    REQUIRE(table.move_row(1, 0, true)); // the script nests under the value parent
+    REQUIRE(table.move_row(2, 1, true)); // the value child nests under the script
+
+    const auto path = scratch_file("nested.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
+    // A child names its parent on its index line, even when the member name has
+    // a space, and a script member carries a suffix just like a value member.
+    CHECK(member_text(path, "index.txt")
+          == std::optional<std::string> {"entries/parent.txt\n"
+                                         "entries/script-child.lua parent=\"entries/parent.txt\"\n"
+                                         "entries/value child.txt parent=\"entries/script-child.lua\"\n"});
+
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(loaded.size() == 3);
+    CHECK(loaded.entries()[0].description == "parent");
+    CHECK(loaded.entries()[1].description == "script-child");
+    CHECK(loaded.entries()[1].kind == EntryKind::script);
+    CHECK(loaded.entries()[2].description == "value child");
+    CHECK(loaded.depth_of(0) == 0);
+    CHECK(loaded.depth_of(1) == 1);
+    CHECK(loaded.depth_of(2) == 2);
+    CHECK(loaded.subtree_size(0) == 3);
+    CHECK(loaded.entries()[1].parent == loaded.entries()[0].id);
+    CHECK(loaded.entries()[2].parent == loaded.entries()[1].id);
+}
+
+TEST_CASE("a version 3 archive still loads and is re-saved as version 5", "[table]")
 {
     const auto path = scratch_file("legacy.skt");
     std::filesystem::remove(path);
@@ -852,7 +1118,7 @@ TEST_CASE("a version 3 archive still loads and is re-saved as version 4", "[tabl
     CHECK(table.entries()[0].description == "health");
 
     REQUIRE(slopkit::table::save(path, table).has_value());
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 4\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
     std::filesystem::remove(path);
 }
 

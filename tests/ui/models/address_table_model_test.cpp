@@ -9,6 +9,7 @@
 
 #include "support/ui_helpers.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/components/indent_delegate.hpp"
 
 TEST_CASE("the address-table model edits the table", "[ui]")
 {
@@ -245,6 +246,115 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     REQUIRE(self != nullptr);
     CHECK_FALSE(model.dropMimeData(self.get(), Qt::MoveAction, 0, 0, QModelIndex()));
     CHECK(table.entries()[0].description == "second");
+}
+
+TEST_CASE("the address-table model nests rows and reports their depth", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    const auto                   add_row = [&table](const QString& description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description.toStdString();
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add_row(QStringLiteral("first"), 0x1000);
+    add_row(QStringLiteral("second"), 0x2000);
+    add_row(QStringLiteral("third"), 0x3000);
+    add_row(QStringLiteral("fourth"), 0x4000);
+
+    slopkit::plugin::PluginHost            host;
+    slopkit::process::PluginAccess         access {host};
+    slopkit::process::AccessWorker         worker {access};
+    slopkit::process::AttachedTarget       target;
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+
+    const auto depth_of = [&model](int row)
+    {
+        return model
+            .data(model.index(row, slopkit::ui::models::AddressTableModel::description),
+                  slopkit::ui::widgets::kDepthRole)
+            .toInt();
+    };
+    CHECK(model.depth_at(0) == 0);
+    CHECK(depth_of(0) == 0);
+
+    int moved_count  = 0;
+    int nested_count = 0;
+    QObject::connect(&model,
+                     &QAbstractItemModel::rowsMoved,
+                     &model,
+                     [&moved_count](const QModelIndex&, int, int, const QModelIndex&, int)
+                     {
+                         ++moved_count;
+                     });
+    QObject::connect(&model,
+                     &slopkit::ui::models::AddressTableModel::statusChanged,
+                     &model,
+                     [&nested_count](const QString& message, bool)
+                     {
+                         if (message == QStringLiteral("Row nested."))
+                         {
+                             ++nested_count;
+                         }
+                     });
+
+    // A pure re-parent keeps the row in place: only the depth and the status
+    // change, and no move is announced.
+    CHECK(model.drop_row(1, 0, true));
+    CHECK(moved_count == 0);
+    CHECK(nested_count == 1);
+    CHECK(depth_of(0) == 0);
+    CHECK(depth_of(1) == 1);
+    CHECK(depth_of(2) == 0);
+    CHECK(table.entries()[1].parent == table.entries()[0].id);
+
+    // A nest onto one of its own descendants is refused and reports nothing.
+    CHECK_FALSE(model.drop_row(0, 1, true));
+    CHECK(nested_count == 1);
+    CHECK(table.entries()[0].description == "first");
+
+    // A no-op nest (already the right child) reports nothing either.
+    CHECK_FALSE(model.drop_row(1, 0, true));
+    CHECK(nested_count == 1);
+
+    // A nest that crosses the list is a real move: fourth becomes second's child.
+    CHECK(model.drop_row(3, 1, true));
+    CHECK(moved_count == 1);
+    CHECK(nested_count == 2);
+    CHECK(table.entries()[2].description == "fourth");
+    CHECK(depth_of(0) == 0);
+    CHECK(depth_of(1) == 1);
+    CHECK(depth_of(2) == 2);
+    CHECK(depth_of(3) == 0);
+    CHECK(table.entries()[2].parent == table.entries()[1].id);
+
+    // The Qt fallback path refuses a nest onto the dragged row's own subtree and
+    // allows a nest onto a row outside it.
+    std::unique_ptr<QMimeData> first_payload {model.mimeData({model.index(0, 0)})};
+    REQUIRE(first_payload != nullptr);
+    CHECK_FALSE(model.canDropMimeData(first_payload.get(), Qt::MoveAction, -1, 0, model.index(0, 0)));
+    CHECK_FALSE(model.canDropMimeData(first_payload.get(), Qt::MoveAction, -1, 0, model.index(1, 0)));
+    CHECK_FALSE(model.canDropMimeData(first_payload.get(), Qt::MoveAction, -1, 0, model.index(2, 0)));
+    CHECK(model.canDropMimeData(first_payload.get(), Qt::MoveAction, -1, 0, model.index(3, 0)));
+
+    // A Qt item drop (a valid parent) nests through the same path, in place.
+    std::unique_ptr<QMimeData> third_payload {model.mimeData({model.index(3, 0)})};
+    REQUIRE(third_payload != nullptr);
+    CHECK(model.dropMimeData(third_payload.get(), Qt::MoveAction, -1, 0, model.index(0, 0)));
+    CHECK(nested_count == 3);
+    CHECK(depth_of(3) == 1);
+    CHECK(table.entries()[3].parent == table.entries()[0].id);
+
+    // Dropping a row onto itself is refused and changes nothing.
+    std::unique_ptr<QMimeData> self {model.mimeData({model.index(0, 0)})};
+    REQUIRE(self != nullptr);
+    CHECK_FALSE(model.dropMimeData(self.get(), Qt::MoveAction, 0, 0, QModelIndex()));
+    CHECK(table.entries()[0].description == "first");
 }
 
 TEST_CASE("the address-table model edits only a script row's Description and Active cells", "[ui]")

@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -26,12 +27,19 @@ namespace slopkit::table
 
     namespace
     {
-        constexpr std::string_view kFormatToken         = "slopkit-table 4";
-        // Reader compatibility: a version-3 archive predates script entries, so
-        // it simply has no `.lua` members. The writer always emits the current
-        // token, and an older build refuses it explicitly instead of
-        // mis-parsing a Lua body as a value entry.
-        constexpr std::string_view kPreviousFormatToken = "slopkit-table 3";
+        constexpr std::string_view kFormatToken         = "slopkit-table 5";
+        // Reader compatibility: 4 predates nesting, so its index lines carry no
+        // ` parent="…"` suffix; 3 predates script entries, so it simply has no
+        // `.lua` members. The writer always emits the current token, and an older
+        // build refuses it explicitly instead of mis-parsing the new lines.
+        constexpr std::string_view kPreviousFormatToken = "slopkit-table 4";
+        constexpr std::string_view kOldestFormatToken   = "slopkit-table 3";
+
+        // The optional suffix an index line carries to name a child's parent:
+        // the parent's member path sits between these quotes. A member path can
+        // never contain a `"` (`entry_member_name` replaces it), so the suffix is
+        // unambiguous.
+        constexpr std::string_view kParentSuffix = " parent=\"";
 
         std::string_view trim(std::string_view value)
         {
@@ -375,8 +383,11 @@ namespace slopkit::table
             });
         }
 
-        std::vector<std::string> taken;
-        std::vector<std::string> order;
+        std::vector<std::string>                       taken;
+        std::vector<std::string>                       order;
+        // An entry's stable id -> its member path, so a child can name its
+        // parent on the index line.
+        std::unordered_map<std::uint64_t, std::string> member_of;
         taken.reserve(table.size());
         order.reserve(table.size());
         for (const AddressEntry& entry : table.entries())
@@ -387,6 +398,7 @@ namespace slopkit::table
             taken.push_back(name);
 
             const std::string member = std::string(kEntriesPrefix) + name;
+            member_of[entry.id]      = member;
             if (script)
             {
                 // A script member holds the Lua source and nothing else: no
@@ -412,9 +424,20 @@ namespace slopkit::table
         }
 
         std::string index;
-        for (const std::string& line : order)
+        for (std::size_t row = 0; row < order.size(); ++row)
         {
-            index += line;
+            index += order[row];
+            // A child names its parent here, not in the body: a script body is
+            // verbatim Lua and could not carry the key.
+            if (const std::uint64_t parent = table.entries()[row].parent; parent != 0)
+            {
+                if (const auto found = member_of.find(parent); found != member_of.end())
+                {
+                    index += kParentSuffix;
+                    index += found->second;
+                    index += '"';
+                }
+            }
             index += '\n';
         }
         members.push_back(ArchiveMember {.name = "index.txt", .text = std::move(index)});
@@ -455,7 +478,7 @@ namespace slopkit::table
             return std::unexpected(std::string {"version.txt: missing"});
         }
         if (const std::string_view version_text = trim(*version);
-            version_text != kFormatToken && version_text != kPreviousFormatToken)
+            version_text != kFormatToken && version_text != kPreviousFormatToken && version_text != kOldestFormatToken)
         {
             const std::string message =
                 std::format("{}: version.txt: unknown format '{}'", path.string(), version_text);
@@ -483,9 +506,11 @@ namespace slopkit::table
             return std::unexpected(std::string {"index.txt: missing"});
         }
 
-        std::vector<AddressEntry> entries;
-        std::vector<std::string>  listed;
-        std::size_t               position = 0;
+        std::vector<AddressEntry>                        entries;
+        std::vector<std::string>                         listed;
+        // (child index, parent member path) recorded while parsing index.txt.
+        std::vector<std::pair<std::size_t, std::string>> parent_links;
+        std::size_t                                      position = 0;
         while (position <= index->size())
         {
             const auto             newline = index->find('\n', position);
@@ -494,7 +519,24 @@ namespace slopkit::table
             const std::string_view line = trim(raw);
             if (!line.empty())
             {
-                const std::string  member(line);
+                // A child line carries an optional ` parent="<member>"` suffix;
+                // split it off before looking the member up.
+                std::string_view           member_view = line;
+                std::optional<std::string> parent_member;
+                if (const auto suffix = line.find(kParentSuffix); suffix != std::string_view::npos)
+                {
+                    const std::string_view tail = line.substr(suffix + kParentSuffix.size());
+                    if (tail.size() < 2 || tail.back() != '"')
+                    {
+                        const std::string message =
+                            std::format("{}: index.txt: malformed parent on '{}'", path.string(), line);
+                        log::warning(log::category::table, message);
+                        return std::unexpected(std::format("index.txt: malformed parent on '{}'", line));
+                    }
+                    parent_member = std::string(tail.substr(0, tail.size() - 1));
+                    member_view   = line.substr(0, suffix);
+                }
+                const std::string  member(member_view);
                 const std::string* body = find_member(members, member);
                 if (body == nullptr)
                 {
@@ -553,6 +595,10 @@ namespace slopkit::table
                     entries.push_back(std::move(*entry));
                 }
                 listed.push_back(member);
+                if (parent_member)
+                {
+                    parent_links.emplace_back(listed.size() - 1, std::move(*parent_member));
+                }
             }
             if (newline == std::string::npos)
             {
@@ -573,7 +619,43 @@ namespace slopkit::table
             }
         }
 
+        // A parent must be listed before its child, which is also what keeps the
+        // child block directly after the parent in the flat order.
+        std::vector<std::pair<std::size_t, std::size_t>> parent_positions;
+        for (const auto& [child, parent_member] : parent_links)
+        {
+            const auto found = std::ranges::find(listed, parent_member);
+            if (found == listed.end())
+            {
+                const std::string message =
+                    std::format("{}: index.txt: entry '{}' names a parent '{}' that is not listed",
+                                path.string(),
+                                listed[child],
+                                parent_member);
+                log::warning(log::category::table, message);
+                return std::unexpected(
+                    std::format("index.txt: entry '{}' names a missing parent '{}'", listed[child], parent_member));
+            }
+            const auto parent_position = static_cast<std::size_t>(found - listed.begin());
+            if (parent_position >= child)
+            {
+                const std::string message =
+                    std::format("{}: index.txt: entry '{}' names a parent '{}' that is listed after it",
+                                path.string(),
+                                listed[child],
+                                parent_member);
+                log::warning(log::category::table, message);
+                return std::unexpected(
+                    std::format("index.txt: entry '{}' names a later parent '{}'", listed[child], parent_member));
+            }
+            parent_positions.emplace_back(child, parent_position);
+        }
+
         loaded.replace(std::move(entries));
+        for (const auto& [child, parent_position] : parent_positions)
+        {
+            loaded.entries()[child].parent = loaded.entries()[parent_position].id;
+        }
         table = std::move(loaded);
         log::info(log::category::table, std::format("loaded {} entry/entries from {}", table.size(), path.string()));
         return {};

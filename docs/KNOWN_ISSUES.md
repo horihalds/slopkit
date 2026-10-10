@@ -28,6 +28,27 @@ regression: debug it, do not add it just to make a run green.
 - **Lone-run check:** `ctest -R "breakpoints window adds, removes and clears
   breakpoints"` passes.
 
+### controller consumes the step-out stop and erases the transient entry
+
+- **Source:** `tests/debug/controller_test.cpp` (`[debug][controller]`).
+- **Symptom:** `REQUIRE(pump_until(controller, ...))` fails: the controller never
+  reaches the stopped state with the transient breakpoint erased and the register
+  writes recorded.
+- **Cause:** the step-out pass races the shared controller/worker under a full
+  run; the same case passes when it has the process to itself.
+- **Lone-run check:** `ctest -R "controller consumes the step-out stop and erases
+  the transient entry"` passes.
+
+### debug session drives a target with forwarding
+
+- **Source:** `tests/platform/linux/debug_session_test.cpp` (`[debug_session]`).
+- **Symptom:** `REQUIRE(leader.has_value())` fails to attach, or a later
+  `CHECK(hit->reason == StopReason::breakpoint)` reports a different stop.
+- **Cause:** `ptrace` attach/stop timing against the spawned practice target under
+  a full run; the session behaves normally when run alone.
+- **Lone-run check:** `ctest -R "debug session drives a target with forwarding"`
+  passes.
+
 ## Not a flake
 
 A failure that is not listed above — or that also fails alone — is a regression.
