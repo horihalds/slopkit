@@ -101,6 +101,12 @@ namespace slopkit::plugin
         // Unmaps a mapping an earlier allocate_memory of this session returned.
         std::expected<void, process::AccessError>          free_memory(std::uint64_t address);
 
+        // True when the plugin implements the ABI 1.7 validation operation.
+        [[nodiscard]] bool                        supports_validation() const noexcept;
+        // True when [address, address + size) is mapped and readable in the
+        // target. An unmapped or unreadable range is false, never an error.
+        std::expected<bool, process::AccessError> validate_memory(std::uint64_t address, std::size_t size);
+
         // True when the plugin implements the ABI 1.4 debug operations.
         [[nodiscard]] bool                         supports_debug() const noexcept;
         // Raw ABI view, for the debug backend that maps the debug_* operations

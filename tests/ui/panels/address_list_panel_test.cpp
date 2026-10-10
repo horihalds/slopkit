@@ -169,7 +169,8 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
                         return table.entries()[0].address == 0x300004;
                     }));
 
-    // A failing resolve keeps the last good address and reports the reason.
+    // A failing resolve keeps the last good address and reports the reason, now
+    // naming the level and the address.
     access.unreadable->insert(module_base);
     table.entries()[0].expression = "app+0+8";
     status.clear();
@@ -177,7 +178,7 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return status.contains(QStringLiteral("cannot read pointer"));
+                        return status.contains(QStringLiteral("the address 100000 at level 1 is not readable"));
                     }));
     CHECK(table.entries()[0].address == 0x300004);
 }

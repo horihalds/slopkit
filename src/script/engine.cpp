@@ -107,6 +107,7 @@ namespace slopkit::script
             install_labels();
             install_resolution();
             install_allocation();
+            install_validation();
             install_aobscan();
             install_assembly();
             install_hook();
@@ -581,9 +582,25 @@ namespace slopkit::script
                         }
                         return decode_pointer_value(*bytes);
                     };
+                    // Validate each dereference through the same seam, so a
+                    // script-level chain names the failing level.
+                    const auto validator = [this](std::uint64_t address,
+                                                  std::size_t   size) -> std::expected<bool, std::string>
+                    {
+                        if (!api.validate)
+                        {
+                            return std::unexpected(std::string {"no target is attached"});
+                        }
+                        return api.validate(address, size);
+                    };
 
-                    const std::expected<std::uint64_t, expr::ResolveError> resolved = expr::evaluate(
-                        *parsed, module_entries, symbol_entries, reader, expr::Options {.pointer_size = pointer_size});
+                    const std::expected<std::uint64_t, expr::ResolveError> resolved =
+                        expr::evaluate(*parsed,
+                                       module_entries,
+                                       symbol_entries,
+                                       reader,
+                                       expr::Options {.pointer_size = pointer_size},
+                                       validator);
                     if (!resolved)
                     {
                         throw std::runtime_error("expression: " + resolved.error().message);
@@ -673,6 +690,53 @@ namespace slopkit::script
                         }
                         throw std::runtime_error("dealloc: " + freed.error());
                     }
+                });
+        }
+
+        // Binds `validate(address[, size])`: true when [address, address + size)
+        // is mapped and readable in the target, false otherwise. `size` defaults
+        // to 1 and is probed in bounded chunks. An unmapped or unreadable range
+        // is `false`, not an error; a zero size, a bad argument or a missing
+        // target raises.
+        void install_validation()
+        {
+            lua.set_function(
+                "validate",
+                [this](sol::object address_object, sol::optional<sol::object> size_object) -> bool
+                {
+                    const std::uint64_t address = value_argument("validate", sol::make_optional(address_object));
+
+                    std::size_t size = 1;
+                    if (size_object)
+                    {
+                        if (size_object->get_type() != sol::type::number)
+                        {
+                            throw std::runtime_error("validate: the size must be a number");
+                        }
+                        lua_State* state = lua.lua_state();
+                        size_object->push(state);
+                        const bool        is_integer = lua_isinteger(state, -1) != 0;
+                        const lua_Integer integer    = is_integer ? lua_tointeger(state, -1) : 0;
+                        const double      number     = is_integer ? 0.0 : lua_tonumber(state, -1);
+                        lua_pop(state, 1);
+                        const double checked_size = is_integer ? static_cast<double>(integer) : number;
+                        if (!std::isfinite(checked_size) || checked_size <= 0.0)
+                        {
+                            throw std::runtime_error("validate: the size must be larger than 0");
+                        }
+                        size = is_integer ? static_cast<std::size_t>(integer) : static_cast<std::size_t>(number);
+                    }
+
+                    if (!api.validate)
+                    {
+                        throw std::runtime_error("validate: no target is attached");
+                    }
+                    const std::expected<bool, std::string> valid = api.validate(address, size);
+                    if (!valid)
+                    {
+                        throw std::runtime_error("validate: " + valid.error());
+                    }
+                    return *valid;
                 });
         }
 

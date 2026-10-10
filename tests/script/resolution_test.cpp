@@ -112,6 +112,42 @@ print(expression("p+0+0+0"))
     CHECK(result.output[3] == "4128"); // two dereferences
 }
 
+TEST_CASE("expression spells a bracket pointer chain and validates its levels", "[script]")
+{
+    ScriptFixture fixture(0x200);
+    // 0x1000 -> 0x1010 and 0x1010 -> 0x1020.
+    fixture.fake.put(0x00, {0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.fake.put(0x10, {0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+
+    SECTION("a bracket chain resolves like its spelling")
+    {
+        const RunResult result = fixture.engine.run(R"(
+slabel("p", 0x1000)
+print(expression("[p]+0x10"))
+print(expression("p+0x10+0x20"))
+print(expression("[[p]+0x10]+0x20"))
+)");
+
+        REQUIRE(result.ok);
+        REQUIRE(result.output.size() == 3);
+        CHECK(result.output[0] == "4128"); // deref the base then add
+        CHECK(result.output[1] == "4160"); // one dereference
+        CHECK(result.output[2] == "32");   // two dereferences: 0x1000->0x1010, +0x10->0x1020->0, +0x20
+    }
+
+    SECTION("a failing level reports its level and address, not the read error")
+    {
+        const RunResult result = fixture.engine.run(R"(
+slabel("p", 0x1000)
+print(expression("[p+0x300]+0"))
+)");
+
+        CHECK_FALSE(result.ok);
+        CHECK(result.error.find("expression: the address 1300 at level 1 is not readable") != std::string::npos);
+        CHECK(fixture.fake.validate_count > 0);
+    }
+}
+
 TEST_CASE("expression reports a broken or unresolvable text", "[script]")
 {
     ScriptFixture fixture;

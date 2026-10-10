@@ -84,6 +84,16 @@ namespace slopkit::process
         {
             return std::unexpected(AccessError::unsupported);
         }
+
+        // True when [address, address + size) is mapped and readable in the
+        // target. The default implementation probes with read(), so a backend
+        // (or plugin) that cannot answer directly needs no override, and an
+        // address that cannot be read is simply invalid rather than an error.
+        virtual std::expected<bool, AccessError> validate(std::uint64_t address, std::size_t size)
+        {
+            const auto data = read(address, size);
+            return data.has_value() && data->size() >= size;
+        }
     };
 
     // Move-only handle to an attached process. All operations return
@@ -221,6 +231,16 @@ namespace slopkit::process
                 return std::unexpected(AccessError::internal);
             }
             return backend_->free(address);
+        }
+
+        // True when [address, address + size) is mapped and readable.
+        std::expected<bool, AccessError> validate(std::uint64_t address, std::size_t size)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->validate(address, size);
         }
 
         [[nodiscard]] explicit operator bool() const noexcept

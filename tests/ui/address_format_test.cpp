@@ -258,6 +258,13 @@ TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")
     CHECK_FALSE(slopkit::ui::parse_address_text("missing", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("low+bogus", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("not an address", spans).has_value());
+
+    // A bracketed pointer chain is never resolved offline: the worker has to
+    // dereference it, so `[low+40]` is not read as `base + 40`.
+    CHECK_FALSE(slopkit::ui::parse_address_text("[low+40]", spans).has_value());
+    CHECK_FALSE(slopkit::ui::parse_address_text("[low]+40", spans).has_value());
+    // A bracket-free module+offset still resolves inline.
+    CHECK(slopkit::ui::parse_address_text("low+40", spans) == std::optional<std::uint64_t> {0x1040});
 }
 
 TEST_CASE("address text resolves symbol names", "[ui]")

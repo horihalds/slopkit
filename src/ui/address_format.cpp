@@ -257,7 +257,7 @@ namespace slopkit::ui
         }
 
         const auto expression = expr::parse(text);
-        if (!expression || expression->offsets.size() != 1)
+        if (!expression || expression->offsets.size() != 1 || expression->pointer_levels() != 0)
         {
             return std::nullopt; // a pointer chain needs the worker
         }

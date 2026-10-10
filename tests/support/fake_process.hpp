@@ -125,6 +125,13 @@ namespace slopkit::test
         std::vector<std::pair<std::uint64_t, std::size_t>> allocate_requests;
         std::atomic<int>                                   allocates {0};
         std::atomic<int>                                   frees {0};
+        // Validation capability and recording. `can_validate` gates a direct
+        // answer; when false the base probe read decides. `validate_error` models
+        // a refused operation, `validates` counts the calls that reach the
+        // backend, and an address in `unreadable` answers invalid.
+        bool                                               can_validate {true};
+        std::optional<process::AccessError>                validate_error;
+        std::atomic<int>                                   validates {0};
 
         [[nodiscard]] process::ProcessId    pid() const noexcept override;
         [[nodiscard]] std::string_view      plugin_id() const noexcept override;
@@ -145,6 +152,7 @@ namespace slopkit::test
         std::expected<std::uint64_t, process::AccessError> allocate(std::size_t   size,
                                                                     std::uint64_t near_address) override;
         std::expected<void, process::AccessError>          free(std::uint64_t address) override;
+        std::expected<bool, process::AccessError>          validate(std::uint64_t address, std::size_t size) override;
     };
 
     // A ProcessAccess serving a fixed process list that can be told to fail the
@@ -169,6 +177,8 @@ namespace slopkit::test
         std::uint64_t                            allocation_base {0x50000};
         std::optional<process::AccessError>      allocate_error;
         std::optional<process::AccessError>      free_error;
+        bool                                     can_validate {true};
+        std::optional<process::AccessError>      validate_error;
         std::atomic<int>                         attach_calls {0};
         std::atomic<int>                         list_calls {0};
 

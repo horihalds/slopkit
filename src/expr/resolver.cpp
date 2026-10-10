@@ -29,11 +29,12 @@ namespace slopkit::expr
         }
     } // namespace
 
-    std::expected<std::uint64_t, ResolveError> evaluate(const Expression&    expression,
-                                                        Modules              modules,
-                                                        Symbols              symbols,
-                                                        const PointerReader& reader,
-                                                        Options /*options*/)
+    std::expected<std::uint64_t, ResolveError> evaluate(const Expression&       expression,
+                                                        Modules                 modules,
+                                                        Symbols                 symbols,
+                                                        const PointerReader&    reader,
+                                                        Options                 options,
+                                                        const AddressValidator& validate)
     {
         std::uint64_t address    = 0;
         bool          base_found = false;
@@ -72,20 +73,32 @@ namespace slopkit::expr
             address = *literal;
         }
 
-        for (std::size_t i = 0; i < expression.offsets.size(); ++i)
+        std::size_t level = 0;
+        for (const auto& offset : expression.offsets)
         {
-            if (i == 0)
+            address += offset.value;
+            for (std::size_t step = 0; step < offset.dereferences; ++step)
             {
-                address += expression.offsets[i].value;
-                continue;
+                ++level;
+                if (validate)
+                {
+                    const auto valid = validate(address, options.pointer_size);
+                    if (valid && !*valid)
+                    {
+                        return std::unexpected(ResolveError {
+                            std::format("the address {:X} at level {} is not readable", address, level), level});
+                    }
+                    // A validator that itself errors is ignored: the read below
+                    // reports its own, already meaningful text.
+                }
+                const auto pointer = reader(address);
+                if (!pointer)
+                {
+                    return std::unexpected(ResolveError {
+                        std::format("cannot read pointer at level {}: {}", level, pointer.error()), level});
+                }
+                address = *pointer;
             }
-            const auto pointer = reader(address);
-            if (!pointer)
-            {
-                return std::unexpected(
-                    ResolveError {std::format("cannot read pointer at level {}: {}", i, pointer.error()), i});
-            }
-            address = *pointer + expression.offsets[i].value;
         }
         return address;
     }

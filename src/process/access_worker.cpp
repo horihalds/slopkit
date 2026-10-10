@@ -938,6 +938,22 @@ namespace slopkit::process
             log::debug(log::category::script, std::format("freed allocation at {:#x}", address));
             return {};
         };
+        // Address validation from the plugin ABI 1.7 operation (or the host's
+        // probe-read fallback). No log record per call: it would fire once per
+        // level per row per resolve pass.
+        api.validate = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            auto valid = session_->validate(address, size);
+            if (!valid)
+            {
+                return std::unexpected(std::string {describe(valid.error())});
+            }
+            return *valid;
+        };
         // The module snapshot `expression` resolves module names against, in the
         // same shape the resolve job passes to `expr::evaluate`.
         api.modules = [this]() -> std::expected<std::vector<expr::ModuleRef>, std::string>
@@ -1224,6 +1240,18 @@ namespace slopkit::process
             }
             return decode_pointer(*bytes);
         };
+        // Validate each dereference through the session's ABI 1.7 operation (or
+        // the host probe fallback), so a failing level names the level and the
+        // address instead of the reader's raw error.
+        const auto validator = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
+        {
+            const auto valid = session_->validate(address, size);
+            if (!valid)
+            {
+                return std::unexpected(std::string {describe(valid.error())});
+            }
+            return *valid;
+        };
 
         result.items.reserve(request.resolve_items.size());
         std::size_t                        failed  = 0;
@@ -1244,8 +1272,12 @@ namespace slopkit::process
                 continue;
             }
 
-            const auto resolved = expr::evaluate(
-                *expression, request.module_refs, symbols, reader, expr::Options {.pointer_size = pointer_size});
+            const auto resolved = expr::evaluate(*expression,
+                                                 request.module_refs,
+                                                 symbols,
+                                                 reader,
+                                                 expr::Options {.pointer_size = pointer_size},
+                                                 validator);
             if (resolved)
             {
                 entry.address = *resolved;

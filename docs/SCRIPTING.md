@@ -179,14 +179,32 @@ starting with `#`, and the value must be a whole number in `0 .. 2^64-1`.
 
 - `symbol(name)` returns a global symbol's value, or `0` when the name is unknown.
 - `label(name)` returns one of the script's own labels, or `0`.
-- `expression(text)` resolves a full address expression — a module, symbol or
-  label base plus the usual `+offset` dereference chain — and returns the absolute
-  address.
+- `expression(text)` resolves a full address expression and returns the absolute
+  address. A `[` … `]` group closes with **one pointer dereference** and nesting
+  spells a multi-level chain — `[[game.exe+10]+18]+24` dereferences twice — while a
+  bracket-free expression keeps the usual `+offset` chain (one dereference between
+  consecutive offsets). Before each dereference the level is validated, so a broken
+  step reports which level and address failed instead of a raw read error.
+- `validate(address[, size_bytes])` returns `true` when `[address, address + size)`
+  is mapped **and readable** in the target, `false` otherwise. `size_bytes`
+  defaults to `1` and is probed in bounded chunks, stopping at the first chunk that
+  fails, so a whole buffer can be checked in one call. An unmapped or unreadable
+  range is `false`, not an error; a zero size and a missing target raise.
 
 Every function that resolves a name looks at the script's **labels first** and
 then at the process-wide **symbols**, so a label shadows a global symbol of the
 same spelling. `expression` additionally accepts a module name and a literal,
 resolving the base as **label → symbol → module name → literal**.
+
+Check a pointer before using it, so a hook can skip an unmapped address instead of
+erroring:
+
+```lua
+local hp = expression("[[game.exe+10]+18]+24") -- one expression, two dereferences
+if validate(hp) then
+    print(read_u32(hp))
+end
+```
 
 ## Scanning for a byte pattern
 
@@ -429,14 +447,18 @@ end
 
 ### Follow a pointer chain in a one-off run
 
-A `Run Script` that registers a base, follows a two-level chain and prints the
-final integer.
+A `Run Script` that registers a base, follows a two-level chain in one bracket
+expression and prints the final integer; `validate` guards the result, so a level
+that is not mapped yet is reported instead of erroring.
 
 ```lua
 ssymbol("base", 0x100000)
-local first  = mem.read(expression("base + 0x10"), "ptr")
-local second = mem.read(first + 8, "ptr")
-print("value:", mem.read(second + 0x14, "i32"))
+local address = expression("[[base]+0x10]+0x18") -- two dereferences, then +0x18
+if validate(address) then
+    print("value:", mem.read(address, "i32"))
+else
+    print("the chain is not readable")
+end
 ```
 
 ## Where to look next

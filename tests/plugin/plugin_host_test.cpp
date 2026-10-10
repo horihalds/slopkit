@@ -294,3 +294,21 @@ TEST_CASE("A plugin that leaves the allocation slots null reports unsupported", 
     REQUIRE_FALSE(freed.has_value());
     CHECK(freed.error() == slopkit::process::AccessError::unsupported);
 }
+
+TEST_CASE("A plugin that leaves the validation slot null reports unsupported", "[plugin]")
+{
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_TEST_LOGGING_PLUGIN_DIR});
+
+    auto* plugin = host.find("logging-fixture");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(1);
+    REQUIRE(session.has_value());
+
+    REQUIRE_FALSE(session->supports_validation());
+
+    auto valid = session->validate_memory(0x1000, 8);
+    REQUIRE_FALSE(valid.has_value());
+    CHECK(valid.error() == slopkit::process::AccessError::unsupported);
+}

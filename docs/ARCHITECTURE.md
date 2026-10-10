@@ -99,6 +99,16 @@ host calls:
   anything else is `SLOPKIT_ERR_NOT_FOUND`. A session whose plugin leaves them
   null reports `unsupported`, which a script sees as `alloc: the target's plugin
   cannot allocate memory`.
+- `validate_memory` — the ABI 1.7 validation operation, left null by a plugin
+  that cannot answer directly. It reports whether `[address, address + size)` is
+  mapped **and readable**: a non-zero out-value means yes, 0 means no, and an
+  unmapped or unreadable range is a successful answer rather than an error. A
+  null session, a null out pointer or a zero size is
+  `SLOPKIT_ERR_INVALID_ARGUMENT`. Unlike `allocate_memory` it never stops the
+  target: it probes the existing `process_vm_*` / procfs path, so there is no
+  ptrace attach and no interlock with the debug session. When a plugin leaves the
+  slot null the host answers by probing its own read path, so behaviour never
+  depends on a plugin's ABI minor.
 
 `src/plugin/plugin_api.h` is the authoritative contract, and the bundled plugins
 under `src/plugins/` are the worked example. They do not hand-write the vtable:
@@ -230,8 +240,9 @@ target.
   `std::function`s plus a `regions` supplier returning every mapped region
   (`MemoryRegion {base, size, readable, module}`), which the worker builds from its
   session's regions joined with its modules. It also carries the ABI 1.6
-  `allocate`/`deallocate` operations and a `modules` supplier (`name` + base, the
-  snapshot `expression` resolves module names against). The engine never sees
+  `allocate`/`deallocate` operations, the ABI 1.7 `validate` operation and a
+  `modules` supplier (`name` + base, the snapshot `expression` resolves module names
+  against). The engine never sees
   `Session` or `ProcessAccess`, so it is unit-testable against an in-memory buffer
   (`tests/support/script_helpers.hpp`). A failed access raises a Lua error that
   carries the target's error text, which then surfaces as `RunResult::error`.
@@ -272,8 +283,10 @@ target.
 - A chunk reads the names it knows back through `label(name)` (its own labels
   only) and `symbol(name)` (labels first, then the process-wide table), both
   returning `0` for an unknown name; and it resolves a full address expression —
-  module/symbol/label base plus the usual `+offset` dereference chain — through
-  `expression(text)`, which returns the absolute address. `expression` resolves
+  module/symbol/label base plus a `+offset` chain that may use square-bracket
+  pointer groups — through `expression(text)`, which returns the absolute address.
+  Each dereference is validated through the same capability as the table's resolve
+  job, so a broken level names the level and the address. `expression` resolves
   the base **label → process-wide symbol → module name → literal**, so a script's
   own name beats a module of the same spelling; this is the one place a script
   label reaches an address expression, while the address table's own resolution
@@ -322,6 +335,19 @@ target.
   never overlap — each refuses while the other holds the target. Each
   `alloc`/`dealloc` writes one `script`-category debug record (address, size,
   outcome).
+- `validate(address[, size_bytes])` answers whether `[address, address + size)`
+  is mapped **and readable** in the target, returning a Lua boolean; `size_bytes`
+  defaults to `1` and is probed in bounded chunks, stopping at the first chunk
+  that fails or comes back short. An unmapped, unreadable or partially mapped
+  range is `false` — a value, not an error, which is the point of the function.
+  It is backed by the ABI 1.7 `validate_memory` operation (or the host's
+  probe-read fallback) through `script::MemoryApi::validate`, needs no ptrace
+  attach and never stops the target, and it writes no log record. A zero size
+  (`validate: the size must be larger than 0`), a bad argument and a missing
+  target (`validate: no target is attached`) raise a Lua error naming the
+  function, as does a target whose plugin refuses with its own text. It composes
+  with the other globals (`validate(label("buf"), 64)`,
+  `validate(expression("game.exe+10"))`).
 - `assemble(address, text[, ...])` turns a newline-separated block of the listing's
   own instructions into bytes with `disasm::assemble_block` and writes them into
   the target in one `MemoryApi::write`. Each instruction is encoded for the
@@ -378,9 +404,19 @@ target.
   takes the snapshot as an argument and looks a base up as **module name → symbol
   name → literal**, so a loaded image is never shadowed while a symbol literally
   named `deadbeef` still beats the bare-hex reading; an unknown name keeps the
-  existing base failure. The script-level `expression` reorders the front of that
-  chain (it looks the base up as a label, then a symbol, and only passes the name
-  that answered), so its own order is described above. `expr` stays a leaf module —
+  existing base failure. An expression may spell a multi-level pointer chain with
+  square brackets: a `[` … `]` group closes with one pointer read, nesting is the
+  chain (`[[game.exe+10]+18]+24` reads twice), while a bracket-free `+offset`
+  expression keeps the legacy rule of one read between consecutive offsets, so
+  saved `.skt` rows, the UI's deref-free parsers (they accept only
+  `pointer_levels() == 0`) and the existing error texts are unchanged. `evaluate`
+  validates **every** read before performing it through an injected
+  `expr::AddressValidator` the caller supplies (the worker builds one from
+  `Session::validate`, the script engine from the same `MemoryApi` seam); a `false`
+  answer fails that level with `the address <HEX> at level N is not readable` and
+  sets `ResolveError::failed_level`, a validator that itself errors is ignored so
+  the reader's own text stands, and an empty validator reproduces the old
+  behaviour exactly. `expr` stays a leaf module —
   `script` includes `expr/resolver.hpp`, not the other way round.
 - Besides `run(chunk)`, the engine exposes `run_lifecycle(chunk, function)`, which
   runs the chunk and then calls its named global (`activate` / `deactivate`),

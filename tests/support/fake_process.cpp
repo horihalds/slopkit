@@ -283,6 +283,25 @@ namespace slopkit::test
         return {};
     }
 
+    std::expected<bool, process::AccessError> FakeBackend::validate(std::uint64_t address, std::size_t size)
+    {
+        ++validates;
+        if (!can_validate)
+        {
+            return process::SessionBackend::validate(address, size);
+        }
+        if (validate_error.has_value())
+        {
+            return std::unexpected(*validate_error);
+        }
+        if (unreadable->contains(address))
+        {
+            return false;
+        }
+        const auto data = memory->read(address, size);
+        return data.has_value() && data->size() >= size;
+    }
+
     std::expected<std::vector<process::ProcessInfo>, process::AccessError> FakeAccess::list_processes()
     {
         ++list_calls;
@@ -311,6 +330,8 @@ namespace slopkit::test
         backend->allocation_base = allocation_base;
         backend->allocate_error  = allocate_error;
         backend->free_error      = free_error;
+        backend->can_validate    = can_validate;
+        backend->validate_error  = validate_error;
         return process::Session {std::move(backend)};
     }
 

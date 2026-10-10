@@ -808,4 +808,41 @@ namespace slopkit::plugin
         return {};
     }
 
+    bool PluginSession::supports_validation() const noexcept
+    {
+        if (plugin_ == nullptr || handle_ == nullptr || plugin_->vtable_ == nullptr)
+        {
+            return false;
+        }
+        return plugin_->vtable_->validate_memory != nullptr;
+    }
+
+    std::expected<bool, process::AccessError> PluginSession::validate_memory(std::uint64_t address, std::size_t size)
+    {
+        if (!valid())
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (plugin_->vtable_->validate_memory == nullptr)
+        {
+            return std::unexpected(process::AccessError::unsupported);
+        }
+
+        std::uint32_t  valid = 0;
+        slopkit_result result {};
+        try
+        {
+            result = plugin_->vtable_->validate_memory(handle_, address, size, &valid);
+        }
+        catch (...)
+        {
+            return std::unexpected(process::AccessError::internal);
+        }
+        if (result.code != SLOPKIT_OK)
+        {
+            return std::unexpected(Plugin::classify(result));
+        }
+        return valid != 0;
+    }
+
 } // namespace slopkit::plugin

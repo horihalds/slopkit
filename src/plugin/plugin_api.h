@@ -38,7 +38,7 @@ extern "C"
 #endif
 
 #define SLOPKIT_PLUGIN_ABI_VERSION_MAJOR 1
-#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 6
+#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 7
 #define SLOPKIT_PLUGIN_ABI_VERSION       ((SLOPKIT_PLUGIN_ABI_VERSION_MAJOR << 16) | SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
 
     /* Status codes carried in `slopkit_result::code`. */
@@ -292,6 +292,17 @@ extern "C"
         /* Unmaps the whole mapping an earlier allocate_memory of the same
            session returned at `address`; anything else is SLOPKIT_ERR_NOT_FOUND. */
         slopkit_result (*free_memory)(void* session, uint64_t address);
+
+        /* --- address validation (ABI 1.7), appended so a plugin built against
+           an older minor keeps loading with the slot left null; the host then
+           validates by probing the read path itself. --- */
+
+        /* Reports whether [address, address + size) is mapped and readable in
+           the target: a non-zero *out_valid means yes, 0 means no (an unmapped,
+           unreadable or short range is a successful answer, never an error). A
+           null session, a null out pointer or a zero size is
+           SLOPKIT_ERR_INVALID_ARGUMENT. */
+        slopkit_result (*validate_memory)(void* session, uint64_t address, uint64_t size, uint32_t* out_valid);
     } slopkit_plugin_vtable;
 
     /*

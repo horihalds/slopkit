@@ -17,6 +17,7 @@
 #include "platform/linux/procfs.hpp"
 #include "plugins/support/allocate.hpp"
 #include "plugins/support/session.hpp"
+#include "plugins/support/validate.hpp"
 
 namespace slopkit::plugins::support
 {
@@ -998,6 +999,37 @@ namespace slopkit::plugins::support
             }
         }
 
+        // --- address validation (ABI 1.7) -----------------------------------
+
+        slopkit_result
+        plugin_validate_memory(void* handle, uint64_t address, uint64_t size, uint32_t* out_valid) noexcept
+        {
+            try
+            {
+                if (out_valid == nullptr)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "null output pointer");
+                }
+                *out_valid    = 0;
+                auto* session = lookup_session(handle);
+                if (session == nullptr)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
+                }
+                if (size == 0)
+                {
+                    return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "the size must be larger than 0");
+                }
+
+                *out_valid = range_is_readable(*session, address, size) ? 1u : 0u;
+                return ok();
+            }
+            catch (...)
+            {
+                return fail(SLOPKIT_ERR_INTERNAL, "unhandled exception");
+            }
+        }
+
         const slopkit_plugin_vtable g_vtable {
             SLOPKIT_PLUGIN_ABI_VERSION,
             sizeof(slopkit_plugin_vtable),
@@ -1026,6 +1058,7 @@ namespace slopkit::plugins::support
             plugin_resume_target,
             plugin_allocate_memory,
             plugin_free_memory,
+            plugin_validate_memory,
         };
     } // namespace
 

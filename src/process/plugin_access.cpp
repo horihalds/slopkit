@@ -132,6 +132,15 @@ namespace slopkit::process
                 return session_.free_memory(address);
             }
 
+            std::expected<bool, AccessError> validate(std::uint64_t address, std::size_t size) override
+            {
+                if (session_.supports_validation())
+                {
+                    return session_.validate_memory(address, size);
+                }
+                return SessionBackend::validate(address, size);
+            }
+
         private:
             plugin::PluginSession     session_;
             ProcessId                 pid_ {};

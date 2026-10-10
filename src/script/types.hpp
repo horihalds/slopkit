@@ -79,6 +79,10 @@ namespace slopkit::script
         std::function<std::expected<std::uint64_t, std::string>(std::size_t size, std::uint64_t near)> allocate;
         // Unmaps a mapping `allocate` returned in this session.
         std::function<std::expected<void, std::string>(std::uint64_t address)>                         deallocate;
+        // True when [address, address + size) is mapped and readable in the
+        // target; absent when no target is attached, which the engine reports
+        // as the run's error.
+        std::function<std::expected<bool, std::string>(std::uint64_t address, std::size_t size)>       validate;
         // The target's images (name + load base) `expression` resolves module
         // names against, built exactly like the resolve job builds its module
         // snapshot.

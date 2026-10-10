@@ -62,6 +62,13 @@ namespace
         std::unordered_map<std::uint64_t, std::size_t>     allocations;
         std::vector<std::pair<std::uint64_t, std::size_t>> allocate_requests;
         std::vector<slopkit::expr::ModuleRef>              modules;
+        // Validation seam for `validate`/`expression`: `can_validate` answers
+        // directly (a range outside the buffer is invalid, not an error),
+        // `validate_error` models a refused operation, and `validate_count`
+        // records the calls.
+        bool                                               can_validate {true};
+        std::optional<std::string>                         validate_error;
+        std::size_t                                        validate_count {0};
         // How many writes reached the seam, so a test can pin the two-write
         // activation; when `refuse_write_at` is set, a write to that address
         // fails instead.
@@ -177,6 +184,19 @@ namespace
             memory.modules = [this]() -> std::expected<std::vector<slopkit::expr::ModuleRef>, std::string>
             {
                 return modules;
+            };
+            memory.validate = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
+            {
+                ++validate_count;
+                if (!can_validate)
+                {
+                    return std::unexpected(std::string {"no target is attached"});
+                }
+                if (validate_error)
+                {
+                    return std::unexpected(*validate_error);
+                }
+                return address >= base && address - base + size <= bytes.size();
             };
             return memory;
         }
