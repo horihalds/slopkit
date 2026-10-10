@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -82,30 +83,38 @@ namespace
         volatile std::uint64_t* counter_ {nullptr};
     };
 
-    // True when `pid` has a region starting exactly at `address` with the given
-    // permissions.
-    bool mapped_rwx_at(std::uint32_t pid, std::uint64_t address)
+    // Returns the region that fully contains [address, address + size), if one
+    // exists. Linux `mmap` merges a new anonymous mapping into an adjacent one
+    // when their protection and backing match, so two neighbouring pages can
+    // appear as a single region that starts at either base; a mapping is found
+    // by covering its range, never by a region starting exactly at its base.
+    // Whole-page ranges stay exact: VMA boundaries are page-aligned, so a page
+    // can never straddle two regions.
+    std::optional<slopkit::platform::MappedRegion>
+    region_covering(std::uint32_t pid, std::uint64_t address, std::uint64_t size)
     {
         for (const auto& region : slopkit::platform::read_maps(pid))
         {
-            if (region.start == address)
+            if (region.start <= address && address + size <= region.end)
             {
-                return region.readable && region.writable && region.executable;
+                return region;
             }
         }
-        return false;
+        return std::nullopt;
     }
 
-    bool any_region_at(std::uint32_t pid, std::uint64_t address)
+    bool mapped(std::uint32_t pid, std::uint64_t address, std::uint64_t size)
     {
-        for (const auto& region : slopkit::platform::read_maps(pid))
-        {
-            if (region.start == address)
-            {
-                return true;
-            }
-        }
-        return false;
+        return region_covering(pid, address, size).has_value();
+    }
+
+    // True when `pid` has a region covering [address, address + size) that is
+    // readable, writable and executable. Coverage, not an exact VMA start, is
+    // used for the same coalescing reason as `region_covering`.
+    bool mapped_rwx(std::uint32_t pid, std::uint64_t address, std::uint64_t size)
+    {
+        const auto region = region_covering(pid, address, size);
+        return region.has_value() && region->readable && region->writable && region->executable;
     }
 
     void wait_for_progress(const AllocChild& child)
@@ -145,7 +154,7 @@ TEST_CASE("linux-proc maps and unmaps target memory through the ABI", "[linux_pr
     REQUIRE(allocated.has_value());
     const std::uint64_t address = *allocated;
     CHECK((address % page) == 0);
-    CHECK(mapped_rwx_at(child.pid(), address));
+    CHECK(mapped_rwx(child.pid(), address, page));
 
     // The mapping is real memory: bytes written through the plugin read back.
     const std::vector<std::byte>   payload {std::byte {0xDE}, std::byte {0xAD}, std::byte {0xBE}, std::byte {0xEF}};
@@ -164,7 +173,7 @@ TEST_CASE("linux-proc maps and unmaps target memory through the ABI", "[linux_pr
     // Freeing removes exactly that mapping.
     auto freed = session->free_memory(address);
     REQUIRE(freed.has_value());
-    CHECK_FALSE(any_region_at(child.pid(), address));
+    CHECK_FALSE(mapped(child.pid(), address, page));
     wait_for_progress(child);
 
     // Freeing it again reports not-found; a foreign address (a module base) is
@@ -179,7 +188,7 @@ TEST_CASE("linux-proc maps and unmaps target memory through the ABI", "[linux_pr
     auto foreign = session->free_memory(modules->front().base);
     REQUIRE_FALSE(foreign.has_value());
     CHECK(foreign.error() == slopkit::process::AccessError::not_found);
-    CHECK(any_region_at(child.pid(), modules->front().base));
+    CHECK(mapped(child.pid(), modules->front().base, page));
 
     // Zero size and a refused mapping are reported, never a bogus address.
     auto zero = session->allocate_memory(0, 0);
@@ -234,21 +243,36 @@ TEST_CASE("linux-proc maps near a hint that is already taken", "[linux_proc][all
     // the closest free page instead of giving up and mapping anywhere.
     auto taken = session->allocate_memory(page, 0);
     REQUIRE(taken.has_value());
-    REQUIRE(any_region_at(child.pid(), *taken));
+    REQUIRE(mapped(child.pid(), *taken, page));
+
+    // Fault the hinted page in and leave a marker in it. The nearest free page
+    // abuts this one, so the kernel usually merges the new mapping into a
+    // single region starting at either base — which is why the checks here are
+    // coverage-based. Reading the marker back after the hinted allocation
+    // proves the hinted page's contents survived, without relying on a VMA
+    // boundary.
+    const std::vector<std::byte>   payload {std::byte {0xDE}, std::byte {0xAD}, std::byte {0xBE}, std::byte {0xEF}};
+    slopkit::process::AccessMethod method = slopkit::process::AccessMethod::none;
+    auto                           marker = session->write(*taken, payload, method);
+    REQUIRE(marker.has_value());
+    CHECK(*marker == payload.size());
 
     auto near = session->allocate_memory(page, *taken);
     REQUIRE(near.has_value());
     const std::uint64_t address = *near;
     CHECK((address % page) == 0);
     CHECK(address != *taken);
-    CHECK(mapped_rwx_at(child.pid(), address));
+    CHECK(mapped_rwx(child.pid(), address, page));
 
     // Close enough for the ±2 GB a near jump reaches (in practice a few pages).
     const std::uint64_t distance = address > *taken ? address - *taken : *taken - address;
     CHECK(distance <= 0x80000000ull);
 
-    // The hinted region itself is untouched.
-    CHECK(any_region_at(child.pid(), *taken));
+    // The hinted region itself is untouched: its marker still reads back.
+    CHECK(mapped(child.pid(), *taken, page));
+    auto read = session->read(*taken, payload.size(), method);
+    REQUIRE(read.has_value());
+    CHECK(*read == payload);
 
     REQUIRE(session->free_memory(address).has_value());
     REQUIRE(session->free_memory(*taken).has_value());
