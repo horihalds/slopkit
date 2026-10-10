@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <span>
 #include <vector>
 
@@ -12,6 +13,7 @@
 
 #include <QWidget>
 
+class QAction;
 class QLabel;
 class QMenu;
 class QPushButton;
@@ -50,8 +52,9 @@ namespace slopkit::ui::panels
         // Chooses how static addresses are shown in the Address column.
         void set_address_mode(ui::AddressMode mode);
 
-        // Adds the per-row entries for `row` to `menu`: `Add to address table`
-        // and the `Copy` submenu (module + RVA, absolute, address + value).
+        // Adds the per-row entries for `row` to `menu`: `Add to address table`,
+        // `Change value…`, `Browse this memory region` and the `Copy` submenu
+        // (module + RVA, absolute, address + value).
         void populate_row_menu(QMenu& menu, int row);
 
         // The seam the window splices between the scanner's pause check and its
@@ -72,10 +75,26 @@ namespace slopkit::ui::panels
         // A request to arm an access watch on a scan hit, from the row menu.
         void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
 
+        // A request to show `address` in the Memory Viewer, from the `Browse
+        // this memory region` entry or the `Ctrl+D` shortcut.
+        void browseRequested(quint64 address);
+
+        // A request to write `bytes` to `address`, from the `Change value…`
+        // entry or the `Ctrl+E` shortcut. The panel parses and encodes the typed
+        // text; the window runs the write, since only it reaches the worker.
+        void changeValueRequested(quint64 address, std::vector<std::byte> bytes);
+
     private:
         void add_to_table(int row);
         void copy_row(int row, models::CopyFormat format);
         void show_context_menu(const QPoint& position);
+
+        // The two row commands. The row variants serve the row menu, the
+        // `selected_` ones the shortcuts, which act on the selected row.
+        void edit_value(int row);
+        void browse_region(int row);
+        void edit_selected_value();
+        void browse_selected_region();
 
         scan::ScanEngine&    engine_;
         table::AddressTable& table_;
@@ -85,12 +104,18 @@ namespace slopkit::ui::panels
         models::FoundResultsModel* model_ {};
         QPushButton*               memory_view_button_ {};
 
+        // The row commands with their `Ctrl+E` / `Ctrl+D` shortcuts, which reach
+        // this panel's table only and act on its selected row.
+        QAction* edit_value_action_ {};
+        QAction* browse_region_action_ {};
+
         // The snapshot currently shown, so an unchanged poll does not reset the
         // model (a reset would drop the selection and re-run the sort).
         scan::ScanSnapshot last_snapshot_;
         scan::ScanConfig   last_config_;
         bool               has_last_ {false};
-        // Whether a target is attached, so the watch entries can arm a slot.
+        // Whether a target is attached, so the watch entries can arm a slot and
+        // a value change can reach the process.
         bool               target_attached_ {false};
     };
 

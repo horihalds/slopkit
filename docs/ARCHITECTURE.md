@@ -137,6 +137,12 @@ worker pool (`max_threads_`), and their hits are collected per run index and
 concatenated in run order, so the result set — same addresses, same order — is
 identical for any thread count.
 
+The engine keeps **every** hit a scan finds: a result set is the whole
+address-sorted set, with no stored-hit cap, and `ScanSnapshot::result_hits` hands
+that one set to the UI, which pages through it (the snapshot's `hits` copies only
+the first `kDisplayPage` rows as a cheap preview). A `Next Scan` therefore refines
+exactly the set the display pages through.
+
 ## The debugger
 
 The debugger is opt-in and is the only `ptrace` user in the project. It sits

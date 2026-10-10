@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <utility>
 
 #include <QAction>
@@ -10,6 +11,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QKeySequence>
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
@@ -17,7 +19,9 @@
 #include <QVBoxLayout>
 
 #include "scan/types.hpp"
+#include "scan/value.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/components/input_box.hpp"
 #include "ui/components/row_menu.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/models/found_results_model.hpp"
@@ -34,7 +38,7 @@ namespace slopkit::ui::panels
         bool same_snapshot(const scan::ScanSnapshot& lhs, const scan::ScanSnapshot& rhs)
         {
             if (lhs.state != rhs.state || lhs.progress != rhs.progress || lhs.hit_count != rhs.hit_count
-                || lhs.truncated != rhs.truncated || lhs.message != rhs.message)
+                || lhs.message != rhs.message)
             {
                 return false;
             }
@@ -101,6 +105,21 @@ namespace slopkit::ui::panels
                 {
                     add_to_table(index.row());
                 });
+
+        // The two row commands carry their shortcuts too; each acts on the
+        // selected hit and is scoped to this panel's table, so Ctrl+E and Ctrl+D
+        // stay free on every other surface.
+        edit_value_action_ = new QAction(tr("Change value…"), this);
+        edit_value_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+E")));
+        edit_value_action_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        connect(edit_value_action_, &QAction::triggered, this, &FoundListPanel::edit_selected_value);
+        table_view_->addAction(edit_value_action_);
+
+        browse_region_action_ = new QAction(tr("Browse this memory region"), this);
+        browse_region_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+D")));
+        browse_region_action_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        connect(browse_region_action_, &QAction::triggered, this, &FoundListPanel::browse_selected_region);
+        table_view_->addAction(browse_region_action_);
 
         table_view_->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(table_view_,
@@ -192,14 +211,9 @@ namespace slopkit::ui::panels
             return;
         }
 
-        QString line = tr("Showing %1 of %2 results")
-                           .arg(static_cast<qulonglong>(model_->rowCount()))
-                           .arg(static_cast<qulonglong>(last_snapshot_.hit_count));
-        if (last_snapshot_.truncated)
-        {
-            line += tr(" (result cap reached)");
-        }
-        header_->setText(line);
+        header_->setText(tr("Showing %1 of %2 results")
+                             .arg(static_cast<qulonglong>(model_->rowCount()))
+                             .arg(static_cast<qulonglong>(last_snapshot_.hit_count)));
     }
 
     void FoundListPanel::add_to_table(int row)
@@ -219,6 +233,68 @@ namespace slopkit::ui::panels
         table_.add(std::move(entry));
     }
 
+    void FoundListPanel::edit_value(int row)
+    {
+        const scan::ScanHit* hit = model_->hit_at(row);
+        if (hit == nullptr)
+        {
+            return;
+        }
+
+        const scan::ScanConfig config = engine_.config();
+        const QString          current =
+            model_->data(model_->index(row, models::FoundResultsModel::value), Qt::DisplayRole).toString();
+
+        widgets::InputBoxOptions options;
+        options.title     = tr("Change value");
+        options.label     = tr("Value:");
+        options.initial   = current;
+        options.monospace = true;
+        options.validate  = [config](const QString& text)
+        {
+            const auto parsed = scan::parse_value(config.value_type, text.toStdString(), config.hex);
+            return parsed ? QString() : QString::fromStdString(parsed.error().message);
+        };
+
+        const std::optional<QString> typed = widgets::get_text(options, this);
+        if (!typed.has_value())
+        {
+            return;
+        }
+        const auto parsed = scan::parse_value(config.value_type, typed->toStdString(), config.hex);
+        if (!parsed.has_value())
+        {
+            return; // the live validator already reported it
+        }
+        emit changeValueRequested(hit->address, scan::encode_value(config.value_type, *parsed));
+    }
+
+    void FoundListPanel::browse_region(int row)
+    {
+        if (const scan::ScanHit* hit = model_->hit_at(row); hit != nullptr)
+        {
+            emit browseRequested(hit->address);
+        }
+    }
+
+    void FoundListPanel::edit_selected_value()
+    {
+        const QModelIndex index = table_view_->currentIndex();
+        if (index.isValid())
+        {
+            edit_value(index.row());
+        }
+    }
+
+    void FoundListPanel::browse_selected_region()
+    {
+        const QModelIndex index = table_view_->currentIndex();
+        if (index.isValid())
+        {
+            browse_region(index.row());
+        }
+    }
+
     void FoundListPanel::populate_row_menu(QMenu& menu, int row)
     {
         widgets::show_explanations(menu);
@@ -230,6 +306,35 @@ namespace slopkit::ui::panels
                 [this, row]
                 {
                     add_to_table(row);
+                });
+
+        // A value change writes to the target, so the entry needs one attached;
+        // it stays visible and explains itself otherwise.
+        if (target_attached_)
+        {
+            QAction* edit = widgets::described_action(
+                menu, tr("Change value…"), tr("Writes the typed value to this hit's address."));
+            connect(edit,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        edit_value(row);
+                    });
+        }
+        else
+        {
+            (void)widgets::disabled_action(menu, tr("Change value…"), tr("Attach to a target first."));
+        }
+
+        QAction* browse = widgets::described_action(
+            menu, tr("Browse this memory region"), tr("Shows this hit's address in the Memory Viewer."));
+        connect(browse,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    browse_region(row);
                 });
 
         QMenu* copy = menu.addMenu(tr("Copy"));

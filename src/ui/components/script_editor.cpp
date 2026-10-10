@@ -65,10 +65,17 @@ namespace slopkit::ui::components
             return selection;
         }
 
-        // True when `trimmed` starts with a keyword that closes a block and so
-        // should resume one stop further out.
+        // True when `trimmed` starts with a keyword that closes a block, or
+        // with the closing half of a bracket pair, and so should resume one stop
+        // further out.
         [[nodiscard]] bool starts_closing_token(const QString& trimmed)
         {
+            if (!trimmed.isEmpty()
+                && (trimmed.at(0) == QLatin1Char('}') || trimmed.at(0) == QLatin1Char(')')
+                    || trimmed.at(0) == QLatin1Char(']')))
+            {
+                return true;
+            }
             int n = 0;
             while (n < trimmed.size() && trimmed.at(n).isLetter())
             {
@@ -77,6 +84,39 @@ namespace slopkit::ui::components
             const QString word = trimmed.left(n);
             return word == QLatin1String("end") || word == QLatin1String("else") || word == QLatin1String("elseif")
                 || word == QLatin1String("until");
+        }
+
+        // `line` up to a trailing `--` comment, trimmed: the part that decides
+        // whether the line opens a block.
+        [[nodiscard]] QString code_part(const QString& line)
+        {
+            const int comment = line.indexOf(QLatin1String("--"));
+            return (comment < 0 ? line : line.left(comment)).trimmed();
+        }
+
+        // True when `line` opens a block the following line belongs to: a keyword
+        // that wants a matching `end`/`until`, or a bracket left open at the
+        // line's end. The next line then indents one stop further in.
+        [[nodiscard]] bool opens_block(const QString& line)
+        {
+            const QString code = code_part(line);
+            if (code.isEmpty())
+            {
+                return false;
+            }
+            const QChar last = code.at(code.size() - 1);
+            if (last == QLatin1Char('{') || last == QLatin1Char('(') || last == QLatin1Char('['))
+            {
+                return true;
+            }
+            int n = code.size();
+            while (n > 0 && code.at(n - 1).isLetter())
+            {
+                --n;
+            }
+            const QString word = code.mid(n);
+            return word == QLatin1String("then") || word == QLatin1String("do") || word == QLatin1String("function")
+                || word == QLatin1String("else") || word == QLatin1String("repeat");
         }
     } // namespace
 
@@ -431,6 +471,24 @@ namespace slopkit::ui::components
             return;
         }
 
+        // Backspace that follows four or more spaces takes the whole stop at
+        // once, so the caret walks the indentation a stop at a time.
+        if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier)
+        {
+            QTextCursor   cursor = textCursor();
+            const QString line   = cursor.block().text();
+            const int     column = cursor.positionInBlock();
+            if (!cursor.hasSelection() && column >= kIndentSize
+                && line.mid(column - kIndentSize, kIndentSize) == QString(kIndentSize, QLatin1Char(' ')))
+            {
+                cursor.movePosition(QTextCursor::Left, QTextCursor::KeepAnchor, kIndentSize);
+                cursor.removeSelectedText();
+                setTextCursor(cursor);
+                event->accept();
+                return;
+            }
+        }
+
         QPlainTextEdit::keyPressEvent(event);
     }
 
@@ -628,7 +686,9 @@ namespace slopkit::ui::components
         }
         QString indent = line.left(leading);
 
-        // A line that opens with a closing keyword resumes one stop further out.
+        // A line that opens with a closing keyword or bracket resumes one stop
+        // further out; one whose text before the caret leaves a block open hands
+        // one stop further in to the line it starts.
         const QString trimmed = line.trimmed();
         if (!trimmed.isEmpty() && starts_closing_token(trimmed))
         {
@@ -638,6 +698,10 @@ namespace slopkit::ui::components
                 ++spaces;
             }
             indent = indent.left(std::max(0, spaces - kIndentSize));
+        }
+        else if (opens_block(line.left(cursor.positionInBlock())))
+        {
+            indent += QString(kIndentSize, QLatin1Char(' '));
         }
 
         cursor.beginEditBlock();

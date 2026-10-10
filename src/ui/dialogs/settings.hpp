@@ -91,7 +91,6 @@ namespace slopkit::ui::dialogs
         QSpinBox*             live_update_interval_ {};
         QLabel*               last_table_label_ {};
         QLineEdit*            alignment_edit_ {};
-        QLineEdit*            result_cap_edit_ {};
         QPlainTextEdit*       plugins_view_ {};
         QLabel*               about_title_ {};
         QLabel*               about_plugins_ {};

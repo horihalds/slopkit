@@ -317,11 +317,6 @@ namespace slopkit::ui::dialogs
         alignment_edit_->setToolTip(tr("Used when the scan controls' alignment field is left blank"));
         form->addRow(tr("Default fast-scan alignment (bytes)"), alignment_edit_);
 
-        result_cap_edit_ = new QLineEdit(QStringLiteral("1000000"), page);
-        result_cap_edit_->setFont(mono_font());
-        result_cap_edit_->setMaximumWidth(200);
-        form->addRow(tr("Stored result cap"), result_cap_edit_);
-
         layout->addLayout(form);
 
         auto* apply_row = new QHBoxLayout();
@@ -449,14 +444,6 @@ namespace slopkit::ui::dialogs
             status_->set_status(widgets::StatusKind::error, tr("Alignment must be a positive number."));
             return;
         }
-        std::uint64_t cap = 0;
-        if (!parse_number(result_cap_edit_->text().toStdString(), cap) || cap == 0)
-        {
-            status_->set_status(widgets::StatusKind::error, tr("The result cap must be a positive number."));
-            return;
-        }
-
-        engine_.set_max_stored_hits(static_cast<std::size_t>(cap));
         emit alignmentChanged(static_cast<quint64>(alignment));
         status_->set_status(widgets::StatusKind::info, tr("Scanning defaults applied."));
     }

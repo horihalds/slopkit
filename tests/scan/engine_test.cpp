@@ -415,10 +415,9 @@ TEST_CASE("a refinement that rejects everything finishes empty", "[scan]")
     CHECK(snapshot.hit_count == 0);
     CHECK(snapshot.hits.empty());
     CHECK(snapshot.progress == Approx(1.0f));
-    CHECK_FALSE(snapshot.truncated);
 }
 
-TEST_CASE("a refinement over a truncated result set reports the full count", "[scan]")
+TEST_CASE("a refinement stores every kept hit, with no result cap", "[scan]")
 {
     auto bytes = std::make_shared<std::vector<std::byte>>(32);
     for (std::size_t i = 0; i < 8; ++i)
@@ -432,15 +431,16 @@ TEST_CASE("a refinement over a truncated result set reports the full count", "[s
     engine.first_scan(unknown, mutable_source(bytes));
     REQUIRE(wait(engine).hit_count == 8);
 
-    // The refinement keeps all eight but the lowered cap stores only three.
-    engine.set_max_stored_hits(3);
+    // All eight candidates stay, so the whole set is stored and shown.
     engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
     const auto snapshot = wait(engine);
 
     REQUIRE(snapshot.state == ScanState::done);
     CHECK(snapshot.hit_count == 8);
-    CHECK(snapshot.truncated);
-    CHECK(snapshot.hits.size() == 3);
+    CHECK(engine.result_count() == 8);
+    REQUIRE(snapshot.result_hits != nullptr);
+    CHECK(snapshot.result_hits->size() == 8);
+    CHECK(snapshot.hits.size() == 8);
 }
 
 TEST_CASE("a cancelled refinement keeps the previous result set", "[scan]")

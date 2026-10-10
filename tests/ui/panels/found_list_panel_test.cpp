@@ -16,7 +16,7 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     CHECK(idle_header->text() == QStringLiteral("Showing 0 of 0 results"));
     CHECK(idle_panel.findChildren<QLabel*>().size() == 1);
 
-    // A capped page keeps the same line and appends the cap suffix instead of
+    // A finished scan keeps the same line, whatever the result count, instead of
     // adding a second status row.
     std::vector<std::byte> bytes(12, std::byte {0});
     for (std::size_t i = 0; i < 3; ++i)
@@ -26,7 +26,6 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     }
 
     slopkit::scan::ScanEngine engine;
-    engine.set_max_stored_hits(2);
     slopkit::scan::ScanConfig config;
     config.value = std::int64_t {10};
     engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
@@ -36,9 +35,8 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     }
     REQUIRE(engine.has_results());
     const auto snapshot = engine.snapshot();
-    REQUIRE(snapshot.hits.size() == 2);
+    REQUIRE(snapshot.hits.size() == 3);
     REQUIRE(snapshot.hit_count == 3);
-    REQUIRE(snapshot.truncated);
 
     slopkit::table::AddressTable        table;
     slopkit::ui::panels::FoundListPanel panel {engine, table};
@@ -46,7 +44,7 @@ TEST_CASE("the found list keeps one result line", "[ui]")
 
     auto* header = panel.findChild<QLabel*>();
     REQUIRE(header != nullptr);
-    CHECK(header->text() == QStringLiteral("Showing 2 of 3 results (result cap reached)"));
+    CHECK(header->text() == QStringLiteral("Showing 3 of 3 results"));
     CHECK(panel.findChildren<QLabel*>().size() == 1);
 }
 
@@ -234,6 +232,8 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
 
     CHECK(action_texts(menu.actions())
           == QList<QString> {QStringLiteral("Add to address table"),
+                             QStringLiteral("Change value…"),
+                             QStringLiteral("Browse this memory region"),
                              QStringLiteral("Copy"),
                              QStringLiteral("Find out what writes this address"),
                              QStringLiteral("Find out what accesses this address")});
@@ -272,9 +272,54 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     CHECK_FALSE(watch_accesses->isEnabled());
     CHECK(watch_writes->toolTip() == QStringLiteral("Attach to a target first."));
 
+    // The value change needs a target too and explains itself the same way; the
+    // browse entry works without one, since it only reads the address.
+    QAction* change = nullptr;
+    QAction* browse = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Change value…"))
+        {
+            change = action;
+        }
+        if (action->text() == QStringLiteral("Browse this memory region"))
+        {
+            browse = action;
+        }
+    }
+    REQUIRE(change != nullptr);
+    REQUIRE(browse != nullptr);
+    CHECK_FALSE(change->isEnabled());
+    CHECK(change->toolTip() == QStringLiteral("Attach to a target first."));
+    CHECK(browse->isEnabled());
+
+    // Both commands answer their shortcut on the panel's own table.
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    QAction* shortcut_edit   = nullptr;
+    QAction* shortcut_browse = nullptr;
+    for (QAction* action : view->actions())
+    {
+        if (action->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")))
+        {
+            shortcut_edit = action;
+        }
+        if (action->shortcut() == QKeySequence(QStringLiteral("Ctrl+D")))
+        {
+            shortcut_browse = action;
+        }
+    }
+    REQUIRE(shortcut_edit != nullptr);
+    REQUIRE(shortcut_browse != nullptr);
+    CHECK(shortcut_edit->text() == QStringLiteral("Change value…"));
+    CHECK(shortcut_browse->text() == QStringLiteral("Browse this memory region"));
+    CHECK(shortcut_edit->shortcutContext() == Qt::WidgetWithChildrenShortcut);
+    CHECK(shortcut_browse->shortcutContext() == Qt::WidgetWithChildrenShortcut);
+
     // Triggering the entries with no hit behind them is a no-op, not a crash.
     menu.actions().front()->trigger();
     copy->actions().front()->trigger();
+    browse->trigger();
 }
 
 TEST_CASE("the found list row menu arms an access watch on a hit", "[ui]")

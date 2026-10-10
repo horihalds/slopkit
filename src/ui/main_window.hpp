@@ -136,6 +136,10 @@ namespace slopkit::ui
         void run_freeze_pass();
 
         void on_memory_view_requested(quint64 address);
+
+        // The found list's `Change value…`: writes the bytes the user typed to
+        // `address` through the shared worker and reports it on the status bar.
+        void on_found_value_requested(quint64 address, std::vector<std::byte> bytes);
         void on_add_address_requested();
         void on_table_loaded();
 
@@ -231,6 +235,9 @@ namespace slopkit::ui
 
         // In-flight freeze job, if any; one at a time.
         std::optional<process::JobId> freeze_pending_;
+
+        // In-flight value write from the found list, if any; one at a time.
+        std::optional<process::JobId> found_write_pending_;
 
         // The two stages of a listing-driven attach: the process listing and
         // then the attach itself. A table load and a practice-target launch

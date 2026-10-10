@@ -47,7 +47,6 @@ namespace slopkit::scan
         std::size_t                                 scanned_bytes {};
         std::size_t                                 total_bytes {};
         std::size_t                                 hit_count {};
-        bool                                        truncated {};
         // The top `kDisplayPage` rows of a finished result set; empty while a
         // scan runs.
         std::vector<ScanHit>                        hits;
@@ -100,28 +99,16 @@ namespace slopkit::scan
         // Scan has been applied that has not been undone yet.
         [[nodiscard]] bool can_undo() const;
 
-        // Lowers or raises the stored-hit cap; takes effect on the next scan.
-        void                      set_max_stored_hits(std::size_t maximum) noexcept;
-        [[nodiscard]] std::size_t max_stored_hits() const noexcept;
-
         // Overrides the first-scan worker count: 0 means automatic, 1 forces the
         // sequential path. Used by the tests and the throughput benchmark.
         void                      set_max_threads(std::size_t threads) noexcept;
         [[nodiscard]] std::size_t max_threads() const noexcept;
 
     private:
-        // The full result set of a scan; `count` may exceed `hits.size()` when
-        // the stored hits were capped.
-        struct ResultSet
-        {
-            std::vector<ScanHit> hits;
-            std::size_t          count {};
-            bool                 truncated {};
-        };
+        // The whole result set of a scan, in address order. Shared with the UI
+        // through the snapshot, so copies stay cheap.
+        using ResultSetPtr = std::shared_ptr<const std::vector<ScanHit>>;
 
-        using ResultSetPtr = std::shared_ptr<const ResultSet>;
-
-        static constexpr std::size_t kMaxStoredHits  = 1'000'000;
         static constexpr std::size_t kHistoryDepth   = 8;
         static constexpr std::size_t kMaxScanThreads = 8;
 
@@ -129,12 +116,9 @@ namespace slopkit::scan
         void run_next(ScanConfig config, ResultSetPtr previous, MemorySource source, const std::stop_token& token);
 
         // Publishes progress only: a running scan exposes no rows at all.
-        void publish_running_locked(std::size_t scanned, std::size_t total, std::size_t count, bool truncated);
+        void publish_running_locked(std::size_t scanned, std::size_t total, std::size_t count);
         void publish_results_locked(ScanState state, std::string message);
-        void finish_success(std::shared_ptr<std::vector<ScanHit>> hits,
-                            std::size_t                           count,
-                            bool                                  truncated,
-                            bool                                  reset_history);
+        void finish_success(std::shared_ptr<std::vector<ScanHit>> hits, bool reset_history);
         void finish_worker() noexcept;
 
         mutable std::mutex        mutex_;
@@ -144,7 +128,6 @@ namespace slopkit::scan
         ScanConfig                config_;
         MemorySource              source_;
         std::atomic<bool>         cancel_requested_ {false};
-        std::atomic<std::size_t>  max_stored_hits_ {kMaxStoredHits};
         std::atomic<std::size_t>  max_threads_ {0};
         std::jthread              worker_;
     };

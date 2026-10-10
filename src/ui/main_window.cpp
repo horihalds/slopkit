@@ -288,6 +288,9 @@ namespace slopkit::ui
                     on_memory_view_requested(scanner_->main_module_address());
                 });
         connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
+        connect(found_list_, &panels::FoundListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
+        connect(
+            found_list_, &panels::FoundListPanel::changeValueRequested, this, &MainWindow::on_found_value_requested);
         connect(scanner_,
                 &panels::ScannerPanel::memoryMapApplied,
                 this,
@@ -688,6 +691,56 @@ namespace slopkit::ui
         run_freeze_pass();
         refresh_target_label();
         live_values_->poll();
+    }
+
+    void MainWindow::on_found_value_requested(quint64 address, std::vector<std::byte> bytes)
+    {
+        if (!target_.valid())
+        {
+            address_status_->set_status(widgets::StatusKind::error, tr("Not attached; cannot write."));
+            return;
+        }
+        if (found_write_pending_.has_value())
+        {
+            address_status_->set_status(widgets::StatusKind::info, tr("A write is already in progress."));
+            return;
+        }
+
+        const std::size_t    length = bytes.size();
+        const process::JobId job_id = worker_.next_job_id();
+        found_write_pending_        = job_id;
+        const bool submitted        = worker_.submit_write(
+            job_id,
+            0, // the found list writes a bare address, not an address-table entry
+            address,
+            std::move(bytes),
+            [this, job_id, address, length](process::JobResult&& result)
+            {
+                if (found_write_pending_ != job_id)
+                {
+                    return; // superseded or shut down
+                }
+                found_write_pending_.reset();
+
+                const auto& write = std::get<process::WriteResult>(result);
+                if (write.error)
+                {
+                    log::warning(
+                        log::category::ui,
+                        std::format("found list write failed at {:X}: {}", address, process::describe(*write.error)));
+                    address_status_->set_status(
+                        widgets::StatusKind::error,
+                        tr("Write failed: %1").arg(to_qstring(process::describe(*write.error))));
+                    return;
+                }
+                log::info(log::category::ui, std::format("found list wrote {} byte(s) at {:X}", length, address));
+                address_status_->set_status(widgets::StatusKind::info, tr("Value written."));
+            });
+        if (!submitted)
+        {
+            found_write_pending_.reset();
+            address_status_->set_status(widgets::StatusKind::error, tr("Write unavailable."));
+        }
     }
 
     void MainWindow::on_memory_view_requested(quint64 address)

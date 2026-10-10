@@ -196,16 +196,13 @@ namespace slopkit::scan
         // Walks one shard in chunks, reading one extra window across the chunk
         // and shard boundaries so windows that straddle them are not skipped.
         // Candidates only start inside the chunk, so `scanned` accounting is
-        // unchanged. Dynamic slots are claimed from `stored` so the total number
-        // of kept hits never exceeds `cap`.
+        // unchanged.
         ScannedShard scan_shard_range(const Shard&              shard,
                                       const Matcher&            matcher,
                                       const MemorySource&       source,
                                       std::uint64_t             alignment,
                                       std::size_t               size,
-                                      std::size_t               cap,
                                       std::vector<std::byte>&   buffer,
-                                      std::atomic<std::size_t>& stored,
                                       std::atomic<std::size_t>& scanned,
                                       std::atomic<std::size_t>& found,
                                       const std::stop_token&    token,
@@ -279,10 +276,7 @@ namespace slopkit::scan
                     const auto record = [&](std::uint64_t address, const std::byte* first)
                     {
                         found.fetch_add(1, std::memory_order_relaxed);
-                        if (stored.fetch_add(1, std::memory_order_relaxed) < cap)
-                        {
-                            result.hits.push_back(ScanHit {address, std::vector<std::byte>(first, first + size), {}});
-                        }
+                        result.hits.push_back(ScanHit {address, std::vector<std::byte>(first, first + size), {}});
                     };
 
                     if (matcher.matches_all())
@@ -447,11 +441,8 @@ namespace slopkit::scan
             const MemorySource*         source {};
             bool                        refinement {};
             std::size_t                 width {};
-            std::size_t                 cap {};
-            std::atomic<std::size_t>*   stored {};
             std::atomic<std::size_t>*   scanned {};
             std::atomic<std::size_t>*   found {};
-            std::atomic<bool>*          truncated {};
             std::atomic<std::size_t>*   unreadable {};
         };
 
@@ -476,14 +467,7 @@ namespace slopkit::scan
                 return;
             }
             ctx.found->fetch_add(1, std::memory_order_relaxed);
-            if (ctx.stored->fetch_add(1, std::memory_order_relaxed) < ctx.cap)
-            {
-                out.push_back(ScanHit {hit.address, std::vector<std::byte>(window.begin(), window.end()), hit.value});
-            }
-            else
-            {
-                ctx.truncated->store(true, std::memory_order_relaxed);
-            }
+            out.push_back(ScanHit {hit.address, std::vector<std::byte>(window.begin(), window.end()), hit.value});
         }
 
         // Refines hits[first..last] with one read of their whole window. A short
@@ -672,7 +656,7 @@ namespace slopkit::scan
         results_ = history_.back();
         history_.pop_back();
         publish_results_locked(ScanState::done, "Undid the last scan.");
-        log::info(log::category::scan, std::format("undo restored {} hit(s)", results_ ? results_->count : 0));
+        log::info(log::category::scan, std::format("undo restored {} hit(s)", results_ ? results_->size() : 0));
     }
 
     void ScanEngine::cancel()
@@ -723,7 +707,7 @@ namespace slopkit::scan
     std::size_t ScanEngine::result_count() const
     {
         const std::lock_guard lock(mutex_);
-        return results_ ? results_->hits.size() : 0;
+        return results_ ? results_->size() : 0;
     }
 
     bool ScanEngine::has_results() const
@@ -738,16 +722,6 @@ namespace slopkit::scan
         return !history_.empty();
     }
 
-    void ScanEngine::set_max_stored_hits(std::size_t maximum) noexcept
-    {
-        max_stored_hits_.store(maximum == 0 ? 1 : maximum);
-    }
-
-    std::size_t ScanEngine::max_stored_hits() const noexcept
-    {
-        return max_stored_hits_.load();
-    }
-
     void ScanEngine::set_max_threads(std::size_t threads) noexcept
     {
         max_threads_.store(threads);
@@ -758,7 +732,7 @@ namespace slopkit::scan
         return max_threads_.load();
     }
 
-    void ScanEngine::publish_running_locked(std::size_t scanned, std::size_t total, std::size_t count, bool truncated)
+    void ScanEngine::publish_running_locked(std::size_t scanned, std::size_t total, std::size_t count)
     {
         snapshot_.state = ScanState::running;
         snapshot_.progress =
@@ -767,7 +741,6 @@ namespace slopkit::scan
         snapshot_.scanned_bytes = scanned;
         snapshot_.total_bytes   = total;
         snapshot_.hit_count     = count;
-        snapshot_.truncated     = truncated;
         snapshot_.hits.clear();
         snapshot_.result_hits.reset();
     }
@@ -778,28 +751,23 @@ namespace slopkit::scan
         snapshot_.message = std::move(message);
         if (results_)
         {
-            snapshot_.hit_count    = results_->count;
-            snapshot_.truncated    = results_->truncated;
-            const std::size_t page = std::min(results_->hits.size(), kDisplayPage);
-            snapshot_.hits.assign(results_->hits.begin(), results_->hits.begin() + static_cast<std::ptrdiff_t>(page));
-            snapshot_.result_hits = std::shared_ptr<const std::vector<ScanHit>>(results_, &results_->hits);
+            snapshot_.hit_count    = results_->size();
+            const std::size_t page = std::min(results_->size(), kDisplayPage);
+            snapshot_.hits.assign(results_->begin(), results_->begin() + static_cast<std::ptrdiff_t>(page));
+            snapshot_.result_hits = results_;
         }
         else
         {
             snapshot_.hit_count = 0;
-            snapshot_.truncated = false;
             snapshot_.hits.clear();
             snapshot_.result_hits.reset();
         }
     }
 
-    void ScanEngine::finish_success(std::shared_ptr<std::vector<ScanHit>> hits,
-                                    std::size_t                           count,
-                                    bool                                  truncated,
-                                    bool                                  reset_history)
+    void ScanEngine::finish_success(std::shared_ptr<std::vector<ScanHit>> hits, bool reset_history)
     {
         const std::lock_guard lock(mutex_);
-        auto                  set = std::make_shared<const ResultSet>(ResultSet {std::move(*hits), count, truncated});
+        auto                  set = std::make_shared<const std::vector<ScanHit>>(std::move(*hits));
         if (reset_history)
         {
             history_.clear();
@@ -862,19 +830,17 @@ namespace slopkit::scan
 
         const std::size_t        total     = total_bytes(spans);
         const std::uint64_t      alignment = config.filter.alignment == 0 ? 1 : config.filter.alignment;
-        const std::size_t        cap       = max_stored_hits_.load();
         const std::vector<Shard> shards    = build_shards(spans, alignment);
 
         std::vector<std::vector<ScanHit>> shard_hits(shards.size());
         std::vector<std::size_t>          shard_unreadable(shards.size());
         {
             const std::lock_guard lock(mutex_);
-            publish_running_locked(0, total, 0, false);
+            publish_running_locked(0, total, 0);
         }
 
         std::atomic<std::size_t> index {0};
         std::atomic<std::size_t> scanned {0};
-        std::atomic<std::size_t> stored {0};
         std::atomic<std::size_t> found {0};
 
         const std::size_t requested = max_threads_.load();
@@ -895,25 +861,15 @@ namespace slopkit::scan
                     break;
                 }
 
-                ScannedShard result    = scan_shard_range(shards[slot],
-                                                          matcher,
-                                                          source,
-                                                          alignment,
-                                                          size,
-                                                          cap,
-                                                          buffer,
-                                                          stored,
-                                                          scanned,
-                                                          found,
-                                                          token,
-                                                          cancel_requested_);
+                ScannedShard result = scan_shard_range(
+                    shards[slot], matcher, source, alignment, size, buffer, scanned, found, token, cancel_requested_);
                 shard_hits[slot]       = std::move(result.hits);
                 shard_unreadable[slot] = result.unreadable_chunks;
 
                 {
                     const std::lock_guard lock(mutex_);
                     const std::size_t     count = found.load(std::memory_order_relaxed);
-                    publish_running_locked(scanned.load(std::memory_order_relaxed), total, count, count > cap);
+                    publish_running_locked(scanned.load(std::memory_order_relaxed), total, count);
                 }
                 if (result.cancelled)
                 {
@@ -946,7 +902,7 @@ namespace slopkit::scan
 
         const std::size_t count = found.load(std::memory_order_relaxed);
         auto              next  = std::make_shared<std::vector<ScanHit>>();
-        next->reserve(std::min(count, cap));
+        next->reserve(count);
         for (auto& shard : shard_hits)
         {
             for (auto& hit : shard)
@@ -963,7 +919,7 @@ namespace slopkit::scan
                       return left.address < right.address;
                   });
 
-        finish_success(std::move(next), count, count > cap, true);
+        finish_success(std::move(next), true);
 
         std::size_t unreadable = 0;
         for (const std::size_t value : shard_unreadable)
@@ -975,12 +931,10 @@ namespace slopkit::scan
             log::debug(log::category::scan, std::format("first scan: {} unreadable chunk(s) skipped", unreadable));
         }
 
-        log::info(log::category::scan,
-                  std::format("first scan finished: {} hit(s){}, {} byte(s) scanned in {:.1f} ms",
-                              count,
-                              count > cap ? " (stored hits truncated)" : "",
-                              total,
-                              elapsed_ms(started)));
+        log::info(
+            log::category::scan,
+            std::format(
+                "first scan finished: {} hit(s), {} byte(s) scanned in {:.1f} ms", count, total, elapsed_ms(started)));
     }
 
     void
@@ -1013,21 +967,19 @@ namespace slopkit::scan
             return;
         }
 
-        const std::size_t total = previous->hits.size();
-        const std::size_t cap   = max_stored_hits_.load();
-        const std::size_t width =
-            refinement ? (previous->hits.empty() ? 0 : previous->hits.front().value.size()) : size;
+        const std::size_t total = previous->size();
+        const std::size_t width = refinement ? (previous->empty() ? 0 : previous->front().value.size()) : size;
 
         {
             const std::lock_guard lock(mutex_);
-            publish_running_locked(0, total, 0, false);
+            publish_running_locked(0, total, 0);
         }
 
         if (total == 0 || width == 0)
         {
             // Nothing to refine; a zero width is the old loop's "read_size == 0"
             // case, where every candidate is dropped.
-            finish_success(std::make_shared<std::vector<ScanHit>>(), 0, false, false);
+            finish_success(std::make_shared<std::vector<ScanHit>>(), false);
             log::info(
                 log::category::scan,
                 std::format(
@@ -1037,24 +989,19 @@ namespace slopkit::scan
 
         std::atomic<std::size_t> scanned {0};
         std::atomic<std::size_t> found {0};
-        std::atomic<std::size_t> stored {0};
         std::atomic<std::size_t> unreadable {0};
-        std::atomic<bool>        truncated {false};
         std::atomic<bool>        cancelled {false};
 
-        const std::vector<NextBatch> batches = build_batches(previous->hits, width);
+        const std::vector<NextBatch> batches = build_batches(*previous, width);
 
         NextContext ctx;
         ctx.config     = &config;
-        ctx.hits       = &previous->hits;
+        ctx.hits       = previous.get();
         ctx.source     = &source;
         ctx.refinement = refinement;
         ctx.width      = width;
-        ctx.cap        = cap;
-        ctx.stored     = &stored;
         ctx.scanned    = &scanned;
         ctx.found      = &found;
-        ctx.truncated  = &truncated;
         ctx.unreadable = &unreadable;
 
         std::atomic<std::size_t>          next_batch {0};
@@ -1083,10 +1030,8 @@ namespace slopkit::scan
                 {
                     since_publish = 0;
                     const std::lock_guard lock(mutex_);
-                    publish_running_locked(scanned.load(std::memory_order_relaxed),
-                                           total,
-                                           found.load(std::memory_order_relaxed),
-                                           truncated.load(std::memory_order_relaxed));
+                    publish_running_locked(
+                        scanned.load(std::memory_order_relaxed), total, found.load(std::memory_order_relaxed));
                 }
             }
         };
@@ -1121,7 +1066,7 @@ namespace slopkit::scan
 
         const std::size_t count = found.load(std::memory_order_relaxed);
         auto              next  = std::make_shared<std::vector<ScanHit>>();
-        next->reserve(std::min(count, cap));
+        next->reserve(count);
         for (auto& slot : batch_hits)
         {
             for (auto& hit : slot)
@@ -1130,7 +1075,7 @@ namespace slopkit::scan
             }
         }
 
-        finish_success(std::move(next), count, truncated.load(std::memory_order_relaxed), false);
+        finish_success(std::move(next), false);
 
         const std::size_t unreadable_count = unreadable.load(std::memory_order_relaxed);
         if (unreadable_count > 0)
@@ -1138,12 +1083,10 @@ namespace slopkit::scan
             log::debug(log::category::scan,
                        std::format("next scan: {} unreadable candidate read(s) skipped", unreadable_count));
         }
-        log::info(log::category::scan,
-                  std::format("next scan finished: {} of {} candidate(s) kept{} in {:.1f} ms",
-                              count,
-                              total,
-                              truncated.load(std::memory_order_relaxed) ? " (stored hits truncated)" : "",
-                              elapsed_ms(started)));
+        log::info(
+            log::category::scan,
+            std::format(
+                "next scan finished: {} of {} candidate(s) kept in {:.1f} ms", count, total, elapsed_ms(started)));
     }
 
 } // namespace slopkit::scan
