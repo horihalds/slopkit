@@ -236,14 +236,19 @@ TEST_CASE("the memory view document writes through the access worker", "[ui]")
                                             }};
 
     CHECK(fixture.document.write_value(kBase, QStringLiteral("0xEF")));
+
+    // The worker thread writes the target before it queues the completion, so
+    // waiting on the byte can return before the callback - and the record it
+    // logs - has run. Waiting for the record keeps the two in order, and the
+    // drained completion is what makes reading the fake's memory below safe.
     REQUIRE(pump_worker(fixture.worker,
                         [&]
                         {
-                            return fixture.access.memory->bytes.at(kBase) == std::byte {0xEF};
+                            return !records.empty();
                         }));
-    REQUIRE_FALSE(records.empty());
     CHECK(records.back().level == slopkit::log::Level::info);
     CHECK(records.back().message.find("memory view wrote") != std::string::npos);
+    CHECK(fixture.access.memory->bytes.at(kBase) == std::byte {0xEF});
 
     // The next identical reading does not flash the written byte as changed.
     fixture.pass();

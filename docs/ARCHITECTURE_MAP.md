@@ -152,6 +152,12 @@ docs that hold the detail behind this map.
 - A test fake driven from a worker thread keeps its state behind a lock and
   exposes snapshot accessors instead of public fields, so the test thread never
   reads a record mid-write — see `tests/support/fake_debug.hpp`.
+- A job's side effect and its completion are two steps: `AccessWorker::run()`
+  performs the job on the worker thread and only then queues the completion that
+  `drain()` invokes on the UI thread. A test that asserts anything the completion
+  produces — a log record, a model refresh, a repaint — must wait for the drained
+  completion, never for the worker-thread side effect — worked example in
+  `tests/ui/components/memory_view_document_test.cpp`.
 - Configure fails without ImageMagick, the Zydis, libzip, Lua and sol2 dev
   packages and `pkg-config`.
 
