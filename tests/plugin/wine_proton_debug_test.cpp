@@ -114,11 +114,6 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     };
 
     const auto target = reinterpret_cast<std::uint64_t>(&debug_target);
-    const auto before = read_target(target);
-    REQUIRE(before.has_value());
-    REQUIRE(before->size() == 1);
-    const auto original = (*before)[0];
-    CHECK(original != std::byte {0xCC});
 
     // Debugging before an attach is refused.
     slopkit_stop_info unarmed {};
@@ -127,6 +122,14 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     std::uint32_t leader = 0;
     REQUIRE(vtable->debug_attach(handle, &leader).code == SLOPKIT_OK);
     CHECK(leader == child.pid());
+
+    // The target is stopped now, so reads take the host process_vm/procfs path;
+    // the original byte at the target can be compared before and after arming.
+    const auto before = read_target(target);
+    REQUIRE(before.has_value());
+    REQUIRE(before->size() == 1);
+    const auto original = (*before)[0];
+    CHECK(original != std::byte {0xCC});
 
     // Attaching twice is idempotent.
     REQUIRE(vtable->debug_attach(handle, &leader).code == SLOPKIT_OK);

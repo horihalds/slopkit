@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,7 @@
 #include "platform/linux/wine.hpp"
 #include "plugins/support/allocate.hpp"
 #include "plugins/support/plugin_support.hpp"
-#include "plugins/wine_proton/agent_allocator.hpp"
+#include "plugins/wine_proton/agent_service.hpp"
 
 namespace
 {
@@ -48,8 +49,9 @@ namespace
     uint32_t access_methods() noexcept
     {
         // PTRACE only ever runs while an explicitly started debug session is
-        // open; ordinary reads and writes stay on process_vm/procfs.
-        return SLOPKIT_ACCESS_PROCESS_VM | SLOPKIT_ACCESS_PROCFS_MEM | SLOPKIT_ACCESS_PTRACE;
+        // open; ordinary reads and writes ride the resident agent while the
+        // target can run, and process_vm/procfs while a debug session stops it.
+        return SLOPKIT_ACCESS_PROCESS_VM | SLOPKIT_ACCESS_PROCFS_MEM | SLOPKIT_ACCESS_PTRACE | SLOPKIT_ACCESS_AGENT;
     }
 
     // The name the picker shows: /proc/<pid>/status first, then the exe filename.
@@ -98,20 +100,50 @@ namespace
     std::expected<std::uint64_t, slopkit::plugins::support::AllocationError>
     allocate(slopkit::plugins::support::Session& session, std::uint64_t size, std::uint64_t near_address)
     {
-        return slopkit::plugins::wine_proton::AgentAllocator::allocate(session, size, near_address);
+        return slopkit::plugins::wine_proton::AgentService::allocate(session, size, near_address);
     }
 
     std::expected<void, slopkit::plugins::support::AllocationError> free(slopkit::plugins::support::Session& session,
                                                                          std::uint64_t                       address)
     {
-        return slopkit::plugins::wine_proton::AgentAllocator::free(session, address);
+        return slopkit::plugins::wine_proton::AgentService::free(session, address);
     }
 
     // Closing the session SHUTDOWNs the agent (which frees what it allocated),
     // unmaps the shared region and removes the per-session directory.
     void close_session(slopkit::plugins::support::Session& session)
     {
-        slopkit::plugins::wine_proton::AgentAllocator::close(session.pid);
+        slopkit::plugins::wine_proton::AgentService::close(session.pid);
+    }
+
+    // The region list comes from the target's own VirtualQuery walk, merged with
+    // the procfs paths so module attribution survives.
+    std::expected<std::vector<slopkit::platform::MappedRegion>, slopkit::plugins::support::AccessFault>
+    regions(slopkit::plugins::support::Session& session)
+    {
+        return slopkit::plugins::wine_proton::AgentService::regions(session);
+    }
+
+    // Address validation answers from the target's own commit and protection
+    // view while it can run, and from the shared read probe otherwise.
+    std::expected<bool, slopkit::plugins::support::AccessFault>
+    range_is_readable(slopkit::plugins::support::Session& session, std::uint64_t address, std::size_t size)
+    {
+        return slopkit::plugins::wine_proton::AgentService::validate(session, address, size);
+    }
+
+    // Reads and writes ride the resident agent while the target can run, and the
+    // host session memory while a debug session has it stopped.
+    std::expected<slopkit::plugins::support::MemoryResult, slopkit::plugins::support::AccessFault>
+    read(slopkit::plugins::support::Session& session, std::uint64_t address, std::span<std::byte> buffer)
+    {
+        return slopkit::plugins::wine_proton::AgentService::read(session, address, buffer);
+    }
+
+    std::expected<slopkit::plugins::support::MemoryResult, slopkit::plugins::support::AccessFault>
+    write(slopkit::plugins::support::Session& session, std::uint64_t address, std::span<const std::byte> data)
+    {
+        return slopkit::plugins::wine_proton::AgentService::write(session, address, data);
     }
 
     constexpr PluginProfile kProfile {info,
@@ -122,7 +154,11 @@ namespace
                                       slopkit::platform::ForeignSignalPolicy::forward,
                                       allocate,
                                       free,
-                                      close_session};
+                                      close_session,
+                                      regions,
+                                      range_is_readable,
+                                      read,
+                                      write};
 } // namespace
 
 extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable* slopkit_plugin_entry(const slopkit_host_services* host)

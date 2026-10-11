@@ -177,6 +177,10 @@ namespace slopkit::process
         {
             append("wineserver");
         }
+        if (has_flag(methods, AccessMethod::agent))
+        {
+            append("agent");
+        }
         return result;
     }
 

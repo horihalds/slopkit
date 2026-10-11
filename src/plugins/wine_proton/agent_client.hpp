@@ -5,9 +5,11 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <vector>
 
 #include "plugins/wine_proton/agent_transport.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
@@ -33,6 +35,25 @@ namespace slopkit::plugins::wine_proton
         std::uint64_t size {0};
         std::uint32_t state {0};
         std::uint32_t protection {0};
+    };
+
+    // One record of an ENUM batch, mirroring the wire entry: the target's own
+    // boundaries, commit state, protection and mapping type.
+    struct AgentRegionEntry
+    {
+        std::uint64_t base {0};
+        std::uint64_t size {0};
+        std::uint32_t state {0};
+        std::uint32_t protection {0};
+        std::uint32_t type {0};
+    };
+
+    // One ENUM round trip's worth of regions plus the cursor to resume from; a
+    // cursor of 0 means the walk reached the end of the user address space.
+    struct AgentRegionBatch
+    {
+        std::vector<AgentRegionEntry> regions;
+        std::uint64_t                 next_cursor {0};
     };
 
     // The Linux end of one injected agent: it runs the one-shot injector under
@@ -79,6 +100,24 @@ namespace slopkit::plugins::wine_proton
         protect(std::uint64_t address, std::uint64_t size, std::uint32_t protection, std::chrono::milliseconds timeout);
         [[nodiscard]] std::expected<AgentRegionInfo, std::string> query(std::uint64_t             address,
                                                                         std::chrono::milliseconds timeout);
+
+        // One batch of the target's VirtualQuery chain, starting at `cursor`.
+        // `capacity` bounds the records per request (0 = the whole payload);
+        // the returned next_cursor is 0 once the walk is done.
+        [[nodiscard]] std::expected<AgentRegionBatch, std::string>
+        enumerate(std::uint64_t cursor, std::uint32_t capacity, std::chrono::milliseconds timeout);
+
+        // Copies up to buffer.size() bytes out of the target through the agent,
+        // chunked at the payload size. A partial transfer (an unmapped hole past
+        // a readable prefix) is a success; a first chunk with nothing readable
+        // is an error.
+        [[nodiscard]] std::expected<std::size_t, std::string>
+        read(std::uint64_t address, std::span<std::byte> buffer, std::chrono::milliseconds timeout);
+
+        // Copies all of `data` into the target through the agent, chunked the
+        // same way. A partial transfer past a writable prefix is a success.
+        [[nodiscard]] std::expected<std::size_t, std::string>
+        write(std::uint64_t address, std::span<const std::byte> data, std::chrono::milliseconds timeout);
 
         // Frees what the agent allocated and stops it serving. Never throws and
         // never blocks longer than `timeout`.

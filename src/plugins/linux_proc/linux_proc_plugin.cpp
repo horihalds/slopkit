@@ -63,14 +63,19 @@ namespace
         }
     }
 
-    // linux-proc has no in-target allocator: nullptr keeps the shared ptrace
-    // allocation path and the shared session teardown.
+    // linux-proc has no in-target allocator and no agent: nullptr keeps the
+    // shared ptrace allocation path, the shared session teardown and the shared
+    // introspection entries.
     constexpr PluginProfile kProfile {info,
                                       precedence,
                                       access_methods,
                                       claim,
                                       shape_modules,
                                       slopkit::platform::ForeignSignalPolicy::suppress,
+                                      nullptr,
+                                      nullptr,
+                                      nullptr,
+                                      nullptr,
                                       nullptr,
                                       nullptr,
                                       nullptr};

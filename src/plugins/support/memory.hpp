@@ -1,0 +1,82 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+
+#include "platform/linux/memory.hpp"
+#include "plugin/plugin_api.h"
+
+namespace slopkit::plugins::support
+{
+    // Why one memory operation failed: the ABI error code the entry returns plus
+    // the human reason a plugin can supply (the ABI's MemoryError carries no
+    // text, and an agent failure is worth naming).
+    struct AccessFault
+    {
+        std::int32_t code {0};
+        std::string  message;
+    };
+
+    // A completed memory transfer: how many bytes moved and the access-method
+    // bit the ABI reports for it (`SLOPKIT_ACCESS_*`).
+    struct MemoryResult
+    {
+        std::size_t   bytes {0};
+        std::uint32_t method {0};
+    };
+
+    // The ABI error code for a MemAccess failure.
+    inline std::int32_t status_for(platform::MemoryError error)
+    {
+        switch (error)
+        {
+        case platform::MemoryError::process_not_found:
+            return SLOPKIT_ERR_NOT_FOUND;
+        case platform::MemoryError::permission_denied:
+            return SLOPKIT_ERR_PERMISSION_DENIED;
+        case platform::MemoryError::invalid_argument:
+            return SLOPKIT_ERR_INVALID_ARGUMENT;
+        case platform::MemoryError::unmapped:
+            return SLOPKIT_ERR_NOT_FOUND;
+        case platform::MemoryError::io_error:
+            return SLOPKIT_ERR_IO;
+        }
+        return SLOPKIT_ERR_INTERNAL;
+    }
+
+    // The wording the shared entries report for a MemAccess failure.
+    inline const char* message_for(platform::MemoryError error)
+    {
+        switch (error)
+        {
+        case platform::MemoryError::process_not_found:
+            return "no such process";
+        case platform::MemoryError::permission_denied:
+            return "permission denied";
+        case platform::MemoryError::invalid_argument:
+            return "invalid argument";
+        case platform::MemoryError::unmapped:
+            return "address range is not mapped";
+        case platform::MemoryError::io_error:
+            return "memory I/O error";
+        }
+        return "unknown memory error";
+    }
+
+    // The access-method bit a MemAccess primitive reports.
+    inline std::uint32_t method_flag(platform::MemoryPrimitive primitive)
+    {
+        switch (primitive)
+        {
+        case platform::MemoryPrimitive::process_vm:
+            return SLOPKIT_ACCESS_PROCESS_VM;
+        case platform::MemoryPrimitive::procfs_mem:
+            return SLOPKIT_ACCESS_PROCFS_MEM;
+        case platform::MemoryPrimitive::none:
+            return 0;
+        }
+        return 0;
+    }
+
+} // namespace slopkit::plugins::support

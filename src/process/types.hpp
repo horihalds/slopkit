@@ -95,6 +95,7 @@ namespace slopkit::process
         process_vm = 1u << 1,
         ptrace     = 1u << 2,
         wineserver = 1u << 3,
+        agent      = 1u << 4,
     };
 
     constexpr AccessMethod operator|(AccessMethod lhs, AccessMethod rhs) noexcept

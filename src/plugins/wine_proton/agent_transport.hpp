@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <span>
 #include <string>
 
 #include "plugins/wine_proton/agent/slopkit_agent_protocol.h"
@@ -46,8 +47,16 @@ namespace slopkit::plugins::wine_proton
         // wakes quickly; an error names the reason (timeout, a protocol
         // mismatch the agent reported, or a reply that does not belong to this
         // request).
-        [[nodiscard]] std::expected<slopkit_agent_record, std::string> transact(const slopkit_agent_record& request,
-                                                                                std::chrono::milliseconds   timeout);
+        //
+        // For the payload-carrying ops, `request_payload` is copied into the
+        // region before the request is published and up to `response_payload`
+        // bytes of the answer are copied out before the state returns to idle,
+        // so the next request never races the previous answer's payload.
+        [[nodiscard]] std::expected<slopkit_agent_record, std::string>
+        transact(const slopkit_agent_record& request,
+                 std::chrono::milliseconds   timeout,
+                 std::span<const std::byte>  request_payload  = {},
+                 std::span<std::byte>        response_payload = {});
 
     private:
         AgentTransport(std::filesystem::path directory, int descriptor, slopkit_agent_region* region) noexcept;

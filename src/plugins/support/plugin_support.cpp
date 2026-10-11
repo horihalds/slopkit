@@ -26,6 +26,13 @@ namespace slopkit::plugins::support
         const slopkit_host_services* g_host    = nullptr;
         const PluginProfile*         g_profile = nullptr;
 
+        // The shared mappings in memory.hpp; the using-declarations keep them in
+        // the same overload set as the AccessError translator below, which would
+        // otherwise hide them from unqualified lookup.
+        using slopkit::plugins::support::message_for;
+        using slopkit::plugins::support::method_flag;
+        using slopkit::plugins::support::status_for;
+
         void* host_alloc(std::size_t size)
         {
             if (g_host == nullptr || g_host->alloc == nullptr)
@@ -65,24 +72,6 @@ namespace slopkit::plugins::support
             }
         }
 
-        int32_t status_for(platform::MemoryError error)
-        {
-            switch (error)
-            {
-            case platform::MemoryError::process_not_found:
-                return SLOPKIT_ERR_NOT_FOUND;
-            case platform::MemoryError::permission_denied:
-                return SLOPKIT_ERR_PERMISSION_DENIED;
-            case platform::MemoryError::invalid_argument:
-                return SLOPKIT_ERR_INVALID_ARGUMENT;
-            case platform::MemoryError::unmapped:
-                return SLOPKIT_ERR_NOT_FOUND;
-            case platform::MemoryError::io_error:
-                return SLOPKIT_ERR_IO;
-            }
-            return SLOPKIT_ERR_INTERNAL;
-        }
-
         int32_t status_for(process::AccessError error)
         {
             switch (error)
@@ -103,38 +92,6 @@ namespace slopkit::plugins::support
                 break;
             }
             return SLOPKIT_ERR_INTERNAL;
-        }
-
-        const char* message_for(platform::MemoryError error)
-        {
-            switch (error)
-            {
-            case platform::MemoryError::process_not_found:
-                return "no such process";
-            case platform::MemoryError::permission_denied:
-                return "permission denied";
-            case platform::MemoryError::invalid_argument:
-                return "invalid argument";
-            case platform::MemoryError::unmapped:
-                return "address range is not mapped";
-            case platform::MemoryError::io_error:
-                return "memory I/O error";
-            }
-            return "unknown memory error";
-        }
-
-        uint32_t method_flag(platform::MemoryPrimitive primitive)
-        {
-            switch (primitive)
-            {
-            case platform::MemoryPrimitive::process_vm:
-                return SLOPKIT_ACCESS_PROCESS_VM;
-            case platform::MemoryPrimitive::procfs_mem:
-                return SLOPKIT_ACCESS_PROCFS_MEM;
-            case platform::MemoryPrimitive::none:
-                return 0;
-            }
-            return 0;
         }
 
         const slopkit_plugin_info* plugin_info() noexcept
@@ -293,7 +250,29 @@ namespace slopkit::plugins::support
                 }
 
                 const auto destination = std::span<std::byte>(static_cast<std::byte*>(buffer), size);
-                const auto result      = session->mem.read(address, destination);
+
+                // A plugin with its own transfer path (Wine's agent) serves the
+                // whole read; the shared session memory runs only when it brings
+                // none.
+                if (g_profile->read != nullptr)
+                {
+                    const auto result = g_profile->read(*session, address, destination);
+                    if (!result)
+                    {
+                        return fail(result.error().code, intern(result.error().message));
+                    }
+                    if (out_read != nullptr)
+                    {
+                        *out_read = result->bytes;
+                    }
+                    if (out_method != nullptr)
+                    {
+                        *out_method = result->method;
+                    }
+                    return ok();
+                }
+
+                const auto result = session->mem.read(address, destination);
                 if (!result)
                 {
                     return fail(status_for(result.error()), message_for(result.error()));
@@ -347,6 +326,28 @@ namespace slopkit::plugins::support
                 }
 
                 const auto source = std::span<const std::byte>(static_cast<const std::byte*>(buffer), size);
+
+                // A plugin with its own transfer path (Wine's agent) serves the
+                // whole write; the shared session memory runs only when it brings
+                // none.
+                if (g_profile->write != nullptr)
+                {
+                    const auto result = g_profile->write(*session, address, source);
+                    if (!result)
+                    {
+                        return fail(result.error().code, intern(result.error().message));
+                    }
+                    if (out_written != nullptr)
+                    {
+                        *out_written = result->bytes;
+                    }
+                    if (out_method != nullptr)
+                    {
+                        *out_method = result->method;
+                    }
+                    return ok();
+                }
+
                 const auto result = session->mem.write(address, source);
                 if (!result)
                 {
@@ -487,8 +488,22 @@ namespace slopkit::plugins::support
                 }
                 reset_arena();
 
-                const auto regions = platform::read_maps(session->pid);
-                auto*      array =
+                std::vector<platform::MappedRegion> regions;
+                if (g_profile->regions != nullptr)
+                {
+                    auto result = g_profile->regions(*session);
+                    if (!result)
+                    {
+                        return fail(result.error().code, intern(result.error().message));
+                    }
+                    regions = std::move(*result);
+                }
+                else
+                {
+                    regions = platform::read_maps(session->pid);
+                }
+
+                auto* array =
                     static_cast<slopkit_region_info*>(host_alloc(sizeof(slopkit_region_info) * regions.size()));
                 if (array == nullptr && !regions.empty())
                 {
@@ -1035,6 +1050,20 @@ namespace slopkit::plugins::support
                 if (size == 0)
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "the size must be larger than 0");
+                }
+
+                // A plugin with its own in-target view (Wine's agent) answers
+                // validation from the target itself; the read probe runs only
+                // when it brings none.
+                if (g_profile->range_is_readable != nullptr)
+                {
+                    const auto valid = g_profile->range_is_readable(*session, address, size);
+                    if (!valid)
+                    {
+                        return fail(SLOPKIT_ERR_IO, intern(valid.error().message));
+                    }
+                    *out_valid = *valid ? 1u : 0u;
+                    return ok();
                 }
 
                 *out_valid = range_is_readable(*session, address, size) ? 1u : 0u;

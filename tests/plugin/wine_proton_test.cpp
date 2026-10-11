@@ -215,7 +215,7 @@ TEST_CASE("wine-proton lists only processes it claims", "[wine_proton]")
     }
 }
 
-TEST_CASE("wine-proton lists modules, threads and regions of a session", "[wine_proton]")
+TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
 {
     slopkit::plugin::PluginHost host;
     host.discover({SLOPKIT_PLUGIN_DIR});
@@ -238,24 +238,20 @@ TEST_CASE("wine-proton lists modules, threads and regions of a session", "[wine_
     REQUIRE(threads.has_value());
     CHECK_FALSE(threads->empty());
 
+    // A native target cannot run the resident agent, so the region list reports
+    // the recorded reason instead of silently listing the host's view.
     const auto regions = session->regions();
-    REQUIRE(regions.has_value());
-    CHECK_FALSE(regions->empty());
-    for (const auto& region : *regions)
-    {
-        CHECK(region.start < region.end);
-    }
+    REQUIRE_FALSE(regions.has_value());
+    CHECK(regions.error() == AccessError::io_error);
 }
 
-TEST_CASE("wine-proton reads and writes target memory", "[wine_proton]")
+TEST_CASE("wine-proton reads and writes only through its resident agent", "[wine_proton]")
 {
+    // A real, readable page, so the failure can only be the absent agent and not
+    // an unmapped address.
     auto* page =
         static_cast<std::byte*>(::mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     REQUIRE(page != MAP_FAILED);
-    for (std::size_t i = 0; i < kPageSize; ++i)
-    {
-        page[i] = static_cast<std::byte>(i % 251);
-    }
     const auto address = reinterpret_cast<std::uint64_t>(page);
 
     slopkit::plugin::PluginHost host;
@@ -265,13 +261,11 @@ TEST_CASE("wine-proton reads and writes target memory", "[wine_proton]")
     auto session = access.attach(static_cast<ProcessId>(::getpid()), "wine-proton");
     REQUIRE(session.has_value());
 
+    // A native target cannot run the resident agent, so reads and writes report
+    // the recorded reason instead of silently using the host process_vm path.
     const auto data = session->read(address, 64);
-    REQUIRE(data.has_value());
-    REQUIRE(data->size() == 64);
-    for (std::size_t i = 0; i < 64; ++i)
-    {
-        REQUIRE((*data)[i] == static_cast<std::byte>(i % 251));
-    }
+    REQUIRE_FALSE(data.has_value());
+    CHECK(data.error() == AccessError::io_error);
 
     const std::array<std::byte, 8> pattern {std::byte {0xde},
                                             std::byte {0xad},
@@ -282,17 +276,58 @@ TEST_CASE("wine-proton reads and writes target memory", "[wine_proton]")
                                             std::byte {0x03},
                                             std::byte {0x04}};
     const auto                     written = session->write(address, pattern);
-    REQUIRE(written.has_value());
-    REQUIRE(*written == pattern.size());
-
-    const auto readback = session->read(address, pattern.size());
-    REQUIRE(readback.has_value());
-    REQUIRE(readback->size() == pattern.size());
-    REQUIRE(std::equal(readback->begin(), readback->end(), pattern.begin()));
-
-    CHECK(session->last_method() != AccessMethod::none);
+    REQUIRE_FALSE(written.has_value());
+    CHECK(written.error() == AccessError::io_error);
 
     ::munmap(page, kPageSize);
+}
+
+TEST_CASE("wine-proton serves a stopped target from the host path", "[wine_proton]")
+{
+    // A child that is not Wine, so the agent can never serve it; once the debug
+    // session stops it, the host path must answer because the agent's service
+    // thread cannot run.
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    ChildGuard guard(child);
+    if (child == 0)
+    {
+        for (;;)
+        {
+            ::pause();
+        }
+    }
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("wine-proton");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(static_cast<ProcessId>(child));
+    REQUIRE(session.has_value());
+    REQUIRE(session->supports_debug());
+
+    auto* vtable = session->vtable();
+    REQUIRE(vtable != nullptr);
+    void* handle = session->handle();
+
+    std::uint32_t leader = 0;
+    REQUIRE(vtable->debug_attach(handle, &leader).code == SLOPKIT_OK);
+
+    // The child is a fork of this process, so a function of this binary is at
+    // the same address and mapped in both.
+    const auto address  = reinterpret_cast<std::uint64_t>(&process_state);
+    const auto expected = *reinterpret_cast<const std::byte*>(&process_state);
+
+    AccessMethod used = AccessMethod::none;
+    const auto   read = session->read(address, 1, used);
+    REQUIRE(read.has_value());
+    REQUIRE(read->size() == 1);
+    CHECK((*read)[0] == expected);
+    CHECK_FALSE(slopkit::process::has_flag(used, AccessMethod::agent));
+
+    REQUIRE(vtable->debug_detach(handle).code == SLOPKIT_OK);
 }
 
 TEST_CASE("wine-proton reports clean errors", "[wine_proton]")
@@ -317,13 +352,15 @@ TEST_CASE("wine-proton reports clean errors", "[wine_proton]")
         CHECK(result.error() == AccessError::invalid_argument);
     }
 
-    SECTION("unmapped address")
+    SECTION("a target the agent cannot serve")
     {
         auto self = access.attach(static_cast<ProcessId>(::getpid()), "wine-proton");
         REQUIRE(self.has_value());
+        // Even an unmapped address reports the agent-off reason first: there is
+        // no silent host fallback.
         const auto result = self->read(0, 16);
         REQUIRE_FALSE(result.has_value());
-        CHECK(result.error() == AccessError::not_found);
+        CHECK(result.error() == AccessError::io_error);
     }
 }
 

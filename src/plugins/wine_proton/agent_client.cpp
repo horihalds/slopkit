@@ -293,6 +293,12 @@ namespace slopkit::plugins::wine_proton
                                       SLOPKIT_AGENT_PROTOCOL_VERSION,
                                       sizeof(slopkit_agent_record)));
         }
+        if (answer->reserved0 != SLOPKIT_AGENT_PAYLOAD_SIZE)
+        {
+            return refuse(std::format("the agent's shared region carries a {}-byte payload; this plugin sends {}",
+                                      answer->reserved0,
+                                      SLOPKIT_AGENT_PAYLOAD_SIZE));
+        }
         if (answer->pointer_size != target.pointer_size)
         {
             return refuse(std::format("the agent is {}-bit but the target is {}-bit",
@@ -491,6 +497,132 @@ namespace slopkit::plugins::wine_proton
             return std::unexpected(answer.error());
         }
         return AgentRegionInfo {answer->region_base, answer->region_size, answer->region_state, answer->region_protect};
+    }
+
+    std::expected<AgentRegionBatch, std::string>
+    AgentClient::enumerate(std::uint64_t cursor, std::uint32_t capacity, std::chrono::milliseconds timeout)
+    {
+        const auto record_capacity =
+            static_cast<std::uint32_t>(SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_region_entry));
+        slopkit_agent_record record {};
+        record.op      = SLOPKIT_AGENT_OP_ENUM;
+        record.address = cursor;
+        record.size    = capacity == 0 ? record_capacity : capacity;
+
+        std::vector<std::byte> payload(SLOPKIT_AGENT_PAYLOAD_SIZE);
+        auto                   answer = transport_->transact(record, timeout, {}, payload);
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+        if (answer->status != SLOPKIT_AGENT_STATUS_OK)
+        {
+            return std::unexpected(std::format("the agent refused an ENUM at {:#x} with status {} (win32 error {})",
+                                               cursor,
+                                               answer->status,
+                                               answer->win32_error));
+        }
+        if (answer->size > record_capacity)
+        {
+            return std::unexpected(std::format(
+                "the agent reported {} region records; the payload holds {}", answer->size, record_capacity));
+        }
+
+        AgentRegionBatch batch;
+        batch.next_cursor = answer->address;
+        batch.regions.reserve(answer->size);
+        const auto* entries = reinterpret_cast<const slopkit_agent_region_entry*>(payload.data());
+        for (std::uint32_t index = 0; index < answer->size; ++index)
+        {
+            batch.regions.push_back(AgentRegionEntry {entries[index].base,
+                                                      entries[index].size,
+                                                      entries[index].state,
+                                                      entries[index].protection,
+                                                      entries[index].type});
+        }
+        return batch;
+    }
+
+    std::expected<std::size_t, std::string>
+    AgentClient::read(std::uint64_t address, std::span<std::byte> buffer, std::chrono::milliseconds timeout)
+    {
+        std::size_t moved = 0;
+        while (moved < buffer.size())
+        {
+            const std::size_t chunk =
+                std::min(buffer.size() - moved, static_cast<std::size_t>(SLOPKIT_AGENT_PAYLOAD_SIZE));
+            slopkit_agent_record record {};
+            record.op         = SLOPKIT_AGENT_OP_READ;
+            record.address    = address + moved;
+            record.size       = chunk;
+            const auto answer = transport_->transact(record, timeout, {}, buffer.subspan(moved, chunk));
+            if (!answer)
+            {
+                if (moved > 0)
+                {
+                    break;
+                }
+                return std::unexpected(answer.error());
+            }
+            if (answer->status != SLOPKIT_AGENT_STATUS_OK)
+            {
+                if (moved > 0)
+                {
+                    break;
+                }
+                return std::unexpected(std::format("the agent could not read {:#x} with status {} (win32 error {})",
+                                                   address + moved,
+                                                   answer->status,
+                                                   answer->win32_error));
+            }
+            if (answer->size == 0)
+            {
+                break;
+            }
+            moved += static_cast<std::size_t>(answer->size);
+        }
+        return moved;
+    }
+
+    std::expected<std::size_t, std::string>
+    AgentClient::write(std::uint64_t address, std::span<const std::byte> data, std::chrono::milliseconds timeout)
+    {
+        std::size_t moved = 0;
+        while (moved < data.size())
+        {
+            const std::size_t chunk =
+                std::min(data.size() - moved, static_cast<std::size_t>(SLOPKIT_AGENT_PAYLOAD_SIZE));
+            slopkit_agent_record record {};
+            record.op         = SLOPKIT_AGENT_OP_WRITE;
+            record.address    = address + moved;
+            record.size       = chunk;
+            const auto answer = transport_->transact(record, timeout, data.subspan(moved, chunk), {});
+            if (!answer)
+            {
+                if (moved > 0)
+                {
+                    break;
+                }
+                return std::unexpected(answer.error());
+            }
+            if (answer->status != SLOPKIT_AGENT_STATUS_OK)
+            {
+                if (moved > 0)
+                {
+                    break;
+                }
+                return std::unexpected(std::format("the agent could not write {:#x} with status {} (win32 error {})",
+                                                   address + moved,
+                                                   answer->status,
+                                                   answer->win32_error));
+            }
+            if (answer->size == 0)
+            {
+                break;
+            }
+            moved += static_cast<std::size_t>(answer->size);
+        }
+        return moved;
     }
 
     void AgentClient::shutdown(std::chrono::milliseconds timeout) noexcept

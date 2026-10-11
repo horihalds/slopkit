@@ -30,38 +30,48 @@
 /* The four bytes "A" "K" "L" "S" read as a little-endian 32-bit word; a stale
    mapping from an unrelated file is rejected by the magic before anything else
    is trusted. */
-#define SLOPKIT_AGENT_MAGIC 0x534C4B41u
+#define SLOPKIT_AGENT_MAGIC                  0x534C4B41u
 
 /* Bumped whenever the layout below changes. A mismatch is refused as a
    protocol error, never waited on until a timeout. */
-#define SLOPKIT_AGENT_PROTOCOL_VERSION 1u
+#define SLOPKIT_AGENT_PROTOCOL_VERSION       2u
 
 /* The file names shared by both sides. The DLL is loaded from its own
    per-session directory and finds the shared region as the sibling file, so
    the path never has to be passed into the target. */
-#define SLOPKIT_AGENT_SHM_FILE        "slopkit-agent.bin"
-#define SLOPKIT_AGENT_SHM_FILE_W      L"slopkit-agent.bin"
-#define SLOPKIT_AGENT_DLL_FILE        "slopkit-agent.dll"
-#define SLOPKIT_AGENT_INJECTOR_FILE   "slopkit-injector.exe"
+#define SLOPKIT_AGENT_SHM_FILE               "slopkit-agent.bin"
+#define SLOPKIT_AGENT_SHM_FILE_W             L"slopkit-agent.bin"
+#define SLOPKIT_AGENT_DLL_FILE               "slopkit-agent.dll"
+#define SLOPKIT_AGENT_INJECTOR_FILE          "slopkit-injector.exe"
 
 /* Request opcodes. */
-#define SLOPKIT_AGENT_OP_HELLO      1u
-#define SLOPKIT_AGENT_OP_ALLOC      2u
-#define SLOPKIT_AGENT_OP_ALLOC_NEAR 3u
-#define SLOPKIT_AGENT_OP_FREE       4u
-#define SLOPKIT_AGENT_OP_PROTECT    5u
-#define SLOPKIT_AGENT_OP_QUERY      6u
-#define SLOPKIT_AGENT_OP_SHUTDOWN   7u
+#define SLOPKIT_AGENT_OP_HELLO               1u
+#define SLOPKIT_AGENT_OP_ALLOC               2u
+#define SLOPKIT_AGENT_OP_ALLOC_NEAR          3u
+#define SLOPKIT_AGENT_OP_FREE                4u
+#define SLOPKIT_AGENT_OP_PROTECT             5u
+#define SLOPKIT_AGENT_OP_QUERY               6u
+#define SLOPKIT_AGENT_OP_SHUTDOWN            7u
+/* Version 2. */
+#define SLOPKIT_AGENT_OP_ENUM                8u
+#define SLOPKIT_AGENT_OP_READ                9u
+#define SLOPKIT_AGENT_OP_WRITE               10u
+
+/* The payload area trailing the request and response records. It holds
+   `SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_region_entry)` region
+   records for ENUM, the bytes READ returns or the bytes WRITE sends. 64 KiB
+   matches the chunk the host's read probe already uses. */
+#define SLOPKIT_AGENT_PAYLOAD_SIZE           (64u * 1024u)
 
 /* Response statuses. SLOPKIT_AGENT_STATUS_ERROR always carries a Win32 error
    code in win32_error; the others describe a request the agent refused before
    it reached a Win32 call. */
-#define SLOPKIT_AGENT_STATUS_OK         0u
-#define SLOPKIT_AGENT_STATUS_ERROR      1u
-#define SLOPKIT_AGENT_STATUS_BAD_REQUEST 2u
-#define SLOPKIT_AGENT_STATUS_UNKNOWN_OP 3u
-#define SLOPKIT_AGENT_STATUS_NOT_OWNED  4u
-#define SLOPKIT_AGENT_STATUS_UNSUPPORTED 5u
+#define SLOPKIT_AGENT_STATUS_OK              0u
+#define SLOPKIT_AGENT_STATUS_ERROR           1u
+#define SLOPKIT_AGENT_STATUS_BAD_REQUEST     2u
+#define SLOPKIT_AGENT_STATUS_UNKNOWN_OP      3u
+#define SLOPKIT_AGENT_STATUS_NOT_OWNED       4u
+#define SLOPKIT_AGENT_STATUS_UNSUPPORTED     5u
 
 /* Header flags. */
 #define SLOPKIT_AGENT_FLAG_NONE              0u
@@ -74,9 +84,9 @@
 
 /* The state word. 0 -> idle, 1 -> a request is published, 2 -> the response is
    published. Written with acquire/release ordering on both sides. */
-#define SLOPKIT_AGENT_STATE_IDLE     0u
-#define SLOPKIT_AGENT_STATE_REQUEST  1u
-#define SLOPKIT_AGENT_STATE_RESPONSE 2u
+#define SLOPKIT_AGENT_STATE_IDLE             0u
+#define SLOPKIT_AGENT_STATE_REQUEST          1u
+#define SLOPKIT_AGENT_STATE_RESPONSE         2u
 
 /* Page protections, mirroring the Win32 PAGE_* values the agent passes to
    VirtualAlloc/VirtualProtect. */
@@ -90,9 +100,15 @@
 #define SLOPKIT_AGENT_PAGE_EXECUTE_WRITECOPY 0x80u
 
 /* Allocation types, mirroring the Win32 MEM_* values. */
-#define SLOPKIT_AGENT_MEM_COMMIT  0x1000u
-#define SLOPKIT_AGENT_MEM_RESERVE 0x2000u
-#define SLOPKIT_AGENT_MEM_FREE    0x10000u
+#define SLOPKIT_AGENT_MEM_COMMIT             0x1000u
+#define SLOPKIT_AGENT_MEM_RESERVE            0x2000u
+#define SLOPKIT_AGENT_MEM_FREE               0x10000u
+
+/* Mapping types, mirroring the Win32 MEM_* values; a range that is not private
+   is shared with another view. */
+#define SLOPKIT_AGENT_MEM_PRIVATE            0x20000u
+#define SLOPKIT_AGENT_MEM_MAPPED             0x40000u
+#define SLOPKIT_AGENT_MEM_IMAGE              0x1000000u
 
 /* The request a host writes and the response the agent writes back, in one
    layout: a request leaves the response-only fields zero and a response leaves
@@ -158,12 +174,38 @@ typedef struct slopkit_agent_header
     uint64_t reserved0;
 } slopkit_agent_header;
 
-/* One mapping, mapped by the host and the agent alike. */
+/* One region record written into the payload by ENUM: the same fields
+   MEMORY_BASIC_INFORMATION reports, widened to fixed-width integers. */
+typedef struct slopkit_agent_region_entry
+{
+    uint64_t base;
+    uint64_t size;
+    uint32_t state;
+    uint32_t protection;
+    uint32_t type;
+    uint32_t reserved;
+} slopkit_agent_region_entry;
+
+/* One mapping, mapped by the host and the agent alike.
+
+   Field reuse across the payload-carrying ops:
+     - ENUM request:  address = the address-space cursor to resume from,
+                      size    = the record capacity (0 = the whole payload).
+       ENUM response: size    = records written, address = the next cursor,
+                      or 0 when the walk reached the end of the user address
+                      space. The records land in payload[].
+     - READ/WRITE request:  address = the target address, size = the byte
+                      count. READ fills payload[]; WRITE sends it.
+       READ/WRITE response: size = the bytes actually moved (a short transfer
+                      is a success).
+     - HELLO response: reserved0 = SLOPKIT_AGENT_PAYLOAD_SIZE, which the host
+                      compares before trusting a payload. */
 typedef struct slopkit_agent_region
 {
     slopkit_agent_header header;
     slopkit_agent_record request;
     slopkit_agent_record response;
+    uint8_t              payload[SLOPKIT_AGENT_PAYLOAD_SIZE];
 } slopkit_agent_region;
 
 #if defined(__cplusplus)
@@ -174,7 +216,9 @@ typedef struct slopkit_agent_region
 
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_record) == 104, "slopkit_agent_record layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_header) == 40, "slopkit_agent_header layout changed");
-SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region) == 248, "slopkit_agent_region layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region_entry) == 32, "slopkit_agent_region_entry layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region) == 248 + SLOPKIT_AGENT_PAYLOAD_SIZE,
+                            "slopkit_agent_region layout changed");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, op) == 0, "record.op moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, status) == 4, "record.status moved");
@@ -204,7 +248,15 @@ SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, heartbeat) == 20, "he
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, agent_pid) == 24, "header.agent_pid moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, requests) == 28, "header.requests moved");
 
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, base) == 0, "entry.base moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, size) == 8, "entry.size moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, state) == 16, "entry.state moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, protection) == 20, "entry.protection moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, type) == 24, "entry.type moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, reserved) == 28, "entry.reserved moved");
+
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, request) == 40, "region.request moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, response) == 144, "region.response moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, payload) == 248, "region.payload moved");
 
 #undef SLOPKIT_AGENT_STATIC_ASSERT

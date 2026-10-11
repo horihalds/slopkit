@@ -1,12 +1,16 @@
 #pragma once
 
 #include <cstdint>
+#include <expected>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "platform/linux/debug_session.hpp"
+#include "platform/linux/procfs.hpp"
 #include "plugin/plugin_api.h"
 #include "plugins/support/allocate.hpp"
+#include "plugins/support/memory.hpp"
 #include "process/types.hpp"
 
 namespace slopkit::plugins::support
@@ -42,6 +46,25 @@ namespace slopkit::plugins::support
         // Optional: run before the session is destroyed, so a plugin's in-target
         // state (Wine's resident agent) is shut down and unmapped.
         void (*close_session)(Session& session);
+        // Optional: the plugin's own region list. wine-proton answers it from the
+        // target's own VirtualQuery view merged with /proc/maps, so module
+        // paths survive; when nullptr the shared /proc/maps reading is used.
+        std::expected<std::vector<platform::MappedRegion>, AccessFault> (*regions)(Session& session);
+        // Optional: the plugin's own range validation. wine-proton answers it
+        // from the target's own commit/protection view; when nullptr the shared
+        // read probe is used.
+        std::expected<bool, AccessFault> (*range_is_readable)(Session&      session,
+                                                              std::uint64_t address,
+                                                              std::size_t   size);
+        // Optional: the plugin's own reads and writes. wine-proton serves them
+        // through the injected agent while the target can run; when nullptr the
+        // shared session-memory path is used.
+        std::expected<MemoryResult, AccessFault> (*read)(Session&             session,
+                                                         std::uint64_t        address,
+                                                         std::span<std::byte> buffer);
+        std::expected<MemoryResult, AccessFault> (*write)(Session&                   session,
+                                                          std::uint64_t              address,
+                                                          std::span<const std::byte> data);
     };
 
     // The single exported symbol a plugin needs: installs the host services and

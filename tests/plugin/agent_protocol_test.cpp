@@ -15,10 +15,12 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
 {
     CHECK(sizeof(slopkit_agent_record) == 104);
     CHECK(sizeof(slopkit_agent_header) == 40);
-    CHECK(sizeof(slopkit_agent_region) == 248);
+    CHECK(sizeof(slopkit_agent_region_entry) == 32);
+    CHECK(sizeof(slopkit_agent_region) == 248 + SLOPKIT_AGENT_PAYLOAD_SIZE);
 
     CHECK(offsetof(slopkit_agent_region, request) == 40);
     CHECK(offsetof(slopkit_agent_region, response) == 144);
+    CHECK(offsetof(slopkit_agent_region, payload) == 248);
 
     CHECK(offsetof(slopkit_agent_header, magic) == 0);
     CHECK(offsetof(slopkit_agent_header, version) == 4);
@@ -45,8 +47,16 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(offsetof(slopkit_agent_record, region_base) == 72);
     CHECK(offsetof(slopkit_agent_record, region_protect) == 92);
 
+    CHECK(offsetof(slopkit_agent_region_entry, base) == 0);
+    CHECK(offsetof(slopkit_agent_region_entry, size) == 8);
+    CHECK(offsetof(slopkit_agent_region_entry, state) == 16);
+    CHECK(offsetof(slopkit_agent_region_entry, protection) == 20);
+    CHECK(offsetof(slopkit_agent_region_entry, type) == 24);
+    CHECK(offsetof(slopkit_agent_region_entry, reserved) == 28);
+
     CHECK(SLOPKIT_AGENT_MAGIC == 0x534C4B41u);
-    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 1u);
+    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 2u);
+    CHECK(SLOPKIT_AGENT_PAYLOAD_SIZE == 64u * 1024u);
     CHECK(SLOPKIT_AGENT_OP_HELLO == 1u);
     CHECK(SLOPKIT_AGENT_OP_ALLOC == 2u);
     CHECK(SLOPKIT_AGENT_OP_ALLOC_NEAR == 3u);
@@ -54,6 +64,9 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(SLOPKIT_AGENT_OP_PROTECT == 5u);
     CHECK(SLOPKIT_AGENT_OP_QUERY == 6u);
     CHECK(SLOPKIT_AGENT_OP_SHUTDOWN == 7u);
+    CHECK(SLOPKIT_AGENT_OP_ENUM == 8u);
+    CHECK(SLOPKIT_AGENT_OP_READ == 9u);
+    CHECK(SLOPKIT_AGENT_OP_WRITE == 10u);
     CHECK(SLOPKIT_AGENT_STATE_IDLE == 0u);
     CHECK(SLOPKIT_AGENT_STATE_REQUEST == 1u);
     CHECK(SLOPKIT_AGENT_STATE_RESPONSE == 2u);

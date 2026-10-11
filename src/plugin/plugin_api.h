@@ -61,6 +61,8 @@ extern "C"
         SLOPKIT_ACCESS_PROCESS_VM = 1u << 1,
         SLOPKIT_ACCESS_PTRACE     = 1u << 2,
         SLOPKIT_ACCESS_WINESERVER = 1u << 3,
+        /* Served by the plugin's own in-target agent rather than the host. */
+        SLOPKIT_ACCESS_AGENT      = 1u << 4,
     };
 
     enum slopkit_module_kind

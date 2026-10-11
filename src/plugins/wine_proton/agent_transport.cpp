@@ -1,5 +1,6 @@
 #include "plugins/wine_proton/agent_transport.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstring>
@@ -144,11 +145,23 @@ namespace slopkit::plugins::wine_proton
         std::atomic_ref<std::uint32_t>(region_->header.state).store(value, std::memory_order_release);
     }
 
-    std::expected<slopkit_agent_record, std::string> AgentTransport::transact(const slopkit_agent_record& request,
-                                                                              std::chrono::milliseconds   timeout)
+    std::expected<slopkit_agent_record, std::string>
+    AgentTransport::transact(const slopkit_agent_record& request,
+                             std::chrono::milliseconds   timeout,
+                             std::span<const std::byte>  request_payload,
+                             std::span<std::byte>        response_payload)
     {
         slopkit_agent_record outgoing = request;
         outgoing.request_id           = ++request_id_;
+
+        // The payload rides in the same region as the record, so it must be in
+        // place before the request is published and copied out before the state
+        // returns to idle.
+        if (!request_payload.empty())
+        {
+            const auto count = std::min(request_payload.size(), sizeof(region_->payload));
+            std::memcpy(region_->payload, request_payload.data(), count);
+        }
 
         region_->request          = outgoing;
         region_->header.heartbeat = ++heartbeat_;
@@ -161,6 +174,11 @@ namespace slopkit::plugins::wine_proton
             if (load_state() == SLOPKIT_AGENT_STATE_RESPONSE)
             {
                 const slopkit_agent_record response = region_->response;
+                if (!response_payload.empty())
+                {
+                    const auto count = std::min(response_payload.size(), sizeof(region_->payload));
+                    std::memcpy(response_payload.data(), region_->payload, count);
+                }
                 store_state(SLOPKIT_AGENT_STATE_IDLE);
                 if (response.request_id != outgoing.request_id)
                 {

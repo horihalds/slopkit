@@ -47,8 +47,8 @@ void* memset(void* destination, int value, size_t count)
 
 void* memcpy(void* destination, const void* source, size_t count)
 {
-    unsigned char*       out = (unsigned char*)destination;
-    const unsigned char* in  = (const unsigned char*)source;
+    unsigned char*       out   = (unsigned char*)destination;
+    const unsigned char* in    = (const unsigned char*)source;
     size_t               index = 0;
     for (; index < count; ++index)
     {
@@ -124,14 +124,14 @@ static wchar_t* agent_wide_last(wchar_t* text, wchar_t needle)
    SHUTDOWN can release everything. Only the service thread touches the list. */
 typedef struct slopkit_agent_allocation
 {
-    uint64_t                          base;
-    uint64_t                          size;
-    struct slopkit_agent_allocation*  next;
+    uint64_t                         base;
+    uint64_t                         size;
+    struct slopkit_agent_allocation* next;
 } slopkit_agent_allocation;
 
-static HMODULE                  g_instance;
-static HANDLE                   g_mapping;
-static slopkit_agent_region*    g_region;
+static HMODULE                   g_instance;
+static HANDLE                    g_mapping;
+static slopkit_agent_region*     g_region;
 static slopkit_agent_allocation* g_allocations;
 
 static slopkit_agent_allocation* agent_find_exact(uint64_t base)
@@ -167,9 +167,9 @@ static int agent_track(uint64_t base, uint64_t size)
     {
         return 0;
     }
-    node->base = base;
-    node->size = size;
-    node->next = g_allocations;
+    node->base    = base;
+    node->size    = size;
+    node->next    = g_allocations;
     g_allocations = node;
     return 1;
 }
@@ -194,7 +194,7 @@ static void agent_free_all(void)
     while (g_allocations != NULL)
     {
         slopkit_agent_allocation* node = g_allocations;
-        g_allocations                   = node->next;
+        g_allocations                  = node->next;
         VirtualFree((LPVOID)(uintptr_t)node->base, 0, MEM_RELEASE);
         HeapFree(GetProcessHeap(), 0, node);
     }
@@ -214,7 +214,7 @@ static int agent_open_region(void)
     {
         return 0;
     }
-    separator[1] = L'\0';
+    separator[1]      = L'\0';
     const size_t used = agent_wide_length(module_path);
     const size_t name = agent_wide_length(SLOPKIT_AGENT_SHM_FILE_W);
     if (used + name + 1 > MAX_PATH)
@@ -240,11 +240,7 @@ static int agent_open_region(void)
     {
         return 0;
     }
-    g_region = (slopkit_agent_region*)MapViewOfFile(g_mapping,
-                                                    FILE_MAP_ALL_ACCESS,
-                                                    0,
-                                                    0,
-                                                    sizeof(slopkit_agent_region));
+    g_region = (slopkit_agent_region*)MapViewOfFile(g_mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(slopkit_agent_region));
     if (g_region == NULL)
     {
         CloseHandle(g_mapping);
@@ -271,9 +267,8 @@ static void agent_close_region(void)
 /* <windows.h> spells the state/flag atomics as LONG, which is 32 bits. */
 static uint32_t agent_load_state(void)
 {
-    return (uint32_t)InterlockedCompareExchange((volatile LONG*)&g_region->header.state,
-                                                (LONG)SLOPKIT_AGENT_STATE_IDLE,
-                                                (LONG)SLOPKIT_AGENT_STATE_IDLE);
+    return (uint32_t)InterlockedCompareExchange(
+        (volatile LONG*)&g_region->header.state, (LONG)SLOPKIT_AGENT_STATE_IDLE, (LONG)SLOPKIT_AGENT_STATE_IDLE);
 }
 
 static void agent_publish_response(const slopkit_agent_record* response)
@@ -390,8 +385,8 @@ static void* agent_search_up(uint64_t from, uint64_t size, uint64_t highest, uin
    page, then the closest free gap below it, then above it. */
 static void* agent_alloc_near(uint64_t size, uint64_t target)
 {
-    uint64_t minimum      = 0;
-    uint64_t maximum      = 0;
+    uint64_t       minimum     = 0;
+    uint64_t       maximum     = 0;
     const uint64_t granularity = agent_granularity(NULL, &minimum, &maximum);
     if (granularity == 0 || target == 0)
     {
@@ -439,9 +434,9 @@ static void agent_fill_error(slopkit_agent_record* response, DWORD win32_error)
 
 static void agent_handle_hello(slopkit_agent_record* response)
 {
-    uint32_t page = 0;
-    uint64_t ignored_min = 0;
-    uint64_t ignored_max = 0;
+    uint32_t       page        = 0;
+    uint64_t       ignored_min = 0;
+    uint64_t       ignored_max = 0;
     const uint64_t granularity = agent_granularity(&page, &ignored_min, &ignored_max);
     response->protocol_version = SLOPKIT_AGENT_PROTOCOL_VERSION;
     response->record_size      = (uint32_t)sizeof(slopkit_agent_record);
@@ -449,6 +444,181 @@ static void agent_handle_hello(slopkit_agent_record* response)
     response->windows_pid      = (uint32_t)GetCurrentProcessId();
     response->granularity      = (uint32_t)granularity;
     response->agent_base       = (uint64_t)(uintptr_t)g_instance;
+    /* The host refuses a different payload capacity before trusting the area. */
+    response->reserved0        = SLOPKIT_AGENT_PAYLOAD_SIZE;
+}
+
+/* Whether a protection permits a plain in-target read. PAGE_GUARD is a
+   one-shot trap, not readable memory, so it is excluded; the low byte is the
+   base protection and the PAGE_NOCACHE/PAGE_WRITECOMBINE modifiers above it do
+   not change readability. */
+static int agent_protection_readable(uint32_t protection)
+{
+    if ((protection & 0x100u) != 0)
+    {
+        return 0;
+    }
+    switch (protection & 0xFFu)
+    {
+    case SLOPKIT_AGENT_PAGE_READONLY:
+    case SLOPKIT_AGENT_PAGE_READWRITE:
+    case SLOPKIT_AGENT_PAGE_WRITECOPY:
+    case SLOPKIT_AGENT_PAGE_EXECUTE_READ:
+    case SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE:
+    case SLOPKIT_AGENT_PAGE_EXECUTE_WRITECOPY:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Whether a protection permits a plain in-target write; a read-only or
+   execute-only page would fault the target, not merely fail the request. */
+static int agent_protection_writable(uint32_t protection)
+{
+    if ((protection & 0x100u) != 0)
+    {
+        return 0;
+    }
+    switch (protection & 0xFFu)
+    {
+    case SLOPKIT_AGENT_PAGE_READWRITE:
+    case SLOPKIT_AGENT_PAGE_WRITECOPY:
+    case SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE:
+    case SLOPKIT_AGENT_PAGE_EXECUTE_WRITECOPY:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* ENUM: walk the target's own VirtualQuery chain from the request cursor,
+   writing up to `size` (0 = the whole payload) region records into payload[].
+   Progress stops at the capacity, at the end of the user address space, or on
+   a failed VirtualQuery; the next cursor is reported in address, 0 when the
+   walk reached the end. */
+static void agent_handle_enum(const slopkit_agent_record* request, slopkit_agent_record* response)
+{
+    const uint32_t capacity = (uint32_t)(SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_region_entry));
+    if (request->size > capacity)
+    {
+        response->status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+        return;
+    }
+    const uint32_t want = request->size == 0 ? capacity : (uint32_t)request->size;
+
+    uint64_t minimum = 0;
+    uint64_t maximum = 0;
+    agent_granularity(NULL, &minimum, &maximum);
+
+    slopkit_agent_region_entry* entries = (slopkit_agent_region_entry*)g_region->payload;
+    uint64_t                    cursor  = request->address;
+    if (cursor == 0)
+    {
+        /* A zero cursor means "start from the beginning": the response reports
+           0 only once the walk has reached the end of the address space. */
+        cursor = minimum;
+    }
+    uint32_t written = 0;
+    while (written < want && cursor != 0 && cursor <= maximum)
+    {
+        MEMORY_BASIC_INFORMATION region;
+        if (VirtualQuery((LPCVOID)(uintptr_t)cursor, &region, sizeof(region)) != sizeof(region))
+        {
+            agent_fill_error(response, GetLastError());
+            return;
+        }
+        const uint64_t base = (uint64_t)(uintptr_t)region.BaseAddress;
+        const uint64_t size = (uint64_t)region.RegionSize;
+        const uint64_t end  = base + size;
+        if (size == 0 || end <= cursor)
+        {
+            /* A zero-size or backwards region would never advance the cursor,
+               so the walk stops as if the address space had ended. */
+            cursor = 0;
+            break;
+        }
+        entries[written].base       = base;
+        entries[written].size       = size;
+        entries[written].state      = (uint32_t)region.State;
+        entries[written].protection = (uint32_t)region.Protect;
+        entries[written].type       = (uint32_t)region.Type;
+        entries[written].reserved   = 0;
+        ++written;
+        cursor = end > maximum ? 0 : end;
+    }
+    response->size    = written;
+    response->address = cursor;
+}
+
+/* The bytes one READ/WRITE may move: no more than the payload, and never past
+   the end of the committed region containing `address`. Returns 0 when nothing
+   is transferable, which the callers report as an error. */
+static uint64_t agent_transfer_span(uint64_t address, uint64_t size, int for_write)
+{
+    if (size > SLOPKIT_AGENT_PAYLOAD_SIZE)
+    {
+        size = SLOPKIT_AGENT_PAYLOAD_SIZE;
+    }
+    MEMORY_BASIC_INFORMATION region;
+    if (VirtualQuery((LPCVOID)(uintptr_t)address, &region, sizeof(region)) != sizeof(region))
+    {
+        return 0;
+    }
+    if (region.State != MEM_COMMIT)
+    {
+        return 0;
+    }
+    const uint32_t protection = (uint32_t)region.Protect;
+    if ((for_write && !agent_protection_writable(protection)) || (!for_write && !agent_protection_readable(protection)))
+    {
+        return 0;
+    }
+    const uint64_t base = (uint64_t)(uintptr_t)region.BaseAddress;
+    const uint64_t end  = base + (uint64_t)region.RegionSize;
+    if (end <= address)
+    {
+        return 0;
+    }
+    return size < end - address ? size : end - address;
+}
+
+/* READ: copy the target's bytes into payload[], at most min(size, payload)
+   bytes and never across the containing region's end. A short copy is a
+   success; a range with nothing readable is an error. */
+static void agent_handle_read(const slopkit_agent_record* request, slopkit_agent_record* response)
+{
+    if (request->size == 0 || request->size > SLOPKIT_AGENT_PAYLOAD_SIZE)
+    {
+        response->status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+        return;
+    }
+    const uint64_t span = agent_transfer_span(request->address, request->size, 0);
+    if (span == 0)
+    {
+        agent_fill_error(response, ERROR_INVALID_ADDRESS);
+        return;
+    }
+    memcpy(g_region->payload, (const void*)(uintptr_t)request->address, (size_t)span);
+    response->size = span;
+}
+
+/* WRITE: copy payload[] into the target, bounded the same way as READ. */
+static void agent_handle_write(const slopkit_agent_record* request, slopkit_agent_record* response)
+{
+    if (request->size == 0 || request->size > SLOPKIT_AGENT_PAYLOAD_SIZE)
+    {
+        response->status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+        return;
+    }
+    const uint64_t span = agent_transfer_span(request->address, request->size, 1);
+    if (span == 0)
+    {
+        agent_fill_error(response, ERROR_INVALID_ADDRESS);
+        return;
+    }
+    memcpy((void*)(uintptr_t)request->address, g_region->payload, (size_t)span);
+    response->size = span;
 }
 
 static void agent_handle_alloc(const slopkit_agent_record* request, slopkit_agent_record* response)
@@ -622,6 +792,15 @@ static int agent_handle_request(void)
     case SLOPKIT_AGENT_OP_QUERY:
         agent_handle_query(&request, &response);
         break;
+    case SLOPKIT_AGENT_OP_ENUM:
+        agent_handle_enum(&request, &response);
+        break;
+    case SLOPKIT_AGENT_OP_READ:
+        agent_handle_read(&request, &response);
+        break;
+    case SLOPKIT_AGENT_OP_WRITE:
+        agent_handle_write(&request, &response);
+        break;
     case SLOPKIT_AGENT_OP_SHUTDOWN:
         agent_free_all();
         keep_serving = 0;
@@ -651,8 +830,8 @@ static DWORD WINAPI agent_service_thread(LPVOID parameter)
         agent_close_region();
         return 0;
     }
-    if (g_region->header.version != SLOPKIT_AGENT_PROTOCOL_VERSION ||
-        g_region->header.record_size != (uint32_t)sizeof(slopkit_agent_record))
+    if (g_region->header.version != SLOPKIT_AGENT_PROTOCOL_VERSION
+        || g_region->header.record_size != (uint32_t)sizeof(slopkit_agent_record))
     {
         /* The host compiled a different layout; tell it so instead of leaving
            it to time out on a reply that will never match. */
@@ -728,8 +907,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
    linker's --entry cannot spell portably; an asm label pins the plain symbol
    instead. */
 #if defined(__i386__) && defined(__GNUC__)
-int WINAPI slopkit_agent_entry(HINSTANCE instance, DWORD reason, LPVOID reserved)
-    __asm__("_slopkit_agent_entry");
+int WINAPI slopkit_agent_entry(HINSTANCE instance, DWORD reason, LPVOID reserved) __asm__("_slopkit_agent_entry");
 #endif
 
 int WINAPI slopkit_agent_entry(HINSTANCE instance, DWORD reason, LPVOID reserved)

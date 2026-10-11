@@ -1,4 +1,4 @@
-#include "plugins/wine_proton/agent_allocator.hpp"
+#include "plugins/wine_proton/agent_service.hpp"
 
 #include <chrono>
 #include <format>
@@ -6,12 +6,15 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "plugin/plugin_api.h"
 #include "plugins/support/allocate.hpp"
+#include "plugins/support/validate.hpp"
 #include "plugins/wine_proton/agent_client.hpp"
+#include "plugins/wine_proton/agent_regions.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
 
 namespace slopkit::plugins::wine_proton
@@ -44,7 +47,7 @@ namespace slopkit::plugins::wine_proton
             state.client.reset();
             state.disabled_reason = reason;
             log::warning(log::category::process,
-                         std::format("wine-proton agent for pid {} is off for this session ({}); allocation is "
+                         std::format("wine-proton agent for pid {} is off for this session ({}); the agent path is "
                                      "unavailable",
                                      pid,
                                      reason));
@@ -88,7 +91,7 @@ namespace slopkit::plugins::wine_proton
             return &*state.client;
         }
 
-        // Runs a call on the agent with the session marked as allocating, so a
+        // Runs a call on the agent with the session marked as in flight, so a
         // debug attach refuses while the target is being touched.
         template<typename Call>
         auto with_agent(support::Session& session, const Call& call)
@@ -98,10 +101,18 @@ namespace slopkit::plugins::wine_proton
             support::end_allocation(session);
             return result;
         }
+
+        // Whether the target can currently run the agent's service thread: a
+        // debug session stops the whole target, and our own remote syscall
+        // suspends it for the moment, so the host path answers instead.
+        bool target_can_run(support::Session& session)
+        {
+            return !session.debug.attached() && !support::allocation_in_flight(session);
+        }
     } // namespace
 
     std::expected<std::uint64_t, support::AllocationError>
-    AgentAllocator::allocate(support::Session& session, std::uint64_t size, std::uint64_t near_address)
+    AgentService::allocate(support::Session& session, std::uint64_t size, std::uint64_t near_address)
     {
         const std::lock_guard lock(g_mutex);
         if (session.debug.attached())
@@ -138,7 +149,7 @@ namespace slopkit::plugins::wine_proton
         return *placed;
     }
 
-    std::expected<void, support::AllocationError> AgentAllocator::free(support::Session& session, std::uint64_t address)
+    std::expected<void, support::AllocationError> AgentService::free(support::Session& session, std::uint64_t address)
     {
         const std::lock_guard lock(g_mutex);
         if (session.debug.attached())
@@ -174,7 +185,156 @@ namespace slopkit::plugins::wine_proton
         return {};
     }
 
-    void AgentAllocator::close(process::ProcessId pid)
+    std::expected<std::vector<platform::MappedRegion>, support::AccessFault>
+    AgentService::regions(support::Session& session)
+    {
+        const std::lock_guard lock(g_mutex);
+        if (!target_can_run(session))
+        {
+            return platform::read_maps(session.pid);
+        }
+
+        AgentState&  state = g_agents[session.pid];
+        AgentClient* agent = ensure_agent(state, session.pid);
+        if (agent == nullptr)
+        {
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, state.disabled_reason});
+        }
+
+        std::vector<AgentRegionEntry> entries;
+        std::uint64_t                 cursor = 0;
+        for (;;)
+        {
+            const auto batch = with_agent(session,
+                                          [&]
+                                          {
+                                              return agent->enumerate(cursor, 0, kRequestTimeout);
+                                          });
+            if (!batch)
+            {
+                const std::string reason = batch.error();
+                disable(state, session.pid, reason);
+                return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, reason});
+            }
+            entries.insert(entries.end(), batch->regions.begin(), batch->regions.end());
+            cursor = batch->next_cursor;
+            if (cursor == 0)
+            {
+                break;
+            }
+        }
+
+        return merge_regions(entries, platform::read_maps(session.pid));
+    }
+
+    std::expected<bool, support::AccessFault>
+    AgentService::validate(support::Session& session, std::uint64_t address, std::size_t size)
+    {
+        const std::lock_guard lock(g_mutex);
+        if (!target_can_run(session))
+        {
+            return support::range_is_readable(session, address, size);
+        }
+
+        AgentState&  state = g_agents[session.pid];
+        AgentClient* agent = ensure_agent(state, session.pid);
+        if (agent == nullptr)
+        {
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, state.disabled_reason});
+        }
+
+        const auto info = with_agent(session,
+                                     [&]
+                                     {
+                                         return agent->query(address, kRequestTimeout);
+                                     });
+        if (!info)
+        {
+            const std::string reason = info.error();
+            disable(state, session.pid, reason);
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, reason});
+        }
+        if (info->state != SLOPKIT_AGENT_MEM_COMMIT || !region_protection_readable(info->protection))
+        {
+            return false;
+        }
+        // The whole range must sit inside the single region QUERY reported.
+        return address + size <= info->base + info->size;
+    }
+
+    std::expected<support::MemoryResult, support::AccessFault>
+    AgentService::read(support::Session& session, std::uint64_t address, std::span<std::byte> buffer)
+    {
+        const std::lock_guard lock(g_mutex);
+        if (!target_can_run(session))
+        {
+            const auto host = session.mem.read(address, buffer);
+            if (!host)
+            {
+                return std::unexpected(
+                    support::AccessFault {support::status_for(host.error()), support::message_for(host.error())});
+            }
+            return support::MemoryResult {host->bytes, support::method_flag(host->primitive)};
+        }
+
+        AgentState&  state = g_agents[session.pid];
+        AgentClient* agent = ensure_agent(state, session.pid);
+        if (agent == nullptr)
+        {
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, state.disabled_reason});
+        }
+
+        const auto moved = with_agent(session,
+                                      [&]
+                                      {
+                                          return agent->read(address, buffer, kRequestTimeout);
+                                      });
+        if (!moved)
+        {
+            const std::string reason = moved.error();
+            disable(state, session.pid, reason);
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, reason});
+        }
+        return support::MemoryResult {*moved, SLOPKIT_ACCESS_AGENT};
+    }
+
+    std::expected<support::MemoryResult, support::AccessFault>
+    AgentService::write(support::Session& session, std::uint64_t address, std::span<const std::byte> data)
+    {
+        const std::lock_guard lock(g_mutex);
+        if (!target_can_run(session))
+        {
+            const auto host = session.mem.write(address, data);
+            if (!host)
+            {
+                return std::unexpected(
+                    support::AccessFault {support::status_for(host.error()), support::message_for(host.error())});
+            }
+            return support::MemoryResult {host->bytes, support::method_flag(host->primitive)};
+        }
+
+        AgentState&  state = g_agents[session.pid];
+        AgentClient* agent = ensure_agent(state, session.pid);
+        if (agent == nullptr)
+        {
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, state.disabled_reason});
+        }
+
+        const auto moved = with_agent(session,
+                                      [&]
+                                      {
+                                          return agent->write(address, data, kRequestTimeout);
+                                      });
+        if (!moved)
+        {
+            const std::string reason = moved.error();
+            disable(state, session.pid, reason);
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, reason});
+        }
+        return support::MemoryResult {*moved, SLOPKIT_ACCESS_AGENT};
+    }
+
+    void AgentService::close(process::ProcessId pid)
     {
         const std::lock_guard lock(g_mutex);
         const auto            entry = g_agents.find(pid);

@@ -22,6 +22,7 @@
 #include "platform/linux/wine.hpp"
 #include "plugins/wine_proton/agent/slopkit_agent_protocol.h"
 #include "plugins/wine_proton/agent_client.hpp"
+#include "plugins/wine_proton/agent_regions.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
 
 namespace
@@ -275,6 +276,61 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     REQUIRE(previous.has_value());
     CHECK(*previous == SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE);
     REQUIRE(agent->protect(*allocated, 0x1000, SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE, 5s).has_value());
+
+    // A write landed in the target, the read brings the same bytes back, and
+    // the region walk reports both the block and the agent's own module.
+    std::vector<std::byte> pattern(16);
+    for (std::size_t index = 0; index < pattern.size(); ++index)
+    {
+        pattern[index] = static_cast<std::byte>(0x40 + index);
+    }
+    const auto written = agent->write(*allocated, pattern, 5s);
+    REQUIRE(written.has_value());
+    CHECK(*written == pattern.size());
+
+    std::vector<std::byte> readback(pattern.size());
+    const auto             read = agent->read(*allocated, readback, 5s);
+    REQUIRE(read.has_value());
+    CHECK(*read == pattern.size());
+    CHECK(readback == pattern);
+
+    bool          saw_block = false;
+    bool          saw_agent = false;
+    std::uint64_t cursor    = 0;
+    for (int guard = 0; guard < 100000 && !(saw_block && saw_agent); ++guard)
+    {
+        const auto batch = agent->enumerate(cursor, 0, 5s);
+        REQUIRE(batch.has_value());
+        for (const auto& entry : batch->regions)
+        {
+            if (*allocated >= entry.base && *allocated < entry.base + entry.size)
+            {
+                saw_block = true;
+            }
+            if (agent->agent_base() >= entry.base && agent->agent_base() < entry.base + entry.size)
+            {
+                saw_agent = true;
+            }
+        }
+        cursor = batch->next_cursor;
+        if (cursor == 0)
+        {
+            break;
+        }
+    }
+    CHECK(saw_block);
+    CHECK(saw_agent);
+
+    // QUERY confirms the block is committed and readable while an unmapped
+    // address is not: the same answer validate_memory is built on.
+    const auto block = agent->query(*allocated, 5s);
+    REQUIRE(block.has_value());
+    CHECK(block->state == SLOPKIT_AGENT_MEM_COMMIT);
+    CHECK(slopkit::plugins::wine_proton::region_protection_readable(block->protection));
+
+    const auto unmapped = agent->query(0x10, 5s);
+    REQUIRE(unmapped.has_value());
+    CHECK(unmapped->state != SLOPKIT_AGENT_MEM_COMMIT);
 
     REQUIRE(agent->free(*near, 5s).has_value());
     CHECK(agent->owns(*allocated));

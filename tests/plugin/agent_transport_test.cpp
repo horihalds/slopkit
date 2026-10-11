@@ -1,8 +1,10 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -33,6 +35,10 @@ namespace
         {
             Serve,
             Silent,
+            // Serves normally, but ignores the very first request; used to
+            // drive a host timeout and then a successful request on the same
+            // region.
+            SilentFirst,
             ProtocolMismatch,
         };
 
@@ -52,7 +58,13 @@ namespace
                 std::atomic_ref<std::uint32_t>(region_->header.flags)
                     .fetch_or(SLOPKIT_AGENT_FLAG_PROTOCOL_MISMATCH, std::memory_order_release);
             }
-            if (behaviour_ == Behaviour::Serve)
+            target_memory_.resize(0x2000);
+            for (std::size_t index = 0; index < target_memory_.size(); ++index)
+            {
+                target_memory_[index] = static_cast<std::byte>(index & 0xFF);
+            }
+
+            if (behaviour_ == Behaviour::Serve || behaviour_ == Behaviour::SilentFirst)
             {
                 thread_ = std::jthread(
                     [this]
@@ -94,6 +106,34 @@ namespace
             return served_.load();
         }
 
+        // The simulated target memory READ/WRITE move bytes through; tests
+        // seed and inspect it directly.
+        [[nodiscard]] std::vector<std::byte>& target_memory()
+        {
+            return target_memory_;
+        }
+
+        [[nodiscard]] static constexpr std::uint64_t target_base()
+        {
+            return 0x10000000ull;
+        }
+
+        // The region list ENUM walks; the default holds three adjacent committed
+        // regions a test can rely on.
+        [[nodiscard]] std::vector<slopkit_agent_region_entry> default_regions() const
+        {
+            std::vector<slopkit_agent_region_entry> regions(3);
+            for (std::uint32_t index = 0; index < regions.size(); ++index)
+            {
+                regions[index].base       = 0x10000000ull + index * 0x1000ull;
+                regions[index].size       = 0x1000;
+                regions[index].state      = SLOPKIT_AGENT_MEM_COMMIT;
+                regions[index].protection = SLOPKIT_AGENT_PAGE_READWRITE;
+                regions[index].type       = SLOPKIT_AGENT_MEM_PRIVATE;
+            }
+            return regions;
+        }
+
     private:
         [[nodiscard]] bool owned(std::uint64_t address) const
         {
@@ -123,6 +163,7 @@ namespace
                 response.windows_pid      = 4242;
                 response.granularity      = 0x10000;
                 response.agent_base       = 0x7fff00000000ull;
+                response.reserved0        = SLOPKIT_AGENT_PAYLOAD_SIZE;
                 break;
             case SLOPKIT_AGENT_OP_ALLOC:
                 if (request.size == 0)
@@ -179,6 +220,72 @@ namespace
                 response.region_state   = SLOPKIT_AGENT_MEM_COMMIT;
                 response.region_protect = SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE;
                 break;
+            case SLOPKIT_AGENT_OP_ENUM:
+            {
+                const auto capacity =
+                    static_cast<std::uint32_t>(SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_region_entry));
+                if (request.size > capacity)
+                {
+                    response.status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+                    break;
+                }
+                const auto  regions = default_regions();
+                const auto  want    = request.size == 0 ? capacity : static_cast<std::uint32_t>(request.size);
+                auto*       entries = reinterpret_cast<slopkit_agent_region_entry*>(region_->payload);
+                std::size_t index   = 0;
+                while (index < regions.size() && regions[index].base < request.address)
+                {
+                    ++index;
+                }
+                std::uint32_t written = 0;
+                while (index < regions.size() && written < want)
+                {
+                    entries[written++] = regions[index++];
+                }
+                response.size    = written;
+                response.address = index < regions.size() ? regions[index].base : 0;
+                break;
+            }
+            case SLOPKIT_AGENT_OP_READ:
+            {
+                if (request.size == 0 || request.size > SLOPKIT_AGENT_PAYLOAD_SIZE)
+                {
+                    response.status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+                    break;
+                }
+                if (request.address < target_base() || request.address >= target_base() + target_memory_.size())
+                {
+                    response.status      = SLOPKIT_AGENT_STATUS_ERROR;
+                    response.win32_error = 0x1E7;
+                    break;
+                }
+                const auto offset    = static_cast<std::size_t>(request.address - target_base());
+                const auto available = target_memory_.size() - offset;
+                const auto span      = std::min<std::size_t>({static_cast<std::size_t>(request.size), available});
+                std::memcpy(region_->payload, target_memory_.data() + offset, span);
+                response.size = span;
+                break;
+            }
+            case SLOPKIT_AGENT_OP_WRITE:
+            {
+                if (request.size == 0 || request.size > SLOPKIT_AGENT_PAYLOAD_SIZE)
+                {
+                    response.status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+                    break;
+                }
+                if (request.address < target_base() || request.address >= target_base() + target_memory_.size())
+                {
+                    response.status      = SLOPKIT_AGENT_STATUS_ERROR;
+                    response.win32_error = 0x1E7;
+                    break;
+                }
+                const auto offset    = static_cast<std::size_t>(request.address - target_base());
+                const auto available = target_memory_.size() - offset;
+                const auto span      = std::min<std::size_t>({static_cast<std::size_t>(request.size), available});
+                std::memcpy(target_memory_.data() + offset, region_->payload, span);
+                response.size = span;
+                break;
+            }
             case SLOPKIT_AGENT_OP_SHUTDOWN:
                 owned_.clear();
                 stop_.store(true);
@@ -202,7 +309,23 @@ namespace
                     continue;
                 }
 
-                last_request_                       = region_->request;
+                last_request_ = region_->request;
+                // SilentFirst abandons exactly its first request: the host
+                // times out on it, and the mock must not answer it late while
+                // the host is waiting on its next request.
+                if (behaviour_ == Behaviour::SilentFirst)
+                {
+                    if (!ignored_first_)
+                    {
+                        ignored_first_      = true;
+                        ignored_request_id_ = last_request_.request_id;
+                    }
+                    if (last_request_.request_id == ignored_request_id_)
+                    {
+                        std::this_thread::sleep_for(50us);
+                        continue;
+                    }
+                }
                 const slopkit_agent_record response = answer(last_request_);
                 // The stopped flag is published before the response, so a host
                 // that observes the answer also observes the flag.
@@ -231,6 +354,9 @@ namespace
         slopkit_agent_record       last_request_ {};
         std::vector<std::uint64_t> owned_;
         std::uint64_t              next_base_ {0x140000000ull};
+        std::vector<std::byte>     target_memory_;
+        bool                       ignored_first_ {false};
+        std::uint32_t              ignored_request_id_ {0};
     };
 
     // A fresh per-test directory under the project's tmp/; the transport removes
@@ -367,6 +493,118 @@ TEST_CASE("the agent transport carries every operation", "[wine-proton][agent]")
         CHECK(done->status == SLOPKIT_AGENT_STATUS_OK);
         CHECK((transport->header().flags & SLOPKIT_AGENT_FLAG_STOPPED) != 0);
     }
+}
+
+TEST_CASE("the agent transport carries a payload in both directions", "[wine-proton][agent]")
+{
+    auto transport = AgentTransport::create(scratch_directory("agent-transport-payload"));
+    REQUIRE(transport.has_value());
+
+    MockAgent agent(transport->directory(), MockAgent::Behaviour::Serve);
+
+    SECTION("enum returns a batch and the next cursor, and the walk ends at 0")
+    {
+        auto first    = request(SLOPKIT_AGENT_OP_ENUM);
+        first.address = 0;
+        first.size    = 2;
+        std::vector<std::byte> payload(SLOPKIT_AGENT_PAYLOAD_SIZE);
+        const auto             batch = transport->transact(first, 2s, {}, payload);
+        REQUIRE(batch.has_value());
+        CHECK(batch->status == SLOPKIT_AGENT_STATUS_OK);
+        CHECK(batch->size == 2u);
+        CHECK(batch->address == 0x10002000ull);
+
+        const auto* entries = reinterpret_cast<const slopkit_agent_region_entry*>(payload.data());
+        CHECK(entries[0].base == 0x10000000ull);
+        CHECK(entries[0].size == 0x1000u);
+        CHECK(entries[0].state == SLOPKIT_AGENT_MEM_COMMIT);
+        CHECK(entries[0].type == SLOPKIT_AGENT_MEM_PRIVATE);
+
+        auto second     = request(SLOPKIT_AGENT_OP_ENUM);
+        second.address  = batch->address;
+        second.size     = 2;
+        const auto tail = transport->transact(second, 2s, {}, payload);
+        REQUIRE(tail.has_value());
+        CHECK(tail->size == 1u);
+        CHECK(tail->address == 0ull);
+    }
+
+    SECTION("read returns the target's bytes and a short read is a success")
+    {
+        auto record    = request(SLOPKIT_AGENT_OP_READ);
+        record.address = MockAgent::target_base() + 0x10;
+        record.size    = 0x20;
+        std::vector<std::byte> buffer(0x20);
+        const auto             read = transport->transact(record, 2s, {}, buffer);
+        REQUIRE(read.has_value());
+        CHECK(read->status == SLOPKIT_AGENT_STATUS_OK);
+        CHECK(read->size == 0x20u);
+        for (std::size_t index = 0; index < buffer.size(); ++index)
+        {
+            CHECK(buffer[index] == agent.target_memory()[0x10 + index]);
+        }
+
+        // A read that runs past the mock's memory comes back short.
+        record.address = MockAgent::target_base() + agent.target_memory().size() - 0x10;
+        record.size    = 0x100;
+        std::vector<std::byte> short_buffer(0x100);
+        const auto             short_read = transport->transact(record, 2s, {}, short_buffer);
+        REQUIRE(short_read.has_value());
+        CHECK(short_read->status == SLOPKIT_AGENT_STATUS_OK);
+        CHECK(short_read->size == 0x10u);
+    }
+
+    SECTION("write sends the payload into the target")
+    {
+        std::vector<std::byte> data(0x40);
+        for (std::size_t index = 0; index < data.size(); ++index)
+        {
+            data[index] = static_cast<std::byte>(0xA0 + (index & 0xF));
+        }
+        auto record      = request(SLOPKIT_AGENT_OP_WRITE);
+        record.address   = MockAgent::target_base() + 0x100;
+        record.size      = data.size();
+        const auto write = transport->transact(record, 2s, data, {});
+        REQUIRE(write.has_value());
+        CHECK(write->status == SLOPKIT_AGENT_STATUS_OK);
+        CHECK(write->size == data.size());
+        CHECK(std::equal(data.begin(), data.end(), agent.target_memory().begin() + 0x100));
+    }
+
+    SECTION("an oversized size is a bad request")
+    {
+        auto enum_request = request(SLOPKIT_AGENT_OP_ENUM);
+        enum_request.size = 99999;
+        std::vector<std::byte> payload(SLOPKIT_AGENT_PAYLOAD_SIZE);
+        const auto             refused = transport->transact(enum_request, 2s, {}, payload);
+        REQUIRE(refused.has_value());
+        CHECK(refused->status == SLOPKIT_AGENT_STATUS_BAD_REQUEST);
+
+        auto read_request    = request(SLOPKIT_AGENT_OP_READ);
+        read_request.address = MockAgent::target_base();
+        read_request.size    = SLOPKIT_AGENT_PAYLOAD_SIZE + 1;
+        std::vector<std::byte> buffer(1);
+        const auto             bad = transport->transact(read_request, 2s, {}, buffer);
+        REQUIRE(bad.has_value());
+        CHECK(bad->status == SLOPKIT_AGENT_STATUS_BAD_REQUEST);
+    }
+}
+
+TEST_CASE("a timed-out agent request does not corrupt the next one", "[wine-proton][agent]")
+{
+    auto transport = AgentTransport::create(scratch_directory("agent-transport-timeout-recover"));
+    REQUIRE(transport.has_value());
+
+    MockAgent agent(transport->directory(), MockAgent::Behaviour::SilentFirst);
+
+    const auto timed_out = transport->transact(request(SLOPKIT_AGENT_OP_HELLO), 150ms);
+    REQUIRE_FALSE(timed_out.has_value());
+
+    // The same region still serves the next request cleanly.
+    const auto recovered = transport->transact(request(SLOPKIT_AGENT_OP_HELLO), 2s);
+    REQUIRE(recovered.has_value());
+    CHECK(recovered->status == SLOPKIT_AGENT_STATUS_OK);
+    CHECK(recovered->reserved0 == SLOPKIT_AGENT_PAYLOAD_SIZE);
 }
 
 TEST_CASE("the agent transport reports a refused request", "[wine-proton][agent]")

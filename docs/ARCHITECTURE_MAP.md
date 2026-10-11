@@ -75,15 +75,15 @@ docs that hold the detail behind this map.
 | ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug |
 | ui/panels | Docked panes (the address list's extended selection, its shared `Del` action and the multi-row delete included) | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
-| plugins/support | Shared bundled-plugin ABI plumbing, including the optional per-plugin `allocate`/`free`/`close_session` hooks | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`), `validate.hpp` (ABI 1.7 chunked readability probe) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
+| plugins/support | Shared bundled-plugin ABI plumbing, including the optional per-plugin `allocate`/`free`/`close_session` hooks and the `regions`/`range_is_readable`/`read`/`write` introspection hooks | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`), `validate.hpp` (ABI 1.7 chunked readability probe), `memory.hpp` (`AccessFault`, `MemoryResult`, the `MemAccess` error/method mapping) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
 | plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
-| plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) and its resident agent | `plugins/wine_proton/wine_proton_plugin.cpp`, `wine_target.hpp`, `agent_transport.hpp`, `agent_client.hpp`, `agent_allocator.hpp`, `agent/slopkit_agent_protocol.h` (see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md)) | `tests/plugin/wine_proton*`, `tests/plugin/agent_*` | plugin, support, platform |
+| plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) and its resident agent | `plugins/wine_proton/wine_proton_plugin.cpp`, `wine_target.hpp`, `agent_transport.hpp`, `agent_client.hpp`, `agent_service.hpp`, `agent_regions.hpp`, `agent/slopkit_agent_protocol.h` (see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md)) | `tests/plugin/wine_proton*`, `tests/plugin/agent_*` | plugin, support, platform |
 
 ## 3. Entry points and data flow
 
 - `src/main.cpp` → `slopkit::app::run()` (`src/app/cli.cpp`) handles argv: headless commands (`--version`, `--list-plugins`, `--list-processes`, scan), otherwise it hands a table path to a running instance (`src/app/instance*`) or builds `ui::App` / `MainWindow`.
 - Plugin discovery: `PluginHost::discover()` over `app::plugin_search_directories()`.
-- Reads/writes: UI → `process::AccessWorker` job → `ProcessAccess` plugin session → `AccessWorker::drain()` applies results on the UI thread.
+- Reads/writes: UI → `process::AccessWorker` job → `ProcessAccess` plugin session (for `wine-proton`, its resident agent while the target can run, else `process_vm`/procfs) → `AccessWorker::drain()` applies results on the UI thread.
 - Scans: scanner panel → `scan::ScanEngine` worker thread → `MemorySource`; the UI polls `snapshot()`.
   With `Pause the game while scanning`, the panel suspends the target through the access worker before the engine starts and resumes it once the engine stops.
 - Live values: `ui::LiveValues` batches every registered `LiveSurface` request into one worker job per interval, then asks each registered `LiveTicker` — `ui::ScriptUpdates` submits the one job that runs the ticked scripts' `update` hooks — after the read pass, so a slow hook can delay at most one batched read; a script is left out of that job until its own declared `update_interval` has elapsed.
@@ -170,7 +170,10 @@ docs that hold the detail behind this map.
   prebuilt pair from `src/plugins/wine_proton/agent/prebuilt/<bitness>` and
   otherwise fails with an actionable message (`cmake/Agent.cmake`). Those
   Windows sources are C11 with `-nostdlib`, not C++, so the C++ style rules do
-  not apply to them.
+  not apply to them. The agent's protocol is versioned, so a protocol change
+  makes any prebuilt pair in that directory unusable — the handshake refuses a
+  version or record-size mismatch — and a refreshed pair must ship in the same
+  change.
 
 ## 6. Maintaining this map
 
