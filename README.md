@@ -36,7 +36,11 @@ the Zydis development package (e.g. Fedora's `zydis-devel`) and the libzip
 development package (e.g. Fedora's `libzip-devel`) with `pkg-config`, the Lua
 development package and sol2 (e.g. Fedora's `lua-devel` and `sol2-devel`), Catch2,
 Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick (build-time
-only, for the icon set).
+only, for the icon set). The Wine/Proton resident agent is cross-compiled and
+needs the mingw-w64 compilers for both bitnesses (`x86_64-w64-mingw32-gcc` and
+`i686-w64-mingw32-gcc`); without them the build uses a prebuilt agent under
+`src/plugins/wine_proton/agent/prebuilt/<bitness>` and otherwise fails the
+`slopkit-agent` target — see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
 
 ```sh
 ./tools/configure.sh
@@ -78,4 +82,5 @@ configure time and the docdir carries the `README.md`, `docs/` files and font li
 - [`docs/SCRIPTING.md`](docs/SCRIPTING.md) — the end-user guide to address-table Lua scripts, the memory API and worked examples.
 - [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md) — UI and design rules for the project.
 - [`docs/LOGGING.md`](docs/LOGGING.md) — logging conventions.
+- [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md) — the Wine/Proton resident agent: design, measurements, deviations and limitations.
 - [`src/plugin/plugin_api.h`](src/plugin/plugin_api.h) — the C plugin ABI.

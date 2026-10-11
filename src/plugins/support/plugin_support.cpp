@@ -245,6 +245,10 @@ namespace slopkit::plugins::support
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
+                if (g_profile->close_session != nullptr)
+                {
+                    g_profile->close_session(*session);
+                }
                 unregister_session(session);
                 session->~Session();
                 host_dealloc(session);
@@ -964,7 +968,12 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "the size must be larger than 0");
                 }
 
-                const auto allocated = allocate_memory(*session, size, near_address);
+                // A plugin that brings its own in-target allocator (Wine's
+                // resident agent) serves the call first; that allocator falls
+                // back to the ptrace path itself when the agent is unavailable.
+                const auto allocated = g_profile->allocate != nullptr
+                                         ? g_profile->allocate(*session, size, near_address)
+                                         : allocate_memory(*session, size, near_address);
                 if (!allocated)
                 {
                     log_message(SLOPKIT_LOG_WARN, std::format("allocation failed: {}", allocated.error().message));
@@ -990,7 +999,8 @@ namespace slopkit::plugins::support
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
-                const auto freed = free_memory(*session, address);
+                const auto freed =
+                    g_profile->free != nullptr ? g_profile->free(*session, address) : free_memory(*session, address);
                 if (!freed)
                 {
                     log_message(SLOPKIT_LOG_WARN, std::format("cannot free {:#x}: {}", address, freed.error().message));

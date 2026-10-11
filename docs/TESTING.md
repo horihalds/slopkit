@@ -64,6 +64,42 @@ QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "name1,name2,*glob*"
 - Never run broad tags like `[ui]` through the binary directly: the full set
   exceeds the tool timeout. Use `./tools/test.sh`.
 
+## The Wine resident agent
+
+The agent is a cross-compiled PE, so it is part of the normal build: the
+`slopkit-agent` target cross-compiles the DLL and the injector for both
+bitnesses into `build/plugins` — the same directory the `wine-proton` plugin is
+loaded from — with `x86_64-w64-mingw32-gcc` and `i686-w64-mingw32-gcc`. Without
+those compilers the build copies a prebuilt pair from
+`src/plugins/wine_proton/agent/prebuilt/<bitness>`; with neither it fails with an
+actionable message. [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md) owns the design,
+the measurements and the known limits.
+
+Two of the three agent tests run in the default suite:
+
+```sh
+ctest --test-dir build -R "agent" --output-on-failure
+```
+
+- the protocol layout test, which pins `sizeof`/`offsetof` for the shared header
+  and the little-endian field encoding both sides compile;
+- the transport test, which serves the real wire protocol from an in-process
+  mock agent and covers the handshake, every operation, a refused request and a
+  timeout.
+
+The third is hidden and environment-gated, because it needs a working wine
+prefix as well as the cross-compiled probe:
+
+```sh
+SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "resident agent allocates" --timeout 600 --output-on-failure
+```
+
+It starts `build/agent_probe/slopkit-probe-x86_64.exe` under wine, injects the
+agent and asserts `alloc`, `alloc_near`, `query` (the block must report
+`MEM_COMMIT` + `PAGE_EXECUTE_READWRITE`, which the ptrace mapping does not),
+`protect`, `free` and `shutdown`. On a warm prefix the whole run takes about
+0.65 s.
+
 ## Manually verify allocation against a Proton game
 
 The allocation window's blast radius against a real Proton target cannot be
@@ -113,6 +149,31 @@ has found none — leaves the game running, which is the intended trade. A targe
 whose only thread outside a call is the group leader is exactly that case: a live
 group's leader is never borrowed, and a thread procfs already reports inside a call
 is not even stopped, so neither can produce the crash signature above.
+
+### With the resident agent
+
+The recipe is path-agnostic: `alloc`/`dealloc` work whether the resident agent or
+the ptrace fallback served them, and the log says which. To check the agent path
+specifically, watch the `process`-category records:
+
+1. The first `alloc` for the game logs either
+   `the resident agent is serving pid <linux pid>: wine pid <windows pid>, ...` or
+   `... agent for pid <linux pid> is off for this session (<reason>); allocation falls back to ptrace`.
+2. Every later call logs `... through the resident agent` or `... through ptrace`,
+   so the path of the first call decides the session and a fallback is never
+   silent.
+3. After the tick/untick cycles, detach (closing the session or switching away)
+   must log no timeout: `SHUTDOWN` stops the agent and frees what it allocated.
+4. `ls $XDG_RUNTIME_DIR/slopkit-agent-*` must find nothing afterwards — the
+   per-session directory holding the region, the DLL and the injector is removed.
+
+`protect` and `query` have no plugin-ABI entry, so this recipe cannot drive them;
+the wine-gated test above does.
+
+For a **32-bit game** the same steps apply: the plugin reads the guest's COFF
+machine and stages `slopkit-agent-i686.dll` with `slopkit-injector-i686.exe`
+instead. No second host architecture is involved — the i686 agent is a PE for a
+32-bit Windows process.
 
 ## Diagnose a build or a run
 

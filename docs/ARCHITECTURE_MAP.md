@@ -18,7 +18,7 @@ docs that hold the detail behind this map.
 | `src/expr` | Address expression parsing (`base + offset...` and `[ ... ]` pointer chains) and module/symbol/literal resolution with an injected per-level validator |
 | `src/platform/linux` | Linux primitives (ptrace, procfs, memory, modules, desktop entries, Wine) shared with plugins |
 | `src/plugin` | Plugin C ABI, host-side facade and loader/discovery |
-| `src/plugins/{support,linux_proc,wine_proton}` | Shared plugin ABI plumbing and the two bundled plugins |
+| `src/plugins/{support,linux_proc,wine_proton}` | Shared plugin ABI plumbing and the two bundled plugins; `wine_proton/agent/` holds the cross-compiled resident agent DLL, its injector and the shared protocol header |
 | `src/process` | Access seam, `AccessWorker`, plugin access, attachment metadata, shared types |
 | `src/sandbox` | Standalone practice-target binary (`slopkit-sandbox`) |
 | `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
@@ -49,8 +49,8 @@ docs that hold the detail behind this map.
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 | `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `fonts/*.ttf` with `OFL.txt` |
-| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts) and `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars) |
-| `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `SCRIPTING.md`, `KNOWN_ISSUES.md` |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars) and `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair) |
+| `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `SCRIPTING.md`, `WINE_AGENT.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
 | `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |
 
@@ -75,9 +75,9 @@ docs that hold the detail behind this map.
 | ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug |
 | ui/panels | Docked panes | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
-| plugins/support | Shared bundled-plugin ABI plumbing | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`), `validate.hpp` (ABI 1.7 chunked readability probe) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
+| plugins/support | Shared bundled-plugin ABI plumbing, including the optional per-plugin `allocate`/`free`/`close_session` hooks | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`), `validate.hpp` (ABI 1.7 chunked readability probe) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
 | plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
-| plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) | `plugins/wine_proton/wine_proton_plugin.cpp` | `tests/plugin/wine_proton*` | plugin, support, platform |
+| plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) and its resident agent | `plugins/wine_proton/wine_proton_plugin.cpp`, `wine_target.hpp`, `agent_transport.hpp`, `agent_client.hpp`, `agent_allocator.hpp`, `agent/slopkit_agent_protocol.h` (see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md)) | `tests/plugin/wine_proton*`, `tests/plugin/agent_*` | plugin, support, platform |
 
 ## 3. Entry points and data flow
 
@@ -130,7 +130,10 @@ docs that hold the detail behind this map.
   signature `PK\003\004`) with the bytes `src/table/table_zip.cpp` writes;
   `SLOPKIT_PLUGIN_RELATIVE_DIR` in
   `CMakeLists.txt`; `SLOPKIT_ACTION_ICON_NAMES` with `widgets::ActionIcon`; the
-  plugin ABI version in `src/plugin/plugin_api.h` with the host handshake.
+  plugin ABI version in `src/plugin/plugin_api.h` with the host handshake;
+  `src/plugins/wine_proton/agent/slopkit_agent_protocol.h` with both the
+  mingw-w64 agent and the Linux plugin, so a layout change bumps its
+  `SLOPKIT_AGENT_PROTOCOL_VERSION` and both static-assert sets together.
 - A `.skt` archive is versioned by `version.txt`: the writer emits
   `slopkit-table 5` (value and script entries, with nesting) and the reader also
   accepts `slopkit-table 4` (no nesting) and `slopkit-table 3` (value entries
@@ -162,6 +165,12 @@ docs that hold the detail behind this map.
   `tests/ui/components/memory_view_document_test.cpp`.
 - Configure fails without ImageMagick, the Zydis, libzip, Lua and sol2 dev
   packages and `pkg-config`.
+- The `slopkit-agent` target cross-compiles the Wine resident agent with
+  `x86_64-w64-mingw32-gcc` and `i686-w64-mingw32-gcc`; without them it copies a
+  prebuilt pair from `src/plugins/wine_proton/agent/prebuilt/<bitness>` and
+  otherwise fails with an actionable message (`cmake/Agent.cmake`). Those
+  Windows sources are C11 with `-nostdlib`, not C++, so the C++ style rules do
+  not apply to them.
 
 ## 6. Maintaining this map
 

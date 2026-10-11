@@ -30,6 +30,15 @@ namespace slopkit::plugins::support
     // the session never handed out is SLOPKIT_ERR_NOT_FOUND.
     std::expected<void, AllocationError> free_memory(Session& session, std::uint64_t address);
 
+    // Records an address the session owns but that this allocator did not create
+    // — a plugin's own in-target agent — so free_memory can still release it
+    // after the plugin has fallen back to ptrace. `size` is page-rounded.
+    void record_allocation(Session& session, std::uint64_t address, std::uint64_t size);
+
+    // Drops a recorded address, however it was created, so free_memory no longer
+    // knows it.
+    void forget_allocation(Session& session, std::uint64_t address);
+
     // True while this session is running a remote syscall; the debug attach path
     // refuses then, so a user debug session and an allocation never overlap.
     [[nodiscard]] bool allocation_in_flight(Session& session);

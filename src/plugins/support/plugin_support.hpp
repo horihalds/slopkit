@@ -6,6 +6,7 @@
 
 #include "platform/linux/debug_session.hpp"
 #include "plugin/plugin_api.h"
+#include "plugins/support/allocate.hpp"
 #include "process/types.hpp"
 
 namespace slopkit::plugins::support
@@ -28,6 +29,18 @@ namespace slopkit::plugins::support
         void (*shape_modules)(std::vector<process::ModuleInfo>& modules, process::ProcessId pid);
         // What the debug session does with the target's own signals.
         platform::ForeignSignalPolicy signal_policy;
+        // Optional: the plugin's own allocator, tried before this library's
+        // ptrace path. Wine/Proton uses it to allocate inside the target through
+        // its resident agent, so Wine's VM manager knows about the mapping.
+        // nullptr means the shared ptrace allocator is used directly.
+        std::expected<std::uint64_t, AllocationError> (*allocate)(Session&      session,
+                                                                  std::uint64_t size,
+                                                                  std::uint64_t near_address);
+        // Optional: pairs with `allocate` and releases an address it handed out.
+        std::expected<void, AllocationError> (*free)(Session& session, std::uint64_t address);
+        // Optional: run before the session is destroyed, so a plugin's in-target
+        // state (Wine's resident agent) is shut down and unmapped.
+        void (*close_session)(Session& session);
     };
 
     // The single exported symbol a plugin needs: installs the host services and

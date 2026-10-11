@@ -37,6 +37,12 @@ module shaping and foreign-signal policy), so a fix there lands in both. Each
 plugin still keeps its own state because the host `dlopen`s plugins with
 `RTLD_LOCAL`.
 
+The profile also carries three optional hooks — `allocate`, `free` and
+`close_session`. `linux-proc` leaves them null; `wine-proton` fills them so
+allocation goes through the target's own virtual-memory manager instead of a
+ptrace-injected `mmap`, with the shared ptrace path as the fallback. That
+mechanism is described in [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
+
 ## Discovery
 
 Plugins are discovered at startup in:
@@ -100,7 +106,11 @@ host calls:
   error and **never as address 0**: an allocation is either a real address or a
   failure, so no caller can mistake a call that did not happen for a mapping. A
   session whose plugin leaves them null reports `unsupported`, which a script
-  sees as `alloc: the target's plugin cannot allocate memory`.
+  sees as `alloc: the target's plugin cannot allocate memory`. `wine-proton`
+  serves the pair through its resident agent when it can: the mapping is created
+  by the target's own `VirtualAlloc`, so Wine's VM manager knows about it, and
+  the ptrace path above stays the automatic fallback for the rest of the session
+  once the agent fails — see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
 - `validate_memory` — the ABI 1.7 validation operation, left null by a plugin
   that cannot answer directly. It reports whether `[address, address + size)` is
   mapped **and readable**: a non-zero out-value means yes, 0 means no, and an

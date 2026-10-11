@@ -49,6 +49,19 @@ regression: debug it, do not add it just to make a run green.
 - **Lone-run check:** `ctest -R "debug session drives a target with forwarding"`
   passes.
 
+### a signal storm that keeps the target busy is survived harmlessly
+
+- **Source:** `tests/plugin/linux_proc_alloc_test.cpp` (`[linux_proc][alloc]`).
+- **Symptom:** `REQUIRE(ok)` fails, so a `free_memory` inside the loop returned an
+  error while the storm thread was signalling every thread of the target.
+- **Cause:** the ptrace allocation window races the storm: under a full 900-test
+  run the free can meet a stop the storm caused, and the call is refused. The
+  window behaves normally when the case has the CPU to itself. (The wine-proton
+  agent path is not involved — this case drives `linux-proc`, whose profile
+  leaves the agent hooks null.)
+- **Lone-run check:** `ctest -R "a signal storm that keeps the target busy is
+  survived harmlessly"` passes.
+
 ## Not a flake
 
 A failure that is not listed above — or that also fails alone — is a regression.

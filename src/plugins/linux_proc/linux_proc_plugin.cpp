@@ -63,8 +63,17 @@ namespace
         }
     }
 
-    constexpr PluginProfile kProfile {
-        info, precedence, access_methods, claim, shape_modules, slopkit::platform::ForeignSignalPolicy::suppress};
+    // linux-proc has no in-target allocator: nullptr keeps the shared ptrace
+    // allocation path and the shared session teardown.
+    constexpr PluginProfile kProfile {info,
+                                      precedence,
+                                      access_methods,
+                                      claim,
+                                      shape_modules,
+                                      slopkit::platform::ForeignSignalPolicy::suppress,
+                                      nullptr,
+                                      nullptr,
+                                      nullptr};
 } // namespace
 
 extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable* slopkit_plugin_entry(const slopkit_host_services* host)

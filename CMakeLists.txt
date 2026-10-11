@@ -351,8 +351,14 @@ endfunction()
 add_slopkit_plugin(slopkit-linux_proc ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/linux_proc/linux_proc_plugin.cpp)
 target_link_libraries(slopkit-linux_proc PRIVATE slopkit_plugin_support)
 
-add_slopkit_plugin(slopkit-wine_proton ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/wine_proton/wine_proton_plugin.cpp)
-target_link_libraries(slopkit-wine_proton PRIVATE slopkit_plugin_support)
+file(GLOB_RECURSE SLOPKIT_WINE_PROTON_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/wine_proton/*.cpp)
+add_slopkit_plugin(slopkit-wine_proton ${SLOPKIT_WINE_PROTON_SOURCES})
+target_link_libraries(slopkit-wine_proton PRIVATE slopkit_plugin_support ${CMAKE_DL_LIBS})
+
+# The wine-proton plugin's resident agent is a PE binary for the target, so it
+# is cross-compiled into the plugin directory it is loaded from at runtime.
+include(${CMAKE_SOURCE_DIR}/cmake/Agent.cmake)
 
 # --- tests -----------------------------------------------------------------
 
@@ -429,17 +435,27 @@ set(SLOPKIT_TEST_SANDBOX_SOURCES
 # them defines `slopkit_plugin_entry`, so they are built as their own libraries.
 file(GLOB_RECURSE SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
 list(FILTER SLOPKIT_TEST_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/tests/fixtures/.*")
-add_executable(slopkit_tests ${SLOPKIT_TEST_SOURCES} ${SLOPKIT_TEST_SUPPORT_SOURCES} ${SLOPKIT_TEST_SANDBOX_SOURCES})
+# The wine-proton resident agent's protocol, transport and client are exercised
+# in-process, so the plugin's own sources and the shared support library are
+# compiled and linked into the test binary directly; the loader tests still
+# dlopen the plugin. `wine_proton_plugin.cpp` only adds its entry point here.
+add_executable(slopkit_tests
+    ${SLOPKIT_TEST_SOURCES}
+    ${SLOPKIT_TEST_SUPPORT_SOURCES}
+    ${SLOPKIT_TEST_SANDBOX_SOURCES}
+    ${SLOPKIT_WINE_PROTON_SOURCES})
 # The tests load the bundled plugins the same way the app does, so they need the
 # same exported symbols for the platform library's diagnostics.
 set_target_properties(slopkit_tests PROPERTIES ENABLE_EXPORTS ON)
-add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor slopkit_test_logging)
+add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit-agent slopkit-agent-probe slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor slopkit_test_logging)
 target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tests)
 target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"
     SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_TEST_LOGGING_PLUGIN_DIR="${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR}"
+    SLOPKIT_AGENT_BINARY_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
+    SLOPKIT_AGENT_PROBE_DIR="${SLOPKIT_AGENT_PROBE_DIR}"
     SLOPKIT_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
     SLOPKIT_TMP_DIR="${CMAKE_SOURCE_DIR}/tmp")
 target_link_libraries(slopkit_tests PRIVATE
@@ -448,6 +464,7 @@ target_link_libraries(slopkit_tests PRIVATE
     slopkit_platform
     slopkit_assets
     slopkit_native
+    slopkit_plugin_support
     Qt6::Widgets
     PkgConfig::ZYDIS
     PkgConfig::LIBZIP
@@ -483,6 +500,11 @@ slopkit_install_stripped(slopkit-sandbox ${CMAKE_INSTALL_BINDIR} RUNTIME)
 # (see SLOPKIT_PLUGIN_RELATIVE_DIR above).
 slopkit_install_stripped(slopkit-linux_proc ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins LIBRARY)
 slopkit_install_stripped(slopkit-wine_proton ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins LIBRARY)
+
+# The cross-compiled agent DLLs and their injectors sit beside the plugins; the
+# wine-proton plugin locates them through its own module path.
+install(FILES ${SLOPKIT_AGENT_ARTIFACTS}
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins)
 
 install(FILES ${CMAKE_BINARY_DIR}/slopkit.desktop
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)

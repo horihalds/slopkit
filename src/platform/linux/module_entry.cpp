@@ -230,4 +230,41 @@ namespace slopkit::platform
         return kind;
     }
 
+    std::optional<std::uint16_t> parse_pe_machine(std::span<const std::byte> bytes)
+    {
+        constexpr std::size_t kLfanewOffset   = 0x3c;
+        constexpr std::size_t kSignatureSize  = 4;
+        constexpr std::size_t kCoffHeaderSize = 20;
+
+        if (bytes.size() < 2 || byte_at(bytes, 0) != 'M' || byte_at(bytes, 1) != 'Z')
+        {
+            return std::nullopt;
+        }
+        if (bytes.size() < kLfanewOffset + 4)
+        {
+            return std::nullopt;
+        }
+        const auto lfanew = static_cast<std::size_t>(read_u32(bytes, kLfanewOffset, false));
+        if (lfanew >= bytes.size() || bytes.size() - lfanew < kSignatureSize + kCoffHeaderSize)
+        {
+            return std::nullopt;
+        }
+        if (byte_at(bytes, lfanew) != 'P' || byte_at(bytes, lfanew + 1) != 'E' || byte_at(bytes, lfanew + 2) != 0
+            || byte_at(bytes, lfanew + 3) != 0)
+        {
+            return std::nullopt;
+        }
+        return read_u16(bytes, lfanew + kSignatureSize, false);
+    }
+
+    std::optional<std::uint16_t> read_pe_machine(const std::filesystem::path& path)
+    {
+        const auto header = read_header(path);
+        if (!header)
+        {
+            return std::nullopt;
+        }
+        return parse_pe_machine(std::span<const std::byte>(header->data.data(), header->size));
+    }
+
 } // namespace slopkit::platform

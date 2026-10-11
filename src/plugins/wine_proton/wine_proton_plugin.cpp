@@ -11,13 +11,16 @@
 // wine-proton profile plus the entry point.
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <string>
 #include <vector>
 
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/wine.hpp"
+#include "plugins/support/allocate.hpp"
 #include "plugins/support/plugin_support.hpp"
+#include "plugins/wine_proton/agent_allocator.hpp"
 
 namespace
 {
@@ -89,8 +92,37 @@ namespace
         (void)slopkit::platform::flag_main_pe_image(pid, modules);
     }
 
-    constexpr PluginProfile kProfile {
-        info, precedence, access_methods, claim, shape_modules, slopkit::platform::ForeignSignalPolicy::forward};
+    // Allocation goes through the resident agent first, so the mapping is one
+    // Wine's own virtual-memory manager created; AgentAllocator falls back to
+    // the shared ptrace path and logs which one served each call.
+    std::expected<std::uint64_t, slopkit::plugins::support::AllocationError>
+    allocate(slopkit::plugins::support::Session& session, std::uint64_t size, std::uint64_t near_address)
+    {
+        return slopkit::plugins::wine_proton::AgentAllocator::allocate(session, size, near_address);
+    }
+
+    std::expected<void, slopkit::plugins::support::AllocationError> free(slopkit::plugins::support::Session& session,
+                                                                         std::uint64_t                       address)
+    {
+        return slopkit::plugins::wine_proton::AgentAllocator::free(session, address);
+    }
+
+    // Closing the session SHUTDOWNs the agent (which frees what it allocated),
+    // unmaps the shared region and removes the per-session directory.
+    void close_session(slopkit::plugins::support::Session& session)
+    {
+        slopkit::plugins::wine_proton::AgentAllocator::close(session.pid);
+    }
+
+    constexpr PluginProfile kProfile {info,
+                                      precedence,
+                                      access_methods,
+                                      claim,
+                                      shape_modules,
+                                      slopkit::platform::ForeignSignalPolicy::forward,
+                                      allocate,
+                                      free,
+                                      close_session};
 } // namespace
 
 extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable* slopkit_plugin_entry(const slopkit_host_services* host)
