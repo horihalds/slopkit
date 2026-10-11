@@ -4,6 +4,8 @@
 
 #include <vector>
 
+#include <QKeySequence>
+
 #include "ui/components/row_menu.hpp"
 
 namespace
@@ -98,4 +100,26 @@ TEST_CASE("the shared watch commands report the picked command with a target", "
     REQUIRE(armed.size() == 2);
     CHECK(armed[0] == WatchCommand::writes);
     CHECK(armed[1] == WatchCommand::accesses);
+}
+
+TEST_CASE("a row-menu entry can show another action's key as a hint", "[ui]")
+{
+    application();
+
+    QMenu    menu;
+    QAction* source = menu.addAction(QStringLiteral("Edit"));
+    source->setShortcut(QKeySequence(QStringLiteral("Ctrl+E")));
+
+    QAction* item = slopkit::ui::widgets::described_action(
+        menu, QStringLiteral("Change value…"), QStringLiteral("Writes the typed value."));
+    slopkit::ui::widgets::show_shortcut_hint(*item, *source);
+
+    // The key is copied and pinned as a widget-local hint that never claims it.
+    CHECK(item->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")));
+    CHECK(item->shortcutContext() == Qt::WidgetShortcut);
+    // Only the key column changes.
+    CHECK(item->text() == QStringLiteral("Change value…"));
+    CHECK(item->toolTip() == QStringLiteral("Writes the typed value."));
+    CHECK(item->isEnabled());
+    CHECK(source->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")));
 }

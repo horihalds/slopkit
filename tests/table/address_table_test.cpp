@@ -47,6 +47,13 @@ namespace
         return entry;
     }
 
+    // The selected set as a plain vector, so Catch2 can compare it with `==`.
+    std::vector<std::size_t> selected_rows_of(const AddressTable& table)
+    {
+        const std::span<const std::size_t> rows = table.selected_rows();
+        return {rows.begin(), rows.end()};
+    }
+
     std::filesystem::path scratch_file(std::string_view name)
     {
         const auto      directory = std::filesystem::path(SLOPKIT_TMP_DIR) / "address_table_test";
@@ -797,6 +804,186 @@ TEST_CASE("removing a parent removes its whole subtree", "[table]")
     REQUIRE(other.size() == 1);
     CHECK(other.entries()[0].description == "R");
     CHECK(other.selected() == 0);
+}
+
+TEST_CASE("the selected row set is normalised and remapped by the table", "[table]")
+{
+    AddressTable table;
+    const auto   add = [&table](const char* description)
+    {
+        auto entry        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        table.add(entry);
+    };
+    add("A");
+    add("B");
+    add("C");
+    add("D");
+    add("E");
+
+    // Sorting, deduping and dropping out-of-range rows.
+    table.set_selected_rows(std::vector<std::size_t> {4, 1, 1, 99});
+    CHECK(selected_rows_of(table) == std::vector<std::size_t> {1, 4});
+    CHECK(table.is_row_selected(1));
+    CHECK(table.is_row_selected(4));
+    CHECK_FALSE(table.is_row_selected(0));
+    CHECK_FALSE(table.is_row_selected(99));
+
+    // An empty set is reported empty.
+    table.set_selected_rows(std::span<const std::size_t> {});
+    CHECK(selected_rows_of(table).empty());
+
+    // A plain remove drops the rows inside the erased subtree and shifts the
+    // rows after it down by its size.
+    table.set_selected_rows(std::vector<std::size_t> {1, 3});
+    table.remove(0);
+    CHECK(selected_rows_of(table) == std::vector<std::size_t> {0, 2});
+
+    // add() moves the cursor to the new row but leaves the set alone.
+    table.set_selected_rows(std::vector<std::size_t> {1});
+    add("F");
+    CHECK(table.selected() == 4);
+    CHECK(selected_rows_of(table) == std::vector<std::size_t> {1});
+
+    // clear() and replace() empty the set, like the cursor.
+    table.clear();
+    CHECK(selected_rows_of(table).empty());
+    table.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
+    table.set_selected_rows(std::vector<std::size_t> {0});
+    table.replace({});
+    CHECK(selected_rows_of(table).empty());
+}
+
+TEST_CASE("remove_rows erases every selected subtree in one pass", "[table]")
+{
+    AddressTable table;
+    const auto   add = [&table](const char* description)
+    {
+        auto entry        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        table.add(entry);
+    };
+    add("A");
+    add("B");
+    add("C");
+    add("D");
+    add("E");
+    REQUIRE(table.move_row(1, 0, true)); // B under A
+    REQUIRE(table.move_row(2, 1, true)); // C under B
+    REQUIRE(table.subtree_size(0) == 3);
+
+    // An unsorted list of two top-level rows erases both subtrees in one pass.
+    const std::vector<std::size_t> rows {3, 0}; // D and the whole A subtree
+    table.set_selected_rows(rows);
+    table.remove_rows(rows);
+
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].description == "E");
+    CHECK(selected_rows_of(table).empty());
+    CHECK(table.selected() == 0); // the cursor landed on the first freed slot
+
+    // A child listed next to its parent is covered by the parent's block: one
+    // erase, not two.
+    AddressTable nested;
+    auto         parent = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+    parent.description  = "P";
+    nested.add(parent);
+    auto child        = make_entry(kBase + 4, ValueType::int32, {2, 0, 0, 0});
+    child.description = "Q";
+    nested.add(child);
+    auto tail        = make_entry(kBase + 8, ValueType::int32, {3, 0, 0, 0});
+    tail.description = "R";
+    nested.add(tail);
+    REQUIRE(nested.move_row(1, 0, true)); // Q under P
+
+    nested.remove_rows(std::vector<std::size_t> {0, 1});
+    REQUIRE(nested.size() == 1);
+    CHECK(nested.entries()[0].description == "R");
+
+    // An out-of-range only list and an empty list are no-ops.
+    AddressTable untouched;
+    untouched.remove_rows(std::vector<std::size_t> {5});
+    untouched.remove_rows(std::span<const std::size_t> {});
+    CHECK(untouched.empty());
+}
+
+TEST_CASE("move_row carries the selected rows with the moved block", "[table]")
+{
+    AddressTable table;
+    const auto   add = [&table](const char* description)
+    {
+        auto entry        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        table.add(entry);
+    };
+    add("A");
+    add("B");
+    add("C");
+    add("D");
+    add("E");
+
+    // A row ahead of the block lands behind it; the set is re-sorted.
+    table.set_selected_rows(std::vector<std::size_t> {0, 4});
+    REQUIRE(table.move_row(0, 4, false));
+    CHECK(table.entries()[0].description == "B");
+    CHECK(table.entries()[3].description == "A");
+    CHECK(selected_rows_of(table) == std::vector<std::size_t> {3, 4});
+
+    // A nest move remaps the set with the same arithmetic.
+    AddressTable nested;
+    const auto   add_nested = [&nested](const char* description)
+    {
+        auto entry        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        nested.add(entry);
+    };
+    add_nested("P");
+    add_nested("Q");
+    add_nested("R");
+    add_nested("S");
+
+    nested.set_selected_rows(std::vector<std::size_t> {0, 2});
+    REQUIRE(nested.move_row(3, 0, true)); // S under P
+    CHECK(nested.entries()[0].description == "P");
+    CHECK(nested.entries()[1].description == "S");
+    CHECK(selected_rows_of(nested) == std::vector<std::size_t> {0, 3});
+}
+
+TEST_CASE("a multi-row removal writes one aggregated table record", "[table][log]")
+{
+    LevelGuard level;
+    slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    AddressTable table;
+    const auto   add = [&table](const char* description)
+    {
+        auto entry        = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
+        entry.description = description;
+        table.add(entry);
+    };
+    add("A");
+    add("B");
+    add("C");
+    add("D");
+
+    table.remove_rows(std::vector<std::size_t> {0, 2});
+
+    int removals = 0;
+    for (const auto& record : records)
+    {
+        if (std::string_view {record.category} == slopkit::log::category::table
+            && record.level == slopkit::log::Level::info && record.message.starts_with("entries removed"))
+        {
+            ++removals;
+        }
+    }
+    CHECK(removals == 1);
 }
 
 TEST_CASE("merge maps incoming parents into the target table", "[table]")

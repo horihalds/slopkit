@@ -261,15 +261,30 @@ namespace slopkit::ui::models
 
     QMimeData* AddressTableModel::mimeData(const QModelIndexList& indexes) const
     {
-        int row = -1;
+        const int count        = rowCount();
+        const int cursor       = table_.selected();
+        int       lowest       = -1;
+        bool      drags_cursor = false;
         for (const QModelIndex& index : indexes)
         {
-            if (index.isValid() && index.row() >= 0 && (row < 0 || index.row() < row))
+            if (!index.isValid() || index.row() < 0 || index.row() >= count)
             {
-                row = index.row();
+                continue;
+            }
+            if (lowest < 0 || index.row() < lowest)
+            {
+                lowest = index.row();
+            }
+            if (index.row() == cursor)
+            {
+                drags_cursor = true;
             }
         }
-        if (row < 0 || row >= rowCount())
+
+        // With several rows selected, the gesture moves the row the user grabbed
+        // (the cursor), not the topmost selected one.
+        const int row = drags_cursor ? cursor : lowest;
+        if (row < 0)
         {
             return nullptr;
         }

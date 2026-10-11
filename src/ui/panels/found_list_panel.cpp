@@ -314,6 +314,7 @@ namespace slopkit::ui::panels
         {
             QAction* edit = widgets::described_action(
                 menu, tr("Change value…"), tr("Writes the typed value to this hit's address."));
+            widgets::show_shortcut_hint(*edit, *edit_value_action_);
             connect(edit,
                     &QAction::triggered,
                     this,
@@ -324,11 +325,13 @@ namespace slopkit::ui::panels
         }
         else
         {
-            (void)widgets::disabled_action(menu, tr("Change value…"), tr("Attach to a target first."));
+            QAction* edit = widgets::disabled_action(menu, tr("Change value…"), tr("Attach to a target first."));
+            widgets::show_shortcut_hint(*edit, *edit_value_action_);
         }
 
         QAction* browse = widgets::described_action(
             menu, tr("Browse this memory region"), tr("Shows this hit's address in the Memory Viewer."));
+        widgets::show_shortcut_hint(*browse, *browse_region_action_);
         connect(browse,
                 &QAction::triggered,
                 this,

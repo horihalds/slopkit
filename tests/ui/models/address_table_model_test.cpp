@@ -248,6 +248,46 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     CHECK(table.entries()[0].description == "second");
 }
 
+TEST_CASE("a drag moves the cursor row among a multi-row selection", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    const auto                   add_row = [&table](const QString& description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description.toStdString();
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add_row(QStringLiteral("first"), 0x1000);
+    add_row(QStringLiteral("second"), 0x2000);
+    add_row(QStringLiteral("third"), 0x3000);
+    add_row(QStringLiteral("fourth"), 0x4000);
+
+    slopkit::plugin::PluginHost            host;
+    slopkit::process::PluginAccess         access {host};
+    slopkit::process::AccessWorker         worker {access};
+    slopkit::process::AttachedTarget       target;
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+
+    // The dragged row is the cursor's when the cursor is one of the dragged
+    // indexes, not the topmost selected one.
+    table.set_selected_rows(std::vector<std::size_t> {0, 2});
+    table.set_selected(2);
+    std::unique_ptr<QMimeData> payload {model.mimeData({model.index(0, 0), model.index(2, 0)})};
+    REQUIRE(payload != nullptr);
+    CHECK(payload->data(QStringLiteral("application/x-slopkit-address-row")).toInt() == 2);
+
+    // Without a cursor match it keeps publishing the lowest dragged row.
+    table.set_selected(3);
+    std::unique_ptr<QMimeData> lowest {model.mimeData({model.index(0, 0), model.index(2, 0)})};
+    REQUIRE(lowest != nullptr);
+    CHECK(lowest->data(QStringLiteral("application/x-slopkit-address-row")).toInt() == 0);
+}
+
 TEST_CASE("the address-table model nests rows and reports their depth", "[ui]")
 {
     application();

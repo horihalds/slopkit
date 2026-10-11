@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <iterator>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -72,19 +73,121 @@ namespace slopkit::table
         }
         const std::size_t count = subtree_size(index);
         log::info(log::category::table, std::format("entry removed at index {} ({} row(s))", index, count));
-        entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(index),
-                       entries_.begin() + static_cast<std::ptrdiff_t>(index + count));
+        const std::pair<std::size_t, std::size_t> block {index, count};
+        erase_blocks(std::span<const std::pair<std::size_t, std::size_t>>(&block, 1));
+    }
 
-        const int first = static_cast<int>(index);
-        const int last  = static_cast<int>(index + count);
-        if (selected_ >= first && selected_ < last)
+    void AddressTable::remove_rows(std::span<const std::size_t> rows)
+    {
+        std::vector<std::size_t> sorted(rows.begin(), rows.end());
+        std::ranges::sort(sorted);
+        sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
+
+        // Resolve the listed rows to their top-level blocks: a row inside an
+        // earlier block is already covered by it and is skipped, so a child is
+        // never removed twice.
+        std::vector<std::pair<std::size_t, std::size_t>> blocks;
+        std::size_t                                      row_count = 0;
+        for (const std::size_t row : sorted)
         {
-            selected_ = entries_.empty() ? -1 : std::min(first, static_cast<int>(entries_.size()) - 1);
+            if (row >= entries_.size())
+            {
+                continue;
+            }
+            if (std::ranges::any_of(blocks,
+                                    [row](const std::pair<std::size_t, std::size_t>& block)
+                                    {
+                                        return row >= block.first && row < block.first + block.second;
+                                    }))
+            {
+                continue;
+            }
+            const std::size_t count = subtree_size(row);
+            blocks.emplace_back(row, count);
+            row_count += count;
         }
-        else if (selected_ >= last)
+        if (blocks.empty())
         {
-            selected_ -= static_cast<int>(count);
+            return;
         }
+
+        log::info(log::category::table,
+                  std::format("entries removed ({} row(s) in {} block(s))", row_count, blocks.size()));
+        erase_blocks(blocks);
+    }
+
+    void AddressTable::erase_blocks(std::span<const std::pair<std::size_t, std::size_t>> blocks)
+    {
+        if (blocks.empty())
+        {
+            return;
+        }
+
+        // Erase from the back so the earlier positions stay valid.
+        for (auto block = blocks.rbegin(); block != blocks.rend(); ++block)
+        {
+            entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(block->first),
+                           entries_.begin() + static_cast<std::ptrdiff_t>(block->first + block->second));
+        }
+
+        const auto new_size = static_cast<int>(entries_.size());
+
+        // The row `index` in the new vector: nullopt when it lay inside a block,
+        // otherwise its position.
+        const auto map_row = [blocks](std::size_t index) -> std::optional<std::size_t>
+        {
+            std::size_t erased = 0;
+            for (const auto& [start, count] : blocks)
+            {
+                if (index < start)
+                {
+                    return index - erased;
+                }
+                if (index < start + count)
+                {
+                    return std::nullopt;
+                }
+                erased += count;
+            }
+            return index - erased;
+        };
+
+        if (selected_ >= 0)
+        {
+            if (const auto mapped = map_row(static_cast<std::size_t>(selected_)))
+            {
+                selected_ = static_cast<int>(*mapped);
+            }
+            else
+            {
+                // The cursor was inside a block: it lands on that block's freed
+                // slot, clamped to the last row.
+                const std::size_t cursor        = static_cast<std::size_t>(selected_);
+                std::size_t       erased_before = 0;
+                std::size_t       slot          = 0;
+                for (const auto& [start, count] : blocks)
+                {
+                    if (cursor >= start && cursor < start + count)
+                    {
+                        slot = start - erased_before;
+                        break;
+                    }
+                    erased_before += count;
+                }
+                selected_ = new_size == 0 ? -1 : std::min(static_cast<int>(slot), new_size - 1);
+            }
+        }
+
+        std::vector<std::size_t> kept;
+        kept.reserve(selected_rows_.size());
+        for (const std::size_t row : selected_rows_)
+        {
+            if (const auto mapped = map_row(row))
+            {
+                kept.push_back(*mapped);
+            }
+        }
+        selected_rows_ = std::move(kept);
     }
 
     void AddressTable::clear()
@@ -95,6 +198,7 @@ namespace slopkit::table
         }
         entries_.clear();
         selected_ = -1;
+        selected_rows_.clear();
     }
 
     void AddressTable::replace(std::vector<AddressEntry> entries)
@@ -106,6 +210,7 @@ namespace slopkit::table
             entry.id = next_id_++;
         }
         selected_ = entries_.empty() ? -1 : static_cast<int>(entries_.size()) - 1;
+        selected_rows_.clear();
     }
 
     void AddressTable::move(std::size_t from, std::size_t to)
@@ -185,6 +290,17 @@ namespace slopkit::table
         return index >= ancestor && index < ancestor + subtree_size(ancestor);
     }
 
+    std::size_t
+    AddressTable::moved_row(std::size_t index, std::size_t from, std::size_t count, std::size_t insertion) noexcept
+    {
+        if (index >= from && index < from + count)
+        {
+            return insertion + (index - from);
+        }
+        const std::size_t rest = index < from ? index : index - count;
+        return rest < insertion ? rest : rest + count;
+    }
+
     bool AddressTable::move_row(std::size_t from, std::size_t target, bool nest)
     {
         if (from >= entries_.size())
@@ -244,21 +360,19 @@ namespace slopkit::table
         entries_[insertion].parent = new_parent;
 
         // The selection rides on the moved block; every row the block jumped
-        // over shifts the other way.
+        // over shifts the other way. The mapping is the same one the cursor
+        // always got, applied to the cursor and to every selected row.
         if (selected_ >= 0)
         {
-            const int first = static_cast<int>(from);
-            const int last  = static_cast<int>(from + count);
-            if (selected_ >= first && selected_ < last)
-            {
-                selected_ = static_cast<int>(insertion) + (selected_ - first);
-            }
-            else
-            {
-                const int rest = selected_ < first ? selected_ : selected_ - static_cast<int>(count);
-                selected_      = rest < static_cast<int>(insertion) ? rest : rest + static_cast<int>(count);
-            }
+            selected_ = static_cast<int>(moved_row(static_cast<std::size_t>(selected_), from, count, insertion));
         }
+        for (std::size_t& row : selected_rows_)
+        {
+            row = moved_row(row, from, count, insertion);
+        }
+        // A move is a bijection, so the rows stay unique, but their order can
+        // break (a row ahead of the block may land behind it).
+        std::ranges::sort(selected_rows_);
 
         log::info(log::category::table,
                   std::format("entry moved from {} to {}{}", from, insertion, nest ? " (nested)" : ""));
@@ -372,6 +486,30 @@ namespace slopkit::table
     void AddressTable::set_selected(int index) noexcept
     {
         selected_ = index >= 0 && index < static_cast<int>(entries_.size()) ? index : -1;
+    }
+
+    std::span<const std::size_t> AddressTable::selected_rows() const noexcept
+    {
+        return selected_rows_;
+    }
+
+    void AddressTable::set_selected_rows(std::span<const std::size_t> rows) noexcept
+    {
+        selected_rows_.assign(rows.begin(), rows.end());
+        std::ranges::sort(selected_rows_);
+        selected_rows_.erase(std::unique(selected_rows_.begin(), selected_rows_.end()), selected_rows_.end());
+        selected_rows_.erase(std::remove_if(selected_rows_.begin(),
+                                            selected_rows_.end(),
+                                            [this](std::size_t row)
+                                            {
+                                                return row >= entries_.size();
+                                            }),
+                             selected_rows_.end());
+    }
+
+    bool AddressTable::is_row_selected(std::size_t index) const noexcept
+    {
+        return std::ranges::binary_search(selected_rows_, index);
     }
 
     std::string AddressTable::display_value(std::size_t index) const

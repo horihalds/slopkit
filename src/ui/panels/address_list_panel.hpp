@@ -19,6 +19,7 @@
 #include <QString>
 #include <QWidget>
 
+class QAction;
 class QPoint;
 class QMenu;
 class QTableView;
@@ -184,14 +185,20 @@ namespace slopkit::ui::panels
         void tableSettingsRequested();
 
     private:
-        void                          show_context_menu(const QPoint& position);
-        void                          set_status(const QString& message, bool is_error);
-        void                          save_to_path(const QString& path);
+        void                                   show_context_menu(const QPoint& position);
+        void                                   set_status(const QString& message, bool is_error);
+        void                                   save_to_path(const QString& path);
+        // The rows a row command runs on: the selected set when it is not empty,
+        // otherwise the cursor row alone.
+        [[nodiscard]] std::vector<std::size_t> command_rows() const;
+        // Re-projects the table's cursor and selected set onto the view under
+        // the syncing guard, e.g. after a model reset dropped the view's state.
+        void                                   sync_view_selection();
         // The production save chooser; it runs the native file dialog.
-        static std::optional<QString> default_save_path_prompt(QWidget* parent, const QString& suggested);
+        static std::optional<QString>          default_save_path_prompt(QWidget* parent, const QString& suggested);
         // Re-resolves every entry that carries an expression, at most once per
         // interval unless the expression set or the module map changed.
-        void                          maybe_resolve_expressions();
+        void                                   maybe_resolve_expressions();
 
         // Creates the Add/Edit Script dialog on first use.
         void ensure_script_dialog();
@@ -211,6 +218,12 @@ namespace slopkit::ui::panels
         ui::ModuleSpans                       modules_;
         models::AddressTableModel*            model_ {};
         QTableView*                           table_view_ {};
+        // The row menu's Delete entry and the Del key share this action, so the
+        // wording, the key and the handler cannot drift apart.
+        QAction*                              remove_action_ {};
+        // True while the panel or a model reset writes the selection, so the two
+        // selection handlers cannot loop back into each other.
+        bool                                  syncing_ {false};
         std::optional<process::JobId>         resolve_job_;
         // The in-flight script run, so a second Run Script is refused.
         std::optional<process::JobId>         script_job_;

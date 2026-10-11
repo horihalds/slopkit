@@ -293,6 +293,13 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     CHECK(change->toolTip() == QStringLiteral("Attach to a target first."));
     CHECK(browse->isEnabled());
 
+    // The row-menu entries render the keys the panel's own actions answer, as
+    // widget-local hints that never claim them.
+    CHECK(change->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")));
+    CHECK(change->shortcutContext() == Qt::WidgetShortcut);
+    CHECK(browse->shortcut() == QKeySequence(QStringLiteral("Ctrl+D")));
+    CHECK(browse->shortcutContext() == Qt::WidgetShortcut);
+
     // Both commands answer their shortcut on the panel's own table.
     auto* view = panel.findChild<QTableView*>();
     REQUIRE(view != nullptr);

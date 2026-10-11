@@ -67,6 +67,12 @@ namespace slopkit::ui::widgets
         return action;
     }
 
+    void show_shortcut_hint(QAction& item, const QAction& source)
+    {
+        item.setShortcut(source.shortcut());
+        item.setShortcutContext(Qt::WidgetShortcut);
+    }
+
     void add_watch_commands(QMenu& menu, bool target_attached, const std::function<void(WatchCommand)>& arm)
     {
         menu.addSeparator();

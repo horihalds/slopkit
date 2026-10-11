@@ -28,6 +28,11 @@ namespace slopkit::ui::widgets
     // Disabled entry whose tooltip gives the reason it is unavailable.
     [[nodiscard]] QAction* disabled_action(QMenu& menu, const QString& text, const QString& reason);
 
+    // Renders `source`'s key sequence on `item`, so the menu shows the key the
+    // panel's own action answers. The item keeps `Qt::WidgetShortcut`, so it is a
+    // hint that never claims the key from that action.
+    void show_shortcut_hint(QAction& item, const QAction& source);
+
     // The `Find out what writes/accesses this address` pair, after a separator:
     // shared wording, shared reason, added disabled as a pair while no target is
     // attached. `arm` receives the command the user picked.

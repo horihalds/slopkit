@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "process/access_worker.hpp"
@@ -55,6 +56,13 @@ namespace slopkit::table
         // Erases the whole subtree rooted at `index` and keeps the selection
         // adjustment, so a parent never leaves orphaned children behind.
         void remove(std::size_t index);
+
+        // Erases every listed row's whole subtree in one pass. A listed row that
+        // sits inside another listed row's subtree is skipped, so a child is
+        // never removed twice. The cursor and the selected set are remapped by
+        // the same arithmetic `remove` uses, and one aggregated record is
+        // written under the `table` category.
+        void remove_rows(std::span<const std::size_t> rows);
         void clear();
 
         // Appends a script entry and selects it, returning its row index. A
@@ -109,8 +117,17 @@ namespace slopkit::table
         [[nodiscard]] bool                          empty() const noexcept;
         [[nodiscard]] bool                          valid_index(std::size_t index) const noexcept;
 
+        // The cursor: the row a click or a command landed on. It is the fallback
+        // command input when no rows are selected.
         [[nodiscard]] int selected() const noexcept;
         void              set_selected(int index) noexcept;
+
+        // The selected rows, sorted and unique. This is the durable
+        // multi-selection the address list mirrors from its view; the cursor and
+        // the set are always remapped together by every mutation.
+        [[nodiscard]] std::span<const std::size_t> selected_rows() const noexcept;
+        void                                       set_selected_rows(std::span<const std::size_t> rows) noexcept;
+        [[nodiscard]] bool                         is_row_selected(std::size_t index) const noexcept;
 
         // The value text shown in the table. Empty for a script row, which has
         // no value.
@@ -137,9 +154,21 @@ namespace slopkit::table
         [[nodiscard]] const TableSettings& settings() const noexcept;
 
     private:
+        // Erases the given ascending, disjoint blocks (each pair is a start and
+        // its count) and remaps the cursor and the selected set in one pass. The
+        // cursor clamps to the freed slot when it falls inside a block.
+        void erase_blocks(std::span<const std::pair<std::size_t, std::size_t>> blocks);
+
+        // Maps a row index through a move of `count` rows from `from` to
+        // `insertion` (positions in the original vector), the arithmetic
+        // `move_row` applies to the cursor and to every selected row.
+        [[nodiscard]] static std::size_t
+        moved_row(std::size_t index, std::size_t from, std::size_t count, std::size_t insertion) noexcept;
+
         std::vector<AddressEntry> entries_;
         TableSettings             settings_;
         int                       selected_ {-1};
+        std::vector<std::size_t>  selected_rows_ {}; // sorted, unique, in-range
         double                    next_freeze_time_ {0.0};
         std::uint64_t             next_id_ {1};
     };

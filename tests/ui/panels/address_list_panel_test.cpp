@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <QItemSelectionModel>
+#include <QKeySequence>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
@@ -408,6 +410,419 @@ TEST_CASE("the address list nests by drag and deletes the whole subtree", "[ui]"
     panel.delete_selected();
     CHECK(prompt == QStringLiteral("Delete parent and its 2 children?"));
     CHECK(table.size() == 0);
+}
+
+TEST_CASE("the address list deletes the whole selection in one command", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    const auto                   add = [&table](const char* description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description;
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add("A", 0x1040);
+    add("B", 0x2040);
+    add("C", 0x3040);
+    add("D", 0x4040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    auto* view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+    QItemSelectionModel* selection = view->selectionModel();
+    REQUIRE(selection != nullptr);
+
+    QString status;
+    bool    is_error = true;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&](const QString& text, bool error)
+                     {
+                         status   = text;
+                         is_error = error;
+                     });
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    // Answers the modal confirmation from inside its nested loop and returns the
+    // box's title and text.
+    QString    prompt;
+    QString    box_title;
+    const auto answer = [&prompt, &box_title](bool accept)
+    {
+        prompt.clear();
+        box_title.clear();
+        QTimer::singleShot(0,
+                           [accept, &prompt, &box_title]
+                           {
+                               for (QWidget* widget : QApplication::topLevelWidgets())
+                               {
+                                   auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
+                                   if (box == nullptr || !box->isVisible())
+                                   {
+                                       continue;
+                                   }
+                                   prompt    = box->text();
+                                   box_title = box->windowTitle();
+                                   if (!accept)
+                                   {
+                                       box->reject();
+                                       return;
+                                   }
+                                   for (QPushButton* button : box->findChildren<QPushButton*>())
+                                   {
+                                       if (button->text() == QStringLiteral("Yes"))
+                                       {
+                                           button->click();
+                                           return;
+                                       }
+                                   }
+                               }
+                           });
+    };
+
+    // Select rows 0 and 2 through the view, then delete both in one command.
+    selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    REQUIRE(table.selected_rows().size() == 2);
+
+    answer(true);
+    panel.delete_selected();
+    CHECK(prompt == QStringLiteral("Delete 2 entries?"));
+    CHECK(box_title == QStringLiteral("Delete Entries"));
+    REQUIRE(table.size() == 2);
+    CHECK(table.entries()[0].description == "B");
+    CHECK(table.entries()[1].description == "D");
+    CHECK(status == QStringLiteral("2 entries deleted."));
+    CHECK_FALSE(is_error);
+
+    // One aggregated record, never one per row.
+    int removals = 0;
+    int single   = 0;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.category != "table")
+        {
+            continue;
+        }
+        if (record.message.starts_with("entries removed"))
+        {
+            ++removals;
+        }
+        if (record.message.starts_with("entry removed at index"))
+        {
+            ++single;
+        }
+    }
+    CHECK(removals == 1);
+    CHECK(single == 0);
+}
+
+TEST_CASE("a deleted selection counts each subtree once", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    const auto                   add = [&table](const char* description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description;
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add("A", 0x1040);
+    add("B", 0x2040);
+    add("C", 0x3040);
+    add("D", 0x4040);
+    REQUIRE(table.move_row(1, 0, true)); // B under A
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+    QItemSelectionModel* selection = view->selectionModel();
+    REQUIRE(selection != nullptr);
+
+    QString status;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&status](const QString& text, bool)
+                     {
+                         status = text;
+                     });
+
+    QString    prompt;
+    const auto answer_yes = [&prompt]()
+    {
+        prompt.clear();
+        QTimer::singleShot(0,
+                           [&prompt]
+                           {
+                               for (QWidget* widget : QApplication::topLevelWidgets())
+                               {
+                                   auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
+                                   if (box == nullptr || !box->isVisible())
+                                   {
+                                       continue;
+                                   }
+                                   prompt = box->text();
+                                   for (QPushButton* button : box->findChildren<QPushButton*>())
+                                   {
+                                       if (button->text() == QStringLiteral("Yes"))
+                                       {
+                                           button->click();
+                                           return;
+                                       }
+                                   }
+                               }
+                           });
+    };
+
+    // A parent row and an unrelated row: the parent's child is counted once.
+    selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    REQUIRE(table.selected_rows().size() == 2);
+
+    answer_yes();
+    panel.delete_selected();
+    CHECK(prompt == QStringLiteral("Delete 2 entries and their 1 children?"));
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].description == "D");
+    CHECK(status == QStringLiteral("2 entries deleted."));
+}
+
+TEST_CASE("a parent and its child in the selection collapse to one block", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    const auto                   add = [&table](const char* description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description;
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add("A", 0x1040);
+    add("B", 0x2040);
+    add("C", 0x3040);
+    REQUIRE(table.move_row(1, 0, true)); // B under A
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+    QItemSelectionModel* selection = view->selectionModel();
+    REQUIRE(selection != nullptr);
+
+    QString status;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&status](const QString& text, bool)
+                     {
+                         status = text;
+                     });
+
+    QString prompt;
+    QTimer::singleShot(0,
+                       [&prompt]
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               prompt = box->text();
+                               for (QPushButton* button : box->findChildren<QPushButton*>())
+                               {
+                                   if (button->text() == QStringLiteral("Yes"))
+                                   {
+                                       button->click();
+                                       return;
+                                   }
+                               }
+                           }
+                       });
+
+    selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(model->index(1, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    REQUIRE(table.selected_rows().size() == 2);
+
+    panel.delete_selected();
+    CHECK(prompt == QStringLiteral("Delete A and its 1 children?"));
+    CHECK(table.size() == 1);
+    CHECK(table.entries()[0].description == "C");
+    CHECK(status == QStringLiteral("Entry deleted."));
+}
+
+TEST_CASE("a cancelled delete keeps the rows and the selection", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    const auto                   add = [&table](const char* description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description;
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add("A", 0x1040);
+    add("B", 0x2040);
+    add("C", 0x3040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+    QItemSelectionModel* selection = view->selectionModel();
+    REQUIRE(selection != nullptr);
+
+    QTimer::singleShot(0,
+                       []
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
+                               if (box != nullptr && box->isVisible())
+                               {
+                                   box->reject();
+                                   return;
+                               }
+                           }
+                       });
+
+    selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    REQUIRE(table.selected_rows().size() == 2);
+
+    panel.delete_selected();
+    CHECK(table.size() == 3);
+    CHECK(table.selected_rows().size() == 2);
+}
+
+TEST_CASE("delete falls back to the cursor and refuses with nothing to delete", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    const auto                   add = [&table](const char* description, std::uint64_t address)
+    {
+        slopkit::table::AddressEntry entry;
+        entry.description = description;
+        entry.address     = address;
+        entry.type        = slopkit::scan::ValueType::int32;
+        entry.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+        table.add(entry);
+    };
+    add("A", 0x1040);
+    add("B", 0x2040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    QString status;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&status](const QString& text, bool)
+                     {
+                         status = text;
+                     });
+
+    // Without a selected set the cursor row alone is the command input.
+    table.set_selected(1);
+    QTimer::singleShot(0,
+                       []
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               for (QPushButton* button : box->findChildren<QPushButton*>())
+                               {
+                                   if (button->text() == QStringLiteral("Yes"))
+                                   {
+                                       button->click();
+                                       return;
+                                   }
+                               }
+                           }
+                       });
+    panel.delete_selected();
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].description == "A");
+    CHECK(status == QStringLiteral("Entry deleted."));
+
+    // Nothing selected and no cursor row: the current refusal stands.
+    table.set_selected(-1);
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+    status = QString {};
+    panel.delete_selected();
+    CHECK(status == QStringLiteral("Select an entry to delete."));
+    CHECK(table.size() == 1);
+    int warnings = 0;
+    for (const slopkit::log::Record& record : records)
+    {
+        if (record.category == "ui" && record.level == slopkit::log::Level::warning
+            && record.message == "delete requested with no selection")
+        {
+            ++warnings;
+        }
+    }
+    CHECK(warnings == 1);
 }
 
 TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
@@ -818,6 +1233,163 @@ TEST_CASE("the address list context menu covers rows and the empty area", "[ui]"
     panel.populate_context_menu(empty_menu, below);
     CHECK(action_texts(empty_menu.actions()) == table_commands);
     CHECK(table.selected() == 0);
+
+    panel.close();
+}
+
+TEST_CASE("the address list mirrors an extended selection into the table", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    add_int32(table, 0x1050);
+    add_int32(table, 0x1060);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    panel.resize(800, 400);
+    panel.show();
+    QCoreApplication::processEvents();
+
+    auto* view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+    CHECK(view->selectionMode() == QAbstractItemView::ExtendedSelection);
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+    QItemSelectionModel* selection = view->selectionModel();
+    REQUIRE(selection != nullptr);
+
+    const auto selected_rows = [&table]()
+    {
+        const std::span<const std::size_t> rows = table.selected_rows();
+        return std::vector<std::size_t> {rows.begin(), rows.end()};
+    };
+
+    // A Ctrl-click-style toggle of two rows lands in the table's set.
+    selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    CHECK(selected_rows() == std::vector<std::size_t> {0, 2});
+
+    // An idle refresh leaves the selection the user just made alone.
+    panel.refresh();
+    CHECK(selected_rows() == std::vector<std::size_t> {0, 2});
+    CHECK(selection->selectedRows().size() == 2);
+
+    // The model reset an added row triggers re-projects the durable set, so the
+    // highlight does not silently vanish on the next tick.
+    add_int32(table, 0x1070);
+    panel.refresh();
+    REQUIRE(table.size() == 4);
+    CHECK(selection->selectedRows().size() == 2);
+
+    // Clearing the view's selection empties the durable set too.
+    selection->clearSelection();
+    CHECK(selected_rows().empty());
+
+    panel.close();
+}
+
+TEST_CASE("the address list Delete entry and Del key share one action", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    REQUIRE(table.add_script("helper", "return 1") == 1);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    auto* view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+
+    // Exactly one action carries the Delete key, on the view and its children.
+    QAction* remove = nullptr;
+    for (QAction* action : view->actions())
+    {
+        if (action->shortcut() == QKeySequence(QKeySequence::Delete))
+        {
+            REQUIRE(remove == nullptr);
+            remove = action;
+        }
+    }
+    REQUIRE(remove != nullptr);
+    CHECK(remove->text() == QStringLiteral("Delete"));
+    CHECK(remove->shortcutContext() == Qt::WidgetWithChildrenShortcut);
+
+    // Both row-menu variants add that very action, so the menu renders `Del`.
+    QMenu script_menu;
+    panel.populate_row_menu(script_menu, 1);
+    CHECK(script_menu.actions().contains(remove));
+
+    QMenu value_menu;
+    panel.populate_row_menu(value_menu, 0);
+    CHECK(value_menu.actions().contains(remove));
+}
+
+TEST_CASE("a right-click aligns the selection with the clicked row", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    add_int32(table, 0x1050);
+    add_int32(table, 0x1060);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    panel.resize(800, 400);
+    panel.show();
+    QCoreApplication::processEvents();
+
+    auto* view = panel.findChild<slopkit::ui::components::AddressTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+    QItemSelectionModel* selection = view->selectionModel();
+    REQUIRE(selection != nullptr);
+
+    const auto selected_rows = [&table]()
+    {
+        const std::span<const std::size_t> rows = table.selected_rows();
+        return std::vector<std::size_t> {rows.begin(), rows.end()};
+    };
+
+    selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    REQUIRE(selected_rows() == std::vector<std::size_t> {0, 2});
+
+    // A right-click on a row inside the selection leaves the whole set alone.
+    QMenu inside;
+    panel.populate_context_menu(inside, view->visualRect(model->index(0, 0)).center());
+    CHECK(table.selected() == 0);
+    CHECK(selected_rows() == std::vector<std::size_t> {0, 2});
+
+    // A right-click on a row outside it collapses the selection to that row.
+    QMenu outside;
+    panel.populate_context_menu(outside, view->visualRect(model->index(1, 0)).center());
+    CHECK(table.selected() == 1);
+    CHECK(selected_rows() == std::vector<std::size_t> {1});
+    REQUIRE(selection->selectedRows().size() == 1);
+    CHECK(selection->selectedRows().front().row() == 1);
+
+    // A click below the rows leaves the selection untouched.
+    const QPoint below {view->viewport()->width() / 2, view->viewport()->height() - 2};
+    REQUIRE_FALSE(view->indexAt(below).isValid());
+    QMenu empty;
+    panel.populate_context_menu(empty, below);
+    CHECK(table.selected() == 1);
+    CHECK(selected_rows() == std::vector<std::size_t> {1});
 
     panel.close();
 }

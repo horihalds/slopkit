@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,6 +15,7 @@
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QItemSelectionModel>
+#include <QKeySequence>
 #include <QMenu>
 #include <QTableView>
 #include <QVBoxLayout>
@@ -79,7 +81,7 @@ namespace slopkit::ui::panels
         table_view_->setModel(model_);
         table_view_->setItemDelegate(new widgets::IndentDelegate(table_view_));
         table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
-        table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
+        table_view_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         table_view_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
         table_view_->setDragDropMode(QAbstractItemView::InternalMove);
         table_view_->setDefaultDropAction(Qt::MoveAction);
@@ -97,13 +99,46 @@ namespace slopkit::ui::panels
                                                               QHeaderView::ResizeToContents);
         layout->addWidget(table_view_, 1);
 
+        // The row menu's Delete entry and the Del key run the same action, scoped
+        // to the table and its editors so the key shadows no other surface.
+        remove_action_ = new QAction(tr("Delete"), this);
+        remove_action_->setShortcut(QKeySequence::Delete);
+        remove_action_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        connect(remove_action_, &QAction::triggered, this, &AddressListPanel::delete_selected);
+        table_view_->addAction(remove_action_);
+
         connect(table_view_->selectionModel(),
                 &QItemSelectionModel::currentRowChanged,
                 this,
                 [this](const QModelIndex& current)
                 {
+                    if (syncing_)
+                    {
+                        return;
+                    }
                     table_.set_selected(current.isValid() ? current.row() : -1);
                     refresh();
+                });
+
+        // The view owns the gesture; every change is mirrored into the table's
+        // durable set. The guard ignores the writes the panel makes itself.
+        connect(table_view_->selectionModel(),
+                &QItemSelectionModel::selectionChanged,
+                this,
+                [this](const QItemSelection&, const QItemSelection&)
+                {
+                    if (syncing_)
+                    {
+                        return;
+                    }
+                    std::vector<std::size_t> rows;
+                    const QModelIndexList    indexes = table_view_->selectionModel()->selectedRows();
+                    rows.reserve(static_cast<std::size_t>(indexes.size()));
+                    for (const QModelIndex& index : indexes)
+                    {
+                        rows.push_back(static_cast<std::size_t>(index.row()));
+                    }
+                    table_.set_selected_rows(rows);
                 });
 
         connect(model_,
@@ -152,7 +187,28 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::refresh()
     {
+        bool                          reset       = false;
+        // The model resets only when the row count changed, which is exactly
+        // when it drops the view's selection and current row. That reset is what
+        // re-projects the durable selection; an idle tick leaves the view alone.
+        const QMetaObject::Connection reset_watch = connect(model_,
+                                                            &QAbstractItemModel::modelReset,
+                                                            this,
+                                                            [&reset]
+                                                            {
+                                                                reset = true;
+                                                            });
+        const bool                    was_syncing = syncing_;
+        // The guard keeps the reset's own selection-clearing from writing the
+        // emptied state back into the table.
+        syncing_                                  = true;
         model_->refresh();
+        syncing_ = was_syncing;
+        disconnect(reset_watch);
+        if (reset)
+        {
+            sync_view_selection();
+        }
         maybe_resolve_expressions();
 
         // The engine and a script's globals are dropped with the target, so a
@@ -469,31 +525,125 @@ namespace slopkit::ui::panels
         set_status(tr("Saved %1 entries.").arg(static_cast<qulonglong>(table_.size())), false);
     }
 
+    std::vector<std::size_t> AddressListPanel::command_rows() const
+    {
+        const std::span<const std::size_t> selected = table_.selected_rows();
+        if (!selected.empty())
+        {
+            return {selected.begin(), selected.end()};
+        }
+        const int cursor = table_.selected();
+        if (cursor >= 0 && table_.valid_index(static_cast<std::size_t>(cursor)))
+        {
+            return {static_cast<std::size_t>(cursor)};
+        }
+        return {};
+    }
+
+    void AddressListPanel::sync_view_selection()
+    {
+        QItemSelectionModel* selection = table_view_->selectionModel();
+        if (selection == nullptr)
+        {
+            return;
+        }
+
+        const bool was_syncing = syncing_;
+        syncing_               = true;
+
+        // Rebuild the highlight from the durable set, then restore the cursor
+        // without disturbing that selection.
+        selection->clearSelection();
+        for (const std::size_t row : table_.selected_rows())
+        {
+            const QModelIndex index = model_->index(static_cast<int>(row), models::AddressTableModel::description);
+            if (index.isValid())
+            {
+                selection->select(index, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            }
+        }
+
+        const int cursor = table_.selected();
+        if (cursor >= 0 && cursor < model_->rowCount())
+        {
+            selection->setCurrentIndex(model_->index(cursor, models::AddressTableModel::description),
+                                       QItemSelectionModel::NoUpdate);
+        }
+
+        syncing_ = was_syncing;
+    }
+
     void AddressListPanel::delete_selected()
     {
-        const int row = table_.selected();
-        if (row < 0)
+        const std::vector<std::size_t> rows = command_rows();
+        if (rows.empty())
         {
             log::warning(log::category::ui, "delete requested with no selection");
             set_status(tr("Select an entry to delete."), true);
             return;
         }
 
-        const auto& entry   = table_.entries()[static_cast<std::size_t>(row)];
-        const auto  address = model_->address_text(entry.address);
-        const auto  label   = entry.description.empty() ? address : to_qstring(entry.description);
+        // Resolve the rows to their top-level blocks: a row inside a listed
+        // parent's subtree is covered by that parent, so it counts (and is
+        // erased) once.
+        std::vector<std::pair<std::size_t, std::size_t>> blocks;
+        std::size_t                                      removed = 0;
+        for (const std::size_t row : rows)
+        {
+            if (!table_.valid_index(row))
+            {
+                continue;
+            }
+            const bool covered = std::ranges::any_of(blocks,
+                                                     [row](const std::pair<std::size_t, std::size_t>& block)
+                                                     {
+                                                         return row >= block.first && row < block.first + block.second;
+                                                     });
+            if (covered)
+            {
+                continue;
+            }
+            const std::size_t count = table_.subtree_size(row);
+            blocks.emplace_back(row, count);
+            removed += count;
+        }
+        if (blocks.empty())
+        {
+            log::warning(log::category::ui, "delete requested with no selection");
+            set_status(tr("Select an entry to delete."), true);
+            return;
+        }
 
-        const std::size_t index    = static_cast<std::size_t>(row);
-        const std::size_t children = table_.subtree_size(index) - 1;
-        const QString     question =
-            children == 0 ? tr("Delete %1?").arg(label) : tr("Delete %1 and its %2 children?").arg(label).arg(children);
-        if (!widgets::confirm(this, tr("Delete Entry"), question))
+        const std::size_t entries  = blocks.size();
+        const std::size_t children = removed - entries;
+
+        QString question;
+        QString title;
+        if (entries == 1)
+        {
+            const table::AddressEntry& entry = table_.entries()[blocks.front().first];
+            const QString              label =
+                entry.description.empty() ? model_->address_text(entry.address) : to_qstring(entry.description);
+            title    = tr("Delete Entry");
+            question = children == 0 ? tr("Delete %1?").arg(label)
+                                     : tr("Delete %1 and its %2 children?").arg(label).arg(children);
+        }
+        else
+        {
+            title    = tr("Delete Entries");
+            question = children == 0 ? tr("Delete %1 entries?").arg(entries)
+                                     : tr("Delete %1 entries and their %2 children?").arg(entries).arg(children);
+        }
+
+        if (!widgets::confirm(this, title, question))
         {
             return;
         }
 
-        table_.remove(index);
-        set_status(tr("Entry deleted."), false);
+        table_.remove_rows(rows);
+        set_status(entries == 1 ? tr("Entry deleted.") : tr("%1 entries deleted.").arg(entries), false);
+        // The deleted rows and the re-projected selection land in one step.
+        refresh();
     }
 
     void AddressListPanel::toggle_active_selected()
@@ -841,8 +991,17 @@ namespace slopkit::ui::panels
         const QModelIndex index = table_view_->indexAt(position);
         if (index.isValid() && table_.valid_index(static_cast<std::size_t>(index.row())))
         {
-            table_.set_selected(index.row());
-            populate_row_menu(menu, static_cast<std::size_t>(index.row()));
+            const std::size_t row = static_cast<std::size_t>(index.row());
+            table_.set_selected(static_cast<int>(row));
+            if (!table_.is_row_selected(row))
+            {
+                // A right-click outside the selection moves the whole selection
+                // to the clicked row, so the menu's Delete matches what the user
+                // right-clicked. A right-click inside it leaves it alone.
+                table_.set_selected_rows(std::span<const std::size_t>(&row, 1));
+                sync_view_selection();
+            }
+            populate_row_menu(menu, row);
             return;
         }
 
@@ -897,8 +1056,7 @@ namespace slopkit::ui::panels
                     });
 
             menu.addSeparator();
-            QAction* remove_script = menu.addAction(tr("Delete"));
-            connect(remove_script, &QAction::triggered, this, &AddressListPanel::delete_selected);
+            menu.addAction(remove_action_);
         }
         else
         {
@@ -978,8 +1136,7 @@ namespace slopkit::ui::panels
             (void)widgets::disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
 
             menu.addSeparator();
-            QAction* remove = menu.addAction(tr("Delete"));
-            connect(remove, &QAction::triggered, this, &AddressListPanel::delete_selected);
+            menu.addAction(remove_action_);
         }
 
         // The table-area commands follow the row's own entries, after their own
