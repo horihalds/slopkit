@@ -65,6 +65,20 @@ namespace slopkit::plugins::wine_proton
 
     [[nodiscard]] std::vector<std::string> injector_environment(const std::vector<std::string>& environment);
 
+    // The injector's command line. Wine cannot always write into a Proton target,
+    // so the two calls are separate: `--allocate` reserves the block that is to
+    // hold the DLL path and prints its address, and `--load` runs
+    // `LoadLibraryW` on the address the plugin filled in between.
+    [[nodiscard]] std::vector<std::string>
+    injector_allocate_arguments(const WineTarget& target, const std::filesystem::path& injector, std::size_t bytes);
+
+    // The DLL path is only carried along when the plugin could not place it
+    // through the host's own view of the target.
+    [[nodiscard]] std::vector<std::string> injector_load_arguments(const WineTarget&                 target,
+                                                                   const std::filesystem::path&      injector,
+                                                                   std::uint64_t                     address,
+                                                                   const std::optional<std::string>& windows_dll_path);
+
     [[nodiscard]] std::string linux_path_to_windows(const std::string& path);
 
     [[nodiscard]] bool target_can_reach(process::ProcessId pid, const std::filesystem::path& path);

@@ -633,6 +633,36 @@ TEST_CASE("the injector environment drops process-local handoffs", "[wine_proton
     }
 }
 
+TEST_CASE("the injector is called once to reserve the block and once to load it", "[wine_proton]")
+{
+    using slopkit::plugins::wine_proton::injector_allocate_arguments;
+    using slopkit::plugins::wine_proton::injector_load_arguments;
+    using slopkit::plugins::wine_proton::WineTarget;
+
+    WineTarget target;
+    target.pid         = 4242;
+    target.wine_binary = "/opt/proton/files/lib/wine/x86_64-unix/wine64";
+    target.image_path  = "Z:\\games\\game.exe";
+
+    const auto allocate = injector_allocate_arguments(target, "/tmp/stage/slopkit-injector", 128);
+    CHECK(allocate.front() == target.wine_binary.string());
+    CHECK(std::ranges::find(allocate, "--image") != allocate.end());
+    CHECK(std::ranges::find(allocate, target.image_path) != allocate.end());
+    CHECK(std::ranges::find(allocate, "--allocate") != allocate.end());
+    CHECK(std::ranges::find(allocate, "128") != allocate.end());
+
+    const auto load = injector_load_arguments(target, "/tmp/stage/slopkit-injector", 0x140000, std::nullopt);
+    CHECK(std::ranges::find(load, "--load") != load.end());
+    CHECK(std::ranges::find(load, std::to_string(std::uint64_t {0x140000})) != load.end());
+
+    // The path travels with the load call only when the plugin could not place it
+    // through the host's own view of the target.
+    const auto fallback =
+        injector_load_arguments(target, "/tmp/stage/slopkit-injector", 0x140000, "Z:\\stage\\slopkit-agent.dll");
+    CHECK(std::ranges::find(fallback, "--dll") != fallback.end());
+    CHECK(std::ranges::find(fallback, "Z:\\stage\\slopkit-agent.dll") != fallback.end());
+}
+
 TEST_CASE("the agent is staged where the target can reach it", "[wine_proton]")
 {
     using slopkit::plugins::wine_proton::make_staging_directory;

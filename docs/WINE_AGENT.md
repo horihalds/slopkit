@@ -35,12 +35,12 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
 | --- | --- | --- |
 | Protocol header | `src/plugins/wine_proton/agent/slopkit_agent_protocol.h` | The one contract (version 5): the fixed header, the ring of `SLOPKIT_AGENT_SLOT_COUNT` request slots — each with its own atomic state word, request/response record and 64 KiB payload — and the op/status/page constants. Compiled by mingw-w64 and by the Linux plugin. |
 | Agent DLL | `src/plugins/wine_proton/agent/slopkit_agent.c` | C11, `-nostdlib`, kernel32 only. `DllMain` starts one dispatcher thread; the dispatcher maps the region file next to the DLL, claims every slot in the request state and hands it to a worker created lazily (up to the worker cap, never under Wine's loader lock), and the workers serve `HELLO`, `ALLOC`, `ALLOC_NEAR`, `FREE`, `PROTECT`, `QUERY`, `ENUM`, `MODULES`. Each worker answers its own slot and publishes the response with a release store. `ENUM` walks `VirtualQuery` into that slot's payload; `MODULES` walks the target's own `InLoadOrderModuleList`. `SHUTDOWN` is answered by the dispatcher, which drains in-flight slots, frees everything, joins every worker and unmaps. |
-| Injector | `src/plugins/wine_proton/agent/slopkit_injector.c` | One-shot exe run under the target's own wine: finds the target by image path, is idempotent when the agent is already loaded, then `OpenProcess` / `VirtualAllocEx` / `WriteProcessMemory` / `CreateRemoteThread(LoadLibraryW)`. |
+| Injector | `src/plugins/wine_proton/agent/slopkit_injector.c` | One-shot exe run under the target's own wine, in two calls around the host write (see "Wine's write into a Proton game" below): `--allocate <bytes>` finds the target by image path, is idempotent when the agent is already loaded and returns the block `VirtualAllocEx` reserved in it; `--load <address>` runs `CreateRemoteThread(LoadLibraryW)` on that block, writing the DLL path itself with `WriteProcessMemory` only when the plugin hands it over instead. |
 | Test probe | `src/plugins/wine_proton/agent/slopkit_probe.c` | A trivial console target for the wine-gated end-to-end test; never installed. |
 | Cross-compile | `cmake/Agent.cmake` | One pair of targets per bitness (`x86_64`, `i686`), a clear error when mingw-w64 and no prebuilt exist, and the install rule. |
 | Target derivation | `src/plugins/wine_proton/wine_target.{hpp,cpp}` | From `/proc/<pid>`: the guest's main PE (for the bitness and the `Z:` image path), the loader to host the injector, the target's own environment (without the process-local handoff entries below), a `WINEPREFIX` fallback and the staging directory the target's own namespace can reach. The same one-module selection also names the target in the process list: `guest_image_name` returns that PE image's file name with its extension, so a claimed pid reads `game.exe` rather than the loader's 15-character comm or its exe basename, and a `NameCache` remembers the name per pid for a five-second TTL so the picker's two-second refresh does not re-walk every claimed target — a name is therefore up to the TTL stale, including after a pid is reused. A claimed pid with no identifiable executable image (a `proton`, `pressure-vessel` or `wine64-preloader` wrapper) keeps the comm-then-exe-basename fallback instead of an empty name. |
 | Transport | `src/plugins/wine_proton/agent_transport.{hpp,cpp}` | Creates and mmaps the region and exposes a pool of request slots. `acquire()` hands out a free slot and `Slot::transact()` publishes on it, waits with a bounded timeout and bumps the heartbeat; the request payload is copied into the slot before publishing and the response payload out before the state returns to idle, so one slot never races another. Capacity is the count `HELLO` advertised (one when it reported none). A slot whose exchange times out is retired and never reused, so a late answer can never be read as the next request's. |
-| Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, stages them where the target can see them, spawns the injector under the target's wine, runs the `HELLO` handshake (refusing a version, record-size or payload-size mismatch, and sizing the slot pool from the advertised capacity), and serves `allocate`, `allocate_near`, `free`, `protect`, `query`, `enumerate` and `modules`; tracks the addresses it handed out under a mutex and reports whether every slot is retired. |
+| Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, stages them where the target can see them, spawns the injector under the target's wine once to reserve the DLL path's block and once — after placing the UTF-16 `Z:` path there through the host's own view of the target, or letting the injector write it when even the host cannot — to run `LoadLibraryW` on it, runs the `HELLO` handshake (refusing a version, record-size or payload-size mismatch, and sizing the slot pool from the advertised capacity), and serves `allocate`, `allocate_near`, `free`, `protect`, `query`, `enumerate` and `modules`; tracks the addresses it handed out under a mutex and reports whether every slot is retired. |
 | Service | `src/plugins/wine_proton/agent_service.{hpp,cpp}` | The per-pid owner and the profile hooks that still need the target's own manager: `allocate`/`free` (agent-only), `modules` and `regions`. Parallel calls run without a global lock, lazy bring-up, the bounded revive policy, the stopped-target routing, the module-list cache, the in-flight counter `close` waits on, and `close`. |
 | Region merge | `src/plugins/wine_proton/agent_regions.{hpp,cpp}` | The pure merge of the agent's walk with `/proc/<pid>/maps`: boundaries, commit state and protection come from the agent, `path`, `offset`, `shared` and `deleted` from the overlapping procfs line. |
 | Module merge | `src/plugins/wine_proton/agent_modules.{hpp,cpp}` | The pure merge of the agent's loader walk with `/proc/<pid>/maps`: `base`, image size, entry point, Wine's base name and the main flag come from the loader, `path` and `offset` from the overlapping procfs line; also the UTF-16 to UTF-8 name decoder. |
@@ -51,9 +51,10 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
    introspection call while the target is runnable — derives the target, stages
    the bitness-matched DLL and injector into a per-session directory the target
    can reach (see "Proton's private runtime directory" below), creates the region
-   file there and runs the injector under the loader the target itself runs, with
-   the target's own environment, minus the process-local handoffs described
-   below. A failure here records the reason and is retried by a later call,
+   file there and runs the injector under the loader the target itself runs — once
+   to reserve the block that is to carry the DLL path, then again to load it (see
+   "Wine's write into a Proton game" below) — with the target's own environment,
+   minus the process-local handoffs described below. A failure here records the reason and is retried by a later call,
    bounded by the revive policy (three revives with a five second cooldown); the
    failing call is answered with the error — there is no ptrace fallback for
    allocation.
@@ -200,7 +201,38 @@ The reported reason for a failed injector was the wrong line as well: the game's
 own `WINEDEBUG` prints traces, so the first line of the capture was a `seh`
 trace and never the injector's message. It now reports the injector's last
 `slopkit-injector:` line, or its last non-empty line when the loader died before
-the injector printed anything.
+the injector printed anything. The shared host line for a failed module list
+(`could not list modules: I/O error`) only ever carries the error code, so the
+plugin logs the recorded reason next to it as well.
+
+## Wine's write into a Proton game
+
+The agent's memory work crosses two namespaces, and only one of them can write
+into the game. For the reporter's Proton game, Wine's own cross-process write
+failed:
+
+```
+warning [process] wine-proton agent for pid 312355 could not start (the injector
+exited with 3: slopkit-injector: WriteProcessMemory failed)
+warning [process] could not list modules: I/O error
+```
+
+The injector's `OpenProcess`, `VirtualAllocEx` and its enumeration of the game
+all still worked, so the block was reserved in the game's address space — but the
+write into it came back as `ERROR_ACCESS_DENIED`, the same game whose memory
+slopkit's own `process_vm_writev` and `/proc/<pid>/mem` reach without trouble.
+The agent never started, the module list stayed empty, and every script that
+followed then searched the whole address space instead of one module until its
+time budget expired.
+
+The block therefore belongs to the plugin: `--allocate` reserves it and prints
+its address, the plugin writes the UTF-16 `Z:` DLL path into it through the path
+it already uses for every read and write, and `--load` starts `LoadLibraryW` on
+it. A target the *host* cannot reach either — the wine-gated "inherited a
+wineserver socket" test stands in for one — is still injected, because the plugin
+then hands the path to the `--load` call and the injector's own
+`WriteProcessMemory` places it. Each direction names which side refused, so a
+failure is never silent.
 
 ## What was measured
 
@@ -239,6 +271,12 @@ the injector printed anything.
   with `ShellExecuteEx failed: File not found.`, while the same injector run from
   a directory under `/tmp` with the target's environment loads the agent into the
   game (`slopkit-injector: loaded into pid <windows pid>`).
+- The Proton write failure was reproduced against the reporter's own game:
+  `VirtualAllocEx` reserved a block in the game, the host wrote the DLL path into
+  it and the injector's `--load` mapped the staged DLL into the game
+  (`slopkit-injector: loaded into pid <windows pid>`, with the DLL then present in
+  the game's `/proc/<pid>/maps`), while Wine's own `WriteProcessMemory` into the
+  same block answered `ERROR_ACCESS_DENIED`.
 - The agent and injector build warning-free for both bitnesses; `tools/verify.sh`
   covers them.
 

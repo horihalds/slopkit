@@ -221,6 +221,36 @@ namespace slopkit::plugins::wine_proton
         return filtered;
     }
 
+    std::vector<std::string>
+    injector_allocate_arguments(const WineTarget& target, const std::filesystem::path& injector, std::size_t bytes)
+    {
+        return {target.wine_binary.string(),
+                injector.string(),
+                "--image",
+                target.image_path,
+                "--allocate",
+                std::to_string(bytes)};
+    }
+
+    std::vector<std::string> injector_load_arguments(const WineTarget&                 target,
+                                                     const std::filesystem::path&      injector,
+                                                     std::uint64_t                     address,
+                                                     const std::optional<std::string>& windows_dll_path)
+    {
+        std::vector<std::string> arguments {target.wine_binary.string(),
+                                            injector.string(),
+                                            "--image",
+                                            target.image_path,
+                                            "--load",
+                                            std::to_string(address)};
+        if (windows_dll_path)
+        {
+            arguments.push_back("--dll");
+            arguments.push_back(*windows_dll_path);
+        }
+        return arguments;
+    }
+
     bool target_can_reach(process::ProcessId pid, const std::filesystem::path& path)
     {
         if (path.is_relative())

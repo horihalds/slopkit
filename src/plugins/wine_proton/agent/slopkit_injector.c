@@ -105,6 +105,17 @@ static int text_equal_ci(const wchar_t* left, const wchar_t* right)
     return *left == *right;
 }
 
+/* The decimal value of a command-line number, or 0 when it is not one. */
+static DWORD text_to_number(const wchar_t* text)
+{
+    DWORD value = 0;
+    for (const wchar_t* cursor = text; *cursor >= L'0' && *cursor <= L'9'; ++cursor)
+    {
+        value = value * 10u + (DWORD)(*cursor - L'0');
+    }
+    return value;
+}
+
 static const wchar_t* text_basename(const wchar_t* path)
 {
     const wchar_t* base = path;
@@ -446,6 +457,131 @@ static int list_processes(void)
     return 0;
 }
 
+/* Wine's own cross-process memory write cannot reach every target: a Proton game
+   can be reachable from the host that runs slopkit while WriteProcessMemory into
+   it fails with ERROR_ACCESS_DENIED, and so can Wine's own toolhelp view of its
+   modules. What only Wine can do is still done here — `--allocate <bytes>`
+   reserves the block that is to hold the DLL path and prints its address, and
+   `--load <address>` starts `LoadLibraryW` on it — while the plugin fills the
+   block through the host's own view of the target, a path the host always has.
+   A plain `--dll` keeps the single-call behaviour for the targets Wine can write
+   to itself. */
+static int start_thread(HANDLE process, DWORD pid, void* argument)
+{
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    LPTHREAD_START_ROUTINE load = kernel32 != NULL
+                                      ? (LPTHREAD_START_ROUTINE)(void*)GetProcAddress(kernel32, "LoadLibraryW")
+                                      : NULL;
+    if (load == NULL)
+    {
+        write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: LoadLibraryW not found");
+        return 3;
+    }
+
+    HANDLE thread = CreateRemoteThread(process, NULL, 0, load, argument, 0, NULL);
+    if (thread == NULL)
+    {
+        wchar_t message[64];
+        text_copy(message, L"slopkit-injector: CreateRemoteThread failed, error ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
+        write_line(GetStdHandle(STD_ERROR_HANDLE), message);
+        return 3;
+    }
+
+    DWORD       loaded = 0;
+    const DWORD wait   = WaitForSingleObject(thread, SLOPKIT_INJECTOR_WAIT_MS);
+    int         result = 3;
+    if (wait != WAIT_OBJECT_0)
+    {
+        write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: the remote load timed out");
+    }
+    else if (!GetExitCodeThread(thread, &loaded) || loaded == 0)
+    {
+        write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: the remote LoadLibrary returned no module");
+    }
+    else
+    {
+        wchar_t message[16 + SLOPKIT_INJECTOR_PATH_CHARS + 32];
+        text_copy(message, L"slopkit-injector: loaded into pid ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), pid, 0);
+        path_append(message, sizeof(message) / sizeof(message[0]), L", module 0x");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), loaded, 1);
+        write_line(GetStdHandle(STD_OUTPUT_HANDLE), message);
+        result = 0;
+    }
+    CloseHandle(thread);
+    return result;
+}
+
+static int allocate_block(DWORD pid, size_t bytes)
+{
+    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION, FALSE, pid);
+    if (process == NULL)
+    {
+        wchar_t message[64];
+        text_copy(message, L"slopkit-injector: OpenProcess failed, error ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
+        write_line(GetStdHandle(STD_ERROR_HANDLE), message);
+        return 3;
+    }
+
+    void* block = VirtualAllocEx(process, NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (block == NULL)
+    {
+        wchar_t message[64];
+        text_copy(message, L"slopkit-injector: VirtualAllocEx failed, error ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
+        write_line(GetStdHandle(STD_ERROR_HANDLE), message);
+        CloseHandle(process);
+        return 3;
+    }
+
+    /* The block is left in the target on purpose: the plugin fills it and a
+       later `--load <address>` consumes it. */
+    wchar_t message[80];
+    text_copy(message, L"slopkit-injector: allocated ");
+    path_append_number(message, sizeof(message) / sizeof(message[0]), (uint64_t)(uintptr_t)block, 0);
+    path_append(message, sizeof(message) / sizeof(message[0]), L" in pid ");
+    path_append_number(message, sizeof(message) / sizeof(message[0]), pid, 0);
+    write_line(GetStdHandle(STD_OUTPUT_HANDLE), message);
+    CloseHandle(process);
+    return 0;
+}
+
+static int load_block(DWORD pid, void* address, const wchar_t* dll_path)
+{
+    const DWORD access = PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
+                         PROCESS_VM_WRITE | PROCESS_VM_READ;
+    HANDLE process = OpenProcess(access, FALSE, pid);
+    if (process == NULL)
+    {
+        wchar_t message[64];
+        text_copy(message, L"slopkit-injector: OpenProcess failed, error ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
+        write_line(GetStdHandle(STD_ERROR_HANDLE), message);
+        return 3;
+    }
+
+    int result = 3;
+    if (dll_path == NULL)
+    {
+        result = start_thread(process, pid, address);
+    }
+    else if (!WriteProcessMemory(process, address, dll_path, (text_length(dll_path) + 1) * sizeof(wchar_t), NULL))
+    {
+        wchar_t message[64];
+        text_copy(message, L"slopkit-injector: WriteProcessMemory failed, error ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
+        write_line(GetStdHandle(STD_ERROR_HANDLE), message);
+    }
+    else
+    {
+        result = start_thread(process, pid, address);
+    }
+    CloseHandle(process);
+    return result;
+}
+
 static int inject(DWORD pid, const wchar_t* dll_path)
 {
     const DWORD access = PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
@@ -453,66 +589,33 @@ static int inject(DWORD pid, const wchar_t* dll_path)
     HANDLE process = OpenProcess(access, FALSE, pid);
     if (process == NULL)
     {
-        wchar_t message[128];
+        wchar_t message[64];
         text_copy(message, L"slopkit-injector: OpenProcess failed, error ");
         path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
         write_line(GetStdHandle(STD_ERROR_HANDLE), message);
         return 3;
     }
 
-    const size_t  bytes    = (text_length(dll_path) + 1) * sizeof(wchar_t);
-    void*         remote   = VirtualAllocEx(process, NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    int           result   = 3;
+    const size_t bytes  = (text_length(dll_path) + 1) * sizeof(wchar_t);
+    void*        remote = VirtualAllocEx(process, NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    int          result = 3;
     if (remote == NULL)
     {
-        write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: VirtualAllocEx failed");
+        wchar_t message[64];
+        text_copy(message, L"slopkit-injector: VirtualAllocEx failed, error ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
+        write_line(GetStdHandle(STD_ERROR_HANDLE), message);
     }
     else if (!WriteProcessMemory(process, remote, dll_path, bytes, NULL))
     {
-        write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: WriteProcessMemory failed");
+        wchar_t message[64];
+        text_copy(message, L"slopkit-injector: WriteProcessMemory failed, error ");
+        path_append_number(message, sizeof(message) / sizeof(message[0]), GetLastError(), 0);
+        write_line(GetStdHandle(STD_ERROR_HANDLE), message);
     }
     else
     {
-        HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
-        LPTHREAD_START_ROUTINE load = kernel32 != NULL
-                                          ? (LPTHREAD_START_ROUTINE)(void*)GetProcAddress(kernel32, "LoadLibraryW")
-                                          : NULL;
-        if (load == NULL)
-        {
-            write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: LoadLibraryW not found");
-        }
-        else
-        {
-            HANDLE thread = CreateRemoteThread(process, NULL, 0, load, remote, 0, NULL);
-            if (thread == NULL)
-            {
-                write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: CreateRemoteThread failed");
-            }
-            else
-            {
-                const DWORD wait = WaitForSingleObject(thread, SLOPKIT_INJECTOR_WAIT_MS);
-                DWORD       module = 0;
-                if (wait != WAIT_OBJECT_0)
-                {
-                    write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: the remote load timed out");
-                }
-                else if (!GetExitCodeThread(thread, &module) || module == 0)
-                {
-                    write_line(GetStdHandle(STD_ERROR_HANDLE), L"slopkit-injector: the remote LoadLibrary returned no module");
-                }
-                else
-                {
-                    wchar_t message[16 + SLOPKIT_INJECTOR_PATH_CHARS + 32];
-                    text_copy(message, L"slopkit-injector: loaded into pid ");
-                    path_append_number(message, sizeof(message) / sizeof(message[0]), pid, 0);
-                    path_append(message, sizeof(message) / sizeof(message[0]), L", module 0x");
-                    path_append_number(message, sizeof(message) / sizeof(message[0]), module, 1);
-                    write_line(GetStdHandle(STD_OUTPUT_HANDLE), message);
-                    result = 0;
-                }
-                CloseHandle(thread);
-            }
-        }
+        result = start_thread(process, pid, remote);
     }
     if (remote != NULL)
     {
@@ -539,6 +642,10 @@ int slopkit_injector_entry(void)
     int     list = 0;
     int     have_image = 0;
     int     have_dll   = 0;
+    int     allocate   = 0;
+    int     load       = 0;
+    DWORD   allocate_bytes = 0;
+    uint64_t load_address  = 0;
     image[0] = L'\0';
     dll[0]   = L'\0';
 
@@ -559,6 +666,16 @@ int slopkit_injector_entry(void)
             path_normalize(arguments[++index], dll, SLOPKIT_INJECTOR_PATH_CHARS);
             have_dll = 1;
         }
+        else if (text_equal_ci(argument, L"--allocate") && index + 1 < count)
+        {
+            allocate_bytes = text_to_number(arguments[++index]);
+            allocate       = 1;
+        }
+        else if (text_equal_ci(argument, L"--load") && index + 1 < count)
+        {
+            load_address = text_to_number(arguments[++index]);
+            load         = 1;
+        }
         else
         {
             wchar_t message[SLOPKIT_INJECTOR_PATH_CHARS + 64];
@@ -573,10 +690,11 @@ int slopkit_injector_entry(void)
     {
         ExitProcess((UINT)list_processes());
     }
-    if (!have_image || !have_dll)
+    if (!have_image)
     {
         write_line(GetStdHandle(STD_ERROR_HANDLE),
-                   L"usage: slopkit-injector.exe --image <target> --dll <agent.dll> | --list");
+                   L"usage: slopkit-injector.exe --image <target> --dll <agent.dll> | --allocate <bytes> | --load "
+                   L"<address> | --list");
         ExitProcess(1);
     }
 
@@ -585,6 +703,21 @@ int slopkit_injector_entry(void)
     if (found != 0)
     {
         ExitProcess((UINT)found);
+    }
+    if (allocate)
+    {
+        ExitProcess((UINT)allocate_block(pid, (size_t)allocate_bytes));
+    }
+    if (load)
+    {
+        ExitProcess((UINT)load_block(pid, (void*)(uintptr_t)load_address, have_dll ? dll : NULL));
+    }
+    if (!have_dll)
+    {
+        write_line(GetStdHandle(STD_ERROR_HANDLE),
+                   L"usage: slopkit-injector.exe --image <target> --dll <agent.dll> | --allocate <bytes> | --load "
+                   L"<address> | --list");
+        ExitProcess(1);
     }
     if (agent_module_present(pid))
     {

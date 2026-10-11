@@ -437,7 +437,11 @@ namespace slopkit::plugins::wine_proton
                     return *cached;
                 }
             }
-            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, failure_reason(state)});
+            // The host only sees the error code, so the recorded reason is named
+            // here, next to the failure it explains.
+            const std::string reason = failure_reason(state);
+            log::warning(log::category::process, std::format("cannot list modules of pid {}: {}", session.pid, reason));
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, reason});
         }
 
         std::vector<AgentModuleEntry> entries;

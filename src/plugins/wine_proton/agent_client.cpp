@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <charconv>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -17,6 +20,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+#include "platform/linux/memory.hpp"
+#include "plugins/support/memory.hpp"
 #include "plugins/wine_proton/agent_modules.hpp"
 #include "process/types.hpp"
 
@@ -144,6 +151,36 @@ namespace slopkit::plugins::wine_proton
             return outcome;
         }
 
+        // The injector reports the block it reserved, and the plugin writes the
+        // DLL path into it before the load call consumes the address.
+        std::optional<std::uint64_t> injector_allocated_address(const std::string& output)
+        {
+            constexpr std::string_view marker = "slopkit-injector: allocated ";
+            const auto                 start  = output.rfind(marker);
+            if (start == std::string::npos)
+            {
+                return std::nullopt;
+            }
+            const auto    begin   = output.data() + start + marker.size();
+            std::uint64_t address = 0;
+            if (std::from_chars(begin, output.data() + output.size(), address).ec != std::errc {})
+            {
+                return std::nullopt;
+            }
+            return address;
+        }
+
+        // The staged path is read by the target's Wine, so it travels as the
+        // UTF-16 text Wine expects in the block.
+        std::vector<std::byte> utf16_path(const std::string& path)
+        {
+            const std::vector<char16_t> units(path.begin(), path.end());
+            std::vector<char16_t>       terminated(units);
+            terminated.push_back(u'\0');
+            const auto bytes = std::as_bytes(std::span(terminated));
+            return std::vector<std::byte>(bytes.begin(), bytes.end());
+        }
+
     }
 
     std::string injector_failure_message(std::string_view output)
@@ -233,15 +270,45 @@ namespace slopkit::plugins::wine_proton
             return std::unexpected(transport.error());
         }
 
-        const std::vector<std::string> arguments {
-            target.wine_binary.string(),
-            injector_target.string(),
-            "--image",
-            target.image_path,
-            "--dll",
-            linux_path_to_windows(dll_target.string()),
-        };
-        const auto spawned = run_process(arguments, target.environment, timeout);
+        const auto path_bytes = utf16_path(linux_path_to_windows(dll_target.string()));
+        const auto prepared   = run_process(
+            injector_allocate_arguments(target, injector_target, path_bytes.size()), target.environment, timeout);
+        if (!prepared)
+        {
+            return std::unexpected(prepared.error());
+        }
+        if (prepared->timed_out)
+        {
+            return std::unexpected(std::format("the injector did not finish within {} ms", timeout.count()));
+        }
+        if (prepared->exit_code != 0)
+        {
+            return std::unexpected(std::format(
+                "the injector exited with {}: {}", prepared->exit_code, injector_failure_message(prepared->output)));
+        }
+        const auto address = injector_allocated_address(prepared->output);
+        if (!address)
+        {
+            return std::unexpected(std::format("the injector did not report the block for the DLL path: {}",
+                                               injector_failure_message(prepared->output)));
+        }
+
+        // A Proton game can be out of the host's reach while its own Wine still
+        // writes to it, so the injector falls back to writing the path itself.
+        const auto                 dll_windows = linux_path_to_windows(dll_target.string());
+        std::optional<std::string> unplaced;
+        if (const auto written = platform::write_memory(target.pid, *address, path_bytes); !written)
+        {
+            log::debug(log::category::process,
+                       std::format("the DLL path for pid {} cannot be written from here ({}); the injector will "
+                                   "place it",
+                                   target.pid,
+                                   support::message_for(written.error())));
+            unplaced = dll_windows;
+        }
+
+        const auto spawned = run_process(
+            injector_load_arguments(target, injector_target, *address, unplaced), target.environment, timeout);
         if (!spawned)
         {
             return std::unexpected(spawned.error());
