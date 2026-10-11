@@ -314,23 +314,23 @@ TEST_CASE("the memory view document renders static rows as module+RVA", "[ui]")
     document.set_view(0x1000, 16, 24);
 
     // Without a module map the text keeps the 16-digit padded form.
-    CHECK(document.address_text(0x1010) == QStringLiteral("0000000000001010"));
+    CHECK(document.address_text(0x1010) == QStringLiteral("0x0000000000001010"));
 
     document.set_modules({module_image("app", 0x1000, 0x1000)});
-    CHECK(document.address_text(0x1000) == QStringLiteral("app+0"));
-    CHECK(document.address_text(0x1010) == QStringLiteral("app+10"));
+    CHECK(document.address_text(0x1000) == QStringLiteral("app+0x0"));
+    CHECK(document.address_text(0x1010) == QStringLiteral("app+0x10"));
 
     // Absolute mode restores the padded text.
     document.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(document.address_text(0x1010) == QStringLiteral("0000000000001010"));
+    CHECK(document.address_text(0x1010) == QStringLiteral("0x0000000000001010"));
 
     // An address outside every span stays absolute in both modes.
     document.set_address_mode(slopkit::ui::AddressMode::module_relative);
-    CHECK(document.address_text(0x5000010) == QStringLiteral("0000000005000010"));
+    CHECK(document.address_text(0x5000010) == QStringLiteral("0x0000000005000010"));
 
     // A long module name is shortened in the pane address, while the full
     // accessor keeps the untruncated spelling for hovers.
     document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x1000)});
-    CHECK(document.address_text(0x1010) == QStringLiteral("DyingL..._rwdi.exe+10"));
-    CHECK(document.full_address_text(0x1010) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+10"));
+    CHECK(document.address_text(0x1010) == QStringLiteral("DyingL..._rwdi.exe+0x10"));
+    CHECK(document.full_address_text(0x1010) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x10"));
 }

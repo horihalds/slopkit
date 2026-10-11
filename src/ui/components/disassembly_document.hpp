@@ -28,13 +28,13 @@ namespace slopkit::ui::components
     // What the listing's Copy submenu puts on the clipboard for a decoded row.
     enum class CopyFormat
     {
-        module_relative,           // "<module>+<RVA>"; the absolute form outside every module
-        absolute,                  // "7F3A1B2C"
+        module_relative,           // "<module>+0x<RVA>"; the absolute form outside every module
+        absolute,                  // "0x7F3A1B2C"
         bytes,                     // "48 89 E5", or "??" when unreadable
         instruction,               // "MOV RBP, RSP"
-        address_and_bytes,         // "app+10: 48 89 E5"
-        address_and_instruction,   // "app+10: MOV RBP, RSP"
-        address_bytes_instruction, // "app+10: 48 89 E5  MOV RBP, RSP"
+        address_and_bytes,         // "app+0x10: 48 89 E5"
+        address_and_instruction,   // "app+0x10: MOV RBP, RSP"
+        address_bytes_instruction, // "app+0x10: 48 89 E5  MOV RBP, RSP"
     };
 
     // How the listing paints one run of an instruction line.
@@ -43,7 +43,7 @@ namespace slopkit::ui::components
         plain,        // mnemonic, brackets, commas: the row's own colour
         cpu_register, // a register name
         immediate,    // an immediate or a displacement
-        module,       // the module name of a `module+RVA` address
+        module,       // the module name of a `module+0xRVA` address
     };
 
     // One painted run of the rendered line, in the order it prints.
@@ -51,7 +51,7 @@ namespace slopkit::ui::components
     {
         QString     text;
         SegmentKind kind {SegmentKind::plain};
-        // The untruncated `<module>+<RVA>` when this run is a shortened module
+        // The untruncated `<module>+0x<RVA>` when this run is a shortened module
         // label; empty otherwise, so a surface that did not shorten shows
         // nothing new on hover.
         QString     full {};

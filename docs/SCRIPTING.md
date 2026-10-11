@@ -160,7 +160,7 @@ raises `alloc: the target's plugin cannot allocate memory`; a debug session and 
 allocation never overlap, and the allocation disappears when the target detaches.
 
 In `assemble`, `text` holds one instruction per line written the way the
-disassembly listing prints it (`MOV RBP, RSP`, `JZ 4010`, `MOV RAX, [22FE]`);
+disassembly listing prints it (`MOV RBP, RSP`, `JZ 0x4010`, `MOV RAX, [0x22FE]`);
 blank lines and a `;` to the end of a line are ignored, a bare number is hex
 (`MOV EAX, 10` writes `0x10`) while `#10` is decimal, and each instruction is
 encoded for the address it will occupy. Extra arguments feed Lua's
@@ -216,7 +216,7 @@ local kHook = {
         nop    ; TODO: replace with your code
     ]],
     trampoline = [[
-        SUB RSP, 28
+        SUB RSP, 0x28
         MOV RAX, RBX
     ]],
 }

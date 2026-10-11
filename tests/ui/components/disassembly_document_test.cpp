@@ -184,7 +184,7 @@ TEST_CASE("the disassembly document wraps a `??` and a `.byte` row on one line",
     fixture.document.ensure_rows(2);
 
     REQUIRE(fixture.document.row_count() == 2);
-    CHECK(fixture.document.row(1).text == QStringLiteral(".byte 06"));
+    CHECK(fixture.document.row(1).text == QStringLiteral(".byte 0x06"));
     CHECK(fixture.document.line_count(1, 1) == 1);
     CHECK(fixture.document.line_count(1, 15) == 1);
     CHECK(fixture.document.byte_line(1, 0, 1) == QStringLiteral("06"));
@@ -350,7 +350,7 @@ TEST_CASE("the disassembly document renders an undecodable byte as .byte", "[ui]
     REQUIRE(fixture.document.row_count() >= 3);
     CHECK(fixture.document.row(0).text == QStringLiteral("RET"));
     CHECK(fixture.document.row(1).bytes == QStringLiteral("06"));
-    CHECK(fixture.document.row(1).text == QStringLiteral(".byte 06"));
+    CHECK(fixture.document.row(1).text == QStringLiteral(".byte 0x06"));
     CHECK(fixture.document.row(2).text == QStringLiteral("RET"));
 }
 
@@ -376,7 +376,7 @@ TEST_CASE("the disassembly document clears the decode when the machine mode chan
     fixture.pass();
     fixture.document.ensure_rows(1);
     CHECK(fixture.document.row(0).length == 7);
-    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, 01"));
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, 0x01"));
 
     fixture.document.set_machine_mode(slopkit::disasm::MachineMode::legacy_32);
     fixture.document.ensure_rows(1);
@@ -403,14 +403,14 @@ TEST_CASE("the disassembly document renders addresses through the module map", "
     application();
 
     DocFixture fixture;
-    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("0000000000002010"));
+    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("0x0000000000002010"));
 
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
-    CHECK(fixture.document.address_text(kCode) == QStringLiteral("app+0"));
-    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("app+10"));
+    CHECK(fixture.document.address_text(kCode) == QStringLiteral("app+0x0"));
+    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("app+0x10"));
 
     fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("0000000000002010"));
+    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("0x0000000000002010"));
 }
 
 TEST_CASE("the disassembly document renders every copy form of a row", "[ui]")
@@ -425,17 +425,17 @@ TEST_CASE("the disassembly document renders every copy form of a row", "[ui]")
 
     const DisassemblyDocument& document = fixture.document;
 
-    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0"));
-    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("2000"));
+    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0x0"));
+    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("0x2000"));
     CHECK(document.copy_text(0, CopyFormat::bytes) == QStringLiteral("55"));
     CHECK(document.copy_text(0, CopyFormat::instruction) == QStringLiteral("PUSH RBP"));
-    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("app+0: 55"));
-    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0: PUSH RBP"));
-    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction) == QStringLiteral("app+0: 55  PUSH RBP"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("app+0x0: 55"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0x0: PUSH RBP"));
+    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction) == QStringLiteral("app+0x0: 55  PUSH RBP"));
 
     // The combined forms follow the current display mode for the address.
     fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("0000000000002000: 55"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("0x0000000000002000: 55"));
 
     // Out-of-range rows hand out nothing.
     CHECK(document.copy_text(fixture.document.row_count(), CopyFormat::bytes).isEmpty());
@@ -451,19 +451,19 @@ TEST_CASE("the disassembly document renders a branch target through the module m
     fixture.document.ensure_rows(1);
 
     // Without a module map the decoded padded text stays.
-    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0000000000002017"));
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0x0000000000002017"));
 
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
     const auto jump = fixture.document.row(0);
-    CHECK(jump.text == QStringLiteral("JZ app+17"));
+    CHECK(jump.text == QStringLiteral("JZ app+0x17"));
     CHECK(jump.length == 2);
     CHECK(jump.bytes == QStringLiteral("74 15"));
 
     // Absolute mode restores the decoded text, and switching back re-renders live.
     fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0000000000002017"));
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0x0000000000002017"));
     fixture.document.set_address_mode(slopkit::ui::AddressMode::module_relative);
-    CHECK(fixture.document.row(0).text == QStringLiteral("JZ app+17"));
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ app+0x17"));
 }
 
 TEST_CASE("the disassembly document splits a module-relative line into coloured runs", "[ui]")
@@ -484,7 +484,7 @@ TEST_CASE("the disassembly document splits a module-relative line into coloured 
     CHECK(jump.segments[1].kind == SegmentKind::module);
     CHECK(jump.segments[2].text == QStringLiteral("+"));
     CHECK(jump.segments[2].kind == SegmentKind::plain);
-    CHECK(jump.segments[3].text == QStringLiteral("17"));
+    CHECK(jump.segments[3].text == QStringLiteral("0x17"));
     CHECK(jump.segments[3].kind == SegmentKind::immediate);
     // A module name that fits carries no hover text.
     CHECK(jump.segments[1].full.isEmpty());
@@ -512,15 +512,15 @@ TEST_CASE("the disassembly document attaches the full address to a shortened mod
     CHECK(jump.segments[1].text == QStringLiteral("DyingL..._rwdi.exe"));
     CHECK(jump.segments[1].kind == SegmentKind::module);
     // The module run carries the untruncated address for the hover.
-    CHECK(jump.segments[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+17"));
+    CHECK(jump.segments[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x17"));
     // The `+RVA` runs are never shortened, so they carry no hover text.
     CHECK(jump.segments[2].full.isEmpty());
     CHECK(jump.segments[3].full.isEmpty());
-    CHECK(jump.text == QStringLiteral("JZ DyingL..._rwdi.exe+17"));
+    CHECK(jump.text == QStringLiteral("JZ DyingL..._rwdi.exe+0x17"));
     // Copy keeps the full spelling of the row's own address so a pasted
     // address still resolves.
     CHECK(fixture.document.copy_text(0, CopyFormat::module_relative)
-          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0"));
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x0"));
 }
 
 TEST_CASE("the disassembly document colours a decoded address as an immediate", "[ui]")
@@ -537,7 +537,7 @@ TEST_CASE("the disassembly document colours a decoded address as an immediate", 
     REQUIRE(decoded.segments.size() == 2);
     CHECK(decoded.segments[0].text == QStringLiteral("JZ "));
     CHECK(decoded.segments[0].kind == SegmentKind::plain);
-    CHECK(decoded.segments[1].text == QStringLiteral("0000000000002017"));
+    CHECK(decoded.segments[1].text == QStringLiteral("0x0000000000002017"));
     CHECK(decoded.segments[1].kind == SegmentKind::immediate);
 
     // A module image that does not cover the target keeps the decoded address.
@@ -552,7 +552,7 @@ TEST_CASE("the disassembly document colours a decoded address as an immediate", 
     const auto absolute = fixture.document.row(0);
     REQUIRE(absolute.segments.size() == 2);
     CHECK(absolute.segments[0].text == QStringLiteral("JZ "));
-    CHECK(absolute.segments[1].text == QStringLiteral("0000000000002017"));
+    CHECK(absolute.segments[1].text == QStringLiteral("0x0000000000002017"));
     CHECK(absolute.segments[1].kind == SegmentKind::immediate);
 }
 
@@ -578,7 +578,7 @@ TEST_CASE("the disassembly document classifies registers and displacements", "[u
     CHECK(store.segments[1].kind == SegmentKind::cpu_register);
     CHECK(store.segments[2].text == QStringLiteral("+"));
     CHECK(store.segments[2].kind == SegmentKind::plain);
-    CHECK(store.segments[3].text == QStringLiteral("08"));
+    CHECK(store.segments[3].text == QStringLiteral("0x08"));
     CHECK(store.segments[3].kind == SegmentKind::immediate);
     CHECK(store.segments[4].text == QStringLiteral("], "));
     CHECK(store.segments[4].kind == SegmentKind::plain);
@@ -600,7 +600,7 @@ TEST_CASE("a row with nothing to classify is one plain run", "[ui]")
 
     const auto dot_byte = fixture.document.row(1);
     REQUIRE(dot_byte.segments.size() == 1);
-    CHECK(dot_byte.segments[0].text == QStringLiteral(".byte 06"));
+    CHECK(dot_byte.segments[0].text == QStringLiteral(".byte 0x06"));
     CHECK(dot_byte.segments[0].kind == SegmentKind::plain);
 }
 
@@ -616,7 +616,7 @@ TEST_CASE("the disassembly document renders a memory operand's address through t
 
     // kCode + 7 + 0x2F7 = kCode + 0x2FE.
     const auto load = fixture.document.row(0);
-    CHECK(load.text == QStringLiteral("MOV RAX, [app+2FE]"));
+    CHECK(load.text == QStringLiteral("MOV RAX, [app+0x2FE]"));
     REQUIRE(load.segments.size() == 7);
     CHECK(load.segments[0].text == QStringLiteral("MOV "));
     CHECK(load.segments[0].kind == SegmentKind::plain);
@@ -628,13 +628,13 @@ TEST_CASE("the disassembly document renders a memory operand's address through t
     CHECK(load.segments[3].kind == SegmentKind::module);
     CHECK(load.segments[4].text == QStringLiteral("+"));
     CHECK(load.segments[4].kind == SegmentKind::plain);
-    CHECK(load.segments[5].text == QStringLiteral("2FE"));
+    CHECK(load.segments[5].text == QStringLiteral("0x2FE"));
     CHECK(load.segments[5].kind == SegmentKind::immediate);
     CHECK(load.segments[6].text == QStringLiteral("]"));
     CHECK(load.segments[6].kind == SegmentKind::plain);
 
     fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [00000000000022FE]"));
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [0x00000000000022FE]"));
 }
 
 TEST_CASE("the disassembly document keeps an out-of-module address decoded", "[ui]")
@@ -647,7 +647,7 @@ TEST_CASE("the disassembly document keeps an out-of-module address decoded", "[u
     fixture.document.ensure_rows(1);
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
 
-    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [0000000000402000]"));
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [0x0000000000402000]"));
 }
 
 TEST_CASE("the disassembly document copies the rendered instruction text", "[ui]")
@@ -661,12 +661,13 @@ TEST_CASE("the disassembly document copies the rendered instruction text", "[ui]
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
 
     const DisassemblyDocument& document = fixture.document;
-    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0"));
-    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("2000"));
+    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0x0"));
+    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("0x2000"));
     CHECK(document.copy_text(0, CopyFormat::bytes) == QStringLiteral("74 15"));
-    CHECK(document.copy_text(0, CopyFormat::instruction) == QStringLiteral("JZ app+17"));
-    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0: JZ app+17"));
-    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction) == QStringLiteral("app+0: 74 15  JZ app+17"));
+    CHECK(document.copy_text(0, CopyFormat::instruction) == QStringLiteral("JZ app+0x17"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0x0: JZ app+0x17"));
+    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction)
+          == QStringLiteral("app+0x0: 74 15  JZ app+0x17"));
 }
 
 TEST_CASE("the disassembly document exposes a row's referenced addresses", "[ui]")
@@ -983,7 +984,7 @@ TEST_CASE("the disassembly document edits a rip-relative instruction in place", 
     // rip-relative form, so nothing is written.
     const auto source = fixture.document.edit_source(0);
     REQUIRE(source.has_value());
-    CHECK(*source == QStringLiteral("MOV RAX, [00000000000022FE]"));
+    CHECK(*source == QStringLiteral("MOV RAX, [0x00000000000022FE]"));
     CHECK(fixture.document.edit_error(0, source->toStdString()).empty());
     CHECK(fixture.document.edit_instruction(0, source->toStdString()));
     CHECK(fixture.patches.empty());
@@ -1010,7 +1011,7 @@ TEST_CASE("the disassembly document plans a hook from the cached window", "[ui]"
 
     const slopkit::script::HookTarget& target = *analysis.target;
     CHECK(target.address == kCode);
-    CHECK(target.description == "app+0");
+    CHECK(target.description == "app+0x0");
     CHECK(target.module_name == "app");
     CHECK(target.original.size() == 7); // SUB RSP, 0x28 and its successor
     CHECK(target.covered.size() == 2);

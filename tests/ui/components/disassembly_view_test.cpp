@@ -147,7 +147,7 @@ TEST_CASE("the disassembly view paints the decoded rows", "[ui]")
 
     // A branch target is painted through the module map like the address column.
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
-    CHECK(view.row_text(3) == QStringLiteral("JZ app+1C"));
+    CHECK(view.row_text(3) == QStringLiteral("JZ app+0x1C"));
 
     view.hide();
 }
@@ -210,9 +210,9 @@ TEST_CASE("the disassembly view colours a module-relative rva as an immediate", 
     CHECK(jump[1].colour == slopkit::ui::dark_theme().syntax_module);
     CHECK(jump[2].text == QStringLiteral("+"));
     CHECK(jump[2].colour == slopkit::ui::dark_theme().text);
-    CHECK(jump[3].text == QStringLiteral("17"));
+    CHECK(jump[3].text == QStringLiteral("0x17"));
     CHECK(jump[3].colour == slopkit::ui::dark_theme().syntax_immediate);
-    CHECK(view.row_text(0) == QStringLiteral("JZ app+17"));
+    CHECK(view.row_text(0) == QStringLiteral("JZ app+0x17"));
 
     view.hide();
 }
@@ -236,7 +236,7 @@ TEST_CASE("the disassembly view reveals the full address on hover over a shorten
     const auto jump = view.row_segments(0);
     REQUIRE(jump.size() == 4);
     CHECK(jump[1].text == QStringLiteral("DyingL..._rwdi.exe"));
-    CHECK(jump[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+17"));
+    CHECK(jump[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x17"));
     // The non-module runs carry no hover text.
     CHECK(jump[0].full.isEmpty());
     CHECK(jump[2].full.isEmpty());
@@ -247,12 +247,13 @@ TEST_CASE("the disassembly view reveals the full address on hover over a shorten
     const int          text_left = 4 + view.address_width() + 6 + view.bytes_width() + 6;
 
     // The address column reveals the full address of the row it points at.
-    CHECK(view.hover_full_text(QPoint(6, top + 2)) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0"));
+    CHECK(view.hover_full_text(QPoint(6, top + 2)) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x0"));
     // The module run inside the instruction column reveals the branch target.
     const int module_x = text_left + metrics.horizontalAdvance(QStringLiteral("JZ ")) + 1;
-    CHECK(view.hover_full_text(QPoint(module_x, top + 2)) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+17"));
+    CHECK(view.hover_full_text(QPoint(module_x, top + 2))
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x17"));
     // A run that was not shortened (the RVA) reveals nothing.
-    const int rva_x = text_left + metrics.horizontalAdvance(QStringLiteral("JZ DyingL..._rwdi.exe+1"));
+    const int rva_x = text_left + metrics.horizontalAdvance(QStringLiteral("JZ DyingL..._rwdi.exe+0"));
     CHECK(view.hover_full_text(QPoint(rva_x, top + 2)).isEmpty());
     // The header band and a point below every row reveal nothing.
     CHECK(view.hover_full_text(QPoint(6, 2)).isEmpty());
@@ -315,7 +316,7 @@ TEST_CASE("a .byte row is painted as one muted run", "[ui]")
 
     const auto dot_byte = view.row_segments(1);
     REQUIRE(dot_byte.size() == 1);
-    CHECK(dot_byte[0].text == QStringLiteral(".byte 06"));
+    CHECK(dot_byte[0].text == QStringLiteral(".byte 0x06"));
     CHECK(dot_byte[0].colour == slopkit::ui::dark_theme().text_muted);
 
     view.hide();
@@ -801,7 +802,7 @@ TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
     REQUIRE(nop != nullptr);
     CHECK(nop->isEnabled());
     CHECK(nop->toolTip() == QStringLiteral("Replace this instruction with NOP bytes."));
-    CHECK(action(decoded, QStringLiteral("Restore Original Instruction at app+1")) == nullptr);
+    CHECK(action(decoded, QStringLiteral("Restore Original Instruction at app+0x1")) == nullptr);
 
     std::size_t requested = 99;
     QObject::connect(&view,
@@ -835,14 +836,14 @@ TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
     QMenu patched;
     view.populate_menu(patched, 1);
     CHECK(action(patched, QStringLiteral("NOP Instruction")) == nullptr);
-    QAction* restore = action(patched, QStringLiteral("Restore Original Instruction at app+1"));
+    QAction* restore = action(patched, QStringLiteral("Restore Original Instruction at app+0x1"));
     REQUIRE(restore != nullptr);
     CHECK(restore->toolTip().contains(QStringLiteral("MOV RBP, RSP")));
 
     // A later row inside the region offers the same restore.
     QMenu inside;
     view.populate_menu(inside, 3);
-    CHECK(action(inside, QStringLiteral("Restore Original Instruction at app+1")) != nullptr);
+    CHECK(action(inside, QStringLiteral("Restore Original Instruction at app+0x1")) != nullptr);
 
     std::size_t restored = 99;
     QObject::connect(&view,

@@ -20,9 +20,9 @@ namespace slopkit::ui::models
     // The three texts the found list's Copy submenu puts on the clipboard.
     enum class CopyFormat
     {
-        module_relative,   // "<module>+<RVA>"; the absolute form outside every module
-        absolute,          // "7F3A1B2C"
-        address_and_value, // "<module>+<RVA>: 100" / "7F3A1B2C: 100"
+        module_relative,   // "<module>+0x<RVA>"; the absolute form outside every module
+        absolute,          // "0x7F3A1B2C"
+        address_and_value, // "<module>+0x<RVA>: 100" / "0x7F3A1B2C: 100"
     };
 
     // Address / Value / Previous rows over a scan snapshot. The ordering is

@@ -56,9 +56,9 @@ TEST_CASE("call stack model answers the full-text role with the untruncated addr
         slopkit::ui::AddressMode::module_relative);
 
     const QModelIndex address = model.index(0, CallStackModel::address);
-    CHECK(model.data(address, Qt::DisplayRole).toString() == QStringLiteral("DyingL..._rwdi.exe+10"));
+    CHECK(model.data(address, Qt::DisplayRole).toString() == QStringLiteral("DyingL..._rwdi.exe+0x10"));
     CHECK(model.data(address, slopkit::ui::widgets::kFullTextRole).toString()
-          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+10"));
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x10"));
     // Only the address column carries the full text.
     CHECK(model.data(model.index(0, CallStackModel::frame), slopkit::ui::widgets::kFullTextRole).toString().isEmpty());
 }

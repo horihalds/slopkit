@@ -174,7 +174,7 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     CHECK(viewer->windowHandle()->transientParent() == nullptr);
     // The main module's map is loaded, so the entry renders module-relative and
     // the view lands exactly on the entry address.
-    CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
+    CHECK(document->display_text(0x1040) == QStringLiteral("low+0x40"));
     CHECK(view->first_byte() == 0x1040);
 
     // The table menu's Add Address command reaches the same non-modal dialog.
@@ -1145,7 +1145,7 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     CHECK(instruction == code_base);
     CHECK(length == 3);
     REQUIRE(resolved.size() == 1);
-    CHECK(resolved[0].operand == QStringLiteral("[RBX+10]"));
+    CHECK(resolved[0].operand == QStringLiteral("[RBX+0x10]"));
     CHECK(resolved[0].width == 4);
     CHECK_FALSE(resolved[0].writes);
     // The fake register file holds zeroes, so the operand resolves to the
@@ -1625,7 +1625,8 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     viewer.show();
     const std::uint64_t code_base = seed_listing_code(access, worker, viewer);
     REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
-    const QString selected_text = QStringLiteral("%1").arg(code_base, 16, 16, QLatin1Char('0')).toUpper();
+    const QString selected_text =
+        QStringLiteral("0x") + QStringLiteral("%1").arg(code_base, 16, 16, QLatin1Char('0')).toUpper();
 
     // Every debug entry agrees with its bar button in every state.
     const auto parity = [&]

@@ -247,7 +247,7 @@ namespace slopkit::ui::components
         // narrower than the 16-digit absolute form so it does not jitter. A
         // dragged width replaces the automatic one and is clamped so that the
         // bytes column keeps one token and the instruction column its glyphs.
-        QString       address_sample = QStringLiteral("0000000000000000");
+        QString       address_sample = QStringLiteral("0x0000000000000000");
         const QString top_text       = document_.address_text(first_address_);
         if (top_text.size() > address_sample.size())
         {

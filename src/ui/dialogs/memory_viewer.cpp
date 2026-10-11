@@ -600,7 +600,7 @@ namespace slopkit::ui::dialogs
         options.title       = tr("Go To");
         options.label       = tr("Address or expression:");
         options.initial     = pane_display_text(target, pane_address(target));
-        options.placeholder = QStringLiteral("module, module+10 or [module+10]+18");
+        options.placeholder = QStringLiteral("module, module+0x10 or [module+0x10]+0x18");
         options.monospace   = true;
         options.validate    = [this, target](const QString& text)
         {

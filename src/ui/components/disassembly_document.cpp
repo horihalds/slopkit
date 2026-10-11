@@ -829,11 +829,11 @@ namespace slopkit::ui::components
         {
             candidate.module_name     = span->name;
             candidate.module_rva_text = QString::number(address - span->base, 16).toUpper().toStdString();
-            candidate.description     = span->name + "+" + candidate.module_rva_text;
+            candidate.description     = ui::format_module_relative_full(*span, address).toStdString();
         }
         else
         {
-            candidate.description = QString::number(address, 16).toUpper().toStdString();
+            candidate.description = ui::format_absolute(address).toStdString();
         }
 
         analysis.target = script::build_hook(candidate, analysis.reason);
@@ -900,8 +900,8 @@ namespace slopkit::ui::components
     {
         // One classified slice of `instruction.text`: where it sits in the raw
         // text and the run(s) that replace it. An address inside a module becomes
-        // a module-name run, a plain `+` and an immediate `RVA` run; every other
-        // slice is one run.
+        // a module-name run, a plain `+` and an immediate `0x`-prefixed RVA run;
+        // every other slice is one run.
         struct Mark
         {
             std::size_t             offset {};
@@ -939,18 +939,19 @@ namespace slopkit::ui::components
 
             const ui::ModuleSpan*   span        = module_spans_.containing(ref.address);
             // The module run paints the shortened label; it carries the full
-            // `<module>+<RVA>` for the hover only when the label was shortened.
+            // `<module>+0x<RVA>` for the hover only when the label was shortened.
             const QString           module_name = span != nullptr ? to_qstring(span->label()) : QString {};
             const QString           full        = span != nullptr && span->label() != span->name
                                                     ? ui::format_module_relative_full(*span, ref.address)
                                                     : QString {};
-            const QString           offset_text = relative->mid(module_name.size()); // "+RVA"
+            const QString           offset_text = relative->mid(module_name.size()); // "+0xRVA"
             std::vector<RowSegment> runs;
             runs.push_back({module_name, SegmentKind::module, full});
             if (!offset_text.isEmpty())
             {
-                // The separator stays in the row's own colour and the RVA prints
-                // as the number it is, matching a memory displacement.
+                // The separator stays in the row's own colour and the
+                // `0x`-prefixed RVA prints as the number it is, matching a
+                // memory displacement.
                 runs.push_back({offset_text.left(1), SegmentKind::plain});
                 if (const QString rva = offset_text.mid(1); !rva.isEmpty())
                 {

@@ -151,7 +151,7 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
     CHECK(data_changes > 0);
     const QModelIndex address_index = model->index(0, slopkit::ui::models::AddressTableModel::address);
     CHECK(model->data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+0+8"));
-    CHECK(model->data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("200008"));
+    CHECK(model->data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x200008"));
 
     // A second refresh inside the interval resolves nothing: moving the pointer
     // and refreshing must leave the stored address untouched.
@@ -331,15 +331,15 @@ TEST_CASE("the address list delete confirmation follows the address mode", "[ui]
     };
 
     // No module map yet: the confirmation echoes the absolute address.
-    CHECK(confirmation_text() == QStringLiteral("Delete 1040?"));
+    CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
 
     // Inside a module image the confirmation echoes module+RVA.
     panel.set_modules({module_image("app", 0x1000, 0x1000)});
-    CHECK(confirmation_text() == QStringLiteral("Delete app+40?"));
+    CHECK(confirmation_text() == QStringLiteral("Delete app+0x40?"));
 
     // Absolute mode switches the confirmation back.
     panel.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(confirmation_text() == QStringLiteral("Delete 1040?"));
+    CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
 }
 
 TEST_CASE("the address list nests by drag and deletes the whole subtree", "[ui]")

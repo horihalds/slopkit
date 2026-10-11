@@ -413,7 +413,7 @@ TEST_CASE("the memory view reveals the full address on hover over a shortened mo
     const QFontMetrics metrics(slopkit::ui::mono_font());
     const QPoint       address_hover(5, 4 + (metrics.height() + 4) + 2);
 
-    CHECK(view.hover_full_text(address_hover) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0"));
+    CHECK(view.hover_full_text(address_hover) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x0"));
     // The value cells hold values, not addresses, so a hover there reveals nothing.
     CHECK(view.hover_full_text(QPoint(500, address_hover.y())).isEmpty());
     // The header band and a point below every row reveal nothing.

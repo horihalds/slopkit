@@ -87,7 +87,8 @@ TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
         spans.set_modules(modules);
         REQUIRE(spans.containing(0x4000) != nullptr);
         CHECK(spans.containing(0x4000)->name == "libc.so.6");
-        CHECK(slopkit::ui::format_module_relative(*spans.containing(0x4000), 0x4000) == QStringLiteral("libc.so.6+0"));
+        CHECK(slopkit::ui::format_module_relative(*spans.containing(0x4000), 0x4000)
+              == QStringLiteral("libc.so.6+0x0"));
     }
 }
 
@@ -114,32 +115,32 @@ TEST_CASE("module-relative addresses render as name+HEX", "[ui]")
 {
     const slopkit::ui::ModuleSpan span {"app", {}, 0x1000, 0x2000};
 
-    CHECK(slopkit::ui::format_module_relative(span, 0x1000) == QStringLiteral("app+0"));
-    CHECK(slopkit::ui::format_module_relative(span, 0x1040) == QStringLiteral("app+40"));
-    CHECK(slopkit::ui::format_module_relative(span, 0x1A2B) == QStringLiteral("app+A2B"));
-    // No 0x prefix and no leading zeros.
-    CHECK_FALSE(slopkit::ui::format_module_relative(span, 0x1040).contains(QStringLiteral("0x")));
+    CHECK(slopkit::ui::format_module_relative(span, 0x1000) == QStringLiteral("app+0x0"));
+    CHECK(slopkit::ui::format_module_relative(span, 0x1040) == QStringLiteral("app+0x40"));
+    CHECK(slopkit::ui::format_module_relative(span, 0x1A2B) == QStringLiteral("app+0xA2B"));
+    // An explicit 0x prefix and no leading zeros.
+    CHECK(slopkit::ui::format_module_relative(span, 0x1040).contains(QStringLiteral("0x")));
 }
 
-TEST_CASE("absolute addresses render as bare HEX", "[ui]")
+TEST_CASE("absolute addresses render as 0xHEX", "[ui]")
 {
-    CHECK(slopkit::ui::format_absolute(0) == QStringLiteral("0"));
-    CHECK(slopkit::ui::format_absolute(0x1040) == QStringLiteral("1040"));
-    CHECK(slopkit::ui::format_absolute(0x5000000) == QStringLiteral("5000000"));
-    // Upper-case hex, no leading zeros, no 0x prefix.
-    CHECK(slopkit::ui::format_absolute(0xabcdef) == QStringLiteral("ABCDEF"));
+    CHECK(slopkit::ui::format_absolute(0) == QStringLiteral("0x0"));
+    CHECK(slopkit::ui::format_absolute(0x1040) == QStringLiteral("0x1040"));
+    CHECK(slopkit::ui::format_absolute(0x5000000) == QStringLiteral("0x5000000"));
+    // Upper-case hex, 0x prefixed, no leading zeros.
+    CHECK(slopkit::ui::format_absolute(0xabcdef) == QStringLiteral("0xABCDEF"));
 }
 
 TEST_CASE("padded hex zero-fills to the requested width", "[ui]")
 {
-    CHECK(slopkit::ui::format_padded_hex(0) == QStringLiteral("0000000000000000"));
-    CHECK(slopkit::ui::format_padded_hex(0x41) == QStringLiteral("0000000000000041"));
-    CHECK(slopkit::ui::format_padded_hex(0xFFFFFFFFFFFFFFFF) == QStringLiteral("FFFFFFFFFFFFFFFF"));
+    CHECK(slopkit::ui::format_padded_hex(0) == QStringLiteral("0x0000000000000000"));
+    CHECK(slopkit::ui::format_padded_hex(0x41) == QStringLiteral("0x0000000000000041"));
+    CHECK(slopkit::ui::format_padded_hex(0xFFFFFFFFFFFFFFFF) == QStringLiteral("0xFFFFFFFFFFFFFFFF"));
     // A value wider than the asked-for width keeps all of its digits.
-    CHECK(slopkit::ui::format_padded_hex(0x12345, 2) == QStringLiteral("12345"));
+    CHECK(slopkit::ui::format_padded_hex(0x12345, 2) == QStringLiteral("0x12345"));
     // The Access Watch operand's 2-digit byte and displacement widths.
-    CHECK(slopkit::ui::format_padded_hex(0x41, 2) == QStringLiteral("41"));
-    CHECK(slopkit::ui::format_padded_hex(0x9, 2) == QStringLiteral("09"));
+    CHECK(slopkit::ui::format_padded_hex(0x41, 2) == QStringLiteral("0x41"));
+    CHECK(slopkit::ui::format_padded_hex(0x9, 2) == QStringLiteral("0x09"));
 }
 
 TEST_CASE("the pane and cell address helpers pick their fallback", "[ui]")
@@ -150,21 +151,21 @@ TEST_CASE("the pane and cell address helpers pick their fallback", "[ui]")
 
     // Inside a span both forms are module-relative.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x1040)
-          == QStringLiteral("app+40"));
+          == QStringLiteral("app+0x40"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x1040)
-          == QStringLiteral("app+40"));
+          == QStringLiteral("app+0x40"));
 
     // Outside every span the pane keeps the fixed width, the cell stays compact.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
-          == QStringLiteral("0000000005000000"));
+          == QStringLiteral("0x0000000005000000"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
-          == QStringLiteral("5000000"));
+          == QStringLiteral("0x5000000"));
 
     // Absolute mode never goes module-relative.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
-          == QStringLiteral("0000000000001040"));
+          == QStringLiteral("0x0000000000001040"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
-          == QStringLiteral("1040"));
+          == QStringLiteral("0x1040"));
 }
 
 TEST_CASE("module-relative text falls back in absolute mode and outside spans", "[ui]")
@@ -175,7 +176,7 @@ TEST_CASE("module-relative text falls back in absolute mode and outside spans", 
 
     const auto relative = slopkit::ui::module_relative_text(slopkit::ui::AddressMode::module_relative, spans, 0x1040);
     REQUIRE(relative.has_value());
-    CHECK(*relative == QStringLiteral("app+40"));
+    CHECK(*relative == QStringLiteral("app+0x40"));
 
     // Outside every span there is no module-relative text, whatever the mode.
     CHECK_FALSE(
@@ -202,17 +203,17 @@ TEST_CASE("a shortened module label still has an untruncated spelling", "[ui]")
     CHECK(span->label() == "DyingL..._rwdi.exe");
 
     // Every rendered form shorts the name; the full forms keep it.
-    CHECK(slopkit::ui::format_module_relative(*span, 0x1000 + 0x1A2B) == QStringLiteral("DyingL..._rwdi.exe+1A2B"));
+    CHECK(slopkit::ui::format_module_relative(*span, 0x1000 + 0x1A2B) == QStringLiteral("DyingL..._rwdi.exe+0x1A2B"));
     CHECK(slopkit::ui::format_module_relative_full(*span, 0x1000 + 0x1A2B)
-          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+1A2B"));
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x1A2B"));
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
-          == QStringLiteral("DyingL..._rwdi.exe+1A2B"));
+          == QStringLiteral("DyingL..._rwdi.exe+0x1A2B"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
-          == QStringLiteral("DyingL..._rwdi.exe+1A2B"));
+          == QStringLiteral("DyingL..._rwdi.exe+0x1A2B"));
     CHECK(slopkit::ui::format_pane_address_full(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
-          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+1A2B"));
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x1A2B"));
     CHECK(slopkit::ui::format_cell_address_full(slopkit::ui::AddressMode::module_relative, spans, 0x1000 + 0x1A2B)
-          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+1A2B"));
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x1A2B"));
 }
 
 TEST_CASE("a full module address still resolves when pasted back", "[ui]")
@@ -227,7 +228,7 @@ TEST_CASE("a full module address still resolves when pasted back", "[ui]")
     const std::string text = full.toStdString();
     CHECK(slopkit::ui::parse_address_text(text, spans) == std::optional<std::uint64_t> {0x1000 + 0x1A2B});
     // The shortened spelling is display-only and never resolves.
-    CHECK_FALSE(slopkit::ui::parse_address_text("DyingL..._rwdi.exe+1A2B", spans).has_value());
+    CHECK_FALSE(slopkit::ui::parse_address_text("DyingL..._rwdi.exe+0x1A2B", spans).has_value());
 }
 
 TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")

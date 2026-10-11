@@ -20,8 +20,8 @@ namespace slopkit::ui
     // How an address inside a loaded module image is shown.
     enum class AddressMode
     {
-        module_relative, // "libc.so.6+1A2B" (default)
-        absolute,        // "7F3A1B2C"
+        module_relative, // "libc.so.6+0x1A2B" (default)
+        absolute,        // "0x7F3A1B2C"
     };
 
     // A module's display name is shortened once the part before its file
@@ -80,19 +80,19 @@ namespace slopkit::ui
         std::size_t             main_index_ {};
     };
 
-    // "name+RVA" with the module's shortened label: upper-case hex, no 0x, no
+    // "name+0xRVA" with the module's shortened label: upper-case hex, no
     // leading zeros, no padding.
     [[nodiscard]] QString format_module_relative(const ModuleSpan& span, std::uint64_t address);
 
-    // The untruncated "<name>+<RVA>"; what Copy keeps so a pasted address
+    // The untruncated "<name>+0x<RVA>"; what Copy keeps so a pasted address
     // still resolves.
     [[nodiscard]] QString format_module_relative_full(const ModuleSpan& span, std::uint64_t address);
 
-    // Upper-case hex, no prefix, no leading zeros, no padding.
+    // "0x…": upper-case hex, no leading zeros, no padding.
     [[nodiscard]] QString format_absolute(std::uint64_t address);
 
-    // Upper-case hex, no prefix, zero-padded to `digits`, for the fixed-width
-    // panes where addresses must line up (docs/UI_DESIGN.md#fonts).
+    // "0x…": upper-case hex zero-padded to `digits`, for the fixed-width panes
+    // where addresses must line up (docs/UI_DESIGN.md#fonts).
     [[nodiscard]] QString format_padded_hex(std::uint64_t value, int digits = 16);
 
     // A fixed-width pane row's address: module-relative where the mode and spans

@@ -245,7 +245,7 @@ TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a sele
     // address and the action.
     bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
     CHECK(bar.toggle_breakpoint_button()->isEnabled());
-    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Set a breakpoint at 0000000000002000."));
+    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Set a breakpoint at 0x0000000000002000."));
 
     std::uint64_t requested_address = 0;
     QString       requested_text;
@@ -266,7 +266,7 @@ TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a sele
         QStringLiteral("0000000000002000").toStdString(), 0x2000, slopkit::debug::Kind::software, 1);
     REQUIRE(added.has_value());
     bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
-    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Remove the breakpoint at 0000000000002000."));
+    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Remove the breakpoint at 0x0000000000002000."));
 
     // Ending the session disables the toggle even while the instruction stays
     // selected.

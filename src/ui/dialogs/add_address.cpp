@@ -80,7 +80,7 @@ namespace slopkit::ui::dialogs
         address_edit_ = new QLineEdit(this);
         address_edit_->setObjectName(QStringLiteral("address_edit"));
         address_edit_->setFont(mono_font());
-        address_edit_->setPlaceholderText(QStringLiteral("firefox-bin+4096"));
+        address_edit_->setPlaceholderText(QStringLiteral("firefox-bin+0x4096"));
         form->addRow(tr("Address"), address_edit_);
 
         preview_label_ = new QLabel(this);

@@ -33,7 +33,7 @@ TEST_CASE("the found-results model mirrors a snapshot", "[ui]")
     // Default order is by address, ascending.
     CHECK(model.hit_at(0)->address == 0x1000);
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("1000"));
+          == QStringLiteral("0x1000"));
     CHECK(model.data(model.index(1, slopkit::ui::models::FoundResultsModel::value), Qt::DisplayRole).toString()
           == QStringLiteral("2"));
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::previous), Qt::DisplayRole)
@@ -70,37 +70,37 @@ TEST_CASE("the found-results model renders the clipboard texts", "[ui]")
     model.set_snapshot(snapshot, config);
 
     // With no module map every hit copies as an absolute address.
-    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("1040"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("0x1040"));
 
     model.set_modules({module_image("app", 0x1000, 0x1000)});
 
     // A static hit inside `app`.
-    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+40"));
-    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::absolute) == QStringLiteral("1040"));
-    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("app+40: 10"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+0x40"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::absolute) == QStringLiteral("0x1040"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("app+0x40: 10"));
 
     // A dynamic hit falls back to the absolute form for module + RVA.
-    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("7F3A1B2C"));
-    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::absolute) == QStringLiteral("7F3A1B2C"));
-    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("7F3A1B2C: 100"));
+    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("0x7F3A1B2C"));
+    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::absolute) == QStringLiteral("0x7F3A1B2C"));
+    CHECK(model.copy_text(1, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("0x7F3A1B2C: 100"));
 
     // Module + RVA ignores the display mode; address + value follows it.
     model.set_address_mode(slopkit::ui::AddressMode::absolute);
-    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+40"));
-    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("1040: 10"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+0x40"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("0x1040: 10"));
 
     // A long module name shortens the display but keeps the full spelling for
     // Copy and for the hover role.
     model.set_address_mode(slopkit::ui::AddressMode::module_relative);
     model.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x10000)});
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("DyingL..._rwdi.exe+40"));
+          == QStringLiteral("DyingL..._rwdi.exe+0x40"));
     CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::module_relative)
-          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+40"));
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x40"));
     CHECK(
         model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), slopkit::ui::widgets::kFullTextRole)
             .toString()
-        == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+40"));
+        == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x40"));
 
     // An out-of-range row and a cleared model yield nothing.
     CHECK(model.copy_text(2, slopkit::ui::models::CopyFormat::absolute).isEmpty());
@@ -129,7 +129,8 @@ TEST_CASE("the found-results model copies the value in hex when configured", "[u
     model.set_modules({module_image("app", 0x1000, 0x1000)});
 
     // The value matches the Value column's hex rendering, zero-padded to int32.
-    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value) == QStringLiteral("app+40: 0000000A"));
+    CHECK(model.copy_text(0, slopkit::ui::models::CopyFormat::address_and_value)
+          == QStringLiteral("app+0x40: 0000000A"));
 }
 
 TEST_CASE("the found-results model marks and groups static hits", "[ui]")
@@ -171,18 +172,18 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
 
     // Static hits render as module+RVA by default; the heap hit stays absolute.
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("first+0"));
+          == QStringLiteral("first+0x0"));
     CHECK(model.data(model.index(1, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("low+0"));
+          == QStringLiteral("low+0x0"));
     CHECK(model.data(model.index(2, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("5000000"));
+          == QStringLiteral("0x5000000"));
 
     // Switching to absolute restores the raw address text everywhere.
     model.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("1000"));
+          == QStringLiteral("0x1000"));
     CHECK(model.data(model.index(2, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole).toString()
-          == QStringLiteral("5000000"));
+          == QStringLiteral("0x5000000"));
     model.set_address_mode(slopkit::ui::AddressMode::module_relative);
 
     const QColor green = slopkit::ui::active_theme().success;

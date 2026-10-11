@@ -91,8 +91,8 @@ namespace slopkit::disasm
             return found == register_table().end() ? std::nullopt : std::optional<ZydisRegister>(found->second);
         }
 
-        // One number the way an instruction prints it: bare hex, `0x…`
-        // accepted, `#…` decimal; optionally signed.
+        // One number the way an instruction prints it: `0x…` hex; a bare hex
+        // number and `#…` decimal are also accepted; optionally signed.
         [[nodiscard]] std::optional<std::uint64_t> parse_number(std::string_view text)
         {
             text = trim(text);
@@ -183,7 +183,7 @@ namespace slopkit::disasm
             unsigned char    size {}; // memory access size, 0 when the text does not say
         };
 
-        // The `[...]` expression: `RBP-04`, `RAX+RCX*4+10`, `22FE`.
+        // The `[...]` expression: `RBP-0x04`, `RAX+RCX*4+0x10`, `0x22FE`.
         [[nodiscard]] std::expected<Operand, std::string> parse_memory(std::string_view expression)
         {
             Operand operand;

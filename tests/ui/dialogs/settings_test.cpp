@@ -201,7 +201,7 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
         REQUIRE(document != nullptr);
 
         viewer->set_address(0x1040);
-        CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
+        CHECK(document->display_text(0x1040) == QStringLiteral("low+0x40"));
 
         auto* settings = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
         REQUIRE(settings != nullptr);
@@ -213,9 +213,9 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
         // Clicking the setting re-renders the viewer immediately, with no reload.
         absolute->click();
-        CHECK(document->display_text(0x1040) == QStringLiteral("1040"));
+        CHECK(document->display_text(0x1040) == QStringLiteral("0x1040"));
 
         module_relative->click();
-        CHECK(document->display_text(0x1040) == QStringLiteral("low+40"));
+        CHECK(document->display_text(0x1040) == QStringLiteral("low+0x40"));
     }
 }

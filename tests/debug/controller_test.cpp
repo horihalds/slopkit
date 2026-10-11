@@ -966,7 +966,7 @@ TEST_CASE("controller consumes the step-out stop and erases the transient entry"
                        }));
 
     CHECK(controller.last_stop().trap_address == 0x6000);
-    CHECK(controller.state_text() == QStringLiteral("Stopped at 6000"));
+    CHECK(controller.state_text() == QStringLiteral("Stopped at 0x6000"));
 
     bool rewound = false;
     for (const auto& write : backend.register_writes())

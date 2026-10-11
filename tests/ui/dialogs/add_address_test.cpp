@@ -398,7 +398,7 @@ TEST_CASE("the add address dialog previews the resolved address and value", "[ui
                     {
                         return preview->text().contains(QStringLiteral("42"));
                     }));
-    CHECK(preview->text().contains(QStringLiteral("app+10")));
+    CHECK(preview->text().contains(QStringLiteral("app+0x10")));
 
     // The hex toggle re-formats the same bytes, with no new read.
     hex->setChecked(true);
@@ -461,7 +461,7 @@ TEST_CASE("the add address dialog clears and re-resolves the preview", "[ui]")
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return preview->text().contains(QStringLiteral("app+10"));
+                        return preview->text().contains(QStringLiteral("app+0x10"));
                     }));
 
     // Reopening clears the preview.
@@ -476,7 +476,7 @@ TEST_CASE("the add address dialog clears and re-resolves the preview", "[ui]")
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return preview->text().contains(QStringLiteral("game+10"));
+                        return preview->text().contains(QStringLiteral("game+0x10"));
                     }));
 }
 

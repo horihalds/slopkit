@@ -159,23 +159,23 @@ namespace slopkit::ui
     QString format_module_relative(const ModuleSpan& span, std::uint64_t address)
     {
         const std::uint64_t rva = address >= span.base ? address - span.base : 0;
-        return to_qstring(span.label()) + QLatin1Char('+') + QString::number(rva, 16).toUpper();
+        return to_qstring(span.label()) + QLatin1Char('+') + QStringLiteral("0x") + QString::number(rva, 16).toUpper();
     }
 
     QString format_module_relative_full(const ModuleSpan& span, std::uint64_t address)
     {
         const std::uint64_t rva = address >= span.base ? address - span.base : 0;
-        return to_qstring(span.name) + QLatin1Char('+') + QString::number(rva, 16).toUpper();
+        return to_qstring(span.name) + QLatin1Char('+') + QStringLiteral("0x") + QString::number(rva, 16).toUpper();
     }
 
     QString format_absolute(std::uint64_t address)
     {
-        return QString::number(address, 16).toUpper();
+        return QStringLiteral("0x") + QString::number(address, 16).toUpper();
     }
 
     QString format_padded_hex(std::uint64_t value, int digits)
     {
-        return QString::number(value, 16).toUpper().rightJustified(digits, QLatin1Char('0'));
+        return QStringLiteral("0x") + QString::number(value, 16).toUpper().rightJustified(digits, QLatin1Char('0'));
     }
 
     QString format_pane_address(AddressMode mode, const ModuleSpans& spans, std::uint64_t address)

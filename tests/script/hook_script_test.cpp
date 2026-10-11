@@ -231,7 +231,7 @@ TEST_CASE("address operands are re-emitted position-independently", "[script][ho
         const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
 
         REQUIRE(target.trampoline_lines.size() == 1);
-        CHECK(target.trampoline_lines[0] == "MOV RAX, 1122334455667788");
+        CHECK(target.trampoline_lines[0] == "MOV RAX, 0x1122334455667788");
         CHECK(target.covered[0].address_args.empty());
     }
 
@@ -300,7 +300,7 @@ TEST_CASE("a memory operand the listing prints without a size is re-encoded with
     const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
 
     REQUIRE(target.trampoline_lines.size() == 3);
-    CHECK(target.trampoline_lines[0] == "INC dword ptr [RBX+1C]");
+    CHECK(target.trampoline_lines[0] == "INC dword ptr [RBX+0x1C]");
     CHECK(target.original.size() == 5);
 }
 
@@ -350,7 +350,7 @@ TEST_CASE("a hook on an ambiguous-size memory operand installs", "[script][hook]
     std::string                             reason;
     const std::optional<script::HookTarget> target = script::build_hook(candidate, reason);
     REQUIRE(target.has_value());
-    REQUIRE(target->trampoline_lines.front() == "INC dword ptr [RBX+1C]");
+    REQUIRE(target->trampoline_lines.front() == "INC dword ptr [RBX+0x1C]");
     const std::string source = script::render(*target);
     REQUIRE(script::check_syntax(source).has_value());
 
@@ -389,7 +389,7 @@ TEST_CASE("the rendered script carries the generated facts", "[script][hook]")
     CHECK(source.find("\"game.exe\"") != std::string::npos);
     CHECK(source.find("\"" + target.pattern + "\"") != std::string::npos);
     CHECK(source.find("string.char(0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8)") != std::string::npos);
-    CHECK(source.find("SUB RSP, 28") != std::string::npos);
+    CHECK(source.find("SUB RSP, 0x28") != std::string::npos);
     CHECK(source.find("MOV RAX, RBX") != std::string::npos);
 
     // The two one-line lifecycle hooks, with the install mechanics moved into

@@ -33,7 +33,7 @@ namespace slopkit::script
         disasm::MachineMode      mode {};         // the CPU mode the listing decoded for
         std::string              module_name;     // empty outside every module
         std::string              module_rva_text; // the RVA, upper-case hex without 0x; empty outside every module
-        std::string              description;     // "game.exe+1A2B40", or the absolute address outside a module
+        std::string              description;     // "game.exe+0x1A2B40", or the absolute address outside a module
     };
 
     // One instruction of the window a hook overwrites.
@@ -50,7 +50,7 @@ namespace slopkit::script
     struct HookTarget
     {
         std::uint64_t                address {};  // the hooked instruction
-        std::string                  description; // "game.exe+1A2B40", or the absolute address outside a module
+        std::string                  description; // "game.exe+0x1A2B40", or the absolute address outside a module
         std::string                  module_name; // empty outside every module
         std::string                  module_rva_text;
         std::vector<std::byte>       original;          // the window's bytes, ascending

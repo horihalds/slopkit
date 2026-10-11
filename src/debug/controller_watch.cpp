@@ -30,7 +30,7 @@ namespace slopkit::debug
 
         // A data breakpoint can only watch 1, 2, 4 or 8 bytes.
         const std::size_t bytes = size == 1 || size == 2 || size == 4 || size == 8 ? size : 4;
-        auto              id    = breakpoints_.add(std::format("{:X}", address), address, kind, bytes);
+        auto              id    = breakpoints_.add(std::format("0x{:X}", address), address, kind, bytes);
         if (!id)
         {
             return std::unexpected(id.error());
