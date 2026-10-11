@@ -741,6 +741,31 @@ TEST_CASE("a cancelled delete keeps the rows and the selection", "[ui]")
     panel.delete_selected();
     CHECK(table.size() == 3);
     CHECK(table.selected_rows().size() == 2);
+
+    // A second press acts on the selection the cancelled box left behind.
+    QTimer::singleShot(0,
+                       []
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::MessageBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               for (QPushButton* button : box->findChildren<QPushButton*>())
+                               {
+                                   if (button->text() == QStringLiteral("Yes"))
+                                   {
+                                       button->click();
+                                       return;
+                                   }
+                               }
+                           }
+                       });
+    panel.delete_selected();
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries()[0].description == "B");
 }
 
 TEST_CASE("delete falls back to the cursor and refuses with nothing to delete", "[ui]")
