@@ -25,7 +25,7 @@ an out-of-process transport, with no UI change.
 | Plugin id | Claims | Precedence | Access methods |
 | --- | --- | --- | --- |
 | `linux-proc` | Any normal Linux process | 100 | `process_vm_*`, procfs, ptrace (debugger only) |
-| `wine-proton` | Wine/Proton game processes | 10 | resident agent, `process_vm_*`, procfs, ptrace (debugger only) |
+| `wine-proton` | Wine/Proton game processes | 10 | resident agent (allocation and introspection), `process_vm_*`, procfs, ptrace (debugger only) |
 
 Lower precedence wins, so `wine-proton` is the default target for a Wine process
 that `linux-proc` also claims; the process picker still shows the alternatives.
@@ -39,12 +39,14 @@ plugin still keeps its own state because the host `dlopen`s plugins with
 
 The profile also carries seven optional hooks — `allocate`, `free`,
 `close_session`, `regions`, `range_is_readable`, `read` and `write`.
-`linux-proc` leaves them all null; `wine-proton` fills them so allocation *and*
-introspection go through the target's own virtual-memory manager (the resident
-agent) instead of a ptrace-injected `mmap` or a `/proc` read. The read and write
-hooks still route to `session.mem` while a debug session has the target stopped,
-because the agent's service thread cannot run then. That mechanism is described
-in [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
+`linux-proc` leaves them all null, so the shared support layer serves every one
+of them from `session.mem` and the chunked readability probe. `wine-proton` fills
+only `allocate`, `free`, `regions` and `close_session`, so allocation and the
+region walk go through the target's own virtual-memory manager (the resident
+agent) instead of a ptrace-injected `mmap`; `range_is_readable`, `read` and
+`write` stay null and are host-served even while the target runs, so a scan never
+waits on the agent. That mechanism is described in
+[`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
 
 ## Discovery
 
@@ -86,9 +88,10 @@ host calls:
 - `info` / `precedence`
 - `list_processes` — the processes the plugin claims
 - `open_session` / `close_session`
-- `read_memory` / `write_memory` — `wine-proton` serves them through its resident
-  agent while the target can run, and through `process_vm`/procfs while the target
-  cannot run the agent (our own pause) or when an exchange fails
+- `read_memory` / `write_memory` — `wine-proton` serves them through the host
+  `process_vm_*`/procfs path, exactly as `linux-proc` does, in every target state:
+  a Wine scan is one host syscall per chunk and the resident agent is never asked
+  to copy bytes
 - `list_modules` / `list_threads` / `list_regions` — `wine-proton`'s
   `list_regions` is the agent's `VirtualQuery` walk merged with the `/proc` paths,
   and its `list_modules` is the target's own loader list (`MODULES`) merged with
@@ -129,10 +132,9 @@ host calls:
   target: it probes the existing `process_vm_*` / procfs path, so there is no
   ptrace attach and no interlock with the debug session. When a plugin leaves the
   slot null the host answers by probing its own read path, so behaviour never
-  depends on a plugin's ABI minor. `wine-proton` answers from the target's own
-  `VirtualQuery` (one `QUERY`) while it can run, which is Wine's commit and
-  protection view rather than a read probe; the host probe answers only while a
-  debug session or an in-flight allocation has the target stopped.
+  depends on a plugin's ABI minor. `wine-proton` leaves the hook null, so
+  validation runs on that same host probe in every target state — the answer its
+  own fallback already gave whenever the resident agent was unusable.
 
 `src/plugin/plugin_api.h` is the authoritative contract, and the bundled plugins
 under `src/plugins/` are the worked example. They do not hand-write the vtable:
@@ -181,8 +183,8 @@ exactly the set the display pages through.
 
 The debugger is opt-in and is the only `ptrace` user in the project. It sits
 beside the normal access path rather than in it, so the read/write path stays
-`process_vm_*` / procfs (or, for `wine-proton`, its resident agent) and the
-target sees no `TracerPid` while it is read:
+`process_vm_*` / procfs for both bundled plugins and the target sees no
+`TracerPid` while it is read:
 
 - `platform::ptrace` is the only place that calls `ptrace`. Both bundled plugins
   and the test binary link it through `slopkit_platform`.
@@ -194,8 +196,8 @@ target sees no `TracerPid` while it is read:
   `PluginProfile::debug_excluded_threads`, i.e. the Wine resident agent's
   dispatcher and workers — and leaves those threads running: they are never
   seized, never programmed with debug registers and never waited on, so the agent
-  keeps serving reads, regions, modules and validation while the rest of the
-  target is stopped at a breakpoint. It also offers a **single-thread window**
+  keeps serving allocation, the region walk and the module walk while the rest
+  of the target is stopped at a breakpoint. It also offers a **single-thread window**
   (`attach_thread` / `detach_thread`) beside the group one: the ptrace allocation
   path borrows one donor through it and never seizes the group, the two windows refuse
   while the other is open, and only the group window owns the debug registers.

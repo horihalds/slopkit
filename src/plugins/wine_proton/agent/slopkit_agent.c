@@ -509,50 +509,6 @@ static void agent_handle_hello(slopkit_agent_record* response)
     response->reserved0        = SLOPKIT_AGENT_PAYLOAD_SIZE;
 }
 
-/* Whether a protection permits a plain in-target read. PAGE_GUARD is a
-   one-shot trap, not readable memory, so it is excluded; the low byte is the
-   base protection and the PAGE_NOCACHE/PAGE_WRITECOMBINE modifiers above it do
-   not change readability. */
-static int agent_protection_readable(uint32_t protection)
-{
-    if ((protection & 0x100u) != 0)
-    {
-        return 0;
-    }
-    switch (protection & 0xFFu)
-    {
-    case SLOPKIT_AGENT_PAGE_READONLY:
-    case SLOPKIT_AGENT_PAGE_READWRITE:
-    case SLOPKIT_AGENT_PAGE_WRITECOPY:
-    case SLOPKIT_AGENT_PAGE_EXECUTE_READ:
-    case SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE:
-    case SLOPKIT_AGENT_PAGE_EXECUTE_WRITECOPY:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-/* Whether a protection permits a plain in-target write; a read-only or
-   execute-only page would fault the target, not merely fail the request. */
-static int agent_protection_writable(uint32_t protection)
-{
-    if ((protection & 0x100u) != 0)
-    {
-        return 0;
-    }
-    switch (protection & 0xFFu)
-    {
-    case SLOPKIT_AGENT_PAGE_READWRITE:
-    case SLOPKIT_AGENT_PAGE_WRITECOPY:
-    case SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE:
-    case SLOPKIT_AGENT_PAGE_EXECUTE_WRITECOPY:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
 /* The Windows loader structures the MODULES walk needs, declared locally
    rather than through <winternl.h>: the DLL includes <windows.h> only, and the
    member spelling of mingw-w64's winternl.h is not stable across releases.
@@ -786,76 +742,6 @@ static void agent_handle_enum(const slopkit_agent_record* request, slopkit_agent
     response->address = cursor;
 }
 
-/* The bytes one READ/WRITE may move: no more than the payload, and never past
-   the end of the committed region containing `address`. Returns 0 when nothing
-   is transferable, which the callers report as an error. */
-static uint64_t agent_transfer_span(uint64_t address, uint64_t size, int for_write)
-{
-    if (size > SLOPKIT_AGENT_PAYLOAD_SIZE)
-    {
-        size = SLOPKIT_AGENT_PAYLOAD_SIZE;
-    }
-    MEMORY_BASIC_INFORMATION region;
-    if (VirtualQuery((LPCVOID)(uintptr_t)address, &region, sizeof(region)) != sizeof(region))
-    {
-        return 0;
-    }
-    if (region.State != MEM_COMMIT)
-    {
-        return 0;
-    }
-    const uint32_t protection = (uint32_t)region.Protect;
-    if ((for_write && !agent_protection_writable(protection)) || (!for_write && !agent_protection_readable(protection)))
-    {
-        return 0;
-    }
-    const uint64_t base = (uint64_t)(uintptr_t)region.BaseAddress;
-    const uint64_t end  = base + (uint64_t)region.RegionSize;
-    if (end <= address)
-    {
-        return 0;
-    }
-    return size < end - address ? size : end - address;
-}
-
-/* READ: copy the target's bytes into payload[], at most min(size, payload)
-   bytes and never across the containing region's end. A short copy is a
-   success; a range with nothing readable is an error. */
-static void agent_handle_read(const slopkit_agent_record* request, slopkit_agent_record* response, uint8_t* payload)
-{
-    if (request->size == 0 || request->size > SLOPKIT_AGENT_PAYLOAD_SIZE)
-    {
-        response->status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
-        return;
-    }
-    const uint64_t span = agent_transfer_span(request->address, request->size, 0);
-    if (span == 0)
-    {
-        agent_fill_error(response, ERROR_INVALID_ADDRESS);
-        return;
-    }
-    memcpy(payload, (const void*)(uintptr_t)request->address, (size_t)span);
-    response->size = span;
-}
-
-/* WRITE: copy payload[] into the target, bounded the same way as READ. */
-static void agent_handle_write(const slopkit_agent_record* request, slopkit_agent_record* response, uint8_t* payload)
-{
-    if (request->size == 0 || request->size > SLOPKIT_AGENT_PAYLOAD_SIZE)
-    {
-        response->status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
-        return;
-    }
-    const uint64_t span = agent_transfer_span(request->address, request->size, 1);
-    if (span == 0)
-    {
-        agent_fill_error(response, ERROR_INVALID_ADDRESS);
-        return;
-    }
-    memcpy((void*)(uintptr_t)request->address, payload, (size_t)span);
-    response->size = span;
-}
-
 static void agent_handle_alloc(const slopkit_agent_record* request, slopkit_agent_record* response)
 {
     if (request->size == 0 || request->size > (uint64_t)(SIZE_T)-1)
@@ -1033,12 +919,6 @@ static int agent_dispatch(uint32_t index)
         break;
     case SLOPKIT_AGENT_OP_ENUM:
         agent_handle_enum(&request, &response, slot->payload);
-        break;
-    case SLOPKIT_AGENT_OP_READ:
-        agent_handle_read(&request, &response, slot->payload);
-        break;
-    case SLOPKIT_AGENT_OP_WRITE:
-        agent_handle_write(&request, &response, slot->payload);
         break;
     case SLOPKIT_AGENT_OP_MODULES:
         agent_handle_modules(&request, &response, slot->payload);

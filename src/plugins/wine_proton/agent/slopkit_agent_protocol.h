@@ -10,7 +10,7 @@
 
 /* Bumped whenever the layout below changes. A mismatch is refused as a
    protocol error, never waited on until a timeout. */
-#define SLOPKIT_AGENT_PROTOCOL_VERSION       4u
+#define SLOPKIT_AGENT_PROTOCOL_VERSION       5u
 
 /* The ring of independent request slots one region carries: every slot has its
    own state word, request/response record and payload, so this many requests
@@ -49,10 +49,9 @@
 #define SLOPKIT_AGENT_OP_PROTECT             5u
 #define SLOPKIT_AGENT_OP_QUERY               6u
 #define SLOPKIT_AGENT_OP_SHUTDOWN            7u
-/* Version 2. */
+/* Version 2. 9 and 10 were READ and WRITE, removed in version 5: the host
+   serves memory transfer itself and never asks the target to copy bytes. */
 #define SLOPKIT_AGENT_OP_ENUM                8u
-#define SLOPKIT_AGENT_OP_READ                9u
-#define SLOPKIT_AGENT_OP_WRITE               10u
 /* Version 3. */
 #define SLOPKIT_AGENT_OP_MODULES             11u
 
@@ -61,8 +60,7 @@
 
 /* The payload area trailing the request and response records. It holds
    `SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_region_entry)` region
-   records for ENUM, the bytes READ returns or the bytes WRITE sends. 64 KiB
-   matches the chunk the host's read probe already uses. */
+   records for ENUM. */
 #define SLOPKIT_AGENT_PAYLOAD_SIZE           (64u * 1024u)
 
 /* Response statuses. SLOPKIT_AGENT_STATUS_ERROR always carries a Win32 error

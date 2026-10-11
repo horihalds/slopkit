@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -93,24 +92,6 @@ namespace
         return slopkit::plugins::wine_proton::AgentService::modules(session);
     }
 
-    std::expected<bool, slopkit::plugins::support::AccessFault>
-    range_is_readable(slopkit::plugins::support::Session& session, std::uint64_t address, std::size_t size)
-    {
-        return slopkit::plugins::wine_proton::AgentService::validate(session, address, size);
-    }
-
-    std::expected<slopkit::plugins::support::MemoryResult, slopkit::plugins::support::AccessFault>
-    read(slopkit::plugins::support::Session& session, std::uint64_t address, std::span<std::byte> buffer)
-    {
-        return slopkit::plugins::wine_proton::AgentService::read(session, address, buffer);
-    }
-
-    std::expected<slopkit::plugins::support::MemoryResult, slopkit::plugins::support::AccessFault>
-    write(slopkit::plugins::support::Session& session, std::uint64_t address, std::span<const std::byte> data)
-    {
-        return slopkit::plugins::wine_proton::AgentService::write(session, address, data);
-    }
-
     std::vector<ProcessId> debug_excluded_threads(slopkit::plugins::support::Session& session)
     {
         return slopkit::plugins::wine_proton::AgentService::agent_threads(session);
@@ -127,9 +108,9 @@ namespace
                                       free,
                                       close_session,
                                       regions,
-                                      range_is_readable,
-                                      read,
-                                      write,
+                                      nullptr,
+                                      nullptr,
+                                      nullptr,
                                       debug_excluded_threads};
 }
 

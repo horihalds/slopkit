@@ -22,7 +22,6 @@
 #include "core/log_categories.hpp"
 #include "plugin/plugin_api.h"
 #include "plugins/support/allocate.hpp"
-#include "plugins/support/validate.hpp"
 #include "plugins/wine_proton/agent_client.hpp"
 #include "plugins/wine_proton/agent_modules.hpp"
 #include "plugins/wine_proton/agent_regions.hpp"
@@ -223,30 +222,6 @@ namespace slopkit::plugins::wine_proton
             const std::lock_guard lock(g_mutex);
             state.modules     = std::move(modules);
             state.has_modules = true;
-        }
-
-        std::expected<support::MemoryResult, support::AccessFault>
-        host_read(support::Session& session, std::uint64_t address, std::span<std::byte> buffer)
-        {
-            const auto host = session.mem.read(address, buffer);
-            if (!host)
-            {
-                return std::unexpected(
-                    support::AccessFault {support::status_for(host.error()), support::message_for(host.error())});
-            }
-            return support::MemoryResult {host->bytes, support::method_flag(host->primitive)};
-        }
-
-        std::expected<support::MemoryResult, support::AccessFault>
-        host_write(support::Session& session, std::uint64_t address, std::span<const std::byte> data)
-        {
-            const auto host = session.mem.write(address, data);
-            if (!host)
-            {
-                return std::unexpected(
-                    support::AccessFault {support::status_for(host.error()), support::message_for(host.error())});
-            }
-            return support::MemoryResult {host->bytes, support::method_flag(host->primitive)};
         }
 
         std::optional<std::uint64_t> thread_stack_start(process::ProcessId pid, process::ProcessId tid)
@@ -493,85 +468,6 @@ namespace slopkit::plugins::wine_proton
         auto merged = merge_modules(entries, platform::read_maps(session.pid));
         store_modules(state, merged);
         return merged;
-    }
-
-    std::expected<bool, support::AccessFault>
-    AgentService::validate(support::Session& session, std::uint64_t address, std::size_t size)
-    {
-        const auto  call  = begin_call(session.pid);
-        AgentState& state = call->state();
-        if (session.suspended)
-        {
-            return support::range_is_readable(session, address, size);
-        }
-
-        const auto client = ensure_client(state, session.pid);
-        if (!client)
-        {
-            return support::range_is_readable(session, address, size);
-        }
-
-        const auto info = client->query(address, kRequestTimeout);
-        if (!info)
-        {
-            note_failure(client, state, session.pid, info.error());
-            return support::range_is_readable(session, address, size);
-        }
-        if (info->state != SLOPKIT_AGENT_MEM_COMMIT || !region_protection_readable(info->protection))
-        {
-            return false;
-        }
-        return address + size <= info->base + info->size;
-    }
-
-    std::expected<support::MemoryResult, support::AccessFault>
-    AgentService::read(support::Session& session, std::uint64_t address, std::span<std::byte> buffer)
-    {
-        const auto  call  = begin_call(session.pid);
-        AgentState& state = call->state();
-        if (session.suspended)
-        {
-            return host_read(session, address, buffer);
-        }
-
-        const auto client = ensure_client(state, session.pid);
-        if (!client)
-        {
-            return host_read(session, address, buffer);
-        }
-
-        const auto moved = client->read(address, buffer, kRequestTimeout);
-        if (!moved)
-        {
-            note_failure(client, state, session.pid, moved.error());
-            return host_read(session, address, buffer);
-        }
-        return support::MemoryResult {*moved, SLOPKIT_ACCESS_AGENT};
-    }
-
-    std::expected<support::MemoryResult, support::AccessFault>
-    AgentService::write(support::Session& session, std::uint64_t address, std::span<const std::byte> data)
-    {
-        const auto  call  = begin_call(session.pid);
-        AgentState& state = call->state();
-        if (session.suspended)
-        {
-            return host_write(session, address, data);
-        }
-
-        const auto client = ensure_client(state, session.pid);
-        if (!client)
-        {
-            return host_write(session, address, data);
-        }
-
-        const auto moved = client->write(address, data, kRequestTimeout);
-        if (!moved)
-        {
-            note_failure(client, state, session.pid, moved.error());
-            return host_write(session, address, data);
-        }
-        return support::MemoryResult {*moved, SLOPKIT_ACCESS_AGENT};
     }
 
     void AgentService::close(process::ProcessId pid)

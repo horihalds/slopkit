@@ -234,7 +234,7 @@ TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
     CHECK_FALSE(regions->empty());
 }
 
-TEST_CASE("wine-proton falls back to the host path when the agent cannot serve", "[wine_proton]")
+TEST_CASE("wine-proton serves reads and writes from the host path", "[wine_proton]")
 {
     auto* page =
         static_cast<std::byte*>(::mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
@@ -248,11 +248,14 @@ TEST_CASE("wine-proton falls back to the host path when the agent cannot serve",
     auto session = access.attach(static_cast<ProcessId>(::getpid()), "wine-proton");
     REQUIRE(session.has_value());
 
-    // A native target cannot run the resident agent, so reads and writes answer
-    // from the host process_vm path instead of failing the session.
+    // Reads and writes never round-trip through the resident agent: the host
+    // process_vm path (or procfs) answers them directly.
     const auto data = session->read(address, 64);
     REQUIRE(data.has_value());
     CHECK(data->size() == 64);
+    CHECK((slopkit::process::has_flag(session->last_method(), AccessMethod::process_vm)
+           || slopkit::process::has_flag(session->last_method(), AccessMethod::procfs_mem)));
+    CHECK_FALSE(slopkit::process::has_flag(session->last_method(), AccessMethod::agent));
 
     const std::array<std::byte, 8> pattern {std::byte {0xde},
                                             std::byte {0xad},
@@ -266,6 +269,7 @@ TEST_CASE("wine-proton falls back to the host path when the agent cannot serve",
     REQUIRE(written.has_value());
     CHECK(*written == pattern.size());
     CHECK(std::equal(pattern.begin(), pattern.end(), page));
+    CHECK_FALSE(slopkit::process::has_flag(session->last_method(), AccessMethod::agent));
 
     ::munmap(page, kPageSize);
 }
@@ -580,46 +584,24 @@ TEST_CASE("a failed injector is reported as a useful line", "[wine_proton]")
     }
 }
 
-TEST_CASE("a paused target is not a failure for the agent hooks", "[wine_proton][agent-service]")
+TEST_CASE("a paused target keeps the agent-only hooks unavailable", "[wine_proton][agent-service]")
 {
     using slopkit::platform::ForeignSignalPolicy;
     using slopkit::plugins::support::Session;
     using slopkit::plugins::wine_proton::AgentService;
 
-    auto* page =
-        static_cast<std::byte*>(::mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    REQUIRE(page != MAP_FAILED);
-    const auto address = reinterpret_cast<std::uint64_t>(page);
-    for (std::size_t index = 0; index < 8; ++index)
-    {
-        page[index] = static_cast<std::byte>(0x10 + index);
-    }
-
     Session session(static_cast<ProcessId>(::getpid()), ForeignSignalPolicy::forward);
     session.suspended = true;
 
-    // Our own SIGSTOP pause stops the agent's threads too, so a read answers
-    // from the host path instead of timing out and disabling the agent.
-    std::array<std::byte, 8> buffer {};
-    const auto               read = AgentService::read(session, address, buffer);
-    REQUIRE(read.has_value());
-    CHECK(read->bytes == buffer.size());
-    CHECK(std::equal(buffer.begin(), buffer.end(), page));
-
+    // Our own SIGSTOP pause stops the agent's threads too, so allocation and the
+    // introspection walks cannot be served and report the error instead.
     const auto alloc = AgentService::allocate(session, kPageSize, 0);
     REQUIRE_FALSE(alloc.has_value());
     CHECK(alloc.error().code == SLOPKIT_ERR_IO);
-    const auto freed = AgentService::free(session, address);
+    const auto freed = AgentService::free(session, 0x1000);
     REQUIRE_FALSE(freed.has_value());
     CHECK(freed.error().code == SLOPKIT_ERR_IO);
 
     const auto modules = AgentService::modules(session);
     REQUIRE_FALSE(modules.has_value());
-
-    session.suspended  = false;
-    const auto resumed = AgentService::read(session, address, buffer);
-    REQUIRE(resumed.has_value());
-    CHECK(std::equal(buffer.begin(), buffer.end(), page));
-
-    ::munmap(page, kPageSize);
 }

@@ -280,23 +280,28 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     CHECK(*previous == SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE);
     REQUIRE(agent->protect(*allocated, 0x1000, SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE, 5s).has_value());
 
+    // The bytes are the host's business now: the agent only allocated the
+    // block, and a plain process_vm transfer moves the pattern in and out.
+    slopkit::plugins::support::Session session(launched->guard.pid, slopkit::platform::ForeignSignalPolicy::forward);
+
     std::vector<std::byte> pattern(16);
     for (std::size_t index = 0; index < pattern.size(); ++index)
     {
         pattern[index] = static_cast<std::byte>(0x40 + index);
     }
-    const auto written = agent->write(*allocated, pattern, 5s);
+    const auto written = session.mem.write(*allocated, pattern);
     REQUIRE(written.has_value());
-    CHECK(*written == pattern.size());
+    CHECK(written->bytes == pattern.size());
+    CHECK(written->primitive != slopkit::platform::MemoryPrimitive::none);
 
     std::vector<std::byte> readback(pattern.size());
-    const auto             read = agent->read(*allocated, readback, 5s);
+    const auto             read = session.mem.read(*allocated, readback);
     REQUIRE(read.has_value());
-    CHECK(*read == pattern.size());
+    CHECK(read->bytes == pattern.size());
     CHECK(readback == pattern);
 
-    // Several host threads read distinct ranges at once: the slot ring must
-    // serve them in parallel instead of queuing one behind the other.
+    // Several host threads read the same block at once: the host primitives are
+    // independent per call, so no slot ring stands between them.
     {
         std::atomic<bool>        failed {false};
         std::vector<std::thread> readers;
@@ -305,9 +310,9 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
             readers.emplace_back(
                 [&, index]
                 {
-                    std::vector<std::byte> chunk(32);
-                    const auto chunk_read = agent->read(*allocated + static_cast<std::uint64_t>(index) * 32, chunk, 5s);
-                    if (!chunk_read.has_value() || *chunk_read != chunk.size())
+                    std::vector<std::byte> chunk(4);
+                    const auto chunk_read = session.mem.read(*allocated + static_cast<std::uint64_t>(index) * 4, chunk);
+                    if (!chunk_read.has_value() || chunk_read->bytes != chunk.size())
                     {
                         failed = true;
                     }

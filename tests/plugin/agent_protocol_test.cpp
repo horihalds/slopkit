@@ -73,7 +73,7 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(offsetof(slopkit_agent_module_entry, reserved) == 36);
 
     CHECK(SLOPKIT_AGENT_MAGIC == 0x534C4B41u);
-    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 4u);
+    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 5u);
     CHECK(SLOPKIT_AGENT_SLOT_COUNT == 4u);
     CHECK(SLOPKIT_AGENT_MAX_WORKERS == 4u);
     CHECK(SLOPKIT_AGENT_THREAD_MAGIC == 0x534C4F504B495421ull);
@@ -86,8 +86,6 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(SLOPKIT_AGENT_OP_QUERY == 6u);
     CHECK(SLOPKIT_AGENT_OP_SHUTDOWN == 7u);
     CHECK(SLOPKIT_AGENT_OP_ENUM == 8u);
-    CHECK(SLOPKIT_AGENT_OP_READ == 9u);
-    CHECK(SLOPKIT_AGENT_OP_WRITE == 10u);
     CHECK(SLOPKIT_AGENT_OP_MODULES == 11u);
     CHECK(SLOPKIT_AGENT_MODULE_FLAG_MAIN == 0x1u);
     CHECK(SLOPKIT_AGENT_SLOT_IDLE == 0u);

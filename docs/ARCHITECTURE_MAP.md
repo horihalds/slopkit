@@ -83,7 +83,7 @@ docs that hold the detail behind this map.
 
 - `src/main.cpp` → `slopkit::app::run()` (`src/app/cli.cpp`) handles argv: headless commands (`--version`, `--list-plugins`, `--list-processes`, scan), otherwise it hands a table path to a running instance (`src/app/instance*`) or builds `ui::App` / `MainWindow`.
 - Plugin discovery: `PluginHost::discover()` over `app::plugin_search_directories()`.
-- Reads/writes: UI → `process::AccessWorker` job → `ProcessAccess` plugin session (for `wine-proton`, its resident agent while the target can run, else `process_vm`/procfs) → `AccessWorker::drain()` applies results on the UI thread.
+- Reads/writes: UI → `process::AccessWorker` job → `ProcessAccess` plugin session (`process_vm_*` then procfs for both bundled plugins; `wine-proton` never routes bytes through its resident agent) → `AccessWorker::drain()` applies results on the UI thread.
 - Scans: scanner panel → `scan::ScanEngine` worker thread → `MemorySource`; the UI polls `snapshot()`.
   With `Pause the game while scanning`, the panel suspends the target through the access worker before the engine starts and resumes it once the engine stops.
 - Live values: `ui::LiveValues` batches every registered `LiveSurface` request into one worker job per interval, then asks each registered `LiveTicker` — `ui::ScriptUpdates` submits the one job that runs the ticked scripts' `update` hooks — after the read pass, so a slow hook can delay at most one batched read; a script is left out of that job until its own declared `update_interval` has elapsed.

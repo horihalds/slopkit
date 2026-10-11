@@ -99,12 +99,6 @@ namespace slopkit::plugins::wine_proton
         [[nodiscard]] std::expected<AgentModuleBatch, std::string>
         modules(std::uint64_t start_index, std::uint32_t capacity, std::chrono::milliseconds timeout);
 
-        [[nodiscard]] std::expected<std::size_t, std::string>
-        read(std::uint64_t address, std::span<std::byte> buffer, std::chrono::milliseconds timeout);
-
-        [[nodiscard]] std::expected<std::size_t, std::string>
-        write(std::uint64_t address, std::span<const std::byte> data, std::chrono::milliseconds timeout);
-
         void shutdown(std::chrono::milliseconds timeout = std::chrono::milliseconds {kAgentRequestTimeoutMs}) noexcept;
 
     private:

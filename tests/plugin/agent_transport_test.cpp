@@ -75,12 +75,6 @@ namespace
             region_->header.slot_count   = SLOPKIT_AGENT_SLOT_COUNT;
             region_->header.worker_count = SLOPKIT_AGENT_MAX_WORKERS;
 
-            target_memory_.resize(0x2000);
-            for (std::size_t index = 0; index < target_memory_.size(); ++index)
-            {
-                target_memory_[index] = static_cast<std::byte>(index & 0xFF);
-            }
-
             if (behaviour_ == Behaviour::Serve || behaviour_ == Behaviour::SilentFirst)
             {
                 for (std::uint32_t index = 0; index < SLOPKIT_AGENT_SLOT_COUNT; ++index)
@@ -135,16 +129,6 @@ namespace
         [[nodiscard]] int in_flight() const
         {
             return in_flight_.load();
-        }
-
-        [[nodiscard]] std::vector<std::byte>& target_memory()
-        {
-            return target_memory_;
-        }
-
-        [[nodiscard]] static constexpr std::uint64_t target_base()
-        {
-            return 0x10000000ull;
         }
 
         [[nodiscard]] std::vector<slopkit_agent_region_entry> default_regions() const
@@ -275,46 +259,6 @@ namespace
                 response.address = index < regions.size() ? regions[index].base : 0;
                 break;
             }
-            case SLOPKIT_AGENT_OP_READ:
-            {
-                if (request.size == 0 || request.size > SLOPKIT_AGENT_PAYLOAD_SIZE)
-                {
-                    response.status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
-                    break;
-                }
-                if (request.address < target_base() || request.address >= target_base() + target_memory_.size())
-                {
-                    response.status      = SLOPKIT_AGENT_STATUS_ERROR;
-                    response.win32_error = 0x1E7;
-                    break;
-                }
-                const auto offset    = static_cast<std::size_t>(request.address - target_base());
-                const auto available = target_memory_.size() - offset;
-                const auto span      = std::min<std::size_t>({static_cast<std::size_t>(request.size), available});
-                std::memcpy(payload, target_memory_.data() + offset, span);
-                response.size = span;
-                break;
-            }
-            case SLOPKIT_AGENT_OP_WRITE:
-            {
-                if (request.size == 0 || request.size > SLOPKIT_AGENT_PAYLOAD_SIZE)
-                {
-                    response.status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
-                    break;
-                }
-                if (request.address < target_base() || request.address >= target_base() + target_memory_.size())
-                {
-                    response.status      = SLOPKIT_AGENT_STATUS_ERROR;
-                    response.win32_error = 0x1E7;
-                    break;
-                }
-                const auto offset    = static_cast<std::size_t>(request.address - target_base());
-                const auto available = target_memory_.size() - offset;
-                const auto span      = std::min<std::size_t>({static_cast<std::size_t>(request.size), available});
-                std::memcpy(target_memory_.data() + offset, payload, span);
-                response.size = span;
-                break;
-            }
             case SLOPKIT_AGENT_OP_SHUTDOWN:
                 owned_.clear();
                 break;
@@ -408,7 +352,6 @@ namespace
         slopkit_agent_record                               last_request_ {};
         std::vector<std::uint64_t>                         owned_;
         std::uint64_t                                      next_base_ {0x140000000ull};
-        std::vector<std::byte>                             target_memory_;
         bool                                               ignored_seen_ {false};
         std::uint32_t                                      ignored_request_id_ {0};
     };
@@ -571,7 +514,7 @@ TEST_CASE("the agent transport carries every operation", "[wine-proton][agent]")
     }
 }
 
-TEST_CASE("the agent transport carries a payload in both directions", "[wine-proton][agent]")
+TEST_CASE("the agent transport carries a payload", "[wine-proton][agent]")
 {
     auto transport = AgentTransport::create(scratch_directory("agent-transport-payload"));
     REQUIRE(transport.has_value());
@@ -605,47 +548,6 @@ TEST_CASE("the agent transport carries a payload in both directions", "[wine-pro
         CHECK(tail->address == 0ull);
     }
 
-    SECTION("read returns the target's bytes and a short read is a success")
-    {
-        auto record    = request(SLOPKIT_AGENT_OP_READ);
-        record.address = MockAgent::target_base() + 0x10;
-        record.size    = 0x20;
-        std::vector<std::byte> buffer(0x20);
-        const auto             read = transact(*transport, record, 2s, {}, buffer);
-        REQUIRE(read.has_value());
-        CHECK(read->status == SLOPKIT_AGENT_STATUS_OK);
-        CHECK(read->size == 0x20u);
-        for (std::size_t index = 0; index < buffer.size(); ++index)
-        {
-            CHECK(buffer[index] == agent.target_memory()[0x10 + index]);
-        }
-
-        record.address = MockAgent::target_base() + agent.target_memory().size() - 0x10;
-        record.size    = 0x100;
-        std::vector<std::byte> short_buffer(0x100);
-        const auto             short_read = transact(*transport, record, 2s, {}, short_buffer);
-        REQUIRE(short_read.has_value());
-        CHECK(short_read->status == SLOPKIT_AGENT_STATUS_OK);
-        CHECK(short_read->size == 0x10u);
-    }
-
-    SECTION("write sends the payload into the target")
-    {
-        std::vector<std::byte> data(0x40);
-        for (std::size_t index = 0; index < data.size(); ++index)
-        {
-            data[index] = static_cast<std::byte>(0xA0 + (index & 0xF));
-        }
-        auto record      = request(SLOPKIT_AGENT_OP_WRITE);
-        record.address   = MockAgent::target_base() + 0x100;
-        record.size      = data.size();
-        const auto write = transact(*transport, record, 2s, data, {});
-        REQUIRE(write.has_value());
-        CHECK(write->status == SLOPKIT_AGENT_STATUS_OK);
-        CHECK(write->size == data.size());
-        CHECK(std::equal(data.begin(), data.end(), agent.target_memory().begin() + 0x100));
-    }
-
     SECTION("an oversized size is a bad request")
     {
         auto enum_request = request(SLOPKIT_AGENT_OP_ENUM);
@@ -654,14 +556,6 @@ TEST_CASE("the agent transport carries a payload in both directions", "[wine-pro
         const auto             refused = transact(*transport, enum_request, 2s, {}, payload);
         REQUIRE(refused.has_value());
         CHECK(refused->status == SLOPKIT_AGENT_STATUS_BAD_REQUEST);
-
-        auto read_request    = request(SLOPKIT_AGENT_OP_READ);
-        read_request.address = MockAgent::target_base();
-        read_request.size    = SLOPKIT_AGENT_PAYLOAD_SIZE + 1;
-        std::vector<std::byte> buffer(1);
-        const auto             bad = transact(*transport, read_request, 2s, {}, buffer);
-        REQUIRE(bad.has_value());
-        CHECK(bad->status == SLOPKIT_AGENT_STATUS_BAD_REQUEST);
     }
 }
 
@@ -673,26 +567,25 @@ TEST_CASE("several host threads transact on their own slots at once", "[wine-pro
 
     MockAgent agent(transport->directory(), MockAgent::Behaviour::Serve, 60ms);
 
-    constexpr std::size_t                        kReaders = 2;
-    std::array<std::thread, kReaders>            readers;
-    std::array<std::uint32_t, kReaders>          answered_ids {};
-    std::array<std::vector<std::byte>, kReaders> results;
-    std::latch                                   start(static_cast<std::ptrdiff_t>(kReaders) + 1);
+    constexpr std::size_t               kReaders = 2;
+    std::array<std::thread, kReaders>   readers;
+    std::array<std::uint32_t, kReaders> answered_ids {};
+    std::array<std::uint64_t, kReaders> region_bases {};
+    std::latch                          start(static_cast<std::ptrdiff_t>(kReaders) + 1);
 
     for (std::size_t index = 0; index < kReaders; ++index)
     {
         readers[index] = std::thread(
             [&, index]
             {
-                results[index].assign(0x20, std::byte {0});
-                auto record    = request(SLOPKIT_AGENT_OP_READ);
-                record.address = MockAgent::target_base() + index * 0x40;
-                record.size    = results[index].size();
+                auto record    = request(SLOPKIT_AGENT_OP_QUERY);
+                record.address = 0x7f00abcdull + index * 0x1000ull;
                 start.arrive_and_wait();
-                const auto answer = transact(*transport, record, 5s, {}, results[index]);
+                const auto answer = transact(*transport, record, 5s);
                 if (answer.has_value())
                 {
                     answered_ids[index] = answer->request_id;
+                    region_bases[index] = answer->region_base;
                 }
             });
     }
@@ -705,9 +598,8 @@ TEST_CASE("several host threads transact on their own slots at once", "[wine-pro
     CHECK(answered_ids[0] != 0u);
     CHECK(answered_ids[1] != 0u);
     CHECK(answered_ids[0] != answered_ids[1]);
-    CHECK(results[0] == std::vector<std::byte>(agent.target_memory().begin(), agent.target_memory().begin() + 0x20));
-    CHECK(results[1]
-          == std::vector<std::byte>(agent.target_memory().begin() + 0x40, agent.target_memory().begin() + 0x60));
+    CHECK(region_bases[0] == 0x7f00a000ull);
+    CHECK(region_bases[1] == 0x7f00b000ull);
 
     CHECK(agent.peak_in_flight() > 1);
     CHECK(transport->available_slots() == SLOPKIT_AGENT_SLOT_COUNT);
