@@ -108,7 +108,8 @@ Check three logs after the run:
   — a new `crash_*` file means the run still died.
 
 A refusal is a valid outcome: `alloc`/`dealloc` reporting that no target thread is
-outside a system call leaves the game running, which is the intended trade.
+outside a system call — only after the bounded re-scan of the target's thread states
+has found none — leaves the game running, which is the intended trade.
 
 ## Diagnose a build or a run
 

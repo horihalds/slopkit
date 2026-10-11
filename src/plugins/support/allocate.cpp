@@ -179,47 +179,50 @@ namespace slopkit::plugins::support
                 failure(SLOPKIT_ERR_UNSUPPORTED, "no syscall instruction found in the target's executable code"));
         }
 
-        // How many target threads a donor search tries before giving up. A
-        // thread that is inside a system call is never borrowed, so a burst of
+        // How many target threads a donor search tries per scan before moving on.
+        // A thread that is inside a system call is never borrowed, so a burst of
         // them costs one borrow attempt each until a clean one is found.
         constexpr std::size_t kMaxDonorAttempts = 16;
 
-        // The tids to try as a donor, in the order to try them: every thread
-        // that is not the thread-group leader, running ones first and then the
-        // rest in tid order, with the leader falling back only for a target
-        // that has no other thread. A running thread is in user mode, so the
-        // first candidate is usually outside a system call.
+        // How long the donor search keeps re-reading the target's thread states
+        // after a scan in which every candidate was inside a system call, and how
+        // long it waits between scans. A Wine target parks its waiters in
+        // `ioctl`/ntsync for as long as it is idle, so a thread outside a call
+        // often appears a moment later; the bound keeps a target that never has
+        // one from holding the call. Nothing stays attached while it waits.
+        constexpr std::chrono::milliseconds kDonorRescanWindow {200};
+        constexpr std::chrono::milliseconds kDonorRescanPause {10};
+
+        // The tids to try as a donor, in the order to try them: every thread of
+        // the target's group, running ones first and then the rest in tid order.
+        // The thread-group leader is no longer skipped: Wine can park every
+        // worker in a blocking call (ioctl/ntsync) while the leader runs in user
+        // mode, and then the leader is the only thread the window may borrow. It
+        // still comes last within its bucket, so an all-running target keeps the
+        // donor it had before. A running thread is in user mode, so the first
+        // candidate is usually outside a system call.
         std::vector<process::ProcessId> donor_candidates(process::ProcessId pid)
         {
             std::vector<process::ProcessId> running;
             std::vector<process::ProcessId> parked;
-            bool                            have_leader = false;
+            process::ProcessId              leader {0};
+            bool                            leader_running {false};
 
             for (const auto& thread : platform::read_threads(pid))
             {
+                const bool is_running = platform::read_thread_state(pid, thread.tid) == 'R';
                 if (thread.tid == pid)
                 {
-                    have_leader = true;
+                    leader         = thread.tid;
+                    leader_running = is_running;
                     continue;
                 }
-                if (platform::read_thread_state(pid, thread.tid) == 'R')
-                {
-                    running.push_back(thread.tid);
-                }
-                else
-                {
-                    parked.push_back(thread.tid);
-                }
+                (is_running ? running : parked).push_back(thread.tid);
             }
 
-            if (running.empty() && parked.empty())
+            if (leader != 0)
             {
-                // A single-thread target: the leader is all it has.
-                if (have_leader)
-                {
-                    running.push_back(pid);
-                }
-                return running;
+                (leader_running ? running : parked).push_back(leader);
             }
             running.insert(running.end(), parked.begin(), parked.end());
             return running;
@@ -544,58 +547,84 @@ namespace slopkit::plugins::support
             // Tries the target's threads until one is provably outside a system
             // call, then seizes and keeps that one. A thread inside a call is
             // released again at once: never borrow, and never re-enter, a call
-            // the target started.
+            // the target started. An idle Wine target parks every waiter in a
+            // blocking call and can expose a thread outside one a moment later,
+            // so a fruitless scan is retried within a bounded window; nothing
+            // stays attached while the window waits between scans.
             std::expected<void, AllocationError> borrow_donor()
             {
-                const auto candidates = donor_candidates(session_.pid);
-                if (candidates.empty())
-                {
-                    return std::unexpected(failure(SLOPKIT_ERR_NOT_FOUND, "the target has no thread to borrow"));
-                }
+                const auto deadline = std::chrono::steady_clock::now() + kDonorRescanWindow;
 
                 std::string last_reason;
                 bool        tried = false;
-                for (std::size_t i = 0; i < candidates.size() && i < kMaxDonorAttempts; ++i)
+                int         scans = 0;
+
+                for (;;)
                 {
-                    const process::ProcessId tid      = candidates[i];
-                    const auto               attached = session_.debug.attach_thread(tid);
-                    if (!attached)
+                    ++scans;
+
+                    const auto candidates = donor_candidates(session_.pid);
+                    if (candidates.empty())
                     {
-                        if (attached.error() == process::AccessError::permission_denied)
-                        {
-                            return std::unexpected(
-                                failure(SLOPKIT_ERR_PERMISSION_DENIED, "cannot stop the target to run a syscall"));
-                        }
-                        last_reason = "cannot stop thread " + std::to_string(tid);
-                        continue;
+                        return std::unexpected(failure(SLOPKIT_ERR_NOT_FOUND, "the target has no thread to borrow"));
                     }
 
-                    tried            = true;
-                    const auto check = check_borrowable(session_.pid, tid);
-                    if (check.in_call)
+                    for (std::size_t i = 0; i < candidates.size() && i < kMaxDonorAttempts; ++i)
                     {
-                        last_reason = check.detail;
-                        if (const auto wchan = platform::read_thread_wchan(session_.pid, tid); !wchan.empty())
+                        const process::ProcessId tid      = candidates[i];
+                        const auto               attached = session_.debug.attach_thread(tid);
+                        if (!attached)
                         {
-                            last_reason += ", waiting in " + wchan;
+                            if (attached.error() == process::AccessError::permission_denied)
+                            {
+                                return std::unexpected(
+                                    failure(SLOPKIT_ERR_PERMISSION_DENIED, "cannot stop the target to run a syscall"));
+                            }
+                            last_reason = "cannot stop thread " + std::to_string(tid);
+                            continue;
                         }
-                        (void)session_.debug.detach_thread(tid);
-                        continue;
+
+                        tried            = true;
+                        const auto check = check_borrowable(session_.pid, tid);
+                        if (check.in_call)
+                        {
+                            last_reason = check.detail;
+                            if (const auto wchan = platform::read_thread_wchan(session_.pid, tid); !wchan.empty())
+                            {
+                                last_reason += ", waiting in " + wchan;
+                            }
+                            (void)session_.debug.detach_thread(tid);
+                            continue;
+                        }
+
+                        donor_    = tid;
+                        attached_ = true;
+                        if (!check.known)
+                        {
+                            log::debug(log::category::script, std::format("{}, borrowing it", check.detail));
+                        }
+                        if (scans > 1)
+                        {
+                            log::debug(log::category::script,
+                                       std::format("allocation window found thread {} on scan {}", tid, scans));
+                        }
+                        return {};
                     }
 
-                    donor_    = tid;
-                    attached_ = true;
-                    if (!check.known)
+                    // Every candidate was inside a system call: re-read the
+                    // states after a short pause, but only within the window.
+                    if (std::chrono::steady_clock::now() >= deadline)
                     {
-                        log::debug(log::category::script, std::format("{}, borrowing it", check.detail));
+                        break;
                     }
-                    return {};
+                    std::this_thread::sleep_for(kDonorRescanPause);
                 }
 
                 if (tried)
                 {
                     return std::unexpected(failure(SLOPKIT_ERR_PERMISSION_DENIED,
-                                                   "no target thread is outside a system call"
+                                                   "no target thread is outside a system call after "
+                                                       + std::to_string(scans) + " scans"
                                                        + (last_reason.empty() ? std::string {} : ": " + last_reason)));
                 }
                 return std::unexpected(

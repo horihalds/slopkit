@@ -342,17 +342,25 @@ target.
 - Allocation runs a remote `mmap`/`munmap` syscall inside the target through the
   plugin's ptrace `DebugSession`: the window borrows **exactly one** target thread,
   never the thread group, so the target's own waiters keep running and a wait the
-  window does not own cannot be perturbed. The donor is the lowest-numbered thread
-  that is not the thread-group leader, with the leader falling back only for a
-  target that has no other thread, and running threads are tried first. Before the
-  call is planted the donor must be **provably outside a system call** — the field
+  window does not own cannot be perturbed. The donor is the first thread of the
+  group that is **provably outside a system call**: every thread is a candidate,
+  running ones first and the rest in tid order, and the thread-group leader is no
+  longer skipped — it is tried last within its own bucket, because Wine can park
+  every worker in a blocking call while the leader runs in user mode, and then the
+  leader is the only thread the window may borrow. The field
   `/proc/<pid>/task/<tid>/syscall` decides, because an interrupt stop reports
-  `none` from `PTRACE_GET_SYSCALL_INFO` whether or not a call is in flight — and a
-  thread that is inside one is released again and the next candidate tried; when no
-  thread qualifies the call is refused with the reason rather than taking over the
-  return path of a call the target started (Wine parks its main thread in
-  `ioctl`/ntsync, which is exactly the thread the window must never borrow). The
-  syscall is executed with the donor's whole raw `NT_PRSTATUS` register file saved
+  `none` from `PTRACE_GET_SYSCALL_INFO` whether or not a call is in flight; a
+  thread that is inside one is released again and the next candidate tried, and it
+  is never borrowed, re-entered or drained. When a whole scan finds every thread
+  inside a system call the window does not refuse at once: it re-reads the thread
+  states after a short pause and tries again until a fixed ~200 ms window elapses
+  (nothing stays attached while it waits), so a target that is only momentarily
+  busy is still served. Only a target that never exposes a thread outside a call
+  through that window is refused with the reason — the refusal names how many scans
+  were made — rather than taking over the return path of a call the target started
+  (Wine parks its waiters in `ioctl`/ntsync, which is exactly a thread the window
+  must never borrow).
+  The syscall is executed with the donor's whole raw `NT_PRSTATUS` register file saved
   and written back wholesale, so fields the per-name setter does not name survive
   the hand-back, and a planted call still sitting at its syscall-entry stop is
   disarmed first (the number is rewritten to `getpid`) so no give-up path can leave
@@ -374,8 +382,9 @@ target.
   `/proc/<pid>/task/<tid>/stat` confirms the donor is not left in a traced stop —
   otherwise the failure is reported with the tid. A debug session and an allocation
   never overlap — each refuses while the other holds the target. Each `alloc`/
-  `dealloc` writes `script`-category debug records naming the borrowed thread, why
-  it was chosen (or why the call was refused) and the outcome (address, size).
+  `dealloc` writes `script`-category debug records naming the borrowed thread, the
+  scan that found it, why it was chosen (or why the call was refused) and the
+  outcome (address, size).
 - `validate(address[, size_bytes])` answers whether `[address, address + size)`
   is mapped **and readable** in the target, returning a Lua boolean; `size_bytes`
   defaults to `1` and is probed in bounded chunks, stopping at the first chunk

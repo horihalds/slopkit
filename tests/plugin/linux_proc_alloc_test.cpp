@@ -385,6 +385,222 @@ namespace
         Shared* shared_ {nullptr};
     };
 
+    // A target shaped like an idle Wine game: every worker thread is parked in a
+    // blocking call while the thread-group leader runs in user mode. That is the
+    // reported Proton target's shape, and the window has to borrow the leader
+    // because it is the only thread outside a system call. `wake()` releases the
+    // workers, so the test can show their own wait was never perturbed.
+    class IdleWorkersChild
+    {
+    public:
+        static constexpr int kWorkers = 4;
+
+        struct Shared
+        {
+            std::uint64_t parked[kWorkers] {};
+            std::uint64_t progress {};
+            std::uint32_t word {};
+        };
+
+        IdleWorkersChild()
+        {
+            shared_ = static_cast<Shared*>(
+                ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0));
+            if (shared_ == MAP_FAILED || shared_ == nullptr)
+            {
+                shared_ = nullptr;
+                return;
+            }
+            for (int i = 0; i < kWorkers; ++i)
+            {
+                shared_->parked[i] = 0;
+            }
+            shared_->progress = 0;
+            shared_->word     = 0;
+
+            const pid_t pid = ::fork();
+            if (pid == 0)
+            {
+                // Each worker publishes its own slot and then parks in a futex
+                // wait: the window must never touch a waiting thread, and the
+                // parent can tell when all of them are inside the call.
+                for (int i = 0; i < kWorkers; ++i)
+                {
+                    std::thread worker(
+                        [shared = shared_, i]
+                        {
+                            shared->parked[i] = 1;
+                            ::syscall(SYS_futex, &shared->word, kFutexWait, 0, nullptr, nullptr, 0);
+                            for (;;)
+                            {
+                                shared->progress = shared->progress + 1;
+                            }
+                        });
+                    worker.detach();
+                }
+
+                // The leader stays in user mode, so it is the one thread the
+                // window may borrow while the workers sit in their calls.
+                volatile std::uint64_t spin = 0;
+                for (;;)
+                {
+                    spin = spin + 1;
+                }
+                ::_exit(0);
+            }
+            if (pid > 0)
+            {
+                pid_ = pid;
+            }
+        }
+
+        ~IdleWorkersChild()
+        {
+            if (pid_ > 0)
+            {
+                ::kill(pid_, SIGKILL);
+                ::waitpid(pid_, nullptr, 0);
+            }
+            if (shared_ != nullptr)
+            {
+                ::munmap(shared_, sizeof(Shared));
+            }
+        }
+
+        IdleWorkersChild(const IdleWorkersChild&)            = delete;
+        IdleWorkersChild& operator=(const IdleWorkersChild&) = delete;
+
+        [[nodiscard]] std::uint32_t pid() const
+        {
+            return static_cast<std::uint32_t>(pid_);
+        }
+
+        // How many workers have parked plus how many steps they have run since
+        // they were woken: it grows to `kWorkers` once every worker is waiting
+        // and past it once a wake let them run on.
+        [[nodiscard]] std::uint64_t counter() const
+        {
+            if (shared_ == nullptr)
+            {
+                return 0;
+            }
+            std::uint64_t value = shared_->progress;
+            for (int i = 0; i < kWorkers; ++i)
+            {
+                if (shared_->parked[i] != 0)
+                {
+                    value = value + 1;
+                }
+            }
+            return value;
+        }
+
+        // Wakes every parked worker.
+        void wake() const
+        {
+            if (shared_ != nullptr)
+            {
+                ::syscall(SYS_futex, &shared_->word, kFutexWake, kWorkers, nullptr, nullptr, 0);
+            }
+        }
+
+    private:
+        pid_t   pid_ {-1};
+        Shared* shared_ {nullptr};
+    };
+
+    // A target whose only thread is briefly inside a system call: the leader
+    // parks in a futex wait, and the test's helper wakes it a moment later. The
+    // window has to re-read the thread states to find it back in user mode; a
+    // single pass over the candidates would refuse it.
+    class SleepingLeaderChild
+    {
+    public:
+        static constexpr std::uint64_t kInCall = 1;
+
+        struct Shared
+        {
+            std::uint64_t in_call {};
+            std::uint64_t progress {};
+            std::uint32_t word {};
+        };
+
+        SleepingLeaderChild()
+        {
+            shared_ = static_cast<Shared*>(
+                ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0));
+            if (shared_ == MAP_FAILED || shared_ == nullptr)
+            {
+                shared_ = nullptr;
+                return;
+            }
+            shared_->in_call  = 0;
+            shared_->progress = 0;
+            shared_->word     = 0;
+
+            const pid_t pid = ::fork();
+            if (pid == 0)
+            {
+                // The leader is the target's only thread: it announces the wait
+                // and then parks in it. The window may not borrow it while it
+                // waits, and it stays a single thread throughout.
+                shared_->in_call = kInCall;
+                ::syscall(SYS_futex, &shared_->word, kFutexWait, 0, nullptr, nullptr, 0);
+
+                for (;;)
+                {
+                    shared_->progress = shared_->progress + 1;
+                }
+                ::_exit(0);
+            }
+            if (pid > 0)
+            {
+                pid_ = pid;
+            }
+        }
+
+        ~SleepingLeaderChild()
+        {
+            if (pid_ > 0)
+            {
+                ::kill(pid_, SIGKILL);
+                ::waitpid(pid_, nullptr, 0);
+            }
+            if (shared_ != nullptr)
+            {
+                ::munmap(shared_, sizeof(Shared));
+            }
+        }
+
+        SleepingLeaderChild(const SleepingLeaderChild&)            = delete;
+        SleepingLeaderChild& operator=(const SleepingLeaderChild&) = delete;
+
+        [[nodiscard]] std::uint32_t pid() const
+        {
+            return static_cast<std::uint32_t>(pid_);
+        }
+
+        // `kInCall` once the leader announced its wait, and past it once a wake
+        // let it run on.
+        [[nodiscard]] std::uint64_t counter() const
+        {
+            return shared_ == nullptr ? 0 : shared_->in_call + shared_->progress;
+        }
+
+        // Wakes the leader out of its wait.
+        void wake() const
+        {
+            if (shared_ != nullptr)
+            {
+                ::syscall(SYS_futex, &shared_->word, kFutexWake, 1, nullptr, nullptr, 0);
+            }
+        }
+
+    private:
+        pid_t   pid_ {-1};
+        Shared* shared_ {nullptr};
+    };
+
     // Set before the fork so the child's handler can write to the shared page it
     // belongs to; the parent's copy stays untouched.
     volatile std::uint64_t* g_signal_flag = nullptr;
@@ -775,6 +991,126 @@ TEST_CASE("allocation completes while the target is inside a syscall", "[linux_p
     // The interrupted syscall was handed back: the child runs on once woken.
     child.wake();
     wait_for_progress(child);
+
+    REQUIRE(session->free_memory(*allocated).has_value());
+    wait_for_progress(child);
+}
+
+TEST_CASE("a target whose parked workers leave the leader to borrow", "[linux_proc][alloc]")
+{
+    // Every worker parks in a futex wait while the leader spins in user mode, so
+    // the leader is the only thread the window may borrow. It must no longer be
+    // skipped: skipping it fails this allocation with permission denied.
+    IdleWorkersChild child;
+    REQUIRE(child.pid() != 0);
+
+    REQUIRE(await_counter(child, IdleWorkersChild::kWorkers));
+    std::this_thread::sleep_for(std::chrono::milliseconds {50});
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(child.pid());
+    REQUIRE(session.has_value());
+    REQUIRE(session->supports_allocation());
+
+    constexpr std::size_t page = 0x1000;
+
+    // Samples the thread states across the window: at most the one borrowed
+    // donor may ever sit in a traced stop, and it must never be a parked worker.
+    std::atomic<bool> monitoring {true};
+    std::atomic<bool> worker_stopped {false};
+    std::thread       monitor(
+        [&]
+        {
+            while (monitoring.load())
+            {
+                for (const auto& thread : slopkit::platform::read_threads(child.pid()))
+                {
+                    if (thread.tid != child.pid()
+                        && slopkit::platform::read_thread_state(child.pid(), thread.tid) == 't')
+                    {
+                        worker_stopped = true;
+                    }
+                }
+            }
+        });
+
+    const auto allocated      = session->allocate_memory(page, 0);
+    const bool no_worker_stop = !worker_stopped.load();
+
+    monitoring = false;
+    monitor.join();
+
+    REQUIRE(allocated.has_value());
+    CHECK(*allocated != 0);
+    CHECK((*allocated % page) == 0);
+    CHECK(mapped_rwx(child.pid(), *allocated, page));
+
+    // No waiting worker was borrowed or left stopped by the window.
+    CHECK(no_worker_stop);
+    CHECK(no_traced_stop(child.pid()));
+
+    // The workers' own wait was never perturbed: waking it lets them run on.
+    const std::uint64_t before = child.counter();
+    child.wake();
+    CHECK(await_counter(child, before + 1));
+
+    REQUIRE(session->free_memory(*allocated).has_value());
+    wait_for_progress(child);
+}
+
+TEST_CASE("allocation rescans a target whose only thread is briefly in a syscall", "[linux_proc][alloc]")
+{
+    // The target's only thread is inside a futex wait for a moment and then back
+    // in user mode, so a single pass over the candidates would refuse it: the
+    // window has to re-read the thread states before it gives up.
+    SleepingLeaderChild child;
+    REQUIRE(child.pid() != 0);
+    REQUIRE(await_counter(child, SleepingLeaderChild::kInCall));
+
+    // Let the leader settle inside the call before the window looks at it.
+    std::this_thread::sleep_for(std::chrono::milliseconds {20});
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    auto* plugin = host.find("linux-proc");
+    REQUIRE(plugin != nullptr);
+
+    auto session = plugin->open_session(child.pid());
+    REQUIRE(session.has_value());
+    REQUIRE(session->supports_allocation());
+
+    constexpr std::size_t page = 0x1000;
+
+    // A helper wakes the leader while the window is mid-scan, so a later scan
+    // finds it back in user mode instead of a busy target.
+    std::thread waker(
+        [&]
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds {50});
+            child.wake();
+        });
+
+    const auto start     = std::chrono::steady_clock::now();
+    const auto allocated = session->allocate_memory(page, 0);
+    const auto elapsed   = std::chrono::steady_clock::now() - start;
+
+    waker.join();
+
+    REQUIRE(allocated.has_value());
+    CHECK(*allocated != 0);
+    CHECK((*allocated % page) == 0);
+    CHECK(mapped_rwx(child.pid(), *allocated, page));
+
+    // The leader was still in its wait when the window started looking, so the
+    // call could not have returned before the wake: the re-scan really was used.
+    CHECK(elapsed >= std::chrono::milliseconds {20});
+    CHECK(no_traced_stop(child.pid()));
 
     REQUIRE(session->free_memory(*allocated).has_value());
     wait_for_progress(child);
