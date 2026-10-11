@@ -378,6 +378,21 @@ TEST_CASE("flag_main_pe_image flags the lowest-based non-DLL PE image", "[procfs
     CHECK_FALSE(modules[0].is_main);
     CHECK(modules[1].is_main);
 
+    // The scan stops at the first executable, so an executable above a DLL and
+    // one below it must both be found, and the lowest executable must win.
+    std::vector<ModuleInfo> game_first {image(game_path, 0x300000), image(dll_path, 0x600000)};
+    CHECK(slopkit::platform::flag_main_pe_image(pid, game_first));
+    CHECK(game_first[0].is_main);
+    CHECK_FALSE(game_first[1].is_main);
+
+    const auto other_path = dir / "other.exe";
+    write_bytes(other_path, make_pe(0x1000, false));
+
+    std::vector<ModuleInfo> two_images {image(game_path, 0x500000), image(other_path, 0x700000)};
+    CHECK(slopkit::platform::flag_main_pe_image(pid, two_images));
+    CHECK(two_images[0].is_main);
+    CHECK_FALSE(two_images[1].is_main);
+
     std::vector<ModuleInfo> dlls {image(dll_path, 0x400000)};
     dlls[0].is_main = true;
     CHECK_FALSE(slopkit::platform::flag_main_pe_image(pid, dlls));

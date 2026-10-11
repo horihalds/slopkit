@@ -1,4 +1,5 @@
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -10,6 +11,7 @@
 #include "plugins/support/allocate.hpp"
 #include "plugins/support/plugin_support.hpp"
 #include "plugins/wine_proton/agent_service.hpp"
+#include "plugins/wine_proton/wine_target.hpp"
 
 namespace
 {
@@ -59,7 +61,17 @@ namespace
         {
             return false;
         }
-        out_name = process_name(pid);
+
+        static slopkit::plugins::wine_proton::NameCache cache;
+        const auto                                      now = std::chrono::steady_clock::now();
+        if (const auto remembered = cache.lookup(pid, now))
+        {
+            out_name = *remembered;
+            return true;
+        }
+
+        out_name = slopkit::plugins::wine_proton::guest_image_name(pid).value_or(process_name(pid));
+        cache.remember(pid, out_name, now);
         return true;
     }
 

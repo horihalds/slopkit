@@ -178,6 +178,99 @@ namespace
         }
         return child;
     }
+
+    // A minimal PE header (kind and bitness) so the guest-image walk can read a
+    // mapped file's image kind.
+    std::vector<std::byte> make_pe(bool is_dll)
+    {
+        constexpr std::size_t   lfanew              = 0x40;
+        constexpr std::size_t   characteristics_off = 22;
+        constexpr std::uint16_t image_file_dll      = 0x2000;
+        constexpr std::uint16_t machine_amd64       = 0x8664;
+
+        std::vector<std::byte> bytes(lfanew + 44, std::byte {0});
+        bytes[0]          = std::byte {'M'};
+        bytes[1]          = std::byte {'Z'};
+        bytes[0x3c]       = static_cast<std::byte>(lfanew & 0xff);
+        bytes[0x3d]       = static_cast<std::byte>((lfanew >> 8) & 0xff);
+        bytes[lfanew]     = std::byte {'P'};
+        bytes[lfanew + 1] = std::byte {'E'};
+
+        bytes[lfanew + 4] = static_cast<std::byte>(machine_amd64 & 0xff);
+        bytes[lfanew + 5] = static_cast<std::byte>((machine_amd64 >> 8) & 0xff);
+
+        const auto characteristics              = static_cast<std::uint16_t>(is_dll ? image_file_dll : 0);
+        bytes[lfanew + characteristics_off]     = static_cast<std::byte>(characteristics & 0xff);
+        bytes[lfanew + characteristics_off + 1] = static_cast<std::byte>((characteristics >> 8) & 0xff);
+        return bytes;
+    }
+
+    void write_bytes(const std::filesystem::path& path, std::span<const std::byte> bytes)
+    {
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    // A child that maps `image` read/exec at offset 0 and pauses, so its maps
+    // carry a file-backed image the guest-image walk can pick up.
+    pid_t spawn_mapping_child(const std::filesystem::path& image)
+    {
+        const pid_t child = ::fork();
+        if (child != 0)
+        {
+            return child;
+        }
+        const int descriptor = ::open(image.c_str(), O_RDONLY);
+        if (descriptor < 0)
+        {
+            ::_exit(70);
+        }
+        if (::mmap(nullptr, kPageSize, PROT_READ | PROT_EXEC, MAP_PRIVATE, descriptor, 0) == MAP_FAILED)
+        {
+            ::_exit(71);
+        }
+        for (;;)
+        {
+            ::pause();
+        }
+    }
+
+    bool wait_for_mapping(ProcessId pid, const std::string& path)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for (;;)
+        {
+            for (const auto& region : slopkit::platform::read_maps(pid))
+            {
+                if (region.path == path)
+                {
+                    return true;
+                }
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
+    bool wait_for_wine(ProcessId pid)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for (;;)
+        {
+            if (slopkit::platform::classify_wine_process(pid).claimed())
+            {
+                return true;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
 }
 
 TEST_CASE("wine-proton is discovered with the expected metadata", "[wine_proton]")
@@ -207,6 +300,59 @@ TEST_CASE("wine-proton lists only processes it claims", "[wine_proton]")
         INFO("pid " << process.pid);
         CHECK(slopkit::platform::classify_wine_process(process.pid).claimed());
     }
+}
+
+TEST_CASE("a wine target's guest image name is its executable's file name", "[wine_proton]")
+{
+    const auto dir = std::filesystem::temp_directory_path() / ("slopkit-wine-image-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    const auto game_dir = dir / "wine" / "drive_c" / "game";
+    std::filesystem::create_directories(game_dir);
+
+    const auto game_path = game_dir / "game.exe";
+    const auto dll_path  = game_dir / "game.dll";
+    write_bytes(game_path, make_pe(false));
+    write_bytes(dll_path, make_pe(true));
+
+    SECTION("the executable's file name keeps the extension")
+    {
+        const pid_t child = spawn_mapping_child(game_path);
+        REQUIRE(child >= 0);
+        ChildGuard guard(child);
+        REQUIRE(wait_for_mapping(static_cast<ProcessId>(child), game_path.string()));
+
+        const auto name = slopkit::plugins::wine_proton::guest_image_name(static_cast<ProcessId>(child));
+        REQUIRE(name.has_value());
+        CHECK(*name == "game.exe");
+    }
+
+    SECTION("a DLL mapping is not an executable image")
+    {
+        const pid_t child = spawn_mapping_child(dll_path);
+        REQUIRE(child >= 0);
+        ChildGuard guard(child);
+        REQUIRE(wait_for_mapping(static_cast<ProcessId>(child), dll_path.string()));
+
+        CHECK_FALSE(slopkit::plugins::wine_proton::guest_image_name(static_cast<ProcessId>(child)).has_value());
+    }
+
+    SECTION("a process with no PE image has no guest name")
+    {
+        const pid_t child = ::fork();
+        REQUIRE(child >= 0);
+        ChildGuard guard(child);
+        if (child == 0)
+        {
+            for (;;)
+            {
+                ::pause();
+            }
+        }
+
+        CHECK_FALSE(slopkit::plugins::wine_proton::guest_image_name(static_cast<ProcessId>(child)).has_value());
+    }
+
+    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
@@ -604,4 +750,151 @@ TEST_CASE("a paused target keeps the agent-only hooks unavailable", "[wine_proto
 
     const auto modules = AgentService::modules(session);
     REQUIRE_FALSE(modules.has_value());
+}
+
+TEST_CASE("the name cache remembers a claimed pid for its TTL", "[wine_proton]")
+{
+    using slopkit::plugins::wine_proton::NameCache;
+
+    const auto now = std::chrono::steady_clock::now();
+    NameCache  cache(std::chrono::seconds(5));
+
+    SECTION("a remembered name is returned inside the TTL")
+    {
+        cache.remember(42, "game.exe", now);
+
+        const auto name = cache.lookup(42, now + std::chrono::seconds(4));
+        REQUIRE(name.has_value());
+        CHECK(*name == "game.exe");
+    }
+
+    SECTION("an unknown pid has no name")
+    {
+        CHECK_FALSE(cache.lookup(7, now).has_value());
+    }
+
+    SECTION("an entry is dropped once it expires")
+    {
+        cache.remember(42, "game.exe", now);
+
+        CHECK_FALSE(cache.lookup(42, now + std::chrono::seconds(5)).has_value());
+        CHECK_FALSE(cache.lookup(42, now + std::chrono::seconds(6)).has_value());
+    }
+
+    SECTION("forget removes an entry immediately")
+    {
+        cache.remember(42, "game.exe", now);
+        cache.forget(42);
+
+        CHECK_FALSE(cache.lookup(42, now).has_value());
+    }
+
+    SECTION("a newer name replaces the remembered one")
+    {
+        cache.remember(42, "old.exe", now);
+        cache.remember(42, "new.exe", now + std::chrono::seconds(1));
+
+        const auto name = cache.lookup(42, now + std::chrono::seconds(2));
+        REQUIRE(name.has_value());
+        CHECK(*name == "new.exe");
+    }
+
+    SECTION("the map stays bounded")
+    {
+        // All entries share one expiry, so the emplace order breaks the tie and
+        // the lowest pid is evicted first.
+        constexpr ProcessId kOverCapacity = NameCache::kCapacity + 1;
+        for (ProcessId pid = 1; pid <= kOverCapacity; ++pid)
+        {
+            cache.remember(pid, "game.exe", now);
+        }
+
+        CHECK_FALSE(cache.lookup(1, now).has_value());
+        CHECK(cache.lookup(kOverCapacity, now).has_value());
+    }
+}
+
+TEST_CASE("a claimed wine target is listed by its guest executable name", "[wine_proton]")
+{
+    const auto dir = std::filesystem::temp_directory_path() / ("slopkit-wine-list-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    const auto game_dir = dir / "wine" / "drive_c" / "game";
+    std::filesystem::create_directories(game_dir);
+
+    const auto game_path = game_dir / "game.exe";
+    write_bytes(game_path, make_pe(false));
+
+    // A forked child keeps the parent's maps, so only the extra game.exe makes
+    // it look like a wine target.
+    const pid_t child = spawn_mapping_child(game_path);
+    REQUIRE(child >= 0);
+    ChildGuard guard(child);
+    REQUIRE(wait_for_mapping(static_cast<ProcessId>(child), game_path.string()));
+    REQUIRE(wait_for_wine(static_cast<ProcessId>(child)));
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+    slopkit::process::PluginAccess access(host);
+
+    const auto processes = access.list_processes();
+    REQUIRE(processes.has_value());
+
+    const slopkit::process::ProcessInfo* entry = nullptr;
+    for (const auto& process : *processes)
+    {
+        if (process.pid == static_cast<ProcessId>(child))
+        {
+            entry = &process;
+            break;
+        }
+    }
+
+    REQUIRE(entry != nullptr);
+    CHECK(entry->name == "game.exe");
+    CHECK(entry->plugin_id == "wine-proton");
+    CHECK(std::find(entry->claimants.begin(), entry->claimants.end(), "wine-proton") != entry->claimants.end());
+    CHECK(std::find(entry->claimants.begin(), entry->claimants.end(), "linux-proc") != entry->claimants.end());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("a claimed wine process without a PE image keeps its loader name", "[wine_proton]")
+{
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    ChildGuard guard(child);
+    if (child == 0)
+    {
+        char  arg0[] = "sleep";
+        char  arg1[] = "30";
+        char* argv[] = {arg0, arg1, nullptr};
+        char  env0[] = "PATH=/usr/bin:/bin";
+        char  env1[] = "WINEPREFIX=/tmp/slopkit-wine";
+        char* envp[] = {env0, env1, nullptr};
+        ::execve("/bin/sleep", argv, envp);
+        ::_exit(127);
+    }
+    REQUIRE(wait_for_wine(static_cast<ProcessId>(child)));
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+    slopkit::process::PluginAccess access(host);
+
+    const auto processes = access.list_processes();
+    REQUIRE(processes.has_value());
+
+    const slopkit::process::ProcessInfo* entry = nullptr;
+    for (const auto& process : *processes)
+    {
+        if (process.pid == static_cast<ProcessId>(child))
+        {
+            entry = &process;
+            break;
+        }
+    }
+
+    REQUIRE(entry != nullptr);
+    CHECK(entry->plugin_id == "wine-proton");
+    CHECK_FALSE(entry->name.empty());
+    CHECK(entry->name == "sleep");
 }

@@ -1,11 +1,16 @@
 #include "plugins/wine_proton/wine_target.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <format>
+#include <iterator>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <ranges>
 #include <string_view>
+#include <utility>
 
 #include <unistd.h>
 
@@ -23,7 +28,7 @@ namespace slopkit::plugins::wine_proton
             std::uint32_t pointer_size {0};
         };
 
-        std::optional<GuestImage> guest_image(process::ProcessId pid)
+        std::optional<std::string> guest_image_path(process::ProcessId pid)
         {
             auto modules = platform::modules_from_maps(platform::read_maps(pid));
             if (!platform::flag_main_pe_image(pid, modules))
@@ -35,10 +40,20 @@ namespace slopkit::plugins::wine_proton
             {
                 return std::nullopt;
             }
+            return main->path;
+        }
 
-            const std::filesystem::path path(main->path);
-            const auto                  root    = std::filesystem::path("/proc") / std::to_string(pid) / "root";
-            const auto                  machine = platform::read_pe_machine(root / path.relative_path());
+        std::optional<GuestImage> guest_image(process::ProcessId pid)
+        {
+            const auto path = guest_image_path(pid);
+            if (!path)
+            {
+                return std::nullopt;
+            }
+
+            const auto image_path = std::filesystem::path(*path);
+            const auto root       = std::filesystem::path("/proc") / std::to_string(pid) / "root";
+            const auto machine    = platform::read_pe_machine(root / image_path.relative_path());
             if (!machine)
             {
                 return std::nullopt;
@@ -48,10 +63,10 @@ namespace slopkit::plugins::wine_proton
             {
             case 0x8664:
             case 0xAA64:
-                return GuestImage {main->path, 8};
+                return GuestImage {*path, 8};
             case 0x014C:
             case 0x01C4:
-                return GuestImage {main->path, 4};
+                return GuestImage {*path, 4};
             default:
                 return std::nullopt;
             }
@@ -171,6 +186,16 @@ namespace slopkit::plugins::wine_proton
         }
     }
 
+    std::optional<std::string> guest_image_name(process::ProcessId pid)
+    {
+        const auto path = guest_image_path(pid);
+        if (!path)
+        {
+            return std::nullopt;
+        }
+        return std::filesystem::path(*path).filename().string();
+    }
+
     std::string linux_path_to_windows(const std::string& path)
     {
         std::string result = "Z:";
@@ -270,6 +295,65 @@ namespace slopkit::plugins::wine_proton
             }
         }
         return target;
+    }
+
+    NameCache::NameCache(std::chrono::steady_clock::duration ttl) : ttl_(ttl) {}
+
+    std::optional<std::string> NameCache::lookup(process::ProcessId pid, std::chrono::steady_clock::time_point now)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        const auto                        entry = entries_.find(pid);
+        if (entry == entries_.end())
+        {
+            return std::nullopt;
+        }
+        if (entry->second.expires <= now)
+        {
+            entries_.erase(entry);
+            return std::nullopt;
+        }
+        return entry->second.name;
+    }
+
+    void NameCache::remember(process::ProcessId pid, std::string name, std::chrono::steady_clock::time_point now)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        sweep(now);
+        entries_.insert_or_assign(pid, Entry {std::move(name), now + ttl_});
+    }
+
+    void NameCache::forget(process::ProcessId pid)
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        entries_.erase(pid);
+    }
+
+    void NameCache::sweep(std::chrono::steady_clock::time_point now)
+    {
+        for (auto entry = entries_.begin(); entry != entries_.end();)
+        {
+            if (entry->second.expires <= now)
+            {
+                entry = entries_.erase(entry);
+            }
+            else
+            {
+                ++entry;
+            }
+        }
+
+        while (entries_.size() >= kCapacity)
+        {
+            auto oldest = entries_.begin();
+            for (auto entry = std::next(entries_.begin()); entry != entries_.end(); ++entry)
+            {
+                if (entry->second.expires < oldest->second.expires)
+                {
+                    oldest = entry;
+                }
+            }
+            entries_.erase(oldest);
+        }
     }
 
 }

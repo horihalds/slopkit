@@ -537,7 +537,8 @@ namespace slopkit::platform
 
         const auto root = std::filesystem::path("/proc") / std::to_string(pid) / "root";
 
-        process::ModuleInfo* chosen = nullptr;
+        // modules_from_maps keeps the modules sorted by base, so the first
+        // executable PE image is the lowest-based one the full scan used to pick.
         for (auto& module : modules)
         {
             if (module.kind != process::ModuleKind::pe || module.path.empty() || module.offset != 0)
@@ -555,18 +556,11 @@ namespace slopkit::platform
             {
                 continue;
             }
-            if (chosen == nullptr || module.base < chosen->base)
-            {
-                chosen = &module;
-            }
+            module.is_main = true;
+            return true;
         }
 
-        if (chosen == nullptr)
-        {
-            return false;
-        }
-        chosen->is_main = true;
-        return true;
+        return false;
     }
 
 }
