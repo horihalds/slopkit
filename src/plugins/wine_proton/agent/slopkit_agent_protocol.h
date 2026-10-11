@@ -9,8 +9,9 @@
 #define SLOPKIT_AGENT_MAGIC                  0x534C4B41u
 
 /* Bumped whenever the layout below changes. A mismatch is refused as a
-   protocol error, never waited on until a timeout. */
-#define SLOPKIT_AGENT_PROTOCOL_VERSION       5u
+   protocol error, never waited on until a timeout. Version 6 adds the debug
+   control block (slopkit_agent_debug) used by the in-process VEH debugger. */
+#define SLOPKIT_AGENT_PROTOCOL_VERSION       6u
 
 /* The ring of independent request slots one region carries: every slot has its
    own state word, request/response record and payload, so this many requests
@@ -54,6 +55,10 @@
 #define SLOPKIT_AGENT_OP_ENUM                8u
 /* Version 3. */
 #define SLOPKIT_AGENT_OP_MODULES             11u
+/* Version 6. Block-based debug bring-up: the request only wakes the agent, and
+   every argument and result travels through slopkit_agent_debug. */
+#define SLOPKIT_AGENT_OP_DEBUG_ATTACH        12u
+#define SLOPKIT_AGENT_OP_DEBUG_DETACH        13u
 
 /* Module flags carried in slopkit_agent_module_entry.flags. */
 #define SLOPKIT_AGENT_MODULE_FLAG_MAIN       0x1u
@@ -162,6 +167,156 @@ typedef struct slopkit_agent_record
     uint64_t reserved0;
 } slopkit_agent_record;
 
+/* The debug control block's own capacity limits. */
+#define SLOPKIT_AGENT_DEBUG_MAX_TRAPS        64u
+#define SLOPKIT_AGENT_DEBUG_DR_SLOTS         4u
+#define SLOPKIT_AGENT_DEBUG_REG_COUNT        18u
+#define SLOPKIT_AGENT_DEBUG_MAX_EXCLUDED     8u
+#define SLOPKIT_AGENT_DEBUG_PATH_MAX         512u
+
+/* The debug block's state word. idle -> claimed -> stopped/running, detached
+   once the target is released. Written with acquire/release ordering on both
+   sides; the host waits for stopped while the agent waits for a request. */
+#define SLOPKIT_AGENT_DBG_STATE_IDLE         0u
+#define SLOPKIT_AGENT_DBG_STATE_CLAIMED      1u
+#define SLOPKIT_AGENT_DBG_STATE_STOPPING     2u
+#define SLOPKIT_AGENT_DBG_STATE_STOPPED      3u
+#define SLOPKIT_AGENT_DBG_STATE_RUNNING      4u
+#define SLOPKIT_AGENT_DBG_STATE_DETACHED     5u
+
+/* The command in slopkit_agent_debug.cmd. A request is published only after
+   every argument is visible; the agent zeroes it when it has answered. */
+#define SLOPKIT_AGENT_DBG_CMD_NONE           0u
+#define SLOPKIT_AGENT_DBG_CMD_STOP           1u
+#define SLOPKIT_AGENT_DBG_CMD_RESUME         2u
+#define SLOPKIT_AGENT_DBG_CMD_STEP           3u
+#define SLOPKIT_AGENT_DBG_CMD_GET_REGISTERS  4u
+#define SLOPKIT_AGENT_DBG_CMD_SET_REGISTER   5u
+#define SLOPKIT_AGENT_DBG_CMD_ARM_SOFTWARE   6u
+#define SLOPKIT_AGENT_DBG_CMD_DISARM_SOFTWARE 7u
+#define SLOPKIT_AGENT_DBG_CMD_ARM_HARDWARE   8u
+#define SLOPKIT_AGENT_DBG_CMD_DISARM_HARDWARE 9u
+#define SLOPKIT_AGENT_DBG_CMD_BACKTRACE      10u
+
+/* The stop record's reason. */
+#define SLOPKIT_AGENT_DBG_STOP_TRAP          1u
+#define SLOPKIT_AGENT_DBG_STOP_STEP          2u
+#define SLOPKIT_AGENT_DBG_STOP_INTERRUPT     3u
+#define SLOPKIT_AGENT_DBG_STOP_SIGNAL        4u
+#define SLOPKIT_AGENT_DBG_STOP_EXIT          5u
+
+/* The hardware watch kind, matching the plugin ABI's slopkit_breakpoint_kind. */
+#define SLOPKIT_AGENT_DBG_HW_EXECUTE         1u
+#define SLOPKIT_AGENT_DBG_HW_WRITE           2u
+#define SLOPKIT_AGENT_DBG_HW_READ_WRITE      3u
+
+/* The machine state of one thread, in the same order the host publishes the
+   register values. */
+typedef struct slopkit_agent_registers
+{
+    uint64_t rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp;
+    uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
+    uint64_t rip, rflags;
+} slopkit_agent_registers;
+
+/* One software breakpoint: the patched address, the host's slot, whether the
+   0xCC byte is currently in place, and the byte it replaced. */
+typedef struct slopkit_agent_debug_trap
+{
+    uint64_t address;
+    uint32_t slot;
+    uint32_t armed;
+    uint8_t  saved_byte;
+    uint8_t  reserved[3];
+} slopkit_agent_debug_trap;
+
+/* One hardware slot: DR0..DR3 programming and its host-visible intent. */
+typedef struct slopkit_agent_debug_hardware
+{
+    uint64_t address;
+    uint32_t slot;
+    uint32_t kind;
+    uint32_t size;
+    uint32_t enabled;
+} slopkit_agent_debug_hardware;
+
+/* One thread's own debug register state: what the agent programmed into the
+   thread, so a hit can be attributed without re-reading the thread. */
+typedef struct slopkit_agent_debug_thread_watch
+{
+    uint32_t kind;
+    uint32_t size;
+    uint32_t or_flag;
+    uint32_t reserved;
+} slopkit_agent_debug_thread_watch;
+
+/* Version 6. The debug control block, trailing the slot ring inside
+   slopkit_agent_region. The host fills the intent tables and the resume lane
+   and publishes a command; the agent's VEH handler and watchdog write the stop
+   record and the register snapshot back. The state/flag/request/answer/epoch
+   words follow the same acquire/release and byte-publication conventions as the
+   slots: state gates the block, request is published last and zeroed by the
+   agent, answer carries the matching sequence number, and flag signals a stop.
+
+   Everything is little-endian and naturally aligned on both x86 and x86_64. */
+typedef struct slopkit_agent_debug
+{
+    /* sizeof(slopkit_agent_debug) and offsetof(slopkit_agent_region, debug);
+       the host writes both so an agent built from another header refuses the
+       block instead of aliasing it. */
+    uint32_t size;
+    uint32_t offset;
+
+    uint32_t state;
+    uint32_t flag;
+    uint32_t request;
+    uint32_t answer;
+    uint32_t epoch;
+    int32_t  cmd;
+    int32_t  status;
+    uint32_t win32_error;
+    uint32_t reserved0;
+
+    /* Per-command arguments and results. */
+    uint64_t arg[4];
+    uint64_t out[4];
+
+    /* The Linux tids the agent must not freeze or debug (its own threads). */
+    uint32_t excluded_tid[SLOPKIT_AGENT_DEBUG_MAX_EXCLUDED];
+
+    /* The stop record, published before the stop flag. */
+    uint32_t held_linux_tid;
+    uint32_t held_win_tid;
+    uint32_t stop_reason;
+    uint32_t stop_slot;
+    uint32_t stop_signal;
+    uint32_t reserved1;
+    uint64_t stop_address;
+    uint64_t stop_trap_address;
+
+    /* The resume lane: the trap address and its size, or u64 max as the trap
+       size when the caller resumed past a breakpoint. */
+    uint64_t resume_address;
+    uint64_t resume_trap_size;
+
+    /* The stopped thread's snapshot and the writes staged for the release. */
+    slopkit_agent_registers registers;
+    uint32_t               register_mask;
+    uint32_t               stage_mask;
+    uint64_t               stage_value[SLOPKIT_AGENT_DEBUG_REG_COUNT];
+
+    /* Software breakpoint intent, visible to the host even while running. */
+    uint32_t               trap_count;
+    slopkit_agent_debug_trap trap[SLOPKIT_AGENT_DEBUG_MAX_TRAPS];
+
+    /* Hardware slot intent. */
+    uint32_t                   hardware_count;
+    slopkit_agent_debug_hardware hardware[SLOPKIT_AGENT_DEBUG_DR_SLOTS];
+
+    /* The JSONL path the agent appends debug records to, or empty for none. */
+    char log_path[SLOPKIT_AGENT_DEBUG_PATH_MAX];
+} slopkit_agent_debug;
+
 /* The fixed header every mapping starts with. */
 typedef struct slopkit_agent_header
 {
@@ -247,11 +402,14 @@ typedef struct slopkit_agent_slot
                       in payload[], followed by the names growing down from the
                       end of the payload.
      - HELLO response: reserved0 = SLOPKIT_AGENT_PAYLOAD_SIZE, which the host
-                      compares before trusting a payload. */
+                      compares before trusting a payload.
+     - DEBUG_ATTACH/DEBUG_DETACH: the request carries the block handshake and
+                      every field travels through debug below. */
 typedef struct slopkit_agent_region
 {
     slopkit_agent_header header;
     slopkit_agent_slot   slots[SLOPKIT_AGENT_SLOT_COUNT];
+    slopkit_agent_debug  debug;
 } slopkit_agent_region;
 
 #if defined(__cplusplus)
@@ -266,8 +424,23 @@ SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_slot) == 232 + SLOPKIT_AGENT_PA
                             "slopkit_agent_slot layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region_entry) == 32, "slopkit_agent_region_entry layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_module_entry) == 40, "slopkit_agent_module_entry layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_registers) == 144, "slopkit_agent_registers layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug_trap) == 24, "slopkit_agent_debug_trap layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug_hardware) == 24, "slopkit_agent_debug_hardware layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug_thread_watch) == 16,
+                            "slopkit_agent_debug_thread_watch layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug) == 2656, "slopkit_agent_debug layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, arg) == 48, "debug.arg moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, out) == 80, "debug.out moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, excluded_tid) == 112, "debug.excluded_tid moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, registers) == 200, "debug.registers moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, stage_value) == 352, "debug.stage_value moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, trap) == 504, "debug.trap moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, hardware) == 2048, "debug.hardware moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, log_path) == 2144, "debug.log_path moved");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region)
-                                == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE),
+                                == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE)
+                                       + 2656,
                             "slopkit_agent_region layout changed");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, op) == 0, "record.op moved");
@@ -324,5 +497,8 @@ SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_slot, response) == 120, "slot
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_slot, payload) == 232, "slot.payload moved");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, slots) == 48, "region.slots moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, debug)
+                                == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE),
+                            "region.debug moved");
 
 #undef SLOPKIT_AGENT_STATIC_ASSERT

@@ -70,6 +70,10 @@ namespace slopkit::plugins::wine_proton
 
         [[nodiscard]] std::expected<Slot, std::string> acquire(std::chrono::milliseconds timeout);
 
+        /* The mapped region itself, so the debug block can be driven directly
+           by the debug backend instead of through the request slots. */
+        [[nodiscard]] slopkit_agent_region* region() const noexcept;
+
     private:
         AgentTransport(std::filesystem::path directory, int descriptor, slopkit_agent_region* region) noexcept;
 

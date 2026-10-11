@@ -101,6 +101,22 @@ namespace slopkit::plugins::wine_proton
 
         void shutdown(std::chrono::milliseconds timeout = std::chrono::milliseconds {kAgentRequestTimeoutMs}) noexcept;
 
+        /* The mapped debug control block at `offset` bytes into the region; the
+           host drives it directly because a held stop outlives any slot. */
+        [[nodiscard]] slopkit_agent_debug* debug_at(std::uint32_t offset) const noexcept;
+
+        /* Wakes the agent's debug engine (DEBUG_ATTACH) and releases the target
+           (DEBUG_DETACH). Every argument and result travels through the debug
+           block; the record only names the op. */
+        [[nodiscard]] std::expected<void, std::string> debug_attach(std::chrono::milliseconds timeout);
+        [[nodiscard]] std::expected<void, std::string> debug_detach(std::chrono::milliseconds timeout);
+
+        /* Blocks until the agent has answered the command carrying this
+           sequence number (debug.answer == sequence) or the timeout elapses. */
+        [[nodiscard]] bool wait_for_answer(std::uint32_t sequence, std::chrono::milliseconds timeout) const;
+        /* Blocks until the agent publishes a stop (debug.flag != 0). */
+        [[nodiscard]] bool wait_for_stop(std::chrono::milliseconds timeout) const;
+
     private:
         AgentClient(std::shared_ptr<AgentTransport> transport, std::string injector_output);
 

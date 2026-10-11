@@ -642,6 +642,94 @@ namespace slopkit::plugins::wine_proton
         return batch;
     }
 
+    slopkit_agent_debug* AgentClient::debug_at(std::uint32_t offset) const noexcept
+    {
+        if (transport_ == nullptr || transport_->region() == nullptr)
+        {
+            return nullptr;
+        }
+        auto* const base = reinterpret_cast<std::uint8_t*>(transport_->region());
+        return reinterpret_cast<slopkit_agent_debug*>(base + offset);
+    }
+
+    std::expected<void, std::string> AgentClient::debug_attach(std::chrono::milliseconds timeout)
+    {
+        slopkit_agent_record record {};
+        record.op   = SLOPKIT_AGENT_OP_DEBUG_ATTACH;
+        auto answer = transact(record, timeout);
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+        if (answer->status != SLOPKIT_AGENT_STATUS_OK)
+        {
+            return std::unexpected(std::format(
+                "the agent refused a debug attach: status {} (win32 error {})", answer->status, answer->win32_error));
+        }
+        return {};
+    }
+
+    std::expected<void, std::string> AgentClient::debug_detach(std::chrono::milliseconds timeout)
+    {
+        slopkit_agent_record record {};
+        record.op   = SLOPKIT_AGENT_OP_DEBUG_DETACH;
+        auto answer = transact(record, timeout);
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+        if (answer->status != SLOPKIT_AGENT_STATUS_OK)
+        {
+            return std::unexpected(std::format(
+                "the agent refused a debug detach: status {} (win32 error {})", answer->status, answer->win32_error));
+        }
+        return {};
+    }
+
+    bool AgentClient::wait_for_answer(std::uint32_t sequence, std::chrono::milliseconds timeout) const
+    {
+        slopkit_agent_debug* const block = debug_at(static_cast<std::uint32_t>(offsetof(slopkit_agent_region, debug)));
+        if (block == nullptr)
+        {
+            return false;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (true)
+        {
+            if (std::atomic_ref<std::uint32_t>(block->answer).load(std::memory_order_acquire) == sequence)
+            {
+                return true;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(250));
+        }
+    }
+
+    bool AgentClient::wait_for_stop(std::chrono::milliseconds timeout) const
+    {
+        slopkit_agent_debug* const block = debug_at(static_cast<std::uint32_t>(offsetof(slopkit_agent_region, debug)));
+        if (block == nullptr)
+        {
+            return false;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (true)
+        {
+            if (std::atomic_ref<std::uint32_t>(block->flag).load(std::memory_order_acquire) != 0)
+            {
+                return true;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(250));
+        }
+    }
+
     void AgentClient::shutdown(std::chrono::milliseconds timeout) noexcept
     {
         if (transport_ == nullptr)

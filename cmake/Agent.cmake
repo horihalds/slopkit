@@ -55,8 +55,12 @@ foreach(bitness x86_64 i686)
         add_custom_command(OUTPUT ${_agent_dll}
             COMMAND ${_agent_compiler} ${SLOPKIT_AGENT_COMPILE_FLAGS} -shared -o ${_agent_dll}
                 ${SLOPKIT_AGENT_SOURCE_DIR}/slopkit_agent.c
+                ${SLOPKIT_AGENT_SOURCE_DIR}/slopkit_debug.c
                 -lkernel32 -lgcc -Wl,--entry,${_agent_dll_entry} -Wl,--subsystem,windows
-            DEPENDS ${SLOPKIT_AGENT_SOURCE_DIR}/slopkit_agent.c ${SLOPKIT_AGENT_PROTOCOL}
+            DEPENDS ${SLOPKIT_AGENT_SOURCE_DIR}/slopkit_agent.c
+                ${SLOPKIT_AGENT_SOURCE_DIR}/slopkit_debug.c
+                ${SLOPKIT_AGENT_SOURCE_DIR}/slopkit_debug.h
+                ${SLOPKIT_AGENT_PROTOCOL}
             COMMENT "Cross-compiling the ${bitness} resident agent DLL"
             VERBATIM)
         add_custom_command(OUTPUT ${_agent_injector}

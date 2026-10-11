@@ -65,6 +65,10 @@ namespace slopkit::plugins::wine_proton
         region->header.version     = SLOPKIT_AGENT_PROTOCOL_VERSION;
         region->header.record_size = static_cast<std::uint32_t>(sizeof(slopkit_agent_record));
         region->header.flags       = SLOPKIT_AGENT_FLAG_NONE;
+        /* Announce the debug block so the agent refuses one it cannot parse
+           instead of aliasing it. */
+        region->debug.offset       = static_cast<std::uint32_t>(offsetof(slopkit_agent_region, debug));
+        region->debug.size         = static_cast<std::uint32_t>(sizeof(slopkit_agent_debug));
         return AgentTransport(directory, descriptor, region);
     }
 
@@ -176,6 +180,11 @@ namespace slopkit::plugins::wine_proton
     {
         const std::lock_guard lock(mutex_);
         return retired_in_pool_ >= pool_size_;
+    }
+
+    slopkit_agent_region* AgentTransport::region() const noexcept
+    {
+        return region_;
     }
 
     void AgentTransport::advertise_capacity(std::uint32_t slots) noexcept

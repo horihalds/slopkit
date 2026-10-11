@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "slopkit_agent_protocol.h"
+#include "slopkit_debug.h"
 
 /* Polling: a short spin for a host that is actively waiting, then a Sleep()
    backoff that grows to a ceiling, so an idle or abandoned agent costs almost
@@ -158,6 +159,7 @@ typedef HRESULT(WINAPI* agent_set_thread_description)(HANDLE, PCWSTR);
 static void agent_name_thread(void)
 {
     static const wchar_t name[] = L"slopkit-agent";
+    slopkit_debug_note_agent_thread();
     HMODULE              kernel = GetModuleHandleW(L"kernel32.dll");
     if (kernel == NULL)
     {
@@ -923,6 +925,18 @@ static int agent_dispatch(uint32_t index)
     case SLOPKIT_AGENT_OP_MODULES:
         agent_handle_modules(&request, &response, slot->payload);
         break;
+    case SLOPKIT_AGENT_OP_DEBUG_ATTACH:
+        if (slopkit_debug_attach(g_region) != 0)
+        {
+            response.status = SLOPKIT_AGENT_STATUS_UNSUPPORTED;
+        }
+        break;
+    case SLOPKIT_AGENT_OP_DEBUG_DETACH:
+        if (slopkit_debug_detach(g_region) != 0)
+        {
+            response.status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+        }
+        break;
     case SLOPKIT_AGENT_OP_SHUTDOWN:
         keep_serving = 0;
         break;
@@ -1082,6 +1096,7 @@ static DWORD WINAPI agent_service_thread(LPVOID parameter)
 
     /* The loader lock is already gone by the time this thread runs, so the
        dispatcher may create the lock, the events and every worker it needs. */
+    slopkit_debug_reset(g_region);
     InitializeCriticalSection(&g_lock);
     g_work_event = CreateEventW(NULL, FALSE, FALSE, NULL);
     g_stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
