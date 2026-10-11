@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "plugins/wine_proton/agent_modules.hpp"
 #include "process/types.hpp"
 
 namespace slopkit::plugins::wine_proton
@@ -539,6 +540,70 @@ namespace slopkit::plugins::wine_proton
                                                       entries[index].state,
                                                       entries[index].protection,
                                                       entries[index].type});
+        }
+        return batch;
+    }
+
+    std::expected<AgentModuleBatch, std::string>
+    AgentClient::modules(std::uint64_t start_index, std::uint32_t capacity, std::chrono::milliseconds timeout)
+    {
+        const auto record_capacity =
+            static_cast<std::uint32_t>(SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_module_entry));
+        slopkit_agent_record record {};
+        record.op      = SLOPKIT_AGENT_OP_MODULES;
+        record.address = start_index;
+        record.size    = capacity == 0 ? record_capacity : capacity;
+
+        std::vector<std::byte> payload(SLOPKIT_AGENT_PAYLOAD_SIZE);
+        auto                   answer = transport_->transact(record, timeout, {}, payload);
+        if (!answer)
+        {
+            return std::unexpected(answer.error());
+        }
+        if (answer->status != SLOPKIT_AGENT_STATUS_OK)
+        {
+            return std::unexpected(
+                std::format("the agent refused a MODULES at index {} with status {} (win32 error {})",
+                            start_index,
+                            answer->status,
+                            answer->win32_error));
+        }
+        if (answer->size > record_capacity)
+        {
+            return std::unexpected(std::format(
+                "the agent reported {} module records; the payload holds {}", answer->size, record_capacity));
+        }
+
+        AgentModuleBatch batch;
+        batch.next_index = answer->address;
+        batch.modules.reserve(answer->size);
+        const auto* entries = reinterpret_cast<const slopkit_agent_module_entry*>(payload.data());
+        for (std::uint32_t index = 0; index < answer->size; ++index)
+        {
+            const auto& entry = entries[index];
+            // Every name must sit inside the payload on a UTF-16 boundary; a
+            // range that does not is refused before any byte is read.
+            if ((entry.name_offset % 2u) != 0 || (entry.name_length % 2u) != 0
+                || entry.name_offset > SLOPKIT_AGENT_PAYLOAD_SIZE
+                || entry.name_length > SLOPKIT_AGENT_PAYLOAD_SIZE - entry.name_offset)
+            {
+                return std::unexpected(std::format("the agent's module {} names bytes [{}, {}) outside the payload",
+                                                   index,
+                                                   entry.name_offset,
+                                                   entry.name_offset + entry.name_length));
+            }
+
+            AgentModuleEntry module;
+            module.base  = entry.base;
+            module.size  = entry.size;
+            module.entry = entry.entry;
+            module.main  = (entry.flags & SLOPKIT_AGENT_MODULE_FLAG_MAIN) != 0;
+            if (entry.name_length != 0)
+            {
+                const auto* characters = reinterpret_cast<const char16_t*>(payload.data() + entry.name_offset);
+                decode_utf16(std::span<const char16_t>(characters, entry.name_length / 2), module.name);
+            }
+            batch.modules.push_back(std::move(module));
         }
         return batch;
     }

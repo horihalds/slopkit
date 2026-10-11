@@ -98,8 +98,9 @@ SLOPKIT_WINE_E2E=1 ./build/slopkit_tests "[wine-proton][agent]"
 The first starts `build/agent_probe/slopkit-probe-x86_64.exe` under wine, injects
 the agent and asserts `alloc`, `alloc_near`, `query` (the block must report
 `MEM_COMMIT` + `PAGE_EXECUTE_READWRITE`, which the ptrace mapping does not),
-`protect`, `free` and `shutdown`. On a warm prefix the whole run takes about
-0.65 s.
+`protect`, a full region walk (`ENUM`), a full module walk (`MODULES`) that names
+the probe itself as the main image plus `kernel32.dll` and `ntdll.dll`, `free` and
+`shutdown`. On a warm prefix the whole run takes about 0.65 s.
 
 The second reproduces the Proton case, where the game is started *by another Wine
 process*: it runs the probe as `wine cmd /c <probe>`, finds the process wine

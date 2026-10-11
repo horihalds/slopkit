@@ -56,6 +56,25 @@ namespace slopkit::plugins::wine_proton
         std::uint64_t                 next_cursor {0};
     };
 
+    // One image of a MODULES batch: a loaded PE image from the target's own
+    // loader list, carrying Wine's own base name.
+    struct AgentModuleEntry
+    {
+        std::uint64_t base {0};
+        std::uint64_t size {0};
+        std::uint64_t entry {0};
+        bool          main {false};
+        std::string   name;
+    };
+
+    // One MODULES round trip's worth of images plus the index to resume from;
+    // a next_index of 0 means the loader list ended.
+    struct AgentModuleBatch
+    {
+        std::vector<AgentModuleEntry> modules;
+        std::uint64_t                 next_index {0};
+    };
+
     // The Linux end of one injected agent: it runs the one-shot injector under
     // the target's own wine and prefix, completes the HELLO handshake, and then
     // serves the operations that have to go through Wine's VM manager.
@@ -106,6 +125,12 @@ namespace slopkit::plugins::wine_proton
         // the returned next_cursor is 0 once the walk is done.
         [[nodiscard]] std::expected<AgentRegionBatch, std::string>
         enumerate(std::uint64_t cursor, std::uint32_t capacity, std::chrono::milliseconds timeout);
+
+        // One batch of the target's own loader list, starting at `start_index`.
+        // `capacity` bounds the records per request (0 = the whole payload);
+        // the returned next_index is 0 once the list is done.
+        [[nodiscard]] std::expected<AgentModuleBatch, std::string>
+        modules(std::uint64_t start_index, std::uint32_t capacity, std::chrono::milliseconds timeout);
 
         // Copies up to buffer.size() bytes out of the target through the agent,
         // chunked at the payload size. A partial transfer (an unmapped hole past

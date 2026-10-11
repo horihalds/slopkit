@@ -492,6 +492,180 @@ static int agent_protection_writable(uint32_t protection)
     }
 }
 
+/* The Windows loader structures the MODULES walk needs, declared locally
+   rather than through <winternl.h>: the DLL includes <windows.h> only, and the
+   member spelling of mingw-w64's winternl.h is not stable across releases.
+   Only the fields the walk reads are declared, in their documented order; the
+   pointer and natural alignment of each puts every field at its real offset on
+   both x86_64 and i686. */
+typedef struct slopkit_agent_plist_entry
+{
+    struct slopkit_agent_plist_entry* flink;
+    struct slopkit_agent_plist_entry* blink;
+} slopkit_agent_plist_entry;
+
+/* PEB_LDR_DATA up to and including InLoadOrderModuleList. */
+typedef struct slopkit_agent_ploader_data
+{
+    uint32_t                  length;
+    uint32_t                  initialized;
+    void*                     ss_handle;
+    slopkit_agent_plist_entry in_load_order_module_list;
+} slopkit_agent_ploader_data;
+
+/* UNICODE_STRING: Length and MaximumLength are byte counts. */
+typedef struct slopkit_agent_punicode_string
+{
+    uint16_t length;
+    uint16_t maximum_length;
+    void*    buffer;
+} slopkit_agent_punicode_string;
+
+/* LDR_DATA_TABLE_ENTRY up to and including BaseDllName. */
+typedef struct slopkit_agent_ploader_module_entry
+{
+    slopkit_agent_plist_entry     in_load_order_links;
+    slopkit_agent_plist_entry     in_memory_order_links;
+    slopkit_agent_plist_entry     in_initialization_order_links;
+    void*                         dll_base;
+    void*                         entry_point;
+    uint32_t                      size_of_image;
+    slopkit_agent_punicode_string full_dll_name;
+    slopkit_agent_punicode_string base_dll_name;
+} slopkit_agent_ploader_module_entry;
+
+/* PEB up to and including Ldr; the natural alignment of the pointer members
+   keeps the offsets right on both bitnesses. */
+typedef struct slopkit_agent_ppeb
+{
+    uint8_t                     inherited_address_space;
+    uint8_t                     read_image_file_exec_options;
+    uint8_t                     being_debugged;
+    uint8_t                     bit_field;
+    void*                       mutant;
+    void*                       image_base_address;
+    slopkit_agent_ploader_data* ldr;
+} slopkit_agent_ppeb;
+
+/* TEB up to and including ProcessEnvironmentBlock: the reserved pointers stand
+   in for the members the walk does not read, so the field lands at 0x60 on
+   x86_64 and 0x30 on i686. */
+typedef struct slopkit_agent_pteb
+{
+    void*               reserved[12];
+    slopkit_agent_ppeb* process_environment_block;
+} slopkit_agent_pteb;
+
+/* A hard ceiling on how many loader entries one MODULES request visits past
+   its resume point, so a corrupt or cyclic list cannot spin the service
+   thread. */
+#define SLOPKIT_AGENT_MODULE_LIMIT 4096u
+
+static slopkit_agent_ploader_data* agent_loader_data(void)
+{
+    const slopkit_agent_pteb* teb = (const slopkit_agent_pteb*)NtCurrentTeb();
+    if (teb == NULL || teb->process_environment_block == NULL)
+    {
+        return NULL;
+    }
+    return teb->process_environment_block->ldr;
+}
+
+/* The bytes the downward name cursor needs for a name of `length` bytes,
+   keeping the UTF-16 name on a two-byte boundary. */
+static uint32_t agent_name_span(uint32_t length)
+{
+    return (length + 1u) & ~1u;
+}
+
+/* MODULES: walk the target loader's InLoadOrderModuleList from the request
+   index and report every loaded PE image. Records are written at the start of
+   payload[] in loader order and each name's UTF-16 bytes are appended from the
+   end of the payload downwards, so no fixed name budget is needed. The walk is
+   bounded by a fixed ceiling and by the payload, and it stops early rather
+   than faulting on a malformed or concurrently-changing list. */
+static void agent_handle_modules(const slopkit_agent_record* request, slopkit_agent_record* response)
+{
+    const uint32_t capacity = (uint32_t)(SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_module_entry));
+    if (request->size > capacity || request->address > (uint64_t)-1 - SLOPKIT_AGENT_MODULE_LIMIT)
+    {
+        response->status = SLOPKIT_AGENT_STATUS_BAD_REQUEST;
+        return;
+    }
+    const uint32_t want  = request->size == 0 ? capacity : (uint32_t)request->size;
+    const uint64_t start = request->address;
+
+    slopkit_agent_ploader_data* ldr = agent_loader_data();
+    if (ldr == NULL || ldr->in_load_order_module_list.flink == &ldr->in_load_order_module_list)
+    {
+        /* No loader list to walk: an empty, finished listing. */
+        response->size    = 0;
+        response->address = 0;
+        return;
+    }
+
+    slopkit_agent_plist_entry*  head        = &ldr->in_load_order_module_list;
+    slopkit_agent_module_entry* records     = (slopkit_agent_module_entry*)g_region->payload;
+    uint32_t                    name_cursor = SLOPKIT_AGENT_PAYLOAD_SIZE;
+    uint64_t                    index       = 0;
+    uint32_t                    written     = 0;
+    uint64_t                    visited     = 0;
+    const uint64_t              visit_limit = start + SLOPKIT_AGENT_MODULE_LIMIT;
+
+    slopkit_agent_plist_entry* node = head->flink;
+    while (node != head && node != NULL && visited < visit_limit)
+    {
+        ++visited;
+        const slopkit_agent_ploader_module_entry* module = (const slopkit_agent_ploader_module_entry*)node;
+        node                                            = node->flink;
+
+        if (module->dll_base == NULL)
+        {
+            /* The list also carries entries without an image base, which a
+               module view has nothing to say about. */
+            continue;
+        }
+        if (index < start)
+        {
+            ++index;
+            continue;
+        }
+        if (written == want)
+        {
+            break;
+        }
+
+        const uint32_t name_bytes  = module->base_dll_name.buffer == NULL ? 0u : (uint32_t)module->base_dll_name.length;
+        uint32_t       name_offset = 0;
+        if (name_bytes != 0)
+        {
+            const uint32_t span = agent_name_span(name_bytes);
+            if (span > name_cursor
+                || name_cursor - span < (written + 1u) * (uint32_t)sizeof(slopkit_agent_module_entry))
+            {
+                /* The record array and the downward name area would collide. */
+                break;
+            }
+            name_offset = name_cursor - span;
+            name_cursor = name_offset;
+            memcpy(g_region->payload + name_offset, module->base_dll_name.buffer, name_bytes);
+        }
+
+        records[written].base        = (uint64_t)(uintptr_t)module->dll_base;
+        records[written].size        = (uint64_t)module->size_of_image;
+        records[written].entry       = (uint64_t)(uintptr_t)module->entry_point;
+        records[written].name_offset = name_offset;
+        records[written].name_length = name_bytes;
+        records[written].flags       = index == 0 ? SLOPKIT_AGENT_MODULE_FLAG_MAIN : 0u;
+        records[written].reserved    = 0;
+        ++written;
+        ++index;
+    }
+
+    response->size    = written;
+    response->address = node == head ? 0 : index;
+}
+
 /* ENUM: walk the target's own VirtualQuery chain from the request cursor,
    writing up to `size` (0 = the whole payload) region records into payload[].
    Progress stops at the capacity, at the end of the user address space, or on
@@ -800,6 +974,9 @@ static int agent_handle_request(void)
         break;
     case SLOPKIT_AGENT_OP_WRITE:
         agent_handle_write(&request, &response);
+        break;
+    case SLOPKIT_AGENT_OP_MODULES:
+        agent_handle_modules(&request, &response);
         break;
     case SLOPKIT_AGENT_OP_SHUTDOWN:
         agent_free_all();

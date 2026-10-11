@@ -90,7 +90,10 @@ host calls:
   agent while the target can run, and through `process_vm`/procfs while a debug
   session or an in-flight allocation has it stopped
 - `list_modules` / `list_threads` / `list_regions` — `wine-proton`'s
-  `list_regions` is the agent's `VirtualQuery` walk merged with the `/proc` paths
+  `list_regions` is the agent's `VirtualQuery` walk merged with the `/proc` paths,
+  and its `list_modules` is the target's own loader list (`MODULES`) merged with
+  the same paths; the region list still has a host fallback while the target is
+  stopped, while the module list is agent-only
 - `access_methods` — the access primitives the plugin can use
 - `debug_*` — the ABI 1.4 opt-in debugger operations (`debug_attach` /
   `debug_detach` / `debug_continue` / `debug_step` / `debug_interrupt` /

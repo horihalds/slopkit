@@ -369,6 +369,37 @@ namespace slopkit::plugins::support
             }
         }
 
+        // Fills the ABI module array and interns its strings. The caller has
+        // already reset the arena and checked the output pointers.
+        slopkit_result fill_module_array(const std::vector<process::ModuleInfo>& modules,
+                                         slopkit_module_info**                   out,
+                                         std::size_t*                            out_count)
+        {
+            auto* array = static_cast<slopkit_module_info*>(host_alloc(sizeof(slopkit_module_info) * modules.size()));
+            if (array == nullptr && !modules.empty())
+            {
+                return fail(SLOPKIT_ERR_INTERNAL, "allocation failed");
+            }
+
+            std::size_t count = 0;
+            for (const auto& module : modules)
+            {
+                array[count].base    = module.base;
+                array[count].size    = module.size;
+                array[count].offset  = module.offset;
+                array[count].kind    = static_cast<int32_t>(module.kind);
+                array[count].name    = intern(module.name);
+                array[count].path    = module.path.empty() ? nullptr : intern(module.path);
+                array[count].entry   = module.entry;
+                array[count].is_main = module.is_main ? 1 : 0;
+                ++count;
+            }
+
+            *out       = array;
+            *out_count = count;
+            return ok();
+        }
+
         slopkit_result plugin_list_modules(void* handle, slopkit_module_info** out, std::size_t* out_count) noexcept
         {
             try
@@ -387,35 +418,36 @@ namespace slopkit::plugins::support
                 }
                 reset_arena();
 
-                auto modules = platform::modules_from_maps(platform::read_maps(session->pid));
-                platform::fill_module_entry_points(session->pid, modules);
-                g_profile->shape_modules(modules, session->pid);
-
-                auto* array =
-                    static_cast<slopkit_module_info*>(host_alloc(sizeof(slopkit_module_info) * modules.size()));
-                if (array == nullptr && !modules.empty())
+                std::vector<process::ModuleInfo> modules;
+                if (g_profile->modules != nullptr)
                 {
-                    return fail(SLOPKIT_ERR_INTERNAL, "allocation failed");
+                    // A plugin with its own source (Wine's loader list) replaces
+                    // the shared listing entirely; the shared /proc shaping is
+                    // not applied on top of it.
+                    auto result = g_profile->modules(*session);
+                    if (!result)
+                    {
+                        return fail(result.error().code, intern(result.error().message));
+                    }
+                    modules = std::move(*result);
+                }
+                else
+                {
+                    modules = platform::modules_from_maps(platform::read_maps(session->pid));
+                    platform::fill_module_entry_points(session->pid, modules);
+                    if (g_profile->shape_modules != nullptr)
+                    {
+                        g_profile->shape_modules(modules, session->pid);
+                    }
                 }
 
-                std::size_t count = 0;
-                for (const auto& module : modules)
+                const auto filled = fill_module_array(modules, out, out_count);
+                if (filled.code != SLOPKIT_OK)
                 {
-                    array[count].base    = module.base;
-                    array[count].size    = module.size;
-                    array[count].offset  = module.offset;
-                    array[count].kind    = static_cast<int32_t>(module.kind);
-                    array[count].name    = intern(module.name);
-                    array[count].path    = module.path.empty() ? nullptr : intern(module.path);
-                    array[count].entry   = module.entry;
-                    array[count].is_main = module.is_main ? 1 : 0;
-                    ++count;
+                    return filled;
                 }
 
-                log_message(SLOPKIT_LOG_DEBUG, std::format("listed {} module(s) for pid {}", count, session->pid));
-
-                *out       = array;
-                *out_count = count;
+                log_message(SLOPKIT_LOG_DEBUG, std::format("listed {} module(s) for pid {}", *out_count, session->pid));
                 return ok();
             }
             catch (...)

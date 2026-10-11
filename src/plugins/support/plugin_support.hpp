@@ -28,9 +28,17 @@ namespace slopkit::plugins::support
         // plugin does not claim it (Wine filters here and falls back to the exe
         // filename for the name).
         bool (*claim)(process::ProcessId pid, std::string& out_name);
-        // Reshapes the module list the shared listing built: Wine keeps the PE
-        // images and flags the main PE, linux-proc flags the exe-backed module.
+        // Optional: reshapes the module list the shared listing built, and is
+        // used only by that shared listing: Wine keeps the PE images and flags
+        // the main PE, linux-proc flags the exe-backed module. nullptr leaves
+        // the list as built.
         void (*shape_modules)(std::vector<process::ModuleInfo>& modules, process::ProcessId pid);
+        // Optional: the plugin's own module list. wine-proton answers it from the
+        // target's own loader list merged with /proc/maps; when set it replaces
+        // the shared listing entirely (and `shape_modules` is not called), and
+        // when nullptr the shared /proc listing shaped by `shape_modules` is
+        // used.
+        std::expected<std::vector<process::ModuleInfo>, AccessFault> (*modules)(Session& session);
         // What the debug session does with the target's own signals.
         platform::ForeignSignalPolicy signal_policy;
         // Optional: the plugin's own allocator. Wine/Proton uses it to allocate

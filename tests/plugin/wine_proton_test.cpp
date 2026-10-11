@@ -225,14 +225,11 @@ TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
     auto       session = access.attach(self, "wine-proton");
     REQUIRE(session.has_value());
 
-    // Wine only surfaces PE images, so a native process legitimately has none;
-    // every module it does return must be a PE image.
+    // Module enumeration is agent-only, so a native target reports the recorded
+    // reason with the same failure as the region list, never a silent host list.
     const auto modules = session->modules();
-    REQUIRE(modules.has_value());
-    for (const auto& module : *modules)
-    {
-        CHECK(module.kind == slopkit::process::ModuleKind::pe);
-    }
+    REQUIRE_FALSE(modules.has_value());
+    CHECK(modules.error() == AccessError::io_error);
 
     const auto threads = session->threads();
     REQUIRE(threads.has_value());
@@ -326,6 +323,12 @@ TEST_CASE("wine-proton serves a stopped target from the host path", "[wine_proto
     REQUIRE(read->size() == 1);
     CHECK((*read)[0] == expected);
     CHECK_FALSE(slopkit::process::has_flag(used, AccessMethod::agent));
+
+    // Module enumeration is agent-only, so a stopped target reports the reason
+    // it cannot be served instead of a host-derived list.
+    const auto modules = session->modules();
+    REQUIRE_FALSE(modules.has_value());
+    CHECK(modules.error() == AccessError::permission_denied);
 
     REQUIRE(vtable->debug_detach(handle).code == SLOPKIT_OK);
 }

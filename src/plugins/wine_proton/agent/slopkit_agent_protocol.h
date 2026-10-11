@@ -34,7 +34,7 @@
 
 /* Bumped whenever the layout below changes. A mismatch is refused as a
    protocol error, never waited on until a timeout. */
-#define SLOPKIT_AGENT_PROTOCOL_VERSION       2u
+#define SLOPKIT_AGENT_PROTOCOL_VERSION       3u
 
 /* The file names shared by both sides. The DLL is loaded from its own
    per-session directory and finds the shared region as the sibling file, so
@@ -56,6 +56,11 @@
 #define SLOPKIT_AGENT_OP_ENUM                8u
 #define SLOPKIT_AGENT_OP_READ                9u
 #define SLOPKIT_AGENT_OP_WRITE               10u
+/* Version 3. */
+#define SLOPKIT_AGENT_OP_MODULES             11u
+
+/* Module flags carried in slopkit_agent_module_entry.flags. */
+#define SLOPKIT_AGENT_MODULE_FLAG_MAIN       0x1u
 
 /* The payload area trailing the request and response records. It holds
    `SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_region_entry)` region
@@ -186,6 +191,22 @@ typedef struct slopkit_agent_region_entry
     uint32_t reserved;
 } slopkit_agent_region_entry;
 
+/* Version 3. One loaded image from the target's own loader list, written into
+   the payload by MODULES: the fixed-width fields of one loader entry plus a
+   reference to its name. Records sit at the start of payload[] in loader
+   order; each name's UTF-16 bytes are appended from the end of the payload
+   downwards and referenced by name_offset/name_length. */
+typedef struct slopkit_agent_module_entry
+{
+    uint64_t base;        /* DllBase */
+    uint64_t size;        /* SizeOfImage */
+    uint64_t entry;       /* DllBase + AddressOfEntryPoint, 0 when none */
+    uint32_t name_offset; /* byte offset of the name in payload[] */
+    uint32_t name_length; /* bytes, no terminator */
+    uint32_t flags;       /* SLOPKIT_AGENT_MODULE_FLAG_MAIN */
+    uint32_t reserved;
+} slopkit_agent_module_entry;
+
 /* One mapping, mapped by the host and the agent alike.
 
    Field reuse across the payload-carrying ops:
@@ -198,6 +219,13 @@ typedef struct slopkit_agent_region_entry
                       count. READ fills payload[]; WRITE sends it.
        READ/WRITE response: size = the bytes actually moved (a short transfer
                       is a success).
+     - MODULES request:  address = the starting loader-index (0 = the first
+                      loader entry), size = the record capacity (0 = the whole
+                      payload).
+       MODULES response: size = records written, address = the index to resume
+                      from, or 0 when the loader list ended. The records land
+                      in payload[], followed by the names growing down from the
+                      end of the payload.
      - HELLO response: reserved0 = SLOPKIT_AGENT_PAYLOAD_SIZE, which the host
                       compares before trusting a payload. */
 typedef struct slopkit_agent_region
@@ -217,6 +245,7 @@ typedef struct slopkit_agent_region
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_record) == 104, "slopkit_agent_record layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_header) == 40, "slopkit_agent_header layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region_entry) == 32, "slopkit_agent_region_entry layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_module_entry) == 40, "slopkit_agent_module_entry layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region) == 248 + SLOPKIT_AGENT_PAYLOAD_SIZE,
                             "slopkit_agent_region layout changed");
 
@@ -254,6 +283,14 @@ SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, state) == 16, "
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, protection) == 20, "entry.protection moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, type) == 24, "entry.type moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, reserved) == 28, "entry.reserved moved");
+
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, base) == 0, "module.base moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, size) == 8, "module.size moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, entry) == 16, "module.entry moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, name_offset) == 24, "module.name_offset moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, name_length) == 28, "module.name_length moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, flags) == 32, "module.flags moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, reserved) == 36, "module.reserved moved");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, request) == 40, "region.request moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, response) == 144, "region.response moved");

@@ -14,6 +14,7 @@
 #include "plugins/support/allocate.hpp"
 #include "plugins/support/validate.hpp"
 #include "plugins/wine_proton/agent_client.hpp"
+#include "plugins/wine_proton/agent_modules.hpp"
 #include "plugins/wine_proton/agent_regions.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
 
@@ -225,6 +226,56 @@ namespace slopkit::plugins::wine_proton
         }
 
         return merge_regions(entries, platform::read_maps(session.pid));
+    }
+
+    std::expected<std::vector<process::ModuleInfo>, support::AccessFault>
+    AgentService::modules(support::Session& session)
+    {
+        const std::lock_guard lock(g_mutex);
+        // Agent-only: a module list that silently switched to the host's view
+        // would be the very discrepancy this path removes, so the reason the
+        // agent cannot serve is returned instead.
+        if (session.debug.attached())
+        {
+            return std::unexpected(
+                support::AccessFault {SLOPKIT_ERR_PERMISSION_DENIED, "the target is being debugged"});
+        }
+        if (support::allocation_in_flight(session))
+        {
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, "a call is in flight on this session"});
+        }
+
+        AgentState&  state = g_agents[session.pid];
+        AgentClient* agent = ensure_agent(state, session.pid);
+        if (agent == nullptr)
+        {
+            return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, state.disabled_reason});
+        }
+
+        std::vector<AgentModuleEntry> entries;
+        std::uint64_t                 cursor = 0;
+        for (;;)
+        {
+            const auto batch = with_agent(session,
+                                          [&]
+                                          {
+                                              return agent->modules(cursor, 0, kRequestTimeout);
+                                          });
+            if (!batch)
+            {
+                const std::string reason = batch.error();
+                disable(state, session.pid, reason);
+                return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, reason});
+            }
+            entries.insert(entries.end(), batch->modules.begin(), batch->modules.end());
+            cursor = batch->next_index;
+            if (cursor == 0)
+            {
+                break;
+            }
+        }
+
+        return merge_modules(entries, platform::read_maps(session.pid));
     }
 
     std::expected<bool, support::AccessFault>

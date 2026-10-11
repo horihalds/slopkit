@@ -1,5 +1,7 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
@@ -320,6 +322,72 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     }
     CHECK(saw_block);
     CHECK(saw_agent);
+
+    // The module walk reads the target's own loader list (InLoadOrderModuleList),
+    // so it names the probe itself, kernel32 and ntdll, every base is a real file
+    // mapping in /proc, and no host .so mapping leaks into the list.
+    const auto maps = slopkit::platform::read_maps(launched->guard.pid);
+
+    std::vector<slopkit::plugins::wine_proton::AgentModuleEntry> modules;
+    std::uint64_t                                                module_cursor = 0;
+    for (int guard = 0; guard < 100000; ++guard)
+    {
+        const auto batch = agent->modules(module_cursor, 0, 5s);
+        REQUIRE(batch.has_value());
+        modules.insert(modules.end(), batch->modules.begin(), batch->modules.end());
+        module_cursor = batch->next_index;
+        if (module_cursor == 0)
+        {
+            break;
+        }
+    }
+    REQUIRE_FALSE(modules.empty());
+
+    const auto same_name = [](std::string_view left, std::string_view right)
+    {
+        if (left.size() != right.size())
+        {
+            return false;
+        }
+        for (std::size_t index = 0; index < left.size(); ++index)
+        {
+            if (std::tolower(static_cast<unsigned char>(left[index]))
+                != std::tolower(static_cast<unsigned char>(right[index])))
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    bool saw_probe  = false;
+    bool saw_kernel = false;
+    bool saw_ntdll  = false;
+    for (const auto& module : modules)
+    {
+        INFO("module " << module.name);
+        if (module.main)
+        {
+            saw_probe = same_name(module.name, "slopkit-probe-x86_64.exe");
+        }
+        saw_kernel = saw_kernel || same_name(module.name, "kernel32.dll");
+        saw_ntdll  = saw_ntdll || same_name(module.name, "ntdll.dll");
+
+        // A loader entry is a PE image, so a host .so name can never appear.
+        CHECK(module.name.find(".so") == std::string::npos);
+
+        // Every base is covered by a real file mapping in the target's procfs
+        // view, which is what gives the module its host path.
+        const auto covering = std::ranges::find_if(maps,
+                                                   [&](const slopkit::platform::MappedRegion& map)
+                                                   {
+                                                       return map.start <= module.base && module.base < map.end;
+                                                   });
+        CHECK(covering != maps.end());
+    }
+    CHECK(saw_probe);
+    CHECK(saw_kernel);
+    CHECK(saw_ntdll);
 
     // QUERY confirms the block is committed and readable while an unmapped
     // address is not: the same answer validate_memory is built on.

@@ -18,11 +18,13 @@ namespace slopkit::plugins::wine_proton
 {
     // The profile hooks that reach the resident agent. Allocation is agent-only:
     // Wine's VM manager must own the mapping, so a failure is returned, never
-    // patched over. Introspection (regions, validation, reads, writes) rides the
-    // agent while the target can run and falls to the host path while a debug
-    // session has it stopped. In both cases injection, handshake or request
-    // failures log their reason once, disable the agent for the session and are
-    // returned as an error.
+    // patched over. Module enumeration is agent-only too, because only the
+    // target's own loader list names the images the way the game does.
+    // Introspection (regions, validation, reads, writes) rides the agent while
+    // the target can run and falls to the host path while a debug session has it
+    // stopped. In both cases injection, handshake or request failures log their
+    // reason once, disable the agent for the session and are returned as an
+    // error.
     class AgentService
     {
     public:
@@ -43,6 +45,12 @@ namespace slopkit::plugins::wine_proton
         // procfs paths. The host route answers while the target cannot run.
         [[nodiscard]] static std::expected<std::vector<platform::MappedRegion>, support::AccessFault>
         regions(support::Session& session);
+
+        // The profile hook: the target's own loader list, merged with the procfs
+        // paths. Agent-only: while the target cannot run the recorded reason is
+        // returned as a fault, never a host-derived module list.
+        [[nodiscard]] static std::expected<std::vector<process::ModuleInfo>, support::AccessFault>
+        modules(support::Session& session);
 
         // The profile hook: whether a range is readable, answered by a
         // VirtualQuery in the target while it can run and by the read probe

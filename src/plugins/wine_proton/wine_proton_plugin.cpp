@@ -9,6 +9,9 @@
 // The ABI plumbing (session set, string arena, error mapping, vtable and all 23
 // entries) lives in the shared plugins/support library; this file is only the
 // wine-proton profile plus the entry point.
+//
+// The module list comes from the target's own loader list through the resident
+// agent, not from the host's reading of the process maps.
 
 #include <cstdint>
 #include <expected>
@@ -82,18 +85,6 @@ namespace
         return true;
     }
 
-    // Wine exposes the target's PE images through the process maps; keep only
-    // the PE ones so the module list is game-centric, then flag the main PE.
-    void shape_modules(std::vector<slopkit::process::ModuleInfo>& modules, ProcessId pid)
-    {
-        std::erase_if(modules,
-                      [](const slopkit::process::ModuleInfo& module)
-                      {
-                          return module.kind != slopkit::process::ModuleKind::pe;
-                      });
-        (void)slopkit::platform::flag_main_pe_image(pid, modules);
-    }
-
     // Allocation goes through the resident agent alone, so the mapping is one
     // Wine's own virtual-memory manager created; there is no ptrace fallback and
     // the log names the agent that served the call.
@@ -124,6 +115,15 @@ namespace
         return slopkit::plugins::wine_proton::AgentService::regions(session);
     }
 
+    // The module list comes from the target's own loader list, merged with the
+    // procfs paths. Agent-only, so while the target cannot run the reason is
+    // returned instead of a host-derived list.
+    std::expected<std::vector<slopkit::process::ModuleInfo>, slopkit::plugins::support::AccessFault>
+    modules(slopkit::plugins::support::Session& session)
+    {
+        return slopkit::plugins::wine_proton::AgentService::modules(session);
+    }
+
     // Address validation answers from the target's own commit and protection
     // view while it can run, and from the shared read probe otherwise.
     std::expected<bool, slopkit::plugins::support::AccessFault>
@@ -150,7 +150,8 @@ namespace
                                       precedence,
                                       access_methods,
                                       claim,
-                                      shape_modules,
+                                      nullptr,
+                                      modules,
                                       slopkit::platform::ForeignSignalPolicy::forward,
                                       allocate,
                                       free,

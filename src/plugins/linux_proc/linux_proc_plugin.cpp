@@ -71,6 +71,7 @@ namespace
                                       access_methods,
                                       claim,
                                       shape_modules,
+                                      nullptr,
                                       slopkit::platform::ForeignSignalPolicy::suppress,
                                       nullptr,
                                       nullptr,
