@@ -88,11 +88,11 @@ ctest --test-dir build -R "agent" --output-on-failure
   timeout.
 
 The last two are hidden and environment-gated, because they need a working wine
-prefix as well as the cross-compiled probe:
+prefix as well as the cross-compiled probe. `catch_discover_tests` leaves hidden
+tests out of ctest, so they are selected by tag on the binary:
 
 ```sh
-SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "resident agent allocates" --timeout 600 --output-on-failure
-SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "inherited a wineserver socket" --timeout 600 --output-on-failure
+SLOPKIT_WINE_E2E=1 ./build/slopkit_tests "[wine-proton][agent]"
 ```
 
 The first starts `build/agent_probe/slopkit-probe-x86_64.exe` under wine, injects
@@ -176,8 +176,12 @@ error rather than a silent fallback. Watch the `process`-category records:
    from step 1 instead of falling back to ptrace.
 3. After the tick/untick cycles, detach (closing the session or switching away)
    must log no timeout: `SHUTDOWN` stops the agent and frees what it allocated.
-4. `ls $XDG_RUNTIME_DIR/slopkit-agent-*` must find nothing afterwards — the
-   per-session directory holding the region, the DLL and the injector is removed.
+4. No `slopkit-agent-*` staging directory is left behind: the one holding the
+   region, the DLL and the injector is removed on detach. It is created in the
+   first of `$XDG_RUNTIME_DIR`, the temporary directory and
+   `$HOME/.cache/slopkit` that the target's own namespace can see (see
+   [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md)), so check whichever of the three a
+   containerised game actually shares.
 
 `protect` and `query` have no plugin-ABI entry, so this recipe cannot drive them;
 the wine-gated test above does.
@@ -189,6 +193,10 @@ instead. No second host architecture is involved — the i686 agent is a PE for 
 
 ## Diagnose a build or a run
 
+- An allocation failure names the reason. A failed injector is reported as its
+  last `slopkit-injector:` line when it printed one, otherwise as the last
+  non-empty line of its output, because a game's own `WINEDEBUG` buries the
+  useful line under wine traces.
 - `tools/verify.sh` prints only the `warning:`/`error:`/`FAILED` lines of its
   build and keeps the full transcripts in `build/verify-format.log`,
   `build/verify-build.log` and `build/verify-tests.log`. By hand:

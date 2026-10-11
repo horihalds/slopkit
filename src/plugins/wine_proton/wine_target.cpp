@@ -7,6 +7,8 @@
 #include <ranges>
 #include <string_view>
 
+#include <unistd.h>
+
 #include "platform/linux/module_entry.hpp"
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/wine.hpp"
@@ -151,6 +153,45 @@ namespace slopkit::plugins::wine_proton
                 separator == std::string::npos ? std::string_view(entry) : std::string_view(entry).substr(0, separator);
             return name == "WINESERVERSOCKET";
         }
+
+        // The directories the agent binaries may be staged in, best first: the
+        // per-user runtime directory when the target shares it, the system
+        // temporary directory, then the user's cache. A game launched by Proton
+        // only shares the last two with this tool, because its container
+        // replaces `/run/user/<uid>` with a private directory of its own.
+        std::vector<std::filesystem::path> staging_base_candidates()
+        {
+            std::vector<std::filesystem::path> candidates;
+            if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr && *runtime != '\0')
+            {
+                candidates.emplace_back(runtime);
+            }
+            std::error_code error;
+            const auto      temporary = std::filesystem::temp_directory_path(error);
+            if (!error)
+            {
+                candidates.push_back(temporary);
+            }
+            if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0')
+            {
+                candidates.push_back(std::filesystem::path(home) / ".cache" / "slopkit");
+            }
+            return candidates;
+        }
+
+        std::string join(const std::vector<std::string>& parts)
+        {
+            std::string result;
+            for (const auto& part : parts)
+            {
+                if (!result.empty())
+                {
+                    result += "; ";
+                }
+                result += part;
+            }
+            return result;
+        }
     } // namespace
 
     std::string linux_path_to_windows(const std::string& path)
@@ -179,6 +220,44 @@ namespace slopkit::plugins::wine_proton
             }
         }
         return filtered;
+    }
+
+    bool target_can_reach(process::ProcessId pid, const std::filesystem::path& path)
+    {
+        if (path.is_relative())
+        {
+            return false;
+        }
+        std::error_code error;
+        const auto through_root = std::filesystem::path("/proc") / std::to_string(pid) / "root" / path.relative_path();
+        return std::filesystem::exists(through_root, error) && !error;
+    }
+
+    std::expected<std::filesystem::path, std::string> make_staging_directory(process::ProcessId pid)
+    {
+        const std::string        name = std::format("slopkit-agent-{}-{}", pid, static_cast<long>(::getpid()));
+        std::vector<std::string> rejected;
+        for (const auto& base : staging_base_candidates())
+        {
+            const auto      directory = base / name;
+            std::error_code error;
+            std::filesystem::create_directories(directory, error);
+            if (error)
+            {
+                rejected.push_back(std::format("{} ({})", directory.string(), error.message()));
+                continue;
+            }
+            if (target_can_reach(pid, directory))
+            {
+                return directory;
+            }
+            // The target's namespace does not have this directory, so nothing
+            // staged here would be loadable: drop it and try the next base.
+            rejected.push_back(std::format("{} (the target cannot reach it)", directory.string()));
+            std::error_code cleanup;
+            std::filesystem::remove_all(directory, cleanup);
+        }
+        return std::unexpected(std::format("no staging directory the target can reach; tried {}", join(rejected)));
     }
 
     std::expected<WineTarget, std::string> derive_wine_target(process::ProcessId pid)

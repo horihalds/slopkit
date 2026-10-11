@@ -45,4 +45,17 @@ namespace slopkit::plugins::wine_proton
     // mapping presents the host filesystem to the target.
     [[nodiscard]] std::string linux_path_to_windows(const std::string& path);
 
+    // True when a directory created on the host at `path` is also reachable
+    // through the target's own root, which is the view the target's loader and
+    // its `Z:` drive resolve through. A Proton game runs inside a
+    // pressure-vessel container that replaces `/run/user/<uid>` with a private
+    // directory, so a path staged there is invisible to it even though this
+    // process sees it.
+    [[nodiscard]] bool target_can_reach(process::ProcessId pid, const std::filesystem::path& path);
+
+    // The directory the agent binaries are staged in for one session with `pid`:
+    // the first staging base that the target can actually reach, created if
+    // necessary. Fails with the reason when none of them works.
+    [[nodiscard]] std::expected<std::filesystem::path, std::string> make_staging_directory(process::ProcessId pid);
+
 } // namespace slopkit::plugins::wine_proton

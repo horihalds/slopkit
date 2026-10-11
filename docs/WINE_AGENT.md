@@ -27,20 +27,20 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
 | Injector | `src/plugins/wine_proton/agent/slopkit_injector.c` | One-shot exe run under the target's own wine: finds the target by image path, is idempotent when the agent is already loaded, then `OpenProcess` / `VirtualAllocEx` / `WriteProcessMemory` / `CreateRemoteThread(LoadLibraryW)`. |
 | Test probe | `src/plugins/wine_proton/agent/slopkit_probe.c` | A trivial console target for the wine-gated end-to-end test; never installed. |
 | Cross-compile | `cmake/Agent.cmake` | One pair of targets per bitness (`x86_64`, `i686`), a clear error when mingw-w64 and no prebuilt exist, and the install rule. |
-| Target derivation | `src/plugins/wine_proton/wine_target.{hpp,cpp}` | From `/proc/<pid>`: the guest's main PE (for the bitness and the `Z:` image path), the loader to host the injector, the target's own environment (without the process-local handoff entries below) and a `WINEPREFIX` fallback. |
+| Target derivation | `src/plugins/wine_proton/wine_target.{hpp,cpp}` | From `/proc/<pid>`: the guest's main PE (for the bitness and the `Z:` image path), the loader to host the injector, the target's own environment (without the process-local handoff entries below), a `WINEPREFIX` fallback and the staging directory the target's own namespace can reach. |
 | Transport | `src/plugins/wine_proton/agent_transport.{hpp,cpp}` | Creates and mmaps the region, publishes one request, waits with a bounded timeout, returns the response. |
-| Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, spawns the injector under the target's wine, runs the `HELLO` handshake, and serves the operations; tracks the addresses it handed out. |
+| Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, stages them where the target can see them, spawns the injector under the target's wine, runs the `HELLO` handshake, and serves the operations; tracks the addresses it handed out. |
 | Allocator | `src/plugins/wine_proton/agent_allocator.{hpp,cpp}` | The `allocate`/`free` profile hooks: the agent is the only path, so a failure disables the agent for the session and returns the error, and `close` tears the agent down. |
 
 ## Flow
 
 1. The first `allocate_memory` for a Wine target derives the target, stages the
-   bitness-matched DLL and injector into a per-session directory under
-   `$XDG_RUNTIME_DIR` (or `/tmp`), creates the region file there and runs the
-   injector under the loader the target itself runs, with the target's own
-   environment, minus the process-local handoffs described below. Any failure
-   here disables the agent for that session, logs why, and the call is answered
-   with the error — there is no ptrace fallback.
+   bitness-matched DLL and injector into a per-session directory the target can
+   reach (see "Proton's private runtime directory" below), creates the region
+   file there and runs the injector under the loader the target itself runs, with
+   the target's own environment, minus the process-local handoffs described
+   below. Any failure here disables the agent for that session, logs why, and the
+   call is answered with the error — there is no ptrace fallback.
 2. The agent's service thread opens `slopkit-agent.bin` as the sibling of its own
    module through `Z:` and polls the header's state word. `HELLO` reports the
    protocol version, the record size, the pointer size, the Windows pid, the
@@ -78,6 +78,43 @@ one entry Wine hands down this way today, and the filter is a named list rather
 than a blanket `WINE*` strip, so `WINEPREFIX`, `WINEDLLOVERRIDES` and the rest
 survive.
 
+## Proton's private runtime directory
+
+Steam runs a Proton game inside a pressure-vessel container, and that container
+replaces `/run/user/<uid>` with a private tmpfs: the tool's runtime directory is
+not a path the game shares, even though both sides call it `/run/user/1000` in
+their own namespace. The two directories hold different things — seen through the
+target's own root there is no staging directory, while the tool's own view has
+one:
+
+```
+ls /proc/<game pid>/root/run/user/1000     -> no slopkit-agent-* directory
+ls /run/user/1000                          -> slopkit-agent-<pid>-<tool pid>
+```
+
+The first cut staged the agent under `$XDG_RUNTIME_DIR`, so the game could not
+see the staging directory at all. Wine resolved the staged injector through `Z:`,
+got `STATUS_NO_SUCH_FILE`, and fell back to its own launcher:
+
+```
+wine: created the configuration directory
+Application could not be started, or no application associated with the specified file.
+ShellExecuteEx failed: File not found.
+```
+
+The staging directory is now the first of `$XDG_RUNTIME_DIR`, the temporary
+directory and `$HOME/.cache/slopkit` that the target can reach through
+`/proc/<pid>/root`, so a containerised target is staged in a directory the two
+namespaces really do share. The check runs before the injector does, so an
+unreachable directory is reported as a staging failure instead of a loader
+failure.
+
+The reported reason for a failed injector was the wrong line as well: the game's
+own `WINEDEBUG` prints traces, so the first line of the capture was a `seh`
+trace and never the injector's message. It now reports the injector's last
+`slopkit-injector:` line, or its last non-empty line when the loader died before
+the injector printed anything.
+
 ## What was measured
 
 - The wine-gated end-to-end test (`tests/plugin/wine_proton_agent_e2e_test.cpp`)
@@ -96,6 +133,12 @@ survive.
   `the injector exited with 1: wine: Bad server socket 15 : Bad file descriptor`
   and the environment check reports the handoff still present; with it in place
   the same test injects, allocates and shuts down.
+- The private-runtime-directory failure was reproduced and closed against the
+  reporter's own game: `/proc/<pid>/root/run/user/1000` contains no
+  `slopkit-agent-*` directory, so an injector staged there dies in the loader
+  with `ShellExecuteEx failed: File not found.`, while the same injector run from
+  a directory under `/tmp` with the target's environment loads the agent into the
+  game (`slopkit-injector: loaded into pid <windows pid>`).
 - The agent and injector build warning-free for both bitnesses; `tools/verify.sh`
   covers them.
 
@@ -113,10 +156,11 @@ survive.
   `LoadLibraryW` on the UI thread; the agent therefore comes up on the first
   allocation, which runs on the access worker. Failures are still learned at the
   first allocation, and from then on allocation fails for the session.
-- **The per-session directory is under `$XDG_RUNTIME_DIR` (else `/tmp`), not next
-  to the plugin.** The installed plugin directory may be read-only, and the DLL
-  must find the region as its own sibling, so region, DLL and injector are staged
-  together in a writable directory the target can reach through `Z:`.
+- **The per-session directory is chosen for the target, not for the tool.** The
+  installed plugin directory may be read-only, and the DLL must find the region
+  as its own sibling, so region, DLL and injector are staged together in a
+  writable directory *the target's own namespace can see*, not simply in the
+  tool's runtime directory.
 - **No AF_UNIX/Winsock transport.** As agreed, the file-backed shared region was
   built first and proved sufficient; the socket transport stays the documented
   backup if a prefix without a `Z:` mapping to `/` ever shows up.
@@ -135,6 +179,9 @@ survive.
 - **`Z:` is assumed.** The region is opened through Wine's default `Z:` drive.
   A prefix with that mapping removed makes the agent unusable; the handshake
   times out and allocation fails for that session.
+- **The staging directory must be one the target shares.** `$XDG_RUNTIME_DIR`,
+  the temporary directory and `$HOME/.cache/slopkit` are tried in that order; a
+  target whose container shares none of them fails with a staging error.
 - **The i686 path is built, not exercised.** Both bitnesses cross-compile
   warning-free and the selector reads the guest's COFF machine, but no 32-bit
   game was available here to run the end-to-end test for i686.

@@ -43,28 +43,6 @@ namespace slopkit::plugins::wine_proton
             return std::filesystem::path(info.dli_fname).parent_path();
         }
 
-        // A per-run, per-target directory the target can reach through Wine's
-        // default Z: drive. It holds the region, the DLL and the injector, and
-        // the transport removes it on teardown.
-        std::filesystem::path make_session_directory(process::ProcessId pid)
-        {
-            std::filesystem::path base;
-            if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr && *runtime != '\0')
-            {
-                base = runtime;
-            }
-            else
-            {
-                std::error_code error;
-                base = std::filesystem::temp_directory_path(error);
-                if (error)
-                {
-                    base = "/tmp";
-                }
-            }
-            return base / std::format("slopkit-agent-{}-{}", pid, static_cast<long>(::getpid()));
-        }
-
         struct SpawnOutcome
         {
             int         exit_code {0};
@@ -172,12 +150,39 @@ namespace slopkit::plugins::wine_proton
             return outcome;
         }
 
-        std::string first_line(const std::string& text)
-        {
-            const auto end = text.find('\n');
-            return end == std::string::npos ? text : text.substr(0, end);
-        }
     } // namespace
+
+    std::string injector_failure_message(std::string_view output)
+    {
+        constexpr std::string_view kInjectorMark = "slopkit-injector:";
+        std::string_view           last;
+        std::string_view           from_injector;
+        for (std::size_t offset = 0; offset <= output.size();)
+        {
+            const auto       end  = output.find('\n', offset);
+            const auto       stop = end == std::string_view::npos ? output.size() : end;
+            std::string_view line = output.substr(offset, stop - offset);
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.remove_suffix(1);
+            }
+            if (!line.empty())
+            {
+                last = line;
+                if (line.find(kInjectorMark) != std::string_view::npos)
+                {
+                    from_injector = line;
+                }
+            }
+            if (end == std::string_view::npos)
+            {
+                break;
+            }
+            offset = end + 1;
+        }
+        const auto chosen = from_injector.empty() ? last : from_injector;
+        return chosen.empty() ? std::string("no output") : std::string(chosen);
+    }
 
     std::string AgentClient::dll_file_name(std::uint32_t pointer_size)
     {
@@ -207,25 +212,28 @@ namespace slopkit::plugins::wine_proton
                                                source_directory->string()));
         }
 
-        const auto session_directory = make_session_directory(target.pid);
-        const auto dll_target        = session_directory / SLOPKIT_AGENT_DLL_FILE;
-        const auto injector_target   = session_directory / SLOPKIT_AGENT_INJECTOR_FILE;
-        std::filesystem::create_directories(session_directory, error);
+        const auto staging = make_staging_directory(target.pid);
+        if (!staging)
+        {
+            return std::unexpected(staging.error());
+        }
+        const auto dll_target      = *staging / SLOPKIT_AGENT_DLL_FILE;
+        const auto injector_target = *staging / SLOPKIT_AGENT_INJECTOR_FILE;
         std::filesystem::copy_file(dll_source, dll_target, std::filesystem::copy_options::overwrite_existing, error);
         if (error)
         {
             return std::unexpected(
-                std::format("cannot stage the agent DLL in {}: {}", session_directory.string(), error.message()));
+                std::format("cannot stage the agent DLL in {}: {}", staging->string(), error.message()));
         }
         std::filesystem::copy_file(
             injector_source, injector_target, std::filesystem::copy_options::overwrite_existing, error);
         if (error)
         {
             return std::unexpected(
-                std::format("cannot stage the injector in {}: {}", session_directory.string(), error.message()));
+                std::format("cannot stage the injector in {}: {}", staging->string(), error.message()));
         }
 
-        auto transport = AgentTransport::create(session_directory);
+        auto transport = AgentTransport::create(*staging);
         if (!transport)
         {
             return std::unexpected(transport.error());
@@ -250,8 +258,8 @@ namespace slopkit::plugins::wine_proton
         }
         if (spawned->exit_code != 0)
         {
-            return std::unexpected(
-                std::format("the injector exited with {}: {}", spawned->exit_code, first_line(spawned->output)));
+            return std::unexpected(std::format(
+                "the injector exited with {}: {}", spawned->exit_code, injector_failure_message(spawned->output)));
         }
 
         slopkit_agent_record hello {};

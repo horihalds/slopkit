@@ -5,14 +5,21 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <format>
 #include <fstream>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include <fcntl.h>
+#include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -20,6 +27,7 @@
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/wine.hpp"
 #include "plugin/plugin_host.hpp"
+#include "plugins/wine_proton/agent_client.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
 #include "process/plugin_access.hpp"
 #include "process/types.hpp"
@@ -90,6 +98,91 @@ namespace
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
+    }
+
+    // Writes a single value to a /proc control file, which is how a user
+    // namespace gets its single identity mapping.
+    bool write_control_file(const std::string& path, const std::string& value)
+    {
+        std::ofstream file(path, std::ios::trunc);
+        if (file)
+        {
+            file << value;
+        }
+        return file.good();
+    }
+
+    // Runs a child in its own mount namespace in which `hide` is an empty tmpfs,
+    // so the host still sees that directory but the child cannot: the shape a
+    // pressure-vessel container gives a Proton game. Returns the child, or -1
+    // when the kernel refuses the namespaces.
+    pid_t spawn_isolated_child(const std::filesystem::path& hide)
+    {
+        int ready[2] = {-1, -1};
+        if (::pipe(ready) != 0)
+        {
+            return -1;
+        }
+        const pid_t child = ::fork();
+        if (child < 0)
+        {
+            ::close(ready[0]);
+            ::close(ready[1]);
+            return -1;
+        }
+        if (child == 0)
+        {
+            ::close(ready[0]);
+            if (::unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0)
+            {
+                ::_exit(70);
+            }
+            // Becoming the mapped user of the new namespace is what makes the
+            // mount below privileged enough to succeed.
+            const bool mapped = write_control_file("/proc/self/setgroups", "deny")
+                             && write_control_file("/proc/self/uid_map", std::format("0 {} 1\n", ::getuid()))
+                             && write_control_file("/proc/self/gid_map", std::format("0 {} 1\n", ::getgid()));
+            if (!mapped)
+            {
+                ::_exit(71);
+            }
+            (void)::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr);
+            if (::mount("tmpfs", hide.c_str(), "tmpfs", 0, nullptr) != 0)
+            {
+                ::_exit(72);
+            }
+            if (::write(ready[1], "1", 1) != 1)
+            {
+                ::_exit(73);
+            }
+            ::close(ready[1]);
+            for (;;)
+            {
+                ::pause();
+            }
+        }
+        ::close(ready[1]);
+
+        char       byte {'\0'};
+        ssize_t    got      = 0;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (std::chrono::steady_clock::now() < deadline && got != 1)
+        {
+            ::pollfd descriptor {ready[0], POLLIN, 0};
+            if (::poll(&descriptor, 1, 50) > 0)
+            {
+                got = ::read(ready[0], &byte, 1);
+                break;
+            }
+        }
+        ::close(ready[0]);
+        if (got != 1)
+        {
+            ::kill(child, SIGKILL);
+            ::waitpid(child, nullptr, 0);
+            return -1;
+        }
+        return child;
     }
 } // namespace
 
@@ -360,5 +453,103 @@ TEST_CASE("the injector environment drops process-local handoffs", "[wine_proton
         const std::vector<std::string> environment {"PATH=/usr/bin", "HOME=/home/user"};
 
         CHECK(injector_environment(environment) == environment);
+    }
+}
+
+TEST_CASE("the agent is staged where the target can reach it", "[wine_proton]")
+{
+    using slopkit::plugins::wine_proton::make_staging_directory;
+    using slopkit::plugins::wine_proton::target_can_reach;
+
+    const auto      base = std::filesystem::temp_directory_path() / "slopkit-staging-base";
+    std::error_code error;
+    std::filesystem::remove_all(base, error);
+
+    SECTION("a target that shares the runtime directory is staged there")
+    {
+        REQUIRE(std::filesystem::create_directories(base, error));
+        REQUIRE(::setenv("XDG_RUNTIME_DIR", base.c_str(), 1) == 0);
+
+        const auto staged = make_staging_directory(static_cast<ProcessId>(::getpid()));
+        REQUIRE(staged.has_value());
+        CHECK(staged->parent_path() == base);
+        CHECK(target_can_reach(static_cast<ProcessId>(::getpid()), *staged));
+
+        ::unsetenv("XDG_RUNTIME_DIR");
+        std::filesystem::remove_all(base, error);
+        std::filesystem::remove_all(*staged, error);
+    }
+
+    SECTION("a containerised target is staged outside its private runtime directory")
+    {
+        // A Proton game only shares the temporary directory (and $HOME) with the
+        // tool: its container replaces /run/user/<uid> with a private directory,
+        // so nothing staged under the tool's XDG_RUNTIME_DIR was loadable and the
+        // injector died in the loader with STATUS_NO_SUCH_FILE.
+        REQUIRE(std::filesystem::create_directories(base / "hidden", error));
+
+        const pid_t child = spawn_isolated_child(base);
+        if (child < 0)
+        {
+            WARN("user namespaces are unavailable; the containerised staging case is skipped");
+            std::filesystem::remove_all(base, error);
+            return;
+        }
+        ChildGuard guard(child);
+
+        // The host sees the directory, the target's namespace does not.
+        REQUIRE(std::filesystem::exists(base / "hidden"));
+        CHECK_FALSE(target_can_reach(static_cast<ProcessId>(child), base / "hidden"));
+
+        REQUIRE(::setenv("XDG_RUNTIME_DIR", base.c_str(), 1) == 0);
+        const auto staged = make_staging_directory(static_cast<ProcessId>(child));
+        ::unsetenv("XDG_RUNTIME_DIR");
+
+        REQUIRE(staged.has_value());
+        CHECK_FALSE(staged->string().starts_with(base.string()));
+        CHECK(target_can_reach(static_cast<ProcessId>(child), *staged));
+
+        std::filesystem::remove_all(base, error);
+        std::filesystem::remove_all(*staged, error);
+    }
+
+    SECTION("a process that is gone has no reachable directory")
+    {
+        CHECK_FALSE(target_can_reach(0x7fffffffu, "/"));
+        const auto staged = make_staging_directory(0x7fffffffu);
+        REQUIRE_FALSE(staged.has_value());
+        CHECK(staged.error().find("no staging directory") != std::string::npos);
+    }
+}
+
+TEST_CASE("a failed injector is reported as a useful line", "[wine_proton]")
+{
+    using slopkit::plugins::wine_proton::injector_failure_message;
+
+    SECTION("the injector's own message wins over the surrounding traces")
+    {
+        // The target's own WINEDEBUG buries everything the loader prints, which
+        // is why the first line of the capture was never the useful one.
+        const std::string output = "8092.350:842c:8430:trace:seh:libc_addr_cb found signal trampoline\n"
+                                   "slopkit-injector: the image \"C:\\game\\game.exe\" is not running\n"
+                                   "8092.350:842c:8430:trace:seh:backtrace\n";
+        CHECK(injector_failure_message(output) == "slopkit-injector: the image \"C:\\game\\game.exe\" is not running");
+    }
+
+    SECTION("without an injector message the last line is used")
+    {
+        // What the real failure printed: wine resolved the staged injector
+        // through Z:, found nothing because the directory belonged to another
+        // mount namespace, and fell back to its own launcher.
+        const std::string output = "wine: created the configuration directory\n"
+                                   "Application could not be started, or no application associated with the "
+                                   "specified file.\n"
+                                   "ShellExecuteEx failed: File not found.\n";
+        CHECK(injector_failure_message(output) == "ShellExecuteEx failed: File not found.");
+    }
+
+    SECTION("an empty capture still has a reason")
+    {
+        CHECK(injector_failure_message("") == "no output");
     }
 }

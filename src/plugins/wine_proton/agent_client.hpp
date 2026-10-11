@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 #include "plugins/wine_proton/agent_transport.hpp"
@@ -17,6 +18,13 @@ namespace slopkit::plugins::wine_proton
     // One request to the resident agent may take this long before the plugin
     // gives up on the agent path for the session.
     inline constexpr std::uint32_t kAgentRequestTimeoutMs = 500;
+
+    // The line worth reporting when the injector exits non-zero: its output is
+    // whatever the target's wine prints, so a WINEDEBUG inherited from the game
+    // can bury the one useful line under traces. The injector's own last
+    // `slopkit-injector:` message wins; when the loader died before the injector
+    // could run, the last non-empty line is the only clue there is.
+    [[nodiscard]] std::string injector_failure_message(std::string_view output);
 
     // What QUERY reports about the target's own view of an address.
     struct AgentRegionInfo
