@@ -9,6 +9,7 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "plugin/plugin_api.h"
 #include "plugins/support/allocate.hpp"
 #include "plugins/wine_proton/agent_client.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
@@ -24,8 +25,8 @@ namespace slopkit::plugins::wine_proton
         constexpr std::chrono::milliseconds kShutdownTimeout {200};
 
         // One target's agent. Once `disabled_reason` is set the agent path is
-        // never retried for that process: every later call goes to ptrace, so a
-        // hardened or unsupported target pays the injection cost once.
+        // never retried for that process: every later call fails with that
+        // reason, so a hardened or unsupported target pays the cost once.
         struct AgentState
         {
             std::optional<AgentClient> client;
@@ -43,8 +44,8 @@ namespace slopkit::plugins::wine_proton
             state.client.reset();
             state.disabled_reason = reason;
             log::warning(log::category::process,
-                         std::format("wine-proton agent for pid {} is off for this session ({}); allocation falls "
-                                     "back to ptrace",
+                         std::format("wine-proton agent for pid {} is off for this session ({}); allocation is "
+                                     "unavailable",
                                      pid,
                                      reason));
         }
@@ -102,78 +103,75 @@ namespace slopkit::plugins::wine_proton
     std::expected<std::uint64_t, support::AllocationError>
     AgentAllocator::allocate(support::Session& session, std::uint64_t size, std::uint64_t near_address)
     {
+        const std::lock_guard lock(g_mutex);
+        if (session.debug.attached())
         {
-            const std::lock_guard lock(g_mutex);
-            if (!session.debug.attached())
-            {
-                AgentState& state = g_agents[session.pid];
-                if (AgentClient* agent = ensure_agent(state, session.pid))
-                {
-                    const auto placed =
-                        with_agent(session,
-                                   [&]
-                                   {
-                                       return near_address != 0
-                                                ? agent->allocate_near(size, near_address, kRequestTimeout)
-                                                : agent->allocate(size, 0, kRequestTimeout);
-                                   });
-                    if (placed)
-                    {
-                        log::debug(log::category::process,
-                                   std::format("allocated {} bytes at {:#x} for pid {} through the resident agent",
-                                               size,
-                                               *placed,
-                                               session.pid));
-                        return *placed;
-                    }
-                    disable(state, session.pid, placed.error());
-                }
-            }
+            return std::unexpected(
+                support::AllocationError {SLOPKIT_ERR_PERMISSION_DENIED, "the target is being debugged"});
         }
 
-        const auto placed = support::allocate_memory(session, size, near_address);
-        if (placed)
+        AgentState&  state = g_agents[session.pid];
+        AgentClient* agent = ensure_agent(state, session.pid);
+        if (agent == nullptr)
         {
-            log::debug(
-                log::category::process,
-                std::format("allocated {} bytes at {:#x} for pid {} through ptrace", size, *placed, session.pid));
+            return std::unexpected(support::AllocationError {SLOPKIT_ERR_IO, state.disabled_reason});
         }
-        return placed;
+
+        const auto placed = with_agent(session,
+                                       [&]
+                                       {
+                                           return near_address != 0
+                                                    ? agent->allocate_near(size, near_address, kRequestTimeout)
+                                                    : agent->allocate(size, 0, kRequestTimeout);
+                                       });
+        if (!placed)
+        {
+            const std::string reason = placed.error();
+            disable(state, session.pid, reason);
+            return std::unexpected(support::AllocationError {SLOPKIT_ERR_IO, reason});
+        }
+
+        log::debug(
+            log::category::process,
+            std::format(
+                "allocated {} bytes at {:#x} for pid {} through the resident agent", size, *placed, session.pid));
+        return *placed;
     }
 
     std::expected<void, support::AllocationError> AgentAllocator::free(support::Session& session, std::uint64_t address)
     {
+        const std::lock_guard lock(g_mutex);
+        if (session.debug.attached())
         {
-            const std::lock_guard lock(g_mutex);
-            const auto            entry = g_agents.find(session.pid);
-            if (entry != g_agents.end() && entry->second.client && entry->second.client->owns(address)
-                && !session.debug.attached())
-            {
-                AgentState& state = entry->second;
-                const auto  freed = with_agent(session,
-                                               [&]
-                                               {
-                                                  return state.client->free(address, kRequestTimeout);
-                                               });
-                if (freed)
-                {
-                    log::debug(
-                        log::category::process,
-                        std::format("released {:#x} for pid {} through the resident agent", address, session.pid));
-                    return {};
-                }
-
-                // The agent handed this address out but could not release it.
-                // Record its size so the ptrace path can still unmap it, then
-                // give up on the agent for the rest of the session.
-                if (const auto size = state.client->allocation_size(address))
-                {
-                    support::record_allocation(session, address, *size);
-                }
-                disable(state, session.pid, freed.error());
-            }
+            return std::unexpected(
+                support::AllocationError {SLOPKIT_ERR_PERMISSION_DENIED, "the target is being debugged"});
         }
-        return support::free_memory(session, address);
+
+        const auto entry = g_agents.find(session.pid);
+        if (entry == g_agents.end() || !entry->second.client || !entry->second.client->owns(address))
+        {
+            return std::unexpected(support::AllocationError {SLOPKIT_ERR_NOT_FOUND, "not this session's allocation"});
+        }
+
+        AgentState& state = entry->second;
+        const auto  freed = with_agent(session,
+                                       [&]
+                                       {
+                                          return state.client->free(address, kRequestTimeout);
+                                       });
+        if (!freed)
+        {
+            // The agent handed this address out but could not release it. Give
+            // up on the agent for the session: SHUTDOWN frees everything it
+            // allocated, and every later call fails instead of falling back.
+            const std::string reason = freed.error();
+            disable(state, session.pid, reason);
+            return std::unexpected(support::AllocationError {SLOPKIT_ERR_IO, reason});
+        }
+
+        log::debug(log::category::process,
+                   std::format("released {:#x} for pid {} through the resident agent", address, session.pid));
+        return {};
     }
 
     void AgentAllocator::close(process::ProcessId pid)

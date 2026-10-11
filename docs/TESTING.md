@@ -143,25 +143,28 @@ Check three logs after the run:
   `drive_c/users/steamuser/Documents/Dying Light The Beast/out/logs/crash_<stamp>.log`
   — a new `crash_*` file means the run still died.
 
-A refusal is a valid outcome: `alloc`/`dealloc` reporting that no target thread is
-outside a system call — only after the bounded re-scan of the target's thread states
-has found none — leaves the game running, which is the intended trade. A target
-whose only thread outside a call is the group leader is exactly that case: a live
-group's leader is never borrowed, and a thread procfs already reports inside a call
-is not even stopped, so neither can produce the crash signature above.
+A `wine-proton` target no longer borrows a target thread to allocate: the agent
+does the work, so the refusal above cannot come from this recipe. A failure now
+comes from the agent (injection, the handshake or a request) and is reported as
+the `alloc`/`dealloc` error, with the game left running. Opening the same game
+through `linux-proc` still uses the ptrace path and its refusal, because a live
+group's leader is never borrowed and a thread procfs already reports inside a
+system call is not even stopped, so neither can produce the crash signature above.
 
 ### With the resident agent
 
-The recipe is path-agnostic: `alloc`/`dealloc` work whether the resident agent or
-the ptrace fallback served them, and the log says which. To check the agent path
-specifically, watch the `process`-category records:
+`alloc`/`dealloc` on a `wine-proton` target are served by the resident agent
+alone, so the log says whether the agent came up and a failure is a visible
+error rather than a silent fallback. Watch the `process`-category records:
 
-1. The first `alloc` for the game logs either
-   `the resident agent is serving pid <linux pid>: wine pid <windows pid>, ...` or
-   `... agent for pid <linux pid> is off for this session (<reason>); allocation falls back to ptrace`.
-2. Every later call logs `... through the resident agent` or `... through ptrace`,
-   so the path of the first call decides the session and a fallback is never
-   silent.
+1. The first `alloc` for the game logs
+   `the resident agent is serving pid <linux pid>: wine pid <windows pid>, ...`;
+   if injection or the handshake fails it logs
+   `... agent for pid <linux pid> is off for this session (<reason>); allocation is unavailable`
+   and the `alloc` call fails.
+2. Every later call is served by the agent and logs `... through the resident agent`;
+   after a failure the agent is not retried and the calls fail with the reason
+   from step 1 instead of falling back to ptrace.
 3. After the tick/untick cycles, detach (closing the session or switching away)
    must log no timeout: `SHUTDOWN` stops the agent and frees what it allocated.
 4. `ls $XDG_RUNTIME_DIR/slopkit-agent-*` must find nothing afterwards — the

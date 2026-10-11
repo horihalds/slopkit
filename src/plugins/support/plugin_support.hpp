@@ -29,10 +29,11 @@ namespace slopkit::plugins::support
         void (*shape_modules)(std::vector<process::ModuleInfo>& modules, process::ProcessId pid);
         // What the debug session does with the target's own signals.
         platform::ForeignSignalPolicy signal_policy;
-        // Optional: the plugin's own allocator, tried before this library's
-        // ptrace path. Wine/Proton uses it to allocate inside the target through
-        // its resident agent, so Wine's VM manager knows about the mapping.
-        // nullptr means the shared ptrace allocator is used directly.
+        // Optional: the plugin's own allocator. Wine/Proton uses it to allocate
+        // inside the target through its resident agent, so Wine's VM manager
+        // knows about the mapping, and serves the whole call itself (it never
+        // falls back to ptrace). The shared ptrace allocator is used directly
+        // only when this hook is nullptr.
         std::expected<std::uint64_t, AllocationError> (*allocate)(Session&      session,
                                                                   std::uint64_t size,
                                                                   std::uint64_t near_address);

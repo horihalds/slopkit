@@ -27,7 +27,7 @@ namespace slopkit::plugins::wine_proton
     };
 
     // Derives the target description from /proc/<pid>. A failure names what
-    // could not be found, so the plugin can fall back to ptrace with a reason.
+    // could not be found, so the plugin can report it.
     [[nodiscard]] std::expected<WineTarget, std::string> derive_wine_target(process::ProcessId pid);
 
     // The Z: form of an absolute Linux path, the way Wine's default drive

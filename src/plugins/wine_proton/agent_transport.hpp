@@ -17,7 +17,7 @@ namespace slopkit::plugins::wine_proton
     // and mmaps it; the agent maps the same file through Wine's Z: drive as the
     // sibling of the DLL. The header's state word is the only synchronisation,
     // and every wait is bounded so a hung or dead agent can never hang the
-    // tool: `transact()` returns a timeout error and the caller falls back.
+    // tool: `transact()` returns a timeout error and the caller reports it.
     //
     // The region file lives beside the agent DLL and injector because the DLL
     // looks for it next to its own module path; that is also why the destructor

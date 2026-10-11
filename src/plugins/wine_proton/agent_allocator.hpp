@@ -12,19 +12,19 @@
 namespace slopkit::plugins::wine_proton
 {
 
-    // The resident-agent side of the wine-proton allocator: it tries the in
-    // target agent first (so Wine's own VM manager owns the mapping) and, on
-    // any failure, permanently falls back to the shared ptrace allocator for
-    // the rest of the session. Which path served a call is always logged.
+    // The profile hook: `nullptr`-free replacement for support::allocate_memory.
+    // Its only allocation path is the resident agent, so Wine's own VM manager
+    // owns the mapping; injection, handshake or request failures are logged and
+    // returned as an error, and the agent is not retried for that session. A
+    // Wine mapping that Wine cannot see is never produced.
     class AgentAllocator
     {
     public:
-        // The profile hook: `nullptr`-free replacement for support::allocate_memory.
         [[nodiscard]] static std::expected<std::uint64_t, support::AllocationError>
         allocate(support::Session& session, std::uint64_t size, std::uint64_t near_address);
 
-        // The profile hook: releases an address the agent handed out through the
-        // agent, and any other address through the shared path.
+        // The profile hook: releases an address the agent handed out and refuses
+        // any other; an address the agent cannot release is an error.
         [[nodiscard]] static std::expected<void, support::AllocationError> free(support::Session& session,
                                                                                 std::uint64_t     address);
 

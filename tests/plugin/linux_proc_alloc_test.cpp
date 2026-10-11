@@ -1667,7 +1667,7 @@ TEST_CASE("a debug session and an allocation never overlap", "[linux_proc][alloc
     REQUIRE(session->free_memory(*allocated).has_value());
 }
 
-TEST_CASE("wine-proton also maps and unmaps target memory", "[wine_proton][alloc]")
+TEST_CASE("wine-proton allocates only through its resident agent", "[wine_proton][alloc]")
 {
     AllocChild child;
     REQUIRE(child.pid() != 0);
@@ -1680,10 +1680,15 @@ TEST_CASE("wine-proton also maps and unmaps target memory", "[wine_proton][alloc
 
     auto session = plugin->open_session(child.pid());
     REQUIRE(session.has_value());
+    // The plugin exposes the allocation operations ...
     REQUIRE(session->supports_allocation());
 
-    auto allocated = session->allocate_memory(0x1000, 0);
-    REQUIRE(allocated.has_value());
-    CHECK((*allocated % 0x1000) == 0);
-    REQUIRE(session->free_memory(*allocated).has_value());
+    // ... but they are served by the resident agent alone, and this plain Linux
+    // child is not a Wine target, so no agent can come up. The call must fail
+    // rather than quietly fall back to the ptrace `mmap`, and it must leave the
+    // child's mappings untouched.
+    const std::size_t before  = slopkit::platform::read_maps(child.pid()).size();
+    auto              refused = session->allocate_memory(0x1000, 0);
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(slopkit::platform::read_maps(child.pid()).size() == before);
 }

@@ -177,15 +177,6 @@ namespace slopkit::plugins::wine_proton
             const auto end = text.find('\n');
             return end == std::string::npos ? text : text.substr(0, end);
         }
-
-        // The size to remember for one allocation: the page-rounded request, so
-        // the ptrace fallback's coverage check against /proc/<pid>/maps holds.
-        std::uint64_t page_rounded(std::uint64_t size)
-        {
-            const long          raw  = ::sysconf(_SC_PAGESIZE);
-            const std::uint64_t step = raw > 0 ? static_cast<std::uint64_t>(raw) : 4096u;
-            return (size + step - 1) / step * step;
-        }
     } // namespace
 
     std::string AgentClient::dll_file_name(std::uint32_t pointer_size)
@@ -366,12 +357,6 @@ namespace slopkit::plugins::wine_proton
         return allocations_.contains(address);
     }
 
-    std::optional<std::uint64_t> AgentClient::allocation_size(std::uint64_t address) const noexcept
-    {
-        const auto found = allocations_.find(address);
-        return found == allocations_.end() ? std::nullopt : std::optional<std::uint64_t>(found->second);
-    }
-
     const std::filesystem::path& AgentClient::directory() const noexcept
     {
         return transport_->directory();
@@ -419,7 +404,7 @@ namespace slopkit::plugins::wine_proton
         {
             return std::unexpected(std::string("the agent returned no address"));
         }
-        allocations_.insert_or_assign(answer->address, page_rounded(size));
+        allocations_.insert(answer->address);
         return answer->address;
     }
 
@@ -438,7 +423,7 @@ namespace slopkit::plugins::wine_proton
         if (answer->status == SLOPKIT_AGENT_STATUS_UNSUPPORTED)
         {
             // No gap within ±2 GB. The hint is best effort, so place it
-            // anywhere rather than failing the call, as the ptrace path does.
+            // anywhere rather than failing the call.
             return allocate(size, 0, timeout);
         }
         if (answer->status != SLOPKIT_AGENT_STATUS_OK || answer->address == 0)
@@ -450,7 +435,7 @@ namespace slopkit::plugins::wine_proton
                                                answer->status,
                                                answer->win32_error));
         }
-        allocations_.insert_or_assign(answer->address, page_rounded(size));
+        allocations_.insert(answer->address);
         return answer->address;
     }
 

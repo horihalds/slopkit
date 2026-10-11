@@ -917,18 +917,6 @@ namespace slopkit::plugins::support
         session.allocating = false;
     }
 
-    void record_allocation(Session& session, std::uint64_t address, std::uint64_t size)
-    {
-        const std::lock_guard lock(session.allocation_mutex);
-        session.allocations[address] = static_cast<std::size_t>(size);
-    }
-
-    void forget_allocation(Session& session, std::uint64_t address)
-    {
-        const std::lock_guard lock(session.allocation_mutex);
-        session.allocations.erase(address);
-    }
-
     bool allocation_in_flight(Session& session)
     {
         const std::lock_guard lock(session.allocation_mutex);

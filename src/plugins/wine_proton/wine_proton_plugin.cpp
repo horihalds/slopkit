@@ -92,9 +92,9 @@ namespace
         (void)slopkit::platform::flag_main_pe_image(pid, modules);
     }
 
-    // Allocation goes through the resident agent first, so the mapping is one
-    // Wine's own virtual-memory manager created; AgentAllocator falls back to
-    // the shared ptrace path and logs which one served each call.
+    // Allocation goes through the resident agent alone, so the mapping is one
+    // Wine's own virtual-memory manager created; there is no ptrace fallback and
+    // the log names the agent that served the call.
     std::expected<std::uint64_t, slopkit::plugins::support::AllocationError>
     allocate(slopkit::plugins::support::Session& session, std::uint64_t size, std::uint64_t near_address)
     {

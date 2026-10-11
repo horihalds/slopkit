@@ -40,8 +40,8 @@ plugin still keeps its own state because the host `dlopen`s plugins with
 The profile also carries three optional hooks — `allocate`, `free` and
 `close_session`. `linux-proc` leaves them null; `wine-proton` fills them so
 allocation goes through the target's own virtual-memory manager instead of a
-ptrace-injected `mmap`, with the shared ptrace path as the fallback. That
-mechanism is described in [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
+ptrace-injected `mmap`. That mechanism is described in
+[`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
 
 ## Discovery
 
@@ -108,9 +108,9 @@ host calls:
   session whose plugin leaves them null reports `unsupported`, which a script
   sees as `alloc: the target's plugin cannot allocate memory`. `wine-proton`
   serves the pair through its resident agent when it can: the mapping is created
-  by the target's own `VirtualAlloc`, so Wine's VM manager knows about it, and
-  the ptrace path above stays the automatic fallback for the rest of the session
-  once the agent fails — see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
+  by the target's own `VirtualAlloc`, so Wine's VM manager knows about it, and a
+  failure is an error rather than a fallback to the raw `mmap` above — see
+  [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
 - `validate_memory` — the ABI 1.7 validation operation, left null by a plugin
   that cannot answer directly. It reports whether `[address, address + size)` is
   mapped **and readable**: a non-zero out-value means yes, 0 means no, and an
@@ -177,8 +177,8 @@ beside the normal access path rather than in it, so the read/write path stays
   group, owns the 64 software / 4 hardware breakpoint slots and the wait loop,
   and both `linux-proc` and `wine-proton` implement the ABI 1.4 `debug_*`
   operations as thin wrappers over it. It also offers a **single-thread window**
-  (`attach_thread` / `detach_thread`) beside the group one: the allocation path
-  borrows one donor through it and never seizes the group, the two windows refuse
+  (`attach_thread` / `detach_thread`) beside the group one: the ptrace allocation
+  path borrows one donor through it and never seizes the group, the two windows refuse
   while the other is open, and only the group window owns the debug registers.
   Its `ForeignSignalPolicy` decides what happens to a stop the debugger did not
   ask for: `suppress` resumes with signal

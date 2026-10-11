@@ -4,8 +4,8 @@
 resident agent DLL, instead of running a raw `mmap` in the ptrace injection
 window. Wine's own virtual-memory manager owns the mapping, so `VirtualQuery`
 reports it as committed and the prefix never places its own allocation on top of
-it. The ptrace allocator stays as the automatic fallback behind the same
-interface. `docs/ARCHITECTURE.md` owns the ABI-level description of
+it. The agent is the only allocation path: a failure is an error, never a silent
+raw `mmap`. `docs/ARCHITECTURE.md` owns the ABI-level description of
 `allocate_memory`; this file owns the agent's design, what was measured, the
 deviations from the original request and the known limitations.
 
@@ -30,7 +30,7 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
 | Target derivation | `src/plugins/wine_proton/wine_target.{hpp,cpp}` | From `/proc/<pid>`: the guest's main PE (for the bitness and the `Z:` image path), the loader to host the injector, the target's own environment and a `WINEPREFIX` fallback. |
 | Transport | `src/plugins/wine_proton/agent_transport.{hpp,cpp}` | Creates and mmaps the region, publishes one request, waits with a bounded timeout, returns the response. |
 | Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, spawns the injector under the target's wine, runs the `HELLO` handshake, and serves the operations; tracks the addresses it handed out. |
-| Allocator | `src/plugins/wine_proton/agent_allocator.{hpp,cpp}` | Agent-first `allocate`/`free` for the profile hooks, permanent ptrace fallback per session, logging of which path served each call, teardown on session close. |
+| Allocator | `src/plugins/wine_proton/agent_allocator.{hpp,cpp}` | The `allocate`/`free` profile hooks: the agent is the only path, so a failure disables the agent for the session and returns the error, and `close` tears the agent down. |
 
 ## Flow
 
@@ -39,7 +39,7 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
    `$XDG_RUNTIME_DIR` (or `/tmp`), creates the region file there and runs the
    injector under the loader the target itself runs, with the target's own
    environment. Any failure here disables the agent for that session, logs why,
-   and the call is served by ptrace.
+   and the call is answered with the error — there is no ptrace fallback.
 2. The agent's service thread opens `slopkit-agent.bin` as the sibling of its own
    module through `Z:` and polls the header's state word. `HELLO` reports the
    protocol version, the record size, the pointer size, the Windows pid, the
@@ -71,13 +71,18 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
 
 ## Deviations from the original request
 
+- **No ptrace fallback (owner request).** The first cut served a failed agent
+  call through the shared ptrace allocator. The owner asked for the agent to be
+  the only path, so injection, handshake or request failures now log the reason,
+  disable the agent for the session and return the error; a mapping Wine's
+  virtual-memory manager cannot see is never produced.
 - **Injection is lazy, on the first allocation, not eager at session open.** The
   confirmed design said "eager at session open", but `plugin_open_session` runs
   on the UI thread and `docs/UI_DESIGN.md` forbids touching a target there.
   Injecting eagerly would mean spawning wine and waiting for a remote
   `LoadLibraryW` on the UI thread; the agent therefore comes up on the first
   allocation, which runs on the access worker. Failures are still learned at the
-  first allocation and the session falls back to ptrace for good.
+  first allocation, and from then on allocation fails for the session.
 - **The per-session directory is under `$XDG_RUNTIME_DIR` (else `/tmp`), not next
   to the plugin.** The installed plugin directory may be read-only, and the DLL
   must find the region as its own sibling, so region, DLL and injector are staged
@@ -99,11 +104,11 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
   no longer be shut down from the tool.
 - **`Z:` is assumed.** The region is opened through Wine's default `Z:` drive.
   A prefix with that mapping removed makes the agent unusable; the handshake
-  times out and the plugin falls back to ptrace.
+  times out and allocation fails for that session.
 - **The i686 path is built, not exercised.** Both bitnesses cross-compile
   warning-free and the selector reads the guest's COFF machine, but no 32-bit
   game was available here to run the end-to-end test for i686.
-- **The fallback does not undo Wine's view.** If the agent fails after handing
-  out an address that the session then frees, the ptrace fallback unmaps it with
-  `munmap`, which works because Wine implements `VirtualAlloc` with `mmap`, but
-  Wine's own bookkeeping is only as accurate as that assumption.
+- **A failed agent is permanent for the session.** Once injection, the handshake
+  or any request fails, the agent is not retried and every later allocation for
+  that target fails until the session (or the process) is reopened; there is no
+  ptrace path to fall back to.

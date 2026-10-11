@@ -969,8 +969,8 @@ namespace slopkit::plugins::support
                 }
 
                 // A plugin that brings its own in-target allocator (Wine's
-                // resident agent) serves the call first; that allocator falls
-                // back to the ptrace path itself when the agent is unavailable.
+                // resident agent) serves the whole call itself; the shared
+                // ptrace allocator runs only for a plugin that brings none.
                 const auto allocated = g_profile->allocate != nullptr
                                          ? g_profile->allocate(*session, size, near_address)
                                          : allocate_memory(*session, size, near_address);
