@@ -138,9 +138,9 @@ namespace slopkit::ui
 
         void on_memory_view_requested(quint64 address);
 
-        // The found list's `Change value…`: writes the bytes the user typed to
-        // `address` through the shared worker and reports it on the status bar.
-        void on_found_value_requested(quint64 address, std::vector<std::byte> bytes);
+        // The found list's `Change value…`: writes the typed `bytes` to each of
+        // `addresses` through the shared worker and reports it on the status bar.
+        void on_found_values_requested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
         void on_add_address_requested();
         void on_table_loaded();
 

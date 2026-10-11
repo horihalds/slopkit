@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
 
@@ -85,7 +86,10 @@ namespace slopkit::ui::panels
         table_view_ = new QTableView(this);
         table_view_->setModel(model_);
         table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
-        table_view_->setSelectionMode(QAbstractItemView::SingleSelection);
+        // The `Change value…` command runs on the whole selection, so several
+        // hits of one scan — which share its value type and Hex setting — can be
+        // written at once.
+        table_view_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         table_view_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table_view_->setAlternatingRowColors(true);
         table_view_->setSortingEnabled(true);
@@ -106,9 +110,9 @@ namespace slopkit::ui::panels
                     add_to_table(index.row());
                 });
 
-        // The two row commands carry their shortcuts too; each acts on the
-        // selected hit and is scoped to this panel's table, so Ctrl+E and Ctrl+D
-        // stay free on every other surface.
+        // The two row commands carry their shortcuts too; the value change acts
+        // on the whole selection and both are scoped to this panel's table, so
+        // Ctrl+E and Ctrl+D stay free on every other surface.
         edit_value_action_ = new QAction(tr("Change value…"), this);
         edit_value_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+E")));
         edit_value_action_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -241,6 +245,26 @@ namespace slopkit::ui::panels
             return;
         }
 
+        // The command runs on the whole selection when the clicked row is part
+        // of it; every hit of a scan shares its value type and Hex setting, so
+        // one typed value fits them all.
+        std::vector<std::uint64_t> addresses;
+        const QItemSelectionModel* selection = table_view_->selectionModel();
+        if (selection != nullptr && selection->isRowSelected(row, QModelIndex()))
+        {
+            for (const QModelIndex& index : selection->selectedRows())
+            {
+                if (const scan::ScanHit* selected = model_->hit_at(index.row()); selected != nullptr)
+                {
+                    addresses.push_back(selected->address);
+                }
+            }
+        }
+        if (addresses.empty())
+        {
+            addresses.push_back(hit->address);
+        }
+
         const scan::ScanConfig config = engine_.config();
         const QString          current =
             model_->data(model_->index(row, models::FoundResultsModel::value), Qt::DisplayRole).toString();
@@ -266,7 +290,7 @@ namespace slopkit::ui::panels
         {
             return; // the live validator already reported it
         }
-        emit changeValueRequested(hit->address, scan::encode_value(config.value_type, *parsed));
+        emit changeValuesRequested(std::move(addresses), scan::encode_value(config.value_type, *parsed));
     }
 
     void FoundListPanel::browse_region(int row)
@@ -313,7 +337,7 @@ namespace slopkit::ui::panels
         if (target_attached_)
         {
             QAction* edit = widgets::described_action(
-                menu, tr("Change value…"), tr("Writes the typed value to this hit's address."));
+                menu, tr("Change value…"), tr("Writes the typed value to every selected hit's address."));
             widgets::show_shortcut_hint(*edit, *edit_value_action_);
             connect(edit,
                     &QAction::triggered,
@@ -397,6 +421,17 @@ namespace slopkit::ui::panels
         if (!index.isValid())
         {
             return;
+        }
+
+        // A right-click outside the selection moves it to the clicked hit, so
+        // the menu's `Change value…` matches the row under the cursor; a
+        // right-click inside the selection leaves it alone and acts on all of it.
+        if (QItemSelectionModel* selection = table_view_->selectionModel();
+            selection != nullptr && !selection->isRowSelected(index.row(), QModelIndex()))
+        {
+            selection->select(QItemSelection(index, index),
+                              QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+            table_view_->setCurrentIndex(index);
         }
 
         QMenu menu(this);

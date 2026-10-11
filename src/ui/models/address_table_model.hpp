@@ -101,6 +101,18 @@ namespace slopkit::ui::models
         // flag, which the panel owns because it must run the hook first).
         void note_entry_changed(std::size_t row);
 
+        // Writes `text` to every row in `rows` as one batched write job, parsed
+        // once against the rows' shared value format. `rows_share_value_format`
+        // reports the precondition: every row must be a value entry sharing one
+        // type and Hex setting, so one typed value fits them all. False when
+        // nothing is submitted — an empty or mixed selection, a malformed value,
+        // no attached target or a write already in flight.
+        bool write_values(std::span<const std::size_t> rows, const QString& text);
+
+        // True when `rows` is non-empty and every row is a value entry sharing
+        // the first row's type and Hex setting.
+        [[nodiscard]] bool rows_share_value_format(std::span<const std::size_t> rows) const;
+
     signals:
         void statusChanged(const QString& message, bool is_error);
 
@@ -125,7 +137,7 @@ namespace slopkit::ui::models
         ui::AddressMode address_mode_ {ui::AddressMode::module_relative};
 
         std::optional<process::JobId> write_pending_;
-        std::optional<std::uint64_t>  writing_entry_;
+        std::vector<std::uint64_t>    writing_entries_;
 
         // The per-row live readings, parallel to the table rows; the in-flight
         // request identity lives inside it too.

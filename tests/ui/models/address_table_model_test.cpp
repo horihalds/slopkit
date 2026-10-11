@@ -79,6 +79,97 @@ TEST_CASE("the address-table model edits the table", "[ui]")
     CHECK(message.contains(QStringLiteral("Not attached")));
 }
 
+TEST_CASE("the address-table model writes one value to a selection of like entries", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    add_int32(table, 0x1044);
+    add_int32(table, 0x1048, std::byte {7});
+    table.entries()[2].hex = true; // the third row is a decimal-format odd one out
+
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+
+    QString message;
+    bool    is_error = false;
+    QObject::connect(&model,
+                     &slopkit::ui::models::AddressTableModel::statusChanged,
+                     &model,
+                     [&](const QString& text, bool error)
+                     {
+                         message  = text;
+                         is_error = error;
+                     });
+
+    // The precondition: one type and Hex setting across the whole selection.
+    const std::size_t                  like_rows[]  = {0, 1};
+    const std::size_t                  mixed_rows[] = {0, 2};
+    const std::size_t                  single_row[] = {0};
+    const std::span<const std::size_t> no_rows {};
+    CHECK(model.rows_share_value_format(like_rows));
+    CHECK(model.rows_share_value_format(single_row));
+    CHECK_FALSE(model.rows_share_value_format(mixed_rows));
+    CHECK_FALSE(model.rows_share_value_format(no_rows));
+
+    attach_app_session(worker);
+    // The sparse fake only records writes once a byte exists.
+    access.memory->at(0x1040) = std::byte {0};
+
+    // One typed value reaches every selected row and lands in the table too.
+    CHECK(model.write_values(like_rows, QStringLiteral("42")));
+    CHECK(pump_ui(worker,
+                  [&]
+                  {
+                      return access.memory->at(0x1040) == std::byte {42} && access.memory->at(0x1044) == std::byte {42};
+                  }));
+    CHECK_FALSE(is_error);
+    CHECK(message == QStringLiteral("2 values written."));
+    CHECK(table.entries()[0].bytes.front() == std::byte {42});
+    CHECK(table.entries()[1].bytes.front() == std::byte {42});
+    CHECK(table.entries()[2].bytes.front() == std::byte {7});
+
+    // A malformed value writes nothing and keeps the detailed reason.
+    CHECK_FALSE(model.write_values(like_rows, QStringLiteral("nope")));
+    CHECK(is_error);
+    CHECK(message.startsWith(QStringLiteral("Value:")));
+
+    // A selection that mixes types or formats is refused before parsing.
+    CHECK_FALSE(model.write_values(mixed_rows, QStringLiteral("42")));
+    CHECK(message == QStringLiteral("Select entries of the same type and format."));
+
+    // The single-row editor path still writes one row in its own format.
+    CHECK(model.setData(
+        model.index(2, slopkit::ui::models::AddressTableModel::value), QStringLiteral("2A"), Qt::EditRole));
+    CHECK(pump_ui(worker,
+                  [&]
+                  {
+                      return access.memory->at(0x1048) == std::byte {0x2A};
+                  }));
+    CHECK_FALSE(is_error);
+    CHECK(message == QStringLiteral("Value written."));
+
+    // A missing target refuses the write with the same message the old path used.
+    slopkit::process::AttachedTarget       detached;
+    slopkit::ui::models::AddressTableModel detached_model {table, worker, detached};
+    message = {};
+    QObject::connect(&detached_model,
+                     &slopkit::ui::models::AddressTableModel::statusChanged,
+                     &detached_model,
+                     [&](const QString& text, bool error)
+                     {
+                         message  = text;
+                         is_error = error;
+                     });
+    CHECK_FALSE(detached_model.write_values(single_row, QStringLiteral("1")));
+    CHECK(is_error);
+    CHECK(message.contains(QStringLiteral("Not attached")));
+}
+
 TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui]")
 {
     application();

@@ -28,7 +28,7 @@ docs that hold the detail behind this map.
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, script editor, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
 | `src/ui/models` | Qt item models for tables and lists |
-| `src/ui/panels` | Docked panes (address list, found list, scanner, debugger), the one-line debug control bar, the Memory Viewer's menu bar and the shared debugger command enablement; the address list's multi-row selection, its shared `Del` action and its multi-row delete live here |
+| `src/ui/panels` | Docked panes (address list, found list, scanner, debugger), the one-line debug control bar, the Memory Viewer's menu bar and the shared debugger command enablement; the address list's and the found list's multi-row selection, the address list's shared `Del` action, its multi-row delete and the two surfaces' multi-value `Change value…` live here |
 | `tests/app` | Tests for `src/app` |
 | `tests/core` | Tests for `src/core` |
 | `tests/debug` | Tests for `src/debug` (incl. the practice target) |

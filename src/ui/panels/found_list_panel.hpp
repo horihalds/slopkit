@@ -79,10 +79,12 @@ namespace slopkit::ui::panels
         // this memory region` entry or the `Ctrl+D` shortcut.
         void browseRequested(quint64 address);
 
-        // A request to write `bytes` to `address`, from the `Change value…`
-        // entry or the `Ctrl+E` shortcut. The panel parses and encodes the typed
-        // text; the window runs the write, since only it reaches the worker.
-        void changeValueRequested(quint64 address, std::vector<std::byte> bytes);
+        // A request to write `bytes` to every address in `addresses`, from the
+        // `Change value…` entry or the `Ctrl+E` shortcut. The rows come from the
+        // selection when the clicked row is part of it; the panel parses and
+        // encodes the typed text, and the window runs the write, since only it
+        // reaches the worker.
+        void changeValuesRequested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
 
     private:
         void add_to_table(int row);

@@ -90,7 +90,7 @@ namespace slopkit::ui::models
                 {
                     return {}; // A script has no value.
                 }
-                if (writing_entry_.has_value() && *writing_entry_ == entry.id)
+                if (std::ranges::find(writing_entries_, entry.id) != writing_entries_.end())
                 {
                     return tr("Writing...");
                 }
@@ -582,8 +582,9 @@ namespace slopkit::ui::models
                               {
                                   const auto& entry     = entries[row];
                                   const bool  value_row = entry.kind == table::EntryKind::value;
-                                  const bool  readable  = value_row && !entry.bytes.empty()
-                                                       && !(writing_entry_.has_value() && *writing_entry_ == entry.id);
+                                  const bool  readable =
+                                      value_row && !entry.bytes.empty()
+                                      && std::ranges::find(writing_entries_, entry.id) == writing_entries_.end();
                                   return LiveCandidate {.address  = entry.address,
                                                         .size     = value_row ? entry.bytes.size() : 0,
                                                         .identity = entry.id,
@@ -638,8 +639,41 @@ namespace slopkit::ui::models
 
     bool AddressTableModel::write_value_at(int row, const QString& text)
     {
-        const auto index_row = static_cast<std::size_t>(row);
-        if (row < 0 || index_row >= table_.size())
+        if (row < 0)
+        {
+            return false;
+        }
+        const std::size_t index_row = static_cast<std::size_t>(row);
+        return write_values(std::span<const std::size_t>(&index_row, 1), text);
+    }
+
+    bool AddressTableModel::rows_share_value_format(std::span<const std::size_t> rows) const
+    {
+        if (rows.empty() || !table_.valid_index(rows.front()))
+        {
+            return false;
+        }
+        const auto& first = table_.entries()[rows.front()];
+        if (first.kind != table::EntryKind::value)
+        {
+            return false;
+        }
+        return std::ranges::all_of(rows,
+                                   [this, &first](std::size_t row)
+                                   {
+                                       if (!table_.valid_index(row))
+                                       {
+                                           return false;
+                                       }
+                                       const auto& entry = table_.entries()[row];
+                                       return entry.kind == table::EntryKind::value && entry.type == first.type
+                                           && entry.hex == first.hex;
+                                   });
+    }
+
+    bool AddressTableModel::write_values(std::span<const std::size_t> rows, const QString& text)
+    {
+        if (rows.empty())
         {
             return false;
         }
@@ -653,17 +687,24 @@ namespace slopkit::ui::models
             emit statusChanged(tr("A write is already in progress."), true);
             return false;
         }
+        if (!rows_share_value_format(rows))
+        {
+            log::warning(log::category::ui, "table write rejected: the selection mixes types or formats");
+            emit statusChanged(tr("Select entries of the same type and format."), true);
+            return false;
+        }
 
-        const auto&       entry = table_.entries()[index_row];
-        const std::string input = text.toStdString();
+        const std::size_t first_row = rows.front();
+        const auto&       first     = table_.entries()[first_row];
+        const std::string input     = text.toStdString();
         // Parse here as well so a malformed value keeps its detailed message.
-        if (const auto parsed = scan::parse_value(entry.type, input, entry.hex); !parsed)
+        if (const auto parsed = scan::parse_value(first.type, input, first.hex); !parsed)
         {
             log::warning(log::category::ui, std::format("table value rejected: {}", parsed.error().message));
             emit statusChanged(tr("Value: %1").arg(to_qstring(parsed.error().message)), true);
             return false;
         }
-        auto encoded = table_.encode_value(index_row, input);
+        auto encoded = table_.encode_value(first_row, input);
         if (!encoded)
         {
             log::warning(log::category::ui, std::format("table value rejected: {}", input));
@@ -671,52 +712,70 @@ namespace slopkit::ui::models
             return false;
         }
 
-        const std::uint64_t  entry_id = entry.id;
-        const std::uint64_t  address  = entry.address;
-        const process::JobId job_id   = worker_.next_job_id();
-        write_pending_                = job_id;
-        writing_entry_                = entry_id;
+        std::vector<process::WriteItem> items;
+        std::vector<std::uint64_t>      entries;
+        items.reserve(rows.size());
+        entries.reserve(rows.size());
+        for (const std::size_t row : rows)
+        {
+            const auto& entry = table_.entries()[row];
+            items.push_back(process::WriteItem {.id = entry.id, .address = entry.address, .bytes = *encoded});
+            entries.push_back(entry.id);
+        }
 
-        const bool submitted = worker_.submit_write(
+        const process::JobId job_id = worker_.next_job_id();
+        write_pending_              = job_id;
+        writing_entries_            = entries;
+
+        const bool submitted = worker_.submit_freeze(
             job_id,
-            entry_id,
-            address,
-            std::move(*encoded),
-            [this, entry_id, job_id, cached = *encoded](process::JobResult&& result)
+            std::move(items),
+            [this, job_id, entries, cached = *encoded](process::JobResult&& result)
             {
                 if (write_pending_ != job_id)
                 {
                     return; // Superseded or shut down.
                 }
                 write_pending_.reset();
-                writing_entry_.reset();
+                writing_entries_.clear();
 
-                const auto& write = std::get<process::WriteResult>(result);
-                if (write.error)
+                const auto& freeze = std::get<process::FreezeResult>(result);
+                // A batch stops at its first failure, so the entries before it
+                // are the ones that were written.
+                for (std::size_t index = 0; index < freeze.written && index < entries.size(); ++index)
                 {
-                    log::warning(log::category::ui,
-                                 std::format("table write failed: {}", process::describe(*write.error)));
-                    emit dataChanged(index(0, 0), index(rowCount() - 1, column_count - 1));
-                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*write.error))), true);
-                    return;
+                    table_.apply_write(entries[index], cached);
+                    // Show what was just written without raising the change
+                    // highlight, so the user's own write is not flagged as a move.
+                    seed_live_write(entries[index]);
                 }
-                table_.apply_write(entry_id, std::move(cached));
-                // Show what was just written without raising the change
-                // highlight, so the user's own write is not flagged as a move.
-                seed_live_write(entry_id);
                 note_table_changed();
                 emit dataChanged(index(0, 0), index(rowCount() - 1, column_count - 1));
-                emit statusChanged(tr("Value written."), false);
+                if (freeze.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("table write failed: {}", process::describe(*freeze.error)));
+                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*freeze.error))), true);
+                    return;
+                }
+                if (entries.size() == 1)
+                {
+                    emit statusChanged(tr("Value written."), false);
+                }
+                else
+                {
+                    emit statusChanged(tr("%1 values written.").arg(static_cast<int>(entries.size())), false);
+                }
             });
         if (!submitted)
         {
             write_pending_.reset();
-            writing_entry_.reset();
+            writing_entries_.clear();
             emit statusChanged(tr("Write unavailable."), true);
             return false;
         }
 
-        emit dataChanged(index(row, value), index(row, value));
+        emit dataChanged(index(static_cast<int>(rows.front()), value), index(static_cast<int>(rows.back()), value));
         return true;
     }
 

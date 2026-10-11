@@ -1088,7 +1088,7 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
     QMenu value_menu;
     panel.populate_row_menu(value_menu, 0);
     const QList<QString> value_texts = action_texts(value_menu.actions());
-    CHECK(value_texts.contains(QStringLiteral("Change value")));
+    CHECK(value_texts.contains(QStringLiteral("Change value…")));
     CHECK(value_texts.contains(QStringLiteral("Browse this memory region")));
     CHECK_FALSE(value_texts.contains(QStringLiteral("Run Script")));
     CHECK_FALSE(value_texts.contains(QStringLiteral("Edit Script…")));
@@ -1098,6 +1098,54 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
     QMenu empty_menu;
     panel.populate_row_menu(empty_menu, 9);
     CHECK(action_texts(empty_menu.actions()).isEmpty());
+}
+
+TEST_CASE("the address list changes the value of every selected entry", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    // The sparse fake only records writes once a byte exists.
+    access.memory->at(0x1040)               = std::byte {1};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    add_int32(table, 0x1044);
+    add_int32(table, 0x2000);
+    const std::size_t selected[] = {0, 1};
+    table.set_selected_rows(selected);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    attach_app_session(worker);
+
+    // `change_value` runs the shared input box modally; type into it as it opens
+    // and accept, so the whole selection is written as one batch.
+    QTimer::singleShot(0,
+                       []
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               box->line_edit()->setText(QStringLiteral("42"));
+                               box->accept();
+                               return;
+                           }
+                       });
+    panel.change_value();
+
+    CHECK(pump_ui(worker,
+                  [&]
+                  {
+                      return access.memory->at(0x1040) == std::byte {42} && access.memory->at(0x1044) == std::byte {42};
+                  }));
+    // The entry outside the selection is untouched.
+    CHECK(table.entries()[2].bytes.front() == std::byte {1});
 }
 
 TEST_CASE("the address list table menu carries the table-area commands", "[ui]")
@@ -1231,7 +1279,7 @@ TEST_CASE("the address list context menu covers rows and the empty area", "[ui]"
     QMenu value_menu;
     panel.populate_context_menu(value_menu, view->visualRect(value_index).center());
     const QList<QString> value_texts = action_texts(value_menu.actions());
-    CHECK(value_texts.contains(QStringLiteral("Change value")));
+    CHECK(value_texts.contains(QStringLiteral("Change value…")));
     CHECK(value_texts.mid(value_texts.size() - 3) == table_commands);
     CHECK(table.selected() == 0);
 

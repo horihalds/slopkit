@@ -23,9 +23,11 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "scan/types.hpp"
+#include "scan/value.hpp"
 #include "table/serializer.hpp"
 #include "ui/components/address_table_view.hpp"
 #include "ui/components/indent_delegate.hpp"
+#include "ui/components/input_box.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/row_menu.hpp"
 #include "ui/dialogs/add_script.hpp"
@@ -573,6 +575,46 @@ namespace slopkit::ui::panels
         syncing_ = was_syncing;
     }
 
+    void AddressListPanel::change_value()
+    {
+        const std::vector<std::size_t> rows = command_rows();
+        if (rows.empty())
+        {
+            log::warning(log::category::ui, "change value requested with no selection");
+            set_status(tr("Select an entry to change."), true);
+            return;
+        }
+
+        // The first selected row supplies the format the box validates against;
+        // the model then refuses a selection that mixes types or formats, so one
+        // typed value always fits every row it writes.
+        const table::AddressEntry& first = table_.entries()[rows.front()];
+        const QString              current =
+            model_
+                ->data(model_->index(static_cast<int>(rows.front()), models::AddressTableModel::value), Qt::DisplayRole)
+                .toString();
+
+        widgets::InputBoxOptions options;
+        options.title     = tr("Change value");
+        options.label     = tr("Value:");
+        options.initial   = current;
+        options.monospace = true;
+        options.validate  = [first](const QString& text)
+        {
+            const auto parsed = scan::parse_value(first.type, text.toStdString(), first.hex);
+            return parsed ? QString() : QString::fromStdString(parsed.error().message);
+        };
+
+        const std::optional<QString> typed = widgets::get_text(options, this);
+        if (!typed.has_value())
+        {
+            return; // cancelled
+        }
+        // The model parses and encodes the value and drives the write; it reports
+        // the outcome, including a mixed selection and a malformed value.
+        (void)model_->write_values(rows, *typed);
+    }
+
     void AddressListPanel::delete_selected()
     {
         const std::vector<std::size_t> rows = command_rows();
@@ -1060,17 +1102,10 @@ namespace slopkit::ui::panels
         }
         else
         {
-            QAction* change_value = menu.addAction(tr("Change value"));
-            connect(change_value,
-                    &QAction::triggered,
-                    this,
-                    [this, row]
-                    {
-                        if (table_.valid_index(row))
-                        {
-                            table_view_->edit(model_->index(static_cast<int>(row), models::AddressTableModel::value));
-                        }
-                    });
+            // The value change asks in the shared input box and acts on the whole
+            // selection, matching the scan results' entry for entry.
+            QAction* change_value = menu.addAction(tr("Change value…"));
+            connect(change_value, &QAction::triggered, this, &AddressListPanel::change_value);
 
             QAction* active = menu.addAction(tr("Active"));
             active->setCheckable(true);

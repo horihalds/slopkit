@@ -56,6 +56,11 @@ namespace slopkit::ui::panels
         void delete_selected();
         void toggle_active_selected();
 
+        // The row menu's `Change value`: asks once, in the shared input box, for
+        // a value and writes it to every selected value row. The rows must share
+        // a type and Hex setting; the model refuses a mixed selection.
+        void change_value();
+
         // Runs the native file dialog only and returns the chosen path, or
         // nullopt when the dialog was cancelled. Split out of load_table() so
         // tests can drive a load without the native file dialog.

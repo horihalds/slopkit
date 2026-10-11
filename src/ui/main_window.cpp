@@ -291,7 +291,7 @@ namespace slopkit::ui
         connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
         connect(found_list_, &panels::FoundListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(
-            found_list_, &panels::FoundListPanel::changeValueRequested, this, &MainWindow::on_found_value_requested);
+            found_list_, &panels::FoundListPanel::changeValuesRequested, this, &MainWindow::on_found_values_requested);
         connect(scanner_,
                 &panels::ScannerPanel::memoryMapApplied,
                 this,
@@ -705,8 +705,12 @@ namespace slopkit::ui
         live_values_->poll();
     }
 
-    void MainWindow::on_found_value_requested(quint64 address, std::vector<std::byte> bytes)
+    void MainWindow::on_found_values_requested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes)
     {
+        if (addresses.empty())
+        {
+            return;
+        }
         if (!target_.valid())
         {
             address_status_->set_status(widgets::StatusKind::error, tr("Not attached; cannot write."));
@@ -718,15 +722,21 @@ namespace slopkit::ui
             return;
         }
 
-        const std::size_t    length = bytes.size();
+        std::vector<process::WriteItem> items;
+        items.reserve(addresses.size());
+        for (const std::uint64_t address : addresses)
+        {
+            // The found list writes bare addresses, not address-table entries.
+            items.push_back(process::WriteItem {.id = 0, .address = address, .bytes = bytes});
+        }
+
+        const std::size_t    count  = addresses.size();
         const process::JobId job_id = worker_.next_job_id();
         found_write_pending_        = job_id;
-        const bool submitted        = worker_.submit_write(
+        const bool submitted        = worker_.submit_freeze(
             job_id,
-            0, // the found list writes a bare address, not an address-table entry
-            address,
-            std::move(bytes),
-            [this, job_id, address, length](process::JobResult&& result)
+            std::move(items),
+            [this, job_id, count](process::JobResult&& result)
             {
                 if (found_write_pending_ != job_id)
                 {
@@ -734,19 +744,29 @@ namespace slopkit::ui
                 }
                 found_write_pending_.reset();
 
-                const auto& write = std::get<process::WriteResult>(result);
-                if (write.error)
+                const auto& freeze = std::get<process::FreezeResult>(result);
+                if (freeze.error)
                 {
-                    log::warning(
-                        log::category::ui,
-                        std::format("found list write failed at {:X}: {}", address, process::describe(*write.error)));
+                    log::warning(log::category::ui,
+                                 std::format("found list write failed after {} of {} address(es): {}",
+                                             freeze.written,
+                                             count,
+                                             process::describe(*freeze.error)));
                     address_status_->set_status(
                         widgets::StatusKind::error,
-                        tr("Write failed: %1").arg(to_qstring(process::describe(*write.error))));
+                        tr("Write failed: %1").arg(to_qstring(process::describe(*freeze.error))));
                     return;
                 }
-                log::info(log::category::ui, std::format("found list wrote {} byte(s) at {:X}", length, address));
-                address_status_->set_status(widgets::StatusKind::info, tr("Value written."));
+                log::info(log::category::ui, std::format("found list wrote {} address(es)", freeze.written));
+                if (freeze.written == 1)
+                {
+                    address_status_->set_status(widgets::StatusKind::info, tr("Value written."));
+                }
+                else
+                {
+                    address_status_->set_status(widgets::StatusKind::info,
+                                                tr("%1 values written.").arg(static_cast<qulonglong>(freeze.written)));
+                }
             });
         if (!submitted)
         {

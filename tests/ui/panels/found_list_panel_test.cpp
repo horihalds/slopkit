@@ -329,6 +329,95 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     browse->trigger();
 }
 
+TEST_CASE("the found list changes the value of the whole selection", "[ui]")
+{
+    application();
+
+    // Three matches at 4-byte spacing, all int32 and decimal, as one scan sees.
+    std::vector<std::byte> bytes(12, std::byte {0});
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        const std::uint32_t value = 10;
+        std::memcpy(bytes.data() + static_cast<std::ptrdiff_t>(i * 4), &value, sizeof(value));
+    }
+
+    slopkit::scan::ScanEngine engine;
+    slopkit::scan::ScanConfig config;
+    config.value = std::int64_t {10};
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(engine.has_results());
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    panel.refresh();
+    panel.set_target_attached(true);
+
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    REQUIRE(view->model() != nullptr);
+    REQUIRE(view->model()->rowCount() == 3);
+
+    // The clicked row is part of a two-row selection, so both are written.
+    QItemSelectionModel* selection = view->selectionModel();
+    REQUIRE(selection != nullptr);
+    selection->select(view->model()->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    selection->select(view->model()->index(1, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
+
+    std::vector<std::uint64_t> addresses;
+    std::vector<std::byte>     written;
+    int                        requests = 0;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::changeValuesRequested,
+                     &panel,
+                     [&](std::vector<std::uint64_t> requested, std::vector<std::byte> data)
+                     {
+                         addresses = std::move(requested);
+                         written   = std::move(data);
+                         ++requests;
+                     });
+
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+    QAction* change = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Change value…"))
+        {
+            change = action;
+        }
+    }
+    REQUIRE(change != nullptr);
+    REQUIRE(change->isEnabled());
+
+    // Answer the modal box as it opens and accept, as the row click would.
+    QTimer::singleShot(0,
+                       []
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               box->line_edit()->setText(QStringLiteral("55"));
+                               box->accept();
+                               return;
+                           }
+                       });
+    change->trigger();
+
+    // One request carries both selected addresses and the encoded int32 bytes.
+    REQUIRE(requests == 1);
+    REQUIRE(addresses.size() == 2);
+    CHECK(addresses[0] != addresses[1]);
+    CHECK(written == std::vector<std::byte> {std::byte {55}, std::byte {0}, std::byte {0}, std::byte {0}});
+}
+
 TEST_CASE("the found list row menu arms an access watch on a hit", "[ui]")
 {
     application();
