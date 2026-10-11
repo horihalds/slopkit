@@ -121,7 +121,8 @@ static wchar_t* agent_wide_last(wchar_t* text, wchar_t needle)
 }
 
 /* What the agent allocated, so FREE/PROTECT can refuse a foreign address and
-   SHUTDOWN can release everything. Only the service thread touches the list. */
+   SHUTDOWN can release everything. Several workers touch the list, so every
+   walk and mutation runs under g_lock. */
 typedef struct slopkit_agent_allocation
 {
     uint64_t                         base;
@@ -129,34 +130,97 @@ typedef struct slopkit_agent_allocation
     struct slopkit_agent_allocation* next;
 } slopkit_agent_allocation;
 
+/* A live marker each agent thread keeps on its own stack while it serves. The
+   host scans the stack window below a thread's stack top for `magic` to tell
+   the agent's threads from the target's own without a ptrace window. */
+typedef struct slopkit_agent_marker
+{
+    volatile uint64_t magic;
+    volatile uint64_t tid;
+} slopkit_agent_marker;
+
 static HMODULE                   g_instance;
 static HANDLE                    g_mapping;
 static slopkit_agent_region*     g_region;
 static slopkit_agent_allocation* g_allocations;
 
+/* The dispatcher owns the region and the lifecycle; the workers only serve the
+   slots it hands them. g_lock guards the allocation list, the slot queue and
+   the claimed flags; the events wake a worker and end every loop. */
+static CRITICAL_SECTION g_lock;
+static uint32_t         g_claimed[SLOPKIT_AGENT_SLOT_COUNT];
+static uint32_t         g_queue[SLOPKIT_AGENT_SLOT_COUNT];
+static uint32_t         g_queue_count;
+static HANDLE           g_work_event;
+static HANDLE           g_stop_event;
+static uint32_t         g_workers_started;
+static HANDLE           g_workers[SLOPKIT_AGENT_MAX_WORKERS - 1];
+
+/* Writes the marker each loop iteration so the compiler cannot fold the frame
+   away and the host always finds a live value on this thread's stack. */
+static void agent_mark(slopkit_agent_marker* marker)
+{
+    marker->magic = SLOPKIT_AGENT_THREAD_MAGIC;
+    marker->tid   = (uint64_t)(uintptr_t)GetCurrentThreadId();
+}
+
+/* Best-effort thread name: SetThreadDescription is not on every Wine build, so
+   it is resolved at runtime and its absence simply leaves the stack marker as
+   the only identification path. Split writes keep -Wcast-function-type quiet. */
+typedef HRESULT(WINAPI* agent_set_thread_description)(HANDLE, PCWSTR);
+
+static void agent_name_thread(void)
+{
+    static const wchar_t name[] = L"slopkit-agent";
+    HMODULE              kernel = GetModuleHandleW(L"kernel32.dll");
+    if (kernel == NULL)
+    {
+        return;
+    }
+    FARPROC raw = GetProcAddress(kernel, "SetThreadDescription");
+    union
+    {
+        FARPROC                     raw;
+        agent_set_thread_description typed;
+    } set;
+    set.raw = raw;
+    if (set.typed != NULL)
+    {
+        set.typed(GetCurrentThread(), name);
+    }
+}
+
 static slopkit_agent_allocation* agent_find_exact(uint64_t base)
 {
+    slopkit_agent_allocation* found = NULL;
+    EnterCriticalSection(&g_lock);
     for (slopkit_agent_allocation* node = g_allocations; node != NULL; node = node->next)
     {
         if (node->base == base)
         {
-            return node;
+            found = node;
+            break;
         }
     }
-    return NULL;
+    LeaveCriticalSection(&g_lock);
+    return found;
 }
 
 /* The allocation that wholly contains [address, address + size), or NULL. */
 static slopkit_agent_allocation* agent_find_containing(uint64_t address, uint64_t size)
 {
+    slopkit_agent_allocation* found = NULL;
+    EnterCriticalSection(&g_lock);
     for (slopkit_agent_allocation* node = g_allocations; node != NULL; node = node->next)
     {
         if (address >= node->base && size <= node->size && address - node->base <= node->size - size)
         {
-            return node;
+            found = node;
+            break;
         }
     }
-    return NULL;
+    LeaveCriticalSection(&g_lock);
+    return found;
 }
 
 static int agent_track(uint64_t base, uint64_t size)
@@ -167,34 +231,48 @@ static int agent_track(uint64_t base, uint64_t size)
     {
         return 0;
     }
-    node->base    = base;
-    node->size    = size;
+    node->base = base;
+    node->size = size;
+    EnterCriticalSection(&g_lock);
     node->next    = g_allocations;
     g_allocations = node;
+    LeaveCriticalSection(&g_lock);
     return 1;
 }
 
 static void agent_untrack(slopkit_agent_allocation* node)
 {
+    EnterCriticalSection(&g_lock);
     slopkit_agent_allocation** link = &g_allocations;
     while (*link != NULL)
     {
         if (*link == node)
         {
             *link = node->next;
+            LeaveCriticalSection(&g_lock);
             HeapFree(GetProcessHeap(), 0, node);
             return;
         }
         link = &(*link)->next;
     }
+    LeaveCriticalSection(&g_lock);
 }
 
+/* Only the dispatcher runs this, after every worker has stopped, so no slot is
+   being served and no other thread touches the list. */
 static void agent_free_all(void)
 {
-    while (g_allocations != NULL)
+    for (;;)
     {
-        slopkit_agent_allocation* node = g_allocations;
-        g_allocations                  = node->next;
+        slopkit_agent_allocation* node = NULL;
+        EnterCriticalSection(&g_lock);
+        node          = g_allocations;
+        g_allocations = node != NULL ? node->next : NULL;
+        LeaveCriticalSection(&g_lock);
+        if (node == NULL)
+        {
+            return;
+        }
         VirtualFree((LPVOID)(uintptr_t)node->base, 0, MEM_RELEASE);
         HeapFree(GetProcessHeap(), 0, node);
     }
@@ -265,17 +343,11 @@ static void agent_close_region(void)
 }
 
 /* <windows.h> spells the state/flag atomics as LONG, which is 32 bits. */
-static uint32_t agent_load_state(void)
+static uint32_t agent_load_slot_state(uint32_t index)
 {
-    return (uint32_t)InterlockedCompareExchange(
-        (volatile LONG*)&g_region->header.state, (LONG)SLOPKIT_AGENT_STATE_IDLE, (LONG)SLOPKIT_AGENT_STATE_IDLE);
-}
-
-static void agent_publish_response(const slopkit_agent_record* response)
-{
-    g_region->response = *response;
-    InterlockedIncrement((volatile LONG*)&g_region->header.requests);
-    InterlockedExchange((volatile LONG*)&g_region->header.state, (LONG)SLOPKIT_AGENT_STATE_RESPONSE);
+    return (uint32_t)InterlockedCompareExchange((volatile LONG*)&g_region->slots[index].state,
+                                                (LONG)SLOPKIT_AGENT_SLOT_IDLE,
+                                                (LONG)SLOPKIT_AGENT_SLOT_IDLE);
 }
 
 static uint64_t agent_granularity(UINT* pointer_size, uint64_t* minimum, uint64_t* maximum)
@@ -444,6 +516,9 @@ static void agent_handle_hello(slopkit_agent_record* response)
     response->windows_pid      = (uint32_t)GetCurrentProcessId();
     response->granularity      = (uint32_t)granularity;
     response->agent_base       = (uint64_t)(uintptr_t)g_instance;
+    /* The host sizes its slot pool from these before it serves anything. */
+    response->slot_count       = SLOPKIT_AGENT_SLOT_COUNT;
+    response->worker_count     = SLOPKIT_AGENT_MAX_WORKERS;
     /* The host refuses a different payload capacity before trusting the area. */
     response->reserved0        = SLOPKIT_AGENT_PAYLOAD_SIZE;
 }
@@ -584,7 +659,7 @@ static uint32_t agent_name_span(uint32_t length)
    end of the payload downwards, so no fixed name budget is needed. The walk is
    bounded by a fixed ceiling and by the payload, and it stops early rather
    than faulting on a malformed or concurrently-changing list. */
-static void agent_handle_modules(const slopkit_agent_record* request, slopkit_agent_record* response)
+static void agent_handle_modules(const slopkit_agent_record* request, slopkit_agent_record* response, uint8_t* payload)
 {
     const uint32_t capacity = (uint32_t)(SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_module_entry));
     if (request->size > capacity || request->address > (uint64_t)-1 - SLOPKIT_AGENT_MODULE_LIMIT)
@@ -605,7 +680,7 @@ static void agent_handle_modules(const slopkit_agent_record* request, slopkit_ag
     }
 
     slopkit_agent_plist_entry*  head        = &ldr->in_load_order_module_list;
-    slopkit_agent_module_entry* records     = (slopkit_agent_module_entry*)g_region->payload;
+    slopkit_agent_module_entry* records     = (slopkit_agent_module_entry*)payload;
     uint32_t                    name_cursor = SLOPKIT_AGENT_PAYLOAD_SIZE;
     uint64_t                    index       = 0;
     uint32_t                    written     = 0;
@@ -648,7 +723,7 @@ static void agent_handle_modules(const slopkit_agent_record* request, slopkit_ag
             }
             name_offset = name_cursor - span;
             name_cursor = name_offset;
-            memcpy(g_region->payload + name_offset, module->base_dll_name.buffer, name_bytes);
+            memcpy(payload + name_offset, module->base_dll_name.buffer, name_bytes);
         }
 
         records[written].base        = (uint64_t)(uintptr_t)module->dll_base;
@@ -671,7 +746,7 @@ static void agent_handle_modules(const slopkit_agent_record* request, slopkit_ag
    Progress stops at the capacity, at the end of the user address space, or on
    a failed VirtualQuery; the next cursor is reported in address, 0 when the
    walk reached the end. */
-static void agent_handle_enum(const slopkit_agent_record* request, slopkit_agent_record* response)
+static void agent_handle_enum(const slopkit_agent_record* request, slopkit_agent_record* response, uint8_t* payload)
 {
     const uint32_t capacity = (uint32_t)(SLOPKIT_AGENT_PAYLOAD_SIZE / sizeof(slopkit_agent_region_entry));
     if (request->size > capacity)
@@ -685,7 +760,7 @@ static void agent_handle_enum(const slopkit_agent_record* request, slopkit_agent
     uint64_t maximum = 0;
     agent_granularity(NULL, &minimum, &maximum);
 
-    slopkit_agent_region_entry* entries = (slopkit_agent_region_entry*)g_region->payload;
+    slopkit_agent_region_entry* entries = (slopkit_agent_region_entry*)payload;
     uint64_t                    cursor  = request->address;
     if (cursor == 0)
     {
@@ -760,7 +835,7 @@ static uint64_t agent_transfer_span(uint64_t address, uint64_t size, int for_wri
 /* READ: copy the target's bytes into payload[], at most min(size, payload)
    bytes and never across the containing region's end. A short copy is a
    success; a range with nothing readable is an error. */
-static void agent_handle_read(const slopkit_agent_record* request, slopkit_agent_record* response)
+static void agent_handle_read(const slopkit_agent_record* request, slopkit_agent_record* response, uint8_t* payload)
 {
     if (request->size == 0 || request->size > SLOPKIT_AGENT_PAYLOAD_SIZE)
     {
@@ -773,12 +848,12 @@ static void agent_handle_read(const slopkit_agent_record* request, slopkit_agent
         agent_fill_error(response, ERROR_INVALID_ADDRESS);
         return;
     }
-    memcpy(g_region->payload, (const void*)(uintptr_t)request->address, (size_t)span);
+    memcpy(payload, (const void*)(uintptr_t)request->address, (size_t)span);
     response->size = span;
 }
 
 /* WRITE: copy payload[] into the target, bounded the same way as READ. */
-static void agent_handle_write(const slopkit_agent_record* request, slopkit_agent_record* response)
+static void agent_handle_write(const slopkit_agent_record* request, slopkit_agent_record* response, uint8_t* payload)
 {
     if (request->size == 0 || request->size > SLOPKIT_AGENT_PAYLOAD_SIZE)
     {
@@ -791,7 +866,7 @@ static void agent_handle_write(const slopkit_agent_record* request, slopkit_agen
         agent_fill_error(response, ERROR_INVALID_ADDRESS);
         return;
     }
-    memcpy((void*)(uintptr_t)request->address, g_region->payload, (size_t)span);
+    memcpy((void*)(uintptr_t)request->address, payload, (size_t)span);
     response->size = span;
 }
 
@@ -934,12 +1009,16 @@ static void agent_handle_query(const slopkit_agent_record* request, slopkit_agen
     response->region_protect = (uint32_t)region.Protect;
 }
 
-/* Returns 0 when the service thread must stop. */
-static int agent_handle_request(void)
+/* Answers one slot's request into its response record and publishes the slot's
+   response with a release store. Returns 0 when the request was SHUTDOWN, which
+   the dispatcher handles itself: no worker may free allocations under another
+   worker's feet. */
+static int agent_dispatch(uint32_t index)
 {
+    slopkit_agent_slot*  slot = &g_region->slots[index];
     slopkit_agent_record request;
     slopkit_agent_record response;
-    memcpy(&request, &g_region->request, sizeof(request));
+    memcpy(&request, &slot->request, sizeof(request));
     memset(&response, 0, sizeof(response));
     response.op         = request.op;
     response.request_id = request.request_id;
@@ -967,19 +1046,18 @@ static int agent_handle_request(void)
         agent_handle_query(&request, &response);
         break;
     case SLOPKIT_AGENT_OP_ENUM:
-        agent_handle_enum(&request, &response);
+        agent_handle_enum(&request, &response, slot->payload);
         break;
     case SLOPKIT_AGENT_OP_READ:
-        agent_handle_read(&request, &response);
+        agent_handle_read(&request, &response, slot->payload);
         break;
     case SLOPKIT_AGENT_OP_WRITE:
-        agent_handle_write(&request, &response);
+        agent_handle_write(&request, &response, slot->payload);
         break;
     case SLOPKIT_AGENT_OP_MODULES:
-        agent_handle_modules(&request, &response);
+        agent_handle_modules(&request, &response, slot->payload);
         break;
     case SLOPKIT_AGENT_OP_SHUTDOWN:
-        agent_free_all();
         keep_serving = 0;
         break;
     default:
@@ -987,16 +1065,135 @@ static int agent_handle_request(void)
         break;
     }
 
-    agent_publish_response(&response);
-    if (!keep_serving)
-    {
-        InterlockedOr((volatile LONG*)&g_region->header.flags, (LONG)SLOPKIT_AGENT_FLAG_STOPPED);
-    }
+    slot->response = response;
+    InterlockedIncrement((volatile LONG*)&g_region->header.requests);
+    InterlockedExchange((volatile LONG*)&slot->state, (LONG)SLOPKIT_AGENT_SLOT_RESPONSE);
     return keep_serving;
+}
+
+static DWORD WINAPI agent_worker_thread(LPVOID parameter);
+
+/* Serves a claimed slot and releases the claim, so the dispatcher sees it again
+   once the host republishes a new request on the same slot. */
+static void agent_serve_slot(uint32_t index)
+{
+    (void)agent_dispatch(index);
+    EnterCriticalSection(&g_lock);
+    g_claimed[index] = 0;
+    LeaveCriticalSection(&g_lock);
+}
+
+/* The oldest queued slot index, or SLOPKIT_AGENT_SLOT_COUNT when the queue is
+   empty. */
+static uint32_t agent_take_queued(void)
+{
+    uint32_t index = SLOPKIT_AGENT_SLOT_COUNT;
+    EnterCriticalSection(&g_lock);
+    if (g_queue_count > 0)
+    {
+        index = g_queue[0];
+        for (uint32_t i = 1; i < g_queue_count; ++i)
+        {
+            g_queue[i - 1] = g_queue[i];
+        }
+        --g_queue_count;
+    }
+    LeaveCriticalSection(&g_lock);
+    return index;
+}
+
+/* Creates workers on demand: never more than one fewer than the worker cap (the
+   dispatcher serves one request itself) and never more than there is work for. */
+static void agent_ensure_workers(uint32_t pending)
+{
+    const uint32_t cap = SLOPKIT_AGENT_MAX_WORKERS - 1;
+    for (;;)
+    {
+        EnterCriticalSection(&g_lock);
+        const uint32_t started = g_workers_started;
+        LeaveCriticalSection(&g_lock);
+        if (started >= cap || pending <= started + 1)
+        {
+            return;
+        }
+
+        EnterCriticalSection(&g_lock);
+        const uint32_t index = g_workers_started < cap ? g_workers_started : cap;
+        if (index < cap)
+        {
+            g_workers_started = index + 1;
+        }
+        LeaveCriticalSection(&g_lock);
+        if (index >= cap)
+        {
+            return;
+        }
+
+        HANDLE worker = CreateThread(NULL, 0, agent_worker_thread, NULL, 0, NULL);
+        if (worker == NULL)
+        {
+            EnterCriticalSection(&g_lock);
+            g_workers_started = index;
+            LeaveCriticalSection(&g_lock);
+            return;
+        }
+        g_workers[index] = worker;
+    }
+}
+
+/* One queued request at a time until the stop event is set. Created by the
+   dispatcher, never under Wine's loader lock. The queue is polled before every
+   wait: an auto-reset event collapses several signals into one, so a worker that
+   took one item must keep taking until the queue is empty. */
+static DWORD WINAPI agent_worker_thread(LPVOID parameter)
+{
+    slopkit_agent_marker marker;
+    (void)parameter;
+    agent_name_thread();
+    for (;;)
+    {
+        agent_mark(&marker);
+        if (WaitForSingleObject(g_stop_event, 0) == WAIT_OBJECT_0)
+        {
+            return 0;
+        }
+        const uint32_t index = agent_take_queued();
+        if (index < SLOPKIT_AGENT_SLOT_COUNT)
+        {
+            agent_serve_slot(index);
+            continue;
+        }
+        (void)WaitForSingleObject(g_work_event, 20);
+    }
+}
+
+/* Waits until no worker holds a claimed slot, so the region is quiet before the
+   dispatcher frees allocations and unmaps it. */
+static void agent_drain_slots(void)
+{
+    for (;;)
+    {
+        int busy = 0;
+        EnterCriticalSection(&g_lock);
+        for (uint32_t index = 0; index < SLOPKIT_AGENT_SLOT_COUNT; ++index)
+        {
+            if (g_claimed[index] != 0)
+            {
+                busy = 1;
+            }
+        }
+        LeaveCriticalSection(&g_lock);
+        if (!busy)
+        {
+            return;
+        }
+        Sleep(SLOPKIT_AGENT_SLEEP_MIN_MS);
+    }
 }
 
 static DWORD WINAPI agent_service_thread(LPVOID parameter)
 {
+    slopkit_agent_marker marker;
     g_instance = (HMODULE)parameter;
     if (!agent_open_region())
     {
@@ -1016,23 +1213,90 @@ static DWORD WINAPI agent_service_thread(LPVOID parameter)
         agent_close_region();
         return 0;
     }
-    g_region->header.agent_pid = (uint32_t)GetCurrentProcessId();
 
+    /* The loader lock is already gone by the time this thread runs, so the
+       dispatcher may create the lock, the events and every worker it needs. */
+    InitializeCriticalSection(&g_lock);
+    g_work_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    g_stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    agent_name_thread();
+    g_region->header.agent_pid    = (uint32_t)GetCurrentProcessId();
+    g_region->header.slot_count   = SLOPKIT_AGENT_SLOT_COUNT;
+    g_region->header.worker_count = SLOPKIT_AGENT_MAX_WORKERS;
+    g_region->header.ready        = 1;
+
+    int      stopping       = 0;
     uint32_t last_heartbeat = g_region->header.heartbeat;
     uint32_t spins          = 0;
     DWORD    sleep_ms       = SLOPKIT_AGENT_SLEEP_MIN_MS;
-    for (;;)
+    while (!stopping)
     {
-        if (agent_load_state() == SLOPKIT_AGENT_STATE_REQUEST)
+        agent_mark(&marker);
+
+        for (uint32_t index = 0; index < SLOPKIT_AGENT_SLOT_COUNT; ++index)
+        {
+            if (agent_load_slot_state(index) != SLOPKIT_AGENT_SLOT_REQUEST)
+            {
+                continue;
+            }
+
+            int claimed = 0;
+            EnterCriticalSection(&g_lock);
+            if (g_claimed[index] == 0)
+            {
+                g_claimed[index] = 1;
+                claimed          = 1;
+            }
+            LeaveCriticalSection(&g_lock);
+            if (!claimed)
+            {
+                continue;
+            }
+
+            if (g_region->slots[index].request.op == SLOPKIT_AGENT_OP_SHUTDOWN)
+            {
+                /* Answer SHUTDOWN inline, then drain every other in-flight slot
+                   before anything is freed or the region is unmapped. */
+                (void)agent_dispatch(index);
+                EnterCriticalSection(&g_lock);
+                g_claimed[index] = 0;
+                LeaveCriticalSection(&g_lock);
+                stopping = 1;
+                break;
+            }
+
+            EnterCriticalSection(&g_lock);
+            g_queue[g_queue_count] = index;
+            ++g_queue_count;
+            LeaveCriticalSection(&g_lock);
+            SetEvent(g_work_event);
+        }
+
+        if (stopping)
+        {
+            break;
+        }
+
+        /* Keep draining while anything is queued: the workers poll too, and the
+           dispatcher serving one itself guarantees progress even if a signal was
+           collapsed. */
+        uint32_t queued = 0;
+        EnterCriticalSection(&g_lock);
+        queued = g_queue_count;
+        LeaveCriticalSection(&g_lock);
+        if (queued > 0)
         {
             spins    = 0;
             sleep_ms = SLOPKIT_AGENT_SLEEP_MIN_MS;
-            if (!agent_handle_request())
+            agent_ensure_workers(queued);
+            const uint32_t index = agent_take_queued();
+            if (index < SLOPKIT_AGENT_SLOT_COUNT)
             {
-                break;
+                agent_serve_slot(index);
             }
             continue;
         }
+
         const uint32_t heartbeat = g_region->header.heartbeat;
         if (heartbeat != last_heartbeat)
         {
@@ -1060,7 +1324,22 @@ static DWORD WINAPI agent_service_thread(LPVOID parameter)
         }
     }
 
+    /* Stop every worker and wait for each to finish the slot it holds, so no
+       request is served out of a region that is about to disappear. */
+    SetEvent(g_stop_event);
+    agent_drain_slots();
+    for (uint32_t index = 0; index < g_workers_started; ++index)
+    {
+        if (g_workers[index] != NULL)
+        {
+            WaitForSingleObject(g_workers[index], INFINITE);
+            CloseHandle(g_workers[index]);
+            g_workers[index] = NULL;
+        }
+    }
+
     agent_free_all();
+    InterlockedOr((volatile LONG*)&g_region->header.flags, (LONG)SLOPKIT_AGENT_FLAG_STOPPED);
     agent_close_region();
     FreeLibraryAndExitThread(g_instance, 0);
     return 0;
@@ -1074,6 +1353,12 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         /* The only work the loader lock sees: hand the module handle to the
            service thread and let it do everything else. */
         CloseHandle(CreateThread(NULL, 0, agent_service_thread, (LPVOID)instance, 0, NULL));
+    }
+    else if (reason == DLL_PROCESS_DETACH && g_stop_event != NULL)
+    {
+        /* A process that exits without SHUTDOWN: end the loops best-effort so
+           no worker keeps touching a region on the way down. */
+        SetEvent(g_stop_event);
     }
     return TRUE;
 }

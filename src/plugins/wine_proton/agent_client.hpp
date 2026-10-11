@@ -5,6 +5,7 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
@@ -109,6 +110,12 @@ namespace slopkit::plugins::wine_proton
         [[nodiscard]] bool                         owns(std::uint64_t address) const noexcept;
         // The directory holding the region, the DLL and the injector.
         [[nodiscard]] const std::filesystem::path& directory() const noexcept;
+        // How many requests this agent can serve at once (from its HELLO
+        // answer); 1 when it advertised no capacity.
+        [[nodiscard]] std::uint32_t                slot_count() const;
+        // True once every advertised slot has been retired by a timeout, i.e.
+        // no request can ever be served on this client again.
+        [[nodiscard]] bool                         slots_exhausted() const;
 
         [[nodiscard]] std::expected<std::uint64_t, std::string>
         allocate(std::uint64_t size, std::uint64_t hint, std::chrono::milliseconds timeout);
@@ -154,8 +161,18 @@ namespace slopkit::plugins::wine_proton
         [[nodiscard]] std::expected<slopkit_agent_record, std::string> request(const slopkit_agent_record& record,
                                                                                std::chrono::milliseconds   timeout);
 
+        // One exchange on a slot claimed from the transport's pool, so calls
+        // from different threads (and different chunk loops) do not serialize.
+        [[nodiscard]] std::expected<slopkit_agent_record, std::string>
+        transact(const slopkit_agent_record& record,
+                 std::chrono::milliseconds   timeout,
+                 std::span<const std::byte>  request_payload  = {},
+                 std::span<std::byte>        response_payload = {});
+
         std::shared_ptr<AgentTransport>   transport_;
+        mutable std::mutex                allocations_mutex_;
         std::unordered_set<std::uint64_t> allocations_;
+        std::mutex                        shutdown_mutex_;
         std::string                       injector_output_;
         std::uint32_t                     windows_pid_ {0};
         std::uint32_t                     pointer_size_ {0};

@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
@@ -22,9 +23,11 @@
 
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/wine.hpp"
+#include "plugins/support/session.hpp"
 #include "plugins/wine_proton/agent/slopkit_agent_protocol.h"
 #include "plugins/wine_proton/agent_client.hpp"
 #include "plugins/wine_proton/agent_regions.hpp"
+#include "plugins/wine_proton/agent_service.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
 
 namespace
@@ -296,6 +299,31 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     CHECK(*read == pattern.size());
     CHECK(readback == pattern);
 
+    // Several host threads read distinct ranges at once: the slot ring must
+    // serve them in parallel instead of queuing one behind the other.
+    {
+        std::atomic<bool>        failed {false};
+        std::vector<std::thread> readers;
+        for (int index = 0; index < 4; ++index)
+        {
+            readers.emplace_back(
+                [&, index]
+                {
+                    std::vector<std::byte> chunk(32);
+                    const auto chunk_read = agent->read(*allocated + static_cast<std::uint64_t>(index) * 32, chunk, 5s);
+                    if (!chunk_read.has_value() || *chunk_read != chunk.size())
+                    {
+                        failed = true;
+                    }
+                });
+        }
+        for (auto& reader : readers)
+        {
+            reader.join();
+        }
+        CHECK_FALSE(failed);
+    }
+
     bool          saw_block = false;
     bool          saw_agent = false;
     std::uint64_t cursor    = 0;
@@ -399,6 +427,20 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     const auto unmapped = agent->query(0x10, 5s);
     REQUIRE(unmapped.has_value());
     CHECK(unmapped->state != SLOPKIT_AGENT_MEM_COMMIT);
+
+    // The debug-attach exemption hook must recognise the agent's threads in a
+    // real wine target, so a debug attach can leave them running while the rest
+    // of the target is stopped.
+    {
+        slopkit::plugins::support::Session session(launched->guard.pid,
+                                                   slopkit::platform::ForeignSignalPolicy::forward);
+        const auto                         tids = slopkit::plugins::wine_proton::AgentService::agent_threads(session);
+        CHECK_FALSE(tids.empty());
+        for (const auto tid : tids)
+        {
+            CHECK(tid != static_cast<std::uint32_t>(launched->guard.pid));
+        }
+    }
 
     REQUIRE(agent->free(*near, 5s).has_value());
     CHECK(agent->owns(*allocated));

@@ -49,6 +49,17 @@ regression: debug it, do not add it just to make a run green.
 - **Lone-run check:** `ctest -R "controller ignores a step-out without a stop"`
   passes.
 
+### controller drops a pending step-out when the session ends
+
+- **Source:** `tests/debug/controller_test.cpp` (`[debug][controller]`).
+- **Symptom:** `REQUIRE(pump_until(controller, ...))` fails, or a following
+  `CHECK` reports a different state: the controller does not settle after the
+  session ends.
+- **Cause:** the same shared controller/worker timing as the two cases above; the
+  pass completes normally when the case has the process to itself.
+- **Lone-run check:** `ctest -R "controller drops a pending step-out when the
+  session ends"` passes.
+
 ### debug session drives a target with forwarding
 
 - **Source:** `tests/platform/linux/debug_session_test.cpp` (`[debug_session]`).

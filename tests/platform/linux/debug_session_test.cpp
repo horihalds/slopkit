@@ -7,6 +7,7 @@
 #include <expected>
 #include <future>
 #include <optional>
+#include <span>
 #include <thread>
 
 #include <dlfcn.h>
@@ -34,9 +35,13 @@ namespace
     // Shared with the forked child: it runs debug_target in a loop so the parent
     // always has a stable code address to break on, and counts the SIGUSR1
     // deliveries its own handler sees.
-    volatile std::uint32_t g_tick = 0;
-    volatile std::uint32_t g_usr1 = 0;
-    volatile std::uint32_t g_go   = 0;
+    volatile std::uint32_t g_tick       = 0;
+    volatile std::uint32_t g_usr1       = 0;
+    volatile std::uint32_t g_go         = 0;
+    // The marked thread's own counter and tid, so an attach can be told to leave
+    // that one thread running.
+    volatile std::uint32_t g_marked     = 0;
+    volatile std::uint32_t g_marked_tid = 0;
 
     extern "C" void usr1_handler(int)
     {
@@ -139,12 +144,41 @@ namespace
         return 0;
     }
 
+    // Publishes its own tid, then keeps counting; the debug attach is told to
+    // leave this thread running, so the count must keep climbing while the rest
+    // of the target is stopped.
+    extern "C" int marked_loop(void*)
+    {
+        g_marked_tid = static_cast<std::uint32_t>(::syscall(SYS_gettid));
+        for (;;)
+        {
+            g_marked = g_marked + 1;
+        }
+        return 0;
+    }
+
     // Waits until the child has advanced past `above`, proving it is running.
     bool await_tick(MemAccess& memory, std::uint32_t above)
     {
         for (int waited = 0; waited < 2000; waited += 5)
         {
             if (const auto value = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)); value && *value > above)
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    }
+
+    // Waits until the marked thread's counter advances past `above`, proving an
+    // exempt thread kept running while the rest of the target was stopped.
+    bool await_marked(MemAccess& memory, std::uint32_t above)
+    {
+        for (int waited = 0; waited < 2000; waited += 5)
+        {
+            if (const auto value = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_marked));
+                value && *value > above)
             {
                 return true;
             }
@@ -608,4 +642,61 @@ TEST_CASE("debug session reports a killed target", "[debug_session]")
     REQUIRE(stop.has_value());
     CHECK(stop->reason == StopReason::signalled);
     CHECK(stop->signal == SIGKILL);
+}
+
+TEST_CASE("debug session leaves an excluded thread running", "[debug_session]")
+{
+    // Two threads: an ordinary one that hammers debug_target, and a marked one
+    // that publishes its tid and counts. The attach is told to leave the marked
+    // tid alone, so it keeps running while the ordinary thread is stopped.
+    ChildProcess child(
+        []
+        {
+            ::clone(marked_loop,
+                    g_thread_stack.data() + g_thread_stack.size(),
+                    CLONE_THREAD | CLONE_VM | CLONE_SIGHAND | CLONE_FS | CLONE_FILES,
+                    nullptr);
+            for (;;)
+            {
+                debug_target();
+            }
+        });
+
+    MemAccess    memory(child.pid());
+    DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
+    REQUIRE(await_threads(child.pid(), 2));
+
+    // The marked thread published its own tid.
+    std::uint32_t marked_tid = 0;
+    for (int waited = 0; waited < 2000 && marked_tid == 0; waited += 5)
+    {
+        if (const auto value = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_marked_tid)); value && *value != 0)
+        {
+            marked_tid = *value;
+        }
+        else
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    REQUIRE(marked_tid != 0);
+    CHECK(marked_tid != child.pid());
+
+    const std::array<ProcessId, 1> excluded {marked_tid};
+    const auto                     leader = session.attach(std::span<const ProcessId>(excluded));
+    REQUIRE(leader.has_value());
+    CHECK(session.attached());
+
+    // The excluded thread keeps counting...
+    const auto before = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_marked)).value_or(0);
+    REQUIRE(await_marked(memory, before));
+
+    // ...while the seized thread is stopped: its counter no longer advances.
+    const auto frozen = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)).value_or(0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    CHECK(read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)).value_or(~0u) == frozen);
+
+    // The reduced set still detaches cleanly, leaving every thread detached.
+    CHECK(session.detach().has_value());
+    CHECK_FALSE(session.attached());
 }

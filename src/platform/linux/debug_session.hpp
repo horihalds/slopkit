@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <expected>
 #include <mutex>
+#include <span>
 #include <string_view>
 #include <unordered_set>
 #include <vector>
@@ -67,11 +68,17 @@ namespace slopkit::platform
         [[nodiscard]] process::ProcessId leader() const noexcept;
 
         // Seizes and stops every thread of the process and returns the
-        // thread-group leader. Idempotent while the session is open.
-        [[nodiscard]] std::expected<process::ProcessId, process::AccessError> attach();
+        // thread-group leader. Idempotent while the session is open. Threads in
+        // `excluded` are left running: a plugin passes the threads of its own
+        // in-target machinery (the Wine resident agent) so those keep serving
+        // while the rest of the target is stopped. Every consumer of the seized
+        // set - the debug registers, resume, single-step and detach - sees only
+        // the reduced set, so an exempt thread is never programmed or waited on.
+        [[nodiscard]] std::expected<process::ProcessId, process::AccessError>
+        attach(std::span<const process::ProcessId> excluded = {});
         // Restores every replaced byte, clears the debug registers and detaches
         // every thread. Idempotent.
-        [[nodiscard]] std::expected<void, process::AccessError>               detach();
+        [[nodiscard]] std::expected<void, process::AccessError> detach();
 
         // The single-thread window the allocation path borrows: it seizes and
         // stops exactly `tid` and leaves every other thread of the target

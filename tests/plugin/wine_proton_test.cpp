@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -27,7 +28,9 @@
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/wine.hpp"
 #include "plugin/plugin_host.hpp"
+#include "plugins/support/session.hpp"
 #include "plugins/wine_proton/agent_client.hpp"
+#include "plugins/wine_proton/agent_service.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
 #include "process/plugin_access.hpp"
 #include "process/types.hpp"
@@ -226,7 +229,7 @@ TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
     REQUIRE(session.has_value());
 
     // Module enumeration is agent-only, so a native target reports the recorded
-    // reason with the same failure as the region list, never a silent host list.
+    // reason, never a silent host-derived list.
     const auto modules = session->modules();
     REQUIRE_FALSE(modules.has_value());
     CHECK(modules.error() == AccessError::io_error);
@@ -235,17 +238,17 @@ TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
     REQUIRE(threads.has_value());
     CHECK_FALSE(threads->empty());
 
-    // A native target cannot run the resident agent, so the region list reports
-    // the recorded reason instead of silently listing the host's view.
+    // The region list falls back to the host's /proc/maps view when the agent
+    // cannot serve, so introspection survives a target the agent cannot reach.
     const auto regions = session->regions();
-    REQUIRE_FALSE(regions.has_value());
-    CHECK(regions.error() == AccessError::io_error);
+    REQUIRE(regions.has_value());
+    CHECK_FALSE(regions->empty());
 }
 
-TEST_CASE("wine-proton reads and writes only through its resident agent", "[wine_proton]")
+TEST_CASE("wine-proton falls back to the host path when the agent cannot serve", "[wine_proton]")
 {
-    // A real, readable page, so the failure can only be the absent agent and not
-    // an unmapped address.
+    // A real, readable page, so the host path can succeed where the agent
+    // cannot even start.
     auto* page =
         static_cast<std::byte*>(::mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     REQUIRE(page != MAP_FAILED);
@@ -258,11 +261,11 @@ TEST_CASE("wine-proton reads and writes only through its resident agent", "[wine
     auto session = access.attach(static_cast<ProcessId>(::getpid()), "wine-proton");
     REQUIRE(session.has_value());
 
-    // A native target cannot run the resident agent, so reads and writes report
-    // the recorded reason instead of silently using the host process_vm path.
+    // A native target cannot run the resident agent, so reads and writes answer
+    // from the host process_vm path instead of failing the session.
     const auto data = session->read(address, 64);
-    REQUIRE_FALSE(data.has_value());
-    CHECK(data.error() == AccessError::io_error);
+    REQUIRE(data.has_value());
+    CHECK(data->size() == 64);
 
     const std::array<std::byte, 8> pattern {std::byte {0xde},
                                             std::byte {0xad},
@@ -273,8 +276,9 @@ TEST_CASE("wine-proton reads and writes only through its resident agent", "[wine
                                             std::byte {0x03},
                                             std::byte {0x04}};
     const auto                     written = session->write(address, pattern);
-    REQUIRE_FALSE(written.has_value());
-    CHECK(written.error() == AccessError::io_error);
+    REQUIRE(written.has_value());
+    CHECK(*written == pattern.size());
+    CHECK(std::equal(pattern.begin(), pattern.end(), page));
 
     ::munmap(page, kPageSize);
 }
@@ -328,7 +332,7 @@ TEST_CASE("wine-proton serves a stopped target from the host path", "[wine_proto
     // it cannot be served instead of a host-derived list.
     const auto modules = session->modules();
     REQUIRE_FALSE(modules.has_value());
-    CHECK(modules.error() == AccessError::permission_denied);
+    CHECK(modules.error() == AccessError::io_error);
 
     REQUIRE(vtable->debug_detach(handle).code == SLOPKIT_OK);
 }
@@ -359,11 +363,11 @@ TEST_CASE("wine-proton reports clean errors", "[wine_proton]")
     {
         auto self = access.attach(static_cast<ProcessId>(::getpid()), "wine-proton");
         REQUIRE(self.has_value());
-        // Even an unmapped address reports the agent-off reason first: there is
-        // no silent host fallback.
+        // The agent cannot serve a native target, so the read falls back to the
+        // host path, which reports the unmapped address itself.
         const auto result = self->read(0, 16);
         REQUIRE_FALSE(result.has_value());
-        CHECK(result.error() == AccessError::io_error);
+        CHECK(result.error() == AccessError::not_found);
     }
 }
 
@@ -592,4 +596,53 @@ TEST_CASE("a failed injector is reported as a useful line", "[wine_proton]")
     {
         CHECK(injector_failure_message("") == "no output");
     }
+}
+
+TEST_CASE("a paused target is not a failure for the agent hooks", "[wine_proton][agent-service]")
+{
+    using slopkit::platform::ForeignSignalPolicy;
+    using slopkit::plugins::support::Session;
+    using slopkit::plugins::wine_proton::AgentService;
+
+    auto* page =
+        static_cast<std::byte*>(::mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    REQUIRE(page != MAP_FAILED);
+    const auto address = reinterpret_cast<std::uint64_t>(page);
+    for (std::size_t index = 0; index < 8; ++index)
+    {
+        page[index] = static_cast<std::byte>(0x10 + index);
+    }
+
+    Session session(static_cast<ProcessId>(::getpid()), ForeignSignalPolicy::forward);
+    session.suspended = true;
+
+    // Our own SIGSTOP pause stops the agent's threads too, so a read answers
+    // from the host path instead of timing out and disabling the agent.
+    std::array<std::byte, 8> buffer {};
+    const auto               read = AgentService::read(session, address, buffer);
+    REQUIRE(read.has_value());
+    CHECK(read->bytes == buffer.size());
+    CHECK(std::equal(buffer.begin(), buffer.end(), page));
+
+    // Allocation cannot run on a stopped target: a retryable busy error, never a
+    // session-long disable.
+    const auto alloc = AgentService::allocate(session, kPageSize, 0);
+    REQUIRE_FALSE(alloc.has_value());
+    CHECK(alloc.error().code == SLOPKIT_ERR_IO);
+    const auto freed = AgentService::free(session, address);
+    REQUIRE_FALSE(freed.has_value());
+    CHECK(freed.error().code == SLOPKIT_ERR_IO);
+
+    // With no agent-derived list recorded yet, modules reports the pause rather
+    // than a host-derived list.
+    const auto modules = AgentService::modules(session);
+    REQUIRE_FALSE(modules.has_value());
+
+    // Resume: the same session keeps serving, so the pause disabled nothing.
+    session.suspended  = false;
+    const auto resumed = AgentService::read(session, address, buffer);
+    REQUIRE(resumed.has_value());
+    CHECK(std::equal(buffer.begin(), buffer.end(), page));
+
+    ::munmap(page, kPageSize);
 }

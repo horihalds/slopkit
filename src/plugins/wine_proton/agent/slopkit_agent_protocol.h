@@ -6,18 +6,19 @@
  *
  * The transport is a file the Linux side creates and mmaps and the DLL opens
  * through Wine's Z: drive with CreateFileMapping/MapViewOfFile. One region
- * holds a fixed header, one request record and one response record, so a
- * request and the answer to it never overlap:
+ * holds a fixed header followed by a ring of independent request slots, so
+ * several host threads can have one request in flight at a time without
+ * corrupting each other:
  *
- *   +----------------+-----------------+------------------+
- *   | header         | request record  | response record  |
- *   | state word     | op, args        | status, result   |
- *   +----------------+-----------------+------------------+
+ *   +-----------+-----------+-----------+-----+
+ *   | header    | slot 0    | slot 1    | ... |
+ *   | counters  | st req rp | st req rp |     |
+ *   +-----------+-----------+-----------+-----+
  *
- * The state word in the header is the only synchronisation: the host fills the
- * request, then publishes SLOPKIT_AGENT_STATE_REQUEST; the agent answers and
- * publishes SLOPKIT_AGENT_STATE_RESPONSE; the host copies the response out and
- * returns the state to SLOPKIT_AGENT_STATE_IDLE. Every field is a fixed-width
+ * Each slot's state word is the synchronisation for that slot: the host fills
+ * the request, then publishes SLOPKIT_AGENT_SLOT_REQUEST; the agent answers and
+ * publishes SLOPKIT_AGENT_SLOT_RESPONSE; the host copies the response out and
+ * returns the state to SLOPKIT_AGENT_SLOT_IDLE. Every field is a fixed-width
  * little-endian integer at a fixed offset, which both compilers assert below.
  *
  * This header is plain C so the mingw-w64 agent and injector and the Linux C++
@@ -34,7 +35,28 @@
 
 /* Bumped whenever the layout below changes. A mismatch is refused as a
    protocol error, never waited on until a timeout. */
-#define SLOPKIT_AGENT_PROTOCOL_VERSION       3u
+#define SLOPKIT_AGENT_PROTOCOL_VERSION       4u
+
+/* The ring of independent request slots one region carries: every slot has its
+   own state word, request/response record and payload, so this many requests
+   can be in flight at once. */
+#define SLOPKIT_AGENT_SLOT_COUNT             4u
+
+/* The cap on the agent's concurrent service threads. The dispatcher is one of
+   them, so the agent runs at most 1 + (SLOPKIT_AGENT_MAX_WORKERS - 1) = 4
+   threads and never more workers than there are slots. */
+#define SLOPKIT_AGENT_MAX_WORKERS            4u
+
+/* A live marker every agent thread keeps on its own stack while it serves, so
+   the host can tell the agent's threads from the target's own without ptrace
+   (see SLOPKIT_AGENT_STACK_SCAN_BYTES). */
+#define SLOPKIT_AGENT_THREAD_MAGIC           0x534C4F504B495421ull
+/* How far below a thread's stack top the host scans for the marker. */
+#define SLOPKIT_AGENT_STACK_SCAN_BYTES       (256u * 1024u)
+
+/* The thread description the agent puts on every one of its threads, so the
+   host's /proc/<tid>/comm fast path can recognise them by name. */
+#define SLOPKIT_AGENT_THREAD_NAME            "slopkit-agent"
 
 /* The file names shared by both sides. The DLL is loaded from its own
    per-session directory and finds the shared region as the sibling file, so
@@ -87,11 +109,14 @@
 /* The agent has served SHUTDOWN and its service thread has stopped. */
 #define SLOPKIT_AGENT_FLAG_STOPPED           2u
 
-/* The state word. 0 -> idle, 1 -> a request is published, 2 -> the response is
-   published. Written with acquire/release ordering on both sides. */
-#define SLOPKIT_AGENT_STATE_IDLE             0u
-#define SLOPKIT_AGENT_STATE_REQUEST          1u
-#define SLOPKIT_AGENT_STATE_RESPONSE         2u
+/* One slot's state word. 0 -> idle, 1 -> a request is published, 2 -> the
+   response is published. Written with acquire/release ordering on both sides.
+   RETIRED only exists on the host: a timed-out exchange marks its slot so a
+   late answer can never be mistaken for the next request's answer. */
+#define SLOPKIT_AGENT_SLOT_IDLE              0u
+#define SLOPKIT_AGENT_SLOT_REQUEST           1u
+#define SLOPKIT_AGENT_SLOT_RESPONSE          2u
+#define SLOPKIT_AGENT_SLOT_RETIRED           3u
 
 /* Page protections, mirroring the Win32 PAGE_* values the agent passes to
    VirtualAlloc/VirtualProtect. */
@@ -156,6 +181,11 @@ typedef struct slopkit_agent_record
     uint32_t region_state;
     uint32_t region_protect;
 
+    /* HELLO response: the capacity the host sizes its slot pool from, 0 when
+       the agent predates the slot ring and the host must degrade to one. */
+    uint32_t slot_count;
+    uint32_t worker_count;
+
     uint64_t reserved0;
 } slopkit_agent_record;
 
@@ -166,8 +196,11 @@ typedef struct slopkit_agent_header
     uint32_t version;
     uint32_t record_size;
     uint32_t flags;
-    /* The atomic state word (SLOPKIT_AGENT_STATE_*). */
-    uint32_t state;
+    /* The slot ring's capacity, published once the agent has mapped; the host
+       compares it before it trusts the slot array. */
+    uint32_t slot_count;
+    /* How many worker threads the agent may run; informational. */
+    uint32_t worker_count;
     /* Bumped by the host on every request so an idle agent can back off
        without losing the ability to notice the host is still alive. */
     uint32_t heartbeat;
@@ -175,6 +208,8 @@ typedef struct slopkit_agent_header
     uint32_t agent_pid;
     /* How many requests the agent has served; informational. */
     uint32_t requests;
+    /* Set once the agent's dispatcher is ready to serve slots. */
+    uint32_t ready;
 
     uint64_t reserved0;
 } slopkit_agent_header;
@@ -207,6 +242,18 @@ typedef struct slopkit_agent_module_entry
     uint32_t reserved;
 } slopkit_agent_module_entry;
 
+/* One request slot: its own state word, request/response records and payload,
+   so one it never overlaps another slot's exchange. */
+typedef struct slopkit_agent_slot
+{
+    /* The atomic state word (SLOPKIT_AGENT_SLOT_*). */
+    uint32_t                    state;
+    uint32_t                    reserved;
+    struct slopkit_agent_record request;
+    struct slopkit_agent_record response;
+    uint8_t                     payload[SLOPKIT_AGENT_PAYLOAD_SIZE];
+} slopkit_agent_slot;
+
 /* One mapping, mapped by the host and the agent alike.
 
    Field reuse across the payload-carrying ops:
@@ -231,9 +278,7 @@ typedef struct slopkit_agent_module_entry
 typedef struct slopkit_agent_region
 {
     slopkit_agent_header header;
-    slopkit_agent_record request;
-    slopkit_agent_record response;
-    uint8_t              payload[SLOPKIT_AGENT_PAYLOAD_SIZE];
+    slopkit_agent_slot   slots[SLOPKIT_AGENT_SLOT_COUNT];
 } slopkit_agent_region;
 
 #if defined(__cplusplus)
@@ -242,11 +287,14 @@ typedef struct slopkit_agent_region
 #define SLOPKIT_AGENT_STATIC_ASSERT(condition, message) _Static_assert(condition, message)
 #endif
 
-SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_record) == 104, "slopkit_agent_record layout changed");
-SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_header) == 40, "slopkit_agent_header layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_record) == 112, "slopkit_agent_record layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_header) == 48, "slopkit_agent_header layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_slot) == 232 + SLOPKIT_AGENT_PAYLOAD_SIZE,
+                            "slopkit_agent_slot layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region_entry) == 32, "slopkit_agent_region_entry layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_module_entry) == 40, "slopkit_agent_module_entry layout changed");
-SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region) == 248 + SLOPKIT_AGENT_PAYLOAD_SIZE,
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region)
+                                == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE),
                             "slopkit_agent_region layout changed");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, op) == 0, "record.op moved");
@@ -267,15 +315,20 @@ SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, region_base) == 72, "
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, region_size) == 80, "record.region_size moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, region_state) == 88, "record.region_state moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, region_protect) == 92, "record.region_protect moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, slot_count) == 96, "record.slot_count moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, worker_count) == 100, "record.worker_count moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, reserved0) == 104, "record.reserved0 moved");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, magic) == 0, "header.magic moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, version) == 4, "header.version moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, record_size) == 8, "header.record_size moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, flags) == 12, "header.flags moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, state) == 16, "header.state moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, heartbeat) == 20, "header.heartbeat moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, agent_pid) == 24, "header.agent_pid moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, requests) == 28, "header.requests moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, slot_count) == 16, "header.slot_count moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, worker_count) == 20, "header.worker_count moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, heartbeat) == 24, "header.heartbeat moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, agent_pid) == 28, "header.agent_pid moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, requests) == 32, "header.requests moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_header, ready) == 36, "header.ready moved");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, base) == 0, "entry.base moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region_entry, size) == 8, "entry.size moved");
@@ -292,8 +345,11 @@ SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, name_length) ==
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, flags) == 32, "module.flags moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_module_entry, reserved) == 36, "module.reserved moved");
 
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, request) == 40, "region.request moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, response) == 144, "region.response moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, payload) == 248, "region.payload moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_slot, state) == 0, "slot.state moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_slot, request) == 8, "slot.request moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_slot, response) == 120, "slot.response moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_slot, payload) == 232, "slot.payload moved");
+
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_region, slots) == 48, "region.slots moved");
 
 #undef SLOPKIT_AGENT_STATIC_ASSERT

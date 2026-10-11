@@ -647,7 +647,16 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_PERMISSION_DENIED, "an allocation is in flight");
                 }
 
-                const auto leader = session->debug.attach();
+                // A plugin may name the threads its own in-target machinery runs
+                // on (Wine's resident agent): those are left running so they keep
+                // serving while everything else is seized and stopped.
+                std::vector<process::ProcessId> excluded;
+                if (g_profile->debug_excluded_threads != nullptr)
+                {
+                    excluded = g_profile->debug_excluded_threads(*session);
+                }
+
+                const auto leader = session->debug.attach(excluded);
                 if (!leader)
                 {
                     return fail(status_for(leader.error()), "cannot attach the debugger");

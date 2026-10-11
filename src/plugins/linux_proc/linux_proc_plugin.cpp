@@ -79,6 +79,9 @@ namespace
                                       nullptr,
                                       nullptr,
                                       nullptr,
+                                      nullptr,
+                                      // linux-proc has no in-target thread to keep
+                                      // running, so the debug attach seizes them all.
                                       nullptr};
 } // namespace
 

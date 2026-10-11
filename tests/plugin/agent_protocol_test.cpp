@@ -13,23 +13,29 @@
 // as a timeout against a live target.
 TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
 {
-    CHECK(sizeof(slopkit_agent_record) == 104);
-    CHECK(sizeof(slopkit_agent_header) == 40);
+    CHECK(sizeof(slopkit_agent_record) == 112);
+    CHECK(sizeof(slopkit_agent_header) == 48);
     CHECK(sizeof(slopkit_agent_region_entry) == 32);
     CHECK(sizeof(slopkit_agent_module_entry) == 40);
-    CHECK(sizeof(slopkit_agent_region) == 248 + SLOPKIT_AGENT_PAYLOAD_SIZE);
+    CHECK(sizeof(slopkit_agent_slot) == 232 + SLOPKIT_AGENT_PAYLOAD_SIZE);
+    CHECK(sizeof(slopkit_agent_region) == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE));
 
-    CHECK(offsetof(slopkit_agent_region, request) == 40);
-    CHECK(offsetof(slopkit_agent_region, response) == 144);
-    CHECK(offsetof(slopkit_agent_region, payload) == 248);
+    CHECK(offsetof(slopkit_agent_region, slots) == 48);
+    CHECK(offsetof(slopkit_agent_slot, state) == 0);
+    CHECK(offsetof(slopkit_agent_slot, request) == 8);
+    CHECK(offsetof(slopkit_agent_slot, response) == 120);
+    CHECK(offsetof(slopkit_agent_slot, payload) == 232);
 
     CHECK(offsetof(slopkit_agent_header, magic) == 0);
     CHECK(offsetof(slopkit_agent_header, version) == 4);
     CHECK(offsetof(slopkit_agent_header, record_size) == 8);
     CHECK(offsetof(slopkit_agent_header, flags) == 12);
-    CHECK(offsetof(slopkit_agent_header, state) == 16);
-    CHECK(offsetof(slopkit_agent_header, heartbeat) == 20);
-    CHECK(offsetof(slopkit_agent_header, agent_pid) == 24);
+    CHECK(offsetof(slopkit_agent_header, slot_count) == 16);
+    CHECK(offsetof(slopkit_agent_header, worker_count) == 20);
+    CHECK(offsetof(slopkit_agent_header, heartbeat) == 24);
+    CHECK(offsetof(slopkit_agent_header, agent_pid) == 28);
+    CHECK(offsetof(slopkit_agent_header, requests) == 32);
+    CHECK(offsetof(slopkit_agent_header, ready) == 36);
 
     CHECK(offsetof(slopkit_agent_record, op) == 0);
     CHECK(offsetof(slopkit_agent_record, status) == 4);
@@ -47,6 +53,9 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(offsetof(slopkit_agent_record, agent_base) == 64);
     CHECK(offsetof(slopkit_agent_record, region_base) == 72);
     CHECK(offsetof(slopkit_agent_record, region_protect) == 92);
+    CHECK(offsetof(slopkit_agent_record, slot_count) == 96);
+    CHECK(offsetof(slopkit_agent_record, worker_count) == 100);
+    CHECK(offsetof(slopkit_agent_record, reserved0) == 104);
 
     CHECK(offsetof(slopkit_agent_region_entry, base) == 0);
     CHECK(offsetof(slopkit_agent_region_entry, size) == 8);
@@ -64,7 +73,10 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(offsetof(slopkit_agent_module_entry, reserved) == 36);
 
     CHECK(SLOPKIT_AGENT_MAGIC == 0x534C4B41u);
-    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 3u);
+    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 4u);
+    CHECK(SLOPKIT_AGENT_SLOT_COUNT == 4u);
+    CHECK(SLOPKIT_AGENT_MAX_WORKERS == 4u);
+    CHECK(SLOPKIT_AGENT_THREAD_MAGIC == 0x534C4F504B495421ull);
     CHECK(SLOPKIT_AGENT_PAYLOAD_SIZE == 64u * 1024u);
     CHECK(SLOPKIT_AGENT_OP_HELLO == 1u);
     CHECK(SLOPKIT_AGENT_OP_ALLOC == 2u);
@@ -78,9 +90,10 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(SLOPKIT_AGENT_OP_WRITE == 10u);
     CHECK(SLOPKIT_AGENT_OP_MODULES == 11u);
     CHECK(SLOPKIT_AGENT_MODULE_FLAG_MAIN == 0x1u);
-    CHECK(SLOPKIT_AGENT_STATE_IDLE == 0u);
-    CHECK(SLOPKIT_AGENT_STATE_REQUEST == 1u);
-    CHECK(SLOPKIT_AGENT_STATE_RESPONSE == 2u);
+    CHECK(SLOPKIT_AGENT_SLOT_IDLE == 0u);
+    CHECK(SLOPKIT_AGENT_SLOT_REQUEST == 1u);
+    CHECK(SLOPKIT_AGENT_SLOT_RESPONSE == 2u);
+    CHECK(SLOPKIT_AGENT_SLOT_RETIRED == 3u);
     CHECK(SLOPKIT_AGENT_FLAG_PROTOCOL_MISMATCH == 1u);
     CHECK(SLOPKIT_AGENT_FLAG_STOPPED == 2u);
 }

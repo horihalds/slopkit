@@ -146,6 +146,13 @@ namespace
         return slopkit::plugins::wine_proton::AgentService::write(session, address, data);
     }
 
+    // A debug attach stops every thread except the agent's own, so its reads,
+    // regions, modules and validation keep serving while the target is stopped.
+    std::vector<ProcessId> debug_excluded_threads(slopkit::plugins::support::Session& session)
+    {
+        return slopkit::plugins::wine_proton::AgentService::agent_threads(session);
+    }
+
     constexpr PluginProfile kProfile {info,
                                       precedence,
                                       access_methods,
@@ -159,7 +166,8 @@ namespace
                                       regions,
                                       range_is_readable,
                                       read,
-                                      write};
+                                      write,
+                                      debug_excluded_threads};
 } // namespace
 
 extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable* slopkit_plugin_entry(const slopkit_host_services* host)

@@ -73,6 +73,11 @@ namespace slopkit::plugins::support
         std::expected<MemoryResult, AccessFault> (*write)(Session&                   session,
                                                           std::uint64_t              address,
                                                           std::span<const std::byte> data);
+        // Optional: the target threads the debug attach must leave running, so a
+        // plugin's in-target machinery (Wine's resident agent) keeps serving
+        // while the debugger has the rest of the target stopped. Empty (or
+        // nullptr) seizes every thread, today's behaviour.
+        std::vector<process::ProcessId> (*debug_excluded_threads)(Session& session);
     };
 
     // The single exported symbol a plugin needs: installs the host services and

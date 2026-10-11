@@ -87,13 +87,13 @@ host calls:
 - `list_processes` — the processes the plugin claims
 - `open_session` / `close_session`
 - `read_memory` / `write_memory` — `wine-proton` serves them through its resident
-  agent while the target can run, and through `process_vm`/procfs while a debug
-  session or an in-flight allocation has it stopped
+  agent while the target can run, and through `process_vm`/procfs while the target
+  cannot run the agent (our own pause) or when an exchange fails
 - `list_modules` / `list_threads` / `list_regions` — `wine-proton`'s
   `list_regions` is the agent's `VirtualQuery` walk merged with the `/proc` paths,
   and its `list_modules` is the target's own loader list (`MODULES`) merged with
-  the same paths; the region list still has a host fallback while the target is
-  stopped, while the module list is agent-only
+  the same paths; both fall back while the target cannot run the agent, the module
+  list to the last agent-derived list recorded for that session
 - `access_methods` — the access primitives the plugin can use
 - `debug_*` — the ABI 1.4 opt-in debugger operations (`debug_attach` /
   `debug_detach` / `debug_continue` / `debug_step` / `debug_interrupt` /
@@ -189,7 +189,13 @@ target sees no `TracerPid` while it is read:
 - `platform::DebugSession` is the shared debugger core: it seizes the thread
   group, owns the 64 software / 4 hardware breakpoint slots and the wait loop,
   and both `linux-proc` and `wine-proton` implement the ABI 1.4 `debug_*`
-  operations as thin wrappers over it. It also offers a **single-thread window**
+  operations as thin wrappers over it. Its group `attach()` takes an optional
+  exclusion list — the tids a plugin names through
+  `PluginProfile::debug_excluded_threads`, i.e. the Wine resident agent's
+  dispatcher and workers — and leaves those threads running: they are never
+  seized, never programmed with debug registers and never waited on, so the agent
+  keeps serving reads, regions, modules and validation while the rest of the
+  target is stopped at a breakpoint. It also offers a **single-thread window**
   (`attach_thread` / `detach_thread`) beside the group one: the ptrace allocation
   path borrows one donor through it and never seizes the group, the two windows refuse
   while the other is open, and only the group window owns the debug registers.

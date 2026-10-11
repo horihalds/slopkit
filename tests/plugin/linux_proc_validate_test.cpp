@@ -163,7 +163,7 @@ TEST_CASE("linux-proc validates mapped and unmapped ranges through the ABI", "[l
     wait_for_progress(child);
 }
 
-TEST_CASE("wine-proton validation reports the agent-off reason for a native target", "[wine_proton][validate]")
+TEST_CASE("wine-proton validation falls back to the host probe for a native target", "[wine_proton][validate]")
 {
     ValidateChild child;
     REQUIRE(child.pid() != 0);
@@ -181,11 +181,16 @@ TEST_CASE("wine-proton validation reports the agent-off reason for a native targ
     auto region = small_readable_region(child.pid());
     REQUIRE(region.has_value());
 
-    // A native target cannot run the resident agent, so validation reports the
-    // recorded reason instead of silently answering from the host's read probe.
+    // A native target cannot run the resident agent, so validation answers from
+    // the same read probe the host path uses instead of failing the session.
     const auto mapped = session->validate_memory(region->start, 8);
-    REQUIRE_FALSE(mapped.has_value());
-    CHECK(mapped.error() == slopkit::process::AccessError::io_error);
+    REQUIRE(mapped.has_value());
+    CHECK(*mapped);
+
+    // An unmapped address is a successful "no", never an error.
+    const auto unmapped = session->validate_memory(0, 8);
+    REQUIRE(unmapped.has_value());
+    CHECK_FALSE(*unmapped);
 
     // A zero size is still an argument error, checked before the agent.
     const auto empty = session->validate_memory(region->start, 0);

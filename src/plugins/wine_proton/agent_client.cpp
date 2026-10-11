@@ -263,16 +263,30 @@ namespace slopkit::plugins::wine_proton
                 "the injector exited with {}: {}", spawned->exit_code, injector_failure_message(spawned->output)));
         }
 
+        // The transport owns the slot pool; the handshake claims one slot just
+        // like every later request does.
+        const auto exchange =
+            [&transport](const slopkit_agent_record& record,
+                         std::chrono::milliseconds   wait) -> std::expected<slopkit_agent_record, std::string>
+        {
+            auto slot = transport->acquire(wait);
+            if (!slot)
+            {
+                return std::unexpected(slot.error());
+            }
+            return slot->transact(record, wait);
+        };
+
         slopkit_agent_record hello {};
         hello.op          = SLOPKIT_AGENT_OP_HELLO;
-        const auto answer = transport->transact(hello, timeout);
+        const auto answer = exchange(hello, timeout);
         const auto refuse = [&](const std::string& reason)
         {
             // The DLL is in the target now; ask it to leave before the region
             // goes away so no service thread keeps polling an unlinked file.
             slopkit_agent_record shutdown {};
             shutdown.op = SLOPKIT_AGENT_OP_SHUTDOWN;
-            (void)transport->transact(shutdown, std::chrono::milliseconds {200});
+            (void)exchange(shutdown, std::chrono::milliseconds {200});
             return std::unexpected(reason);
         };
         if (!answer)
@@ -306,6 +320,10 @@ namespace slopkit::plugins::wine_proton
                                       answer->pointer_size == 4 ? 32 : 64,
                                       target.pointer_size == 4 ? 32 : 64));
         }
+
+        // Size the slot pool from the capacity the agent advertised; an agent
+        // that reports none degrades to a single slot and still works.
+        transport->advertise_capacity(answer->slot_count);
 
         AgentClient client(std::make_shared<AgentTransport>(std::move(*transport)), std::move(spawned->output));
         client.windows_pid_  = answer->windows_pid;
@@ -369,6 +387,7 @@ namespace slopkit::plugins::wine_proton
 
     bool AgentClient::owns(std::uint64_t address) const noexcept
     {
+        const std::lock_guard lock(allocations_mutex_);
         return allocations_.contains(address);
     }
 
@@ -377,10 +396,33 @@ namespace slopkit::plugins::wine_proton
         return transport_->directory();
     }
 
+    std::uint32_t AgentClient::slot_count() const
+    {
+        return transport_ != nullptr ? transport_->slot_count() : 0;
+    }
+
+    bool AgentClient::slots_exhausted() const
+    {
+        return transport_ != nullptr && transport_->exhausted();
+    }
+
+    std::expected<slopkit_agent_record, std::string> AgentClient::transact(const slopkit_agent_record& record,
+                                                                           std::chrono::milliseconds   timeout,
+                                                                           std::span<const std::byte>  request_payload,
+                                                                           std::span<std::byte>        response_payload)
+    {
+        auto slot = transport_->acquire(timeout);
+        if (!slot)
+        {
+            return std::unexpected(slot.error());
+        }
+        return slot->transact(record, timeout, request_payload, response_payload);
+    }
+
     std::expected<slopkit_agent_record, std::string> AgentClient::request(const slopkit_agent_record& record,
                                                                           std::chrono::milliseconds   timeout)
     {
-        auto answer = transport_->transact(record, timeout);
+        auto answer = transact(record, timeout);
         if (!answer)
         {
             return std::unexpected(answer.error());
@@ -419,7 +461,10 @@ namespace slopkit::plugins::wine_proton
         {
             return std::unexpected(std::string("the agent returned no address"));
         }
-        allocations_.insert(answer->address);
+        {
+            const std::lock_guard lock(allocations_mutex_);
+            allocations_.insert(answer->address);
+        }
         return answer->address;
     }
 
@@ -430,7 +475,7 @@ namespace slopkit::plugins::wine_proton
         record.op         = SLOPKIT_AGENT_OP_ALLOC_NEAR;
         record.size       = size;
         record.hint       = near_address;
-        const auto answer = transport_->transact(record, timeout);
+        const auto answer = transact(record, timeout);
         if (!answer)
         {
             return std::unexpected(answer.error());
@@ -450,7 +495,10 @@ namespace slopkit::plugins::wine_proton
                                                answer->status,
                                                answer->win32_error));
         }
-        allocations_.insert(answer->address);
+        {
+            const std::lock_guard lock(allocations_mutex_);
+            allocations_.insert(answer->address);
+        }
         return answer->address;
     }
 
@@ -464,7 +512,10 @@ namespace slopkit::plugins::wine_proton
         {
             return std::unexpected(answer.error());
         }
-        allocations_.erase(address);
+        {
+            const std::lock_guard lock(allocations_mutex_);
+            allocations_.erase(address);
+        }
         return {};
     }
 
@@ -511,7 +562,7 @@ namespace slopkit::plugins::wine_proton
         record.size    = capacity == 0 ? record_capacity : capacity;
 
         std::vector<std::byte> payload(SLOPKIT_AGENT_PAYLOAD_SIZE);
-        auto                   answer = transport_->transact(record, timeout, {}, payload);
+        auto                   answer = transact(record, timeout, {}, payload);
         if (!answer)
         {
             return std::unexpected(answer.error());
@@ -555,7 +606,7 @@ namespace slopkit::plugins::wine_proton
         record.size    = capacity == 0 ? record_capacity : capacity;
 
         std::vector<std::byte> payload(SLOPKIT_AGENT_PAYLOAD_SIZE);
-        auto                   answer = transport_->transact(record, timeout, {}, payload);
+        auto                   answer = transact(record, timeout, {}, payload);
         if (!answer)
         {
             return std::unexpected(answer.error());
@@ -620,7 +671,7 @@ namespace slopkit::plugins::wine_proton
             record.op         = SLOPKIT_AGENT_OP_READ;
             record.address    = address + moved;
             record.size       = chunk;
-            const auto answer = transport_->transact(record, timeout, {}, buffer.subspan(moved, chunk));
+            const auto answer = transact(record, timeout, {}, buffer.subspan(moved, chunk));
             if (!answer)
             {
                 if (moved > 0)
@@ -661,7 +712,7 @@ namespace slopkit::plugins::wine_proton
             record.op         = SLOPKIT_AGENT_OP_WRITE;
             record.address    = address + moved;
             record.size       = chunk;
-            const auto answer = transport_->transact(record, timeout, data.subspan(moved, chunk), {});
+            const auto answer = transact(record, timeout, data.subspan(moved, chunk), {});
             if (!answer)
             {
                 if (moved > 0)
@@ -696,14 +747,21 @@ namespace slopkit::plugins::wine_proton
         {
             return;
         }
-        if (!shutdown_sent_)
         {
-            slopkit_agent_record record {};
-            record.op      = SLOPKIT_AGENT_OP_SHUTDOWN;
+            const std::lock_guard lock(shutdown_mutex_);
+            if (shutdown_sent_)
+            {
+                return;
+            }
             shutdown_sent_ = true;
-            (void)transport_->transact(record, timeout);
         }
-        allocations_.clear();
+        slopkit_agent_record record {};
+        record.op = SLOPKIT_AGENT_OP_SHUTDOWN;
+        (void)transact(record, timeout);
+        {
+            const std::lock_guard lock(allocations_mutex_);
+            allocations_.clear();
+        }
     }
 
 } // namespace slopkit::plugins::wine_proton

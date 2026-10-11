@@ -70,7 +70,8 @@ namespace slopkit::platform
         return leader_;
     }
 
-    std::expected<process::ProcessId, process::AccessError> DebugSession::attach()
+    std::expected<process::ProcessId, process::AccessError>
+    DebugSession::attach(std::span<const process::ProcessId> excluded)
     {
         const std::lock_guard lock(mutex_);
         if (attached_)
@@ -89,13 +90,26 @@ namespace slopkit::platform
         }
 
         std::vector<process::ProcessId> tids;
+        bool                            listed = false;
         for (const auto& thread : read_threads(pid_))
         {
-            tids.push_back(thread.tid);
+            listed = true;
+            // An exempt thread keeps running: it is never seized, never gets the
+            // debug registers and is never waited on by resume or detach.
+            if (std::ranges::find(excluded, thread.tid) == excluded.end())
+            {
+                tids.push_back(thread.tid);
+            }
+        }
+        if (!listed && excluded.empty())
+        {
+            tids.push_back(pid_);
         }
         if (tids.empty())
         {
-            tids.push_back(pid_);
+            // Every thread was exempt (or the target went away): there is no
+            // group left to seize.
+            return std::unexpected(process::AccessError::not_found);
         }
 
         std::size_t seized = 0;

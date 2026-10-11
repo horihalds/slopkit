@@ -30,15 +30,15 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
 
 | Piece | Where | Role |
 | --- | --- | --- |
-| Protocol header | `src/plugins/wine_proton/agent/slopkit_agent_protocol.h` | The one contract: a packed little-endian request/response record, the header with the atomic state word, and the op/status/page constants. Compiled by mingw-w64 and by the Linux plugin. |
-| Agent DLL | `src/plugins/wine_proton/agent/slopkit_agent.c` | C11, `-nostdlib`, kernel32 only. `DllMain` starts one service thread; the thread maps the region file next to the DLL and serves `HELLO`, `ALLOC`, `ALLOC_NEAR`, `FREE`, `PROTECT`, `QUERY`, `ENUM`, `MODULES`, `READ`, `WRITE`, `SHUTDOWN`. `ENUM` walks `VirtualQuery` into the shared region's payload; `MODULES` walks the target's own `InLoadOrderModuleList`; `READ`/`WRITE` copy bytes in the target, bounded by the payload and the containing region. |
+| Protocol header | `src/plugins/wine_proton/agent/slopkit_agent_protocol.h` | The one contract (version 4): the fixed header, the ring of `SLOPKIT_AGENT_SLOT_COUNT` request slots — each with its own atomic state word, request/response record and 64 KiB payload — and the op/status/page constants. Compiled by mingw-w64 and by the Linux plugin. |
+| Agent DLL | `src/plugins/wine_proton/agent/slopkit_agent.c` | C11, `-nostdlib`, kernel32 only. `DllMain` starts one dispatcher thread; the dispatcher maps the region file next to the DLL, claims every slot in the request state and hands it to a worker created lazily (up to the worker cap, never under Wine's loader lock), and the workers serve `HELLO`, `ALLOC`, `ALLOC_NEAR`, `FREE`, `PROTECT`, `QUERY`, `ENUM`, `MODULES`, `READ`, `WRITE`. Each worker answers its own slot and publishes the response with a release store. `ENUM` walks `VirtualQuery` into that slot's payload; `MODULES` walks the target's own `InLoadOrderModuleList`; `READ`/`WRITE` copy bytes in the target, bounded by the payload and the containing region. `SHUTDOWN` is answered by the dispatcher, which drains in-flight slots, frees everything, joins every worker and unmaps. |
 | Injector | `src/plugins/wine_proton/agent/slopkit_injector.c` | One-shot exe run under the target's own wine: finds the target by image path, is idempotent when the agent is already loaded, then `OpenProcess` / `VirtualAllocEx` / `WriteProcessMemory` / `CreateRemoteThread(LoadLibraryW)`. |
 | Test probe | `src/plugins/wine_proton/agent/slopkit_probe.c` | A trivial console target for the wine-gated end-to-end test; never installed. |
 | Cross-compile | `cmake/Agent.cmake` | One pair of targets per bitness (`x86_64`, `i686`), a clear error when mingw-w64 and no prebuilt exist, and the install rule. |
 | Target derivation | `src/plugins/wine_proton/wine_target.{hpp,cpp}` | From `/proc/<pid>`: the guest's main PE (for the bitness and the `Z:` image path), the loader to host the injector, the target's own environment (without the process-local handoff entries below), a `WINEPREFIX` fallback and the staging directory the target's own namespace can reach. |
-| Transport | `src/plugins/wine_proton/agent_transport.{hpp,cpp}` | Creates and mmaps the region, publishes one request, waits with a bounded timeout, returns the response. A 64 KiB payload area rides the same mapping: the request payload is copied in before publishing and the response payload out before the state returns to idle. |
-| Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, stages them where the target can see them, spawns the injector under the target's wine, runs the `HELLO` handshake (refusing a version, record-size or payload-size mismatch), and serves `allocate`, `allocate_near`, `free`, `protect`, `query`, `enumerate`, `modules`, `read` and `write`; tracks the addresses it handed out. |
-| Service | `src/plugins/wine_proton/agent_service.{hpp,cpp}` | The per-pid owner and the seven profile hooks: `allocate`/`free` and `modules` (agent-only) plus `regions`, `validate`, `read` and `write`. Lazy bring-up, the disable policy, the stopped-target routing and `close`. |
+| Transport | `src/plugins/wine_proton/agent_transport.{hpp,cpp}` | Creates and mmaps the region and exposes a pool of request slots. `acquire()` hands out a free slot and `Slot::transact()` publishes on it, waits with a bounded timeout and bumps the heartbeat; the request payload is copied into the slot before publishing and the response payload out before the state returns to idle, so one slot never races another. Capacity is the count `HELLO` advertised (one when it reported none). A slot whose exchange times out is retired and never reused, so a late answer can never be read as the next request's. |
+| Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, stages them where the target can see them, spawns the injector under the target's wine, runs the `HELLO` handshake (refusing a version, record-size or payload-size mismatch, and sizing the slot pool from the advertised capacity), and serves `allocate`, `allocate_near`, `free`, `protect`, `query`, `enumerate`, `modules`, `read` and `write`; tracks the addresses it handed out under a mutex and reports whether every slot is retired. |
+| Service | `src/plugins/wine_proton/agent_service.{hpp,cpp}` | The per-pid owner and the seven profile hooks: `allocate`/`free` and `modules` (agent-only) plus `regions`, `validate`, `read` and `write`. Parallel calls run without a global lock, lazy bring-up, the bounded revive policy, the stopped-target routing, the module-list cache, the in-flight counter `close` waits on, and `close`. |
 | Region merge | `src/plugins/wine_proton/agent_regions.{hpp,cpp}` | The pure merge of the agent's walk with `/proc/<pid>/maps`: boundaries, commit state and protection come from the agent, `path`, `offset`, `shared` and `deleted` from the overlapping procfs line. |
 | Module merge | `src/plugins/wine_proton/agent_modules.{hpp,cpp}` | The pure merge of the agent's loader walk with `/proc/<pid>/maps`: `base`, image size, entry point, Wine's base name and the main flag come from the loader, `path` and `offset` from the overlapping procfs line; also the UTF-16 to UTF-8 name decoder. |
 
@@ -50,28 +50,34 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
    can reach (see "Proton's private runtime directory" below), creates the region
    file there and runs the injector under the loader the target itself runs, with
    the target's own environment, minus the process-local handoffs described
-   below. Any failure here disables the agent for that session, logs why, and the
-   call is answered with the error — there is no ptrace fallback.
-2. The agent's service thread opens `slopkit-agent.bin` as the sibling of its own
-   module through `Z:` and polls the header's state word. `HELLO` reports the
+   below. A failure here records the reason and is retried by a later call,
+   bounded by the revive policy (three revives with a five second cooldown); the
+   failing call is answered with the error — there is no ptrace fallback for
+   allocation.
+2. The agent's dispatcher thread opens `slopkit-agent.bin` as the sibling of its
+   own module through `Z:` and polls the slots' state words. `HELLO` reports the
    protocol version, the record size, the pointer size, the Windows pid, the
-   allocation granularity, the agent's base address and the payload capacity; a
-   version, record-size or payload-size mismatch fails the handshake immediately
-   instead of timing out.
-3. Each later call publishes one request, waits for the response with a bounded
-   timeout, and returns the Win32 error code the agent reported. The heartbeat
-   is bumped while waiting, so an agent that has backed off to its `Sleep()`
-   ceiling wakes quickly. The payload-carrying ops (above) copy their bytes
-   through the same region, in before the request and out before idle.
-4. Introspection runs on this same path: `list_regions` loops `ENUM` batches (a
-   64 KiB payload holds 2048 region records), `list_modules` loops `MODULES`
+   allocation granularity, the agent's base address, the payload capacity and the
+   slot/worker counts; a version, record-size or payload-size mismatch fails the
+   handshake immediately instead of timing out.
+3. Each later call claims a slot from the pool and publishes its request there,
+   waits for the response with a bounded timeout, and returns the Win32 error
+   code the agent reported. Parallel host threads take different slots, so they
+   do not serialize behind one lock; a slot whose wait times out is retired and
+   never reused, so a late answer can never be read as another request's. The
+   heartbeat is bumped while waiting, so an agent that has backed off to its
+   `Sleep()` ceiling wakes quickly. The payload-carrying ops (above) copy their
+   bytes through the slot, in before the request and out before idle.
+4. Introspection runs on this same slot pool: `list_regions` loops `ENUM` batches
+   (a 64 KiB payload holds 2048 region records), `list_modules` loops `MODULES`
    batches (a 64 KiB payload holds 1638 module records plus the names),
    `validate_memory` issues one `QUERY`, and `read_memory`/`write_memory` chunk
    at the payload size. Both list operations merge the walk with
    `/proc/<pid>/maps` for the host paths.
-5. On session close the plugin sends `SHUTDOWN`, which frees everything the
-   agent allocated and stops the service thread; the region is unmapped and the
-   per-session directory removed.
+5. On session close the plugin waits for in-flight requests, then sends
+   `SHUTDOWN`, which drains the remaining slots, frees everything the agent
+   allocated and joins every worker; the region is unmapped and the per-session
+   directory removed.
 
 ## Agent-served versus host-served
 
@@ -83,32 +89,56 @@ failure is returned, never patched over with a silently different list.
 the agent, because the host's view is exactly what Wine does not share — a
 `/proc` region list and a read probe miss Wine's commit state.
 
-The agent's service thread cannot run while the target is stopped, so those four
-operations take the host path in two known states, not as a fallback after a
-failure:
+When the target cannot run the agent, the call is routed instead of failing:
 
 | State | `list_regions`, `validate_memory`, `read_memory`, `write_memory` |
 | --- | --- |
 | Target runnable | The agent (`ENUM` walk, `QUERY`, `READ`/`WRITE`). |
-| Debug session attached | Host: `platform::read_maps`, the 64 KiB read probe, `session.mem` (`process_vm` then `/proc/<pid>/mem`). |
-| An allocation is in flight on this session | Host, for the same reason: our own remote call has the target suspended. |
+| Our own pause (`session.suspended`, the scanner's "pause the game") | Host: `platform::read_maps` and `session.mem` (`process_vm` then `/proc/<pid>/mem`). |
+| Debug session attached, agent's threads exempt | The agent keeps serving: the attach leaves the agent's dispatcher and workers running (see "Debugging the target" below). |
+| Debug session attached, agent's threads not recognised | Host, as for our own pause. |
+| A request failed | The host path for this call, with the agent's reason logged. |
 
-Module enumeration is the exception: it needs the agent in every state, so in the
-two states above `list_modules` returns the recorded reason — `permission_denied`
-while the target is being debugged, `io_error` while our own call is in flight —
-instead of a host-derived list. The debugger is unaffected, because
-`debug::Controller` keeps the `ui::ModuleSpans` snapshot taken when the session
-started, so address formatting, module-relative display and breakpoint parsing
-still work while the target is stopped. The visible cost is the memory-map job
-(`AccessWorker::do_memory_map` lists modules and regions in one job and sets its
-result error when the module listing fails, so it reports the error instead of a
-region list) and the `expression()` function's module-name resolution, which
-reports the same error for a stopped Wine target.
+Module enumeration is the exception: it needs the agent, so while our own pause
+has the target stopped, or a debug session stopped it and the agent's threads
+could not be exempted, `list_modules` returns the **last agent-derived list
+recorded for that session** — the target cannot have changed its loader list
+while it is stopped — and only reports the reason when no list has been recorded
+yet. `allocate` and `free` answer with a retryable busy error in the paused
+state, and never disable the agent. The debugger itself is unaffected, because
+`debug::Controller` keeps its attach-time `ui::ModuleSpans` snapshot.
 
-A hard agent failure is different from these states: it logs the reason once,
-disables the agent for the session and returns the error. There is no silent
-`procfs` or `process_vm` answer, so a target whose agent cannot come up loses its
-reads, writes, memory map, module list and validation for the session.
+A failed exchange no longer disables the agent for the session: it records the
+reason and, once **every** advertised slot has been retired (the pool is
+exhausted), drops the client so a later call may bring a fresh agent up, bounded
+by three revives with a five second cooldown. A single timed-out slot leaves the
+rest of the pool serving, and the introspection calls fall back to the host path
+while no agent is available.
+
+## Debugging the target
+
+A debug attach seizes and stops every thread of the group, which would stop the
+agent's dispatcher and workers with it. The attach therefore accepts an
+exclusion list (`DebugSession::attach(excluded)`), and the wine-proton profile
+fills it through the optional `debug_excluded_threads` hook: the excluded tids
+are never seized, never programmed with debug registers and never waited on by
+`resume`, `step` or `detach`, so the agent keeps serving reads, regions, modules
+and validation while the rest of the target sits at a breakpoint.
+
+`AgentService::agent_threads` resolves those tids, in order:
+
+1. every thread whose `comm` is `slopkit-agent` (the DLL names each of its
+   threads through `SetThreadDescription`, which the DLL resolves at run time
+   because the export is not on every Wine build), or
+2. every thread whose stack holds `SLOPKIT_AGENT_THREAD_MAGIC` inside the
+   `SLOPKIT_AGENT_STACK_SCAN_BYTES` window below its `startstack`, read through
+   the host memory path (no ptrace window, so it cannot collide with an
+   allocation).
+
+If neither matches — a Wine build where the description did not take, a stripped
+agent — the attach proceeds unexempted with a warning, and the agent path then
+behaves exactly as it did before. The trade-off is documented under known
+limitations.
 
 ## Proton's environment handoff
 
@@ -216,9 +246,10 @@ the injector printed anything.
 
 - **No ptrace fallback (owner request).** The first cut served a failed agent
   call through the shared ptrace allocator. The owner asked for the agent to be
-  the only path, so injection, handshake or request failures now log the reason,
-  disable the agent for the session and return the error; a mapping Wine's
-  virtual-memory manager cannot see is never produced.
+  the only path, so injection, handshake or request failures now log the reason
+  and return the error; a mapping Wine's virtual-memory manager cannot see is
+  never produced. A later call may retry the injection, bounded by the revive
+  policy below.
 - **Introspection moved onto the agent too (owner request).** The first cut used
   the agent only to allocate. The region list, address validation and memory
   transfer now prefer the agent as well, because its `VirtualQuery` is Wine's own
@@ -230,7 +261,7 @@ the injector printed anything.
   Injecting eagerly would mean spawning wine and waiting for a remote
   `LoadLibraryW` on the UI thread; the agent therefore comes up on the first
   allocation, which runs on the access worker. Failures are still learned at the
-  first allocation, and from then on allocation fails for the session.
+  first allocation; a later call retries under the revive policy.
 - **The per-session directory is chosen for the target, not for the tool.** The
   installed plugin directory may be read-only, and the DLL must find the region
   as its own sibling, so region, DLL and injector are staged together in a
@@ -239,6 +270,20 @@ the injector printed anything.
 - **No AF_UNIX/Winsock transport.** As agreed, the file-backed shared region was
   built first and proved sufficient; the socket transport stays the documented
   backup if a prefix without a `Z:` mapping to `/` ever shows up.
+- **Failure is retryable, not permanent (owner request).** The first cut disabled
+  the agent for the session on any failure. A transient failure now records the
+  reason and, once the slot pool is exhausted, drops the client so a later call
+  may inject a fresh agent, bounded by three revives with a five second cooldown;
+  the failing call still returns the reason.
+- **Several requests at once (owner request).** A single request slot and one
+  global lock serialized every call. The region now carries four independent
+  slots served by a lazily grown worker pool, and the service runs exchanges
+  without a global lock, so parallel host reads are served in parallel.
+- **A stopped target is not a failure, and a debug attach exempts the agent
+  (owner request).** Our own SIGSTOP pause used to produce a 500 ms timeout that
+  disabled the agent; it is now routed to the host path (with `modules` answered
+  from the recorded list). A debug attach leaves the agent's own threads running
+  so the agent keeps serving (see "Debugging the target").
 - **The e2e test is hidden and environment-gated** (`SLOPKIT_WINE_E2E=1`) rather
   than part of the default suite, because it needs wine, a prefix and mingw-w64.
 
@@ -251,7 +296,7 @@ the injector printed anything.
   one while memory is being read.
 - **A crashed host leaves the agent dormant, not gone.** The region is unmapped
   and its file unlinked, but the target keeps the module until it exits; the
-  service thread drops to its `Sleep()` ceiling and costs almost no CPU. It can
+  agent's threads drop to their `Sleep()` ceiling and cost almost no CPU. It can
   no longer be shut down from the tool.
 - **`Z:` is assumed.** The region is opened through Wine's default `Z:` drive.
   A prefix with that mapping removed makes the agent unusable; the handshake
@@ -262,20 +307,40 @@ the injector printed anything.
 - **The i686 path is built, not exercised.** Both bitnesses cross-compile
   warning-free and the selector reads the guest's COFF machine, but no 32-bit
   game was available here to run the end-to-end test for i686.
-- **A failed agent is permanent for the session.** Once injection, the handshake
-  or any request fails, the agent is not retried and every later allocation *and
-  introspection call* for that target fails until the session (or the process) is
-  reopened; there is no ptrace path to fall back to. One failed handshake
-  therefore costs reads, writes, the memory map and validation together, not
-  just allocation.
+- **A revive loses the previous client's ownership table.** `free` for a block
+  handed out before a revive reports "not this session's allocation" and the
+  block leaks inside the target until it exits. The alternative was losing every
+  introspection path for the session, so this is the better trade; it is bounded
+  by the revive cap.
+- **The revive policy is bounded but not free.** A hardened target is injected at
+  most three times per session, never twice within five seconds; after the cap
+  the agent path stays unavailable for that session (allocation, `free` and
+  `modules` report the reason, the introspection calls keep using the host path).
+- **An exempt agent thread is not traced.** A software breakpoint the user arms
+  in code that thread executes (the agent's own module, or a system DLL it calls)
+  would kill that thread, since the thread is not under ptrace. The agent runs
+  only its own module and system calls, the loss is detected as an exhausted pool
+  and handled by the revive policy, and everything else in the target is traced
+  as before.
+- **Agent-thread identification is a heuristic.** If neither the `comm` name nor
+  the stack marker matches (a Wine layer difference, a stripped agent), the debug
+  attach proceeds without exemptions and logs a warning; the agent path then
+  behaves exactly as it did before the attach, and a stopped target falls back to
+  the host path.
+- **The module-list cache is per pid and cleared on close.** While the target is
+  paused, `list_modules` answers from it; a session that pauses before it has
+  ever listed modules still reports the reason.
 - **The module walk reads the loader list without the loader lock.** The agent
   cannot call `LdrLockLoaderLock` (it is not exported to a kernel32-only DLL), so
   a module unloaded concurrently could point at freed memory. The walk is bounded
   and skips entries with a null `DllBase`, and the game's own images — which are
   never unloaded — are read first, so the realistic failure is a short or empty
   list, never a fault or a spin.
-- **Module enumeration is agent-only.** While a debug session stops the target or
-  our own call is in flight, `list_modules` reports the reason instead of a
-  host-derived list. The memory-map job then shows that error (not its region
-  list), and `expression()` cannot resolve a module name, for that stopped
-  target; the debugger itself keeps its attach-time module snapshot.
+- **Module enumeration is agent-only, with a recorded fallback.** While our own
+  pause has the target stopped, a debug session stopped it and the agent's
+  threads could not be exempted, `list_modules` answers from the last
+  agent-derived list recorded for the session instead of a host-derived one; only
+  a session that has never recorded a list reports the reason. The region list is
+  not affected: it falls back to `/proc/<pid>/maps`, so the memory-map job keeps
+  producing a region list. The debugger itself keeps its attach-time module
+  snapshot for name resolution.
