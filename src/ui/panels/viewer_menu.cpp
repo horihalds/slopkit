@@ -11,7 +11,6 @@
 
 namespace slopkit::ui::panels
 {
-
     ViewerMenu::ViewerMenu(debug::Controller&             controller,
                            const process::AttachedTarget& target,
                            components::MemoryView&        view,
@@ -34,21 +33,16 @@ namespace slopkit::ui::panels
         tools_menu_ = addMenu(tr("Tools"));
         debug_menu_ = addMenu(tr("Debug"));
 
-        // Every menu explains its disabled entries through their tooltips.
         for (QMenu* menu : {file_menu_, view_menu_, tools_menu_, debug_menu_})
         {
             widgets::show_explanations(*menu);
         }
 
-        // File: the viewer closes like any other window; hiding it lets the
-        // window geometry keeper persist its frame, and the panes keep their history.
         close_action_ = file_menu_->addAction(tr("Close"));
         close_action_->setShortcut(QKeySequence::Close);
         close_action_->setShortcutContext(Qt::WindowShortcut);
         connect(close_action_, &QAction::triggered, this, &ViewerMenu::closeRequested);
 
-        // View: the byte view's own Go To... action leads the menu, so its
-        // window-scoped Ctrl+G is added once and never duplicated.
         view_menu_->addAction(view_.goto_action());
         follow_action_ = view_menu_->addAction(tr("Follow"));
         connect(follow_action_, &QAction::triggered, this, &ViewerMenu::followRequested);
@@ -58,7 +52,6 @@ namespace slopkit::ui::panels
         back_action_ = view_menu_->addAction(tr("Back"));
         connect(back_action_, &QAction::triggered, this, &ViewerMenu::backRequested);
 
-        // Tools: the listing's row commands, acting on the selected instruction.
         nop_action_ = tools_menu_->addAction(tr("NOP Instruction"));
         connect(nop_action_, &QAction::triggered, this, &ViewerMenu::nopRequested);
         restore_action_ = tools_menu_->addAction(tr("Restore Original Instruction"));
@@ -71,8 +64,6 @@ namespace slopkit::ui::panels
         instruction_accesses_action_ = tools_menu_->addAction(tr("Find out what addresses this instruction accesses"));
         connect(instruction_accesses_action_, &QAction::triggered, this, &ViewerMenu::instructionAccessesRequested);
 
-        // Debug: the control bar's entries, entry for entry, plus the one new
-        // command. Each submission goes to the controller, never to the target.
         start_stop_action_ = debug_menu_->addAction(tr("Start Debugging"));
         connect(start_stop_action_, &QAction::triggered, this, &ViewerMenu::toggle_session);
 
@@ -103,8 +94,6 @@ namespace slopkit::ui::panels
         step_out_action_ = debug_menu_->addAction(tr("Step Out"));
         connect(step_out_action_, &QAction::triggered, &controller_, &debug::Controller::step_out);
 
-        // Breakpoints... opens the same window the bar's button does: it is
-        // emitted here and relayed to the bar's own request.
         breakpoints_action_ = debug_menu_->addAction(tr("Breakpoints..."));
         connect(breakpoints_action_, &QAction::triggered, this, &ViewerMenu::breakpointsRequested);
 
@@ -369,4 +358,4 @@ namespace slopkit::ui::panels
         return instruction_accesses_action_;
     }
 
-} // namespace slopkit::ui::panels
+}

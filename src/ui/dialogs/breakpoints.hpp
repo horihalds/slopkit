@@ -14,20 +14,16 @@ class QTableView;
 namespace slopkit::ui::models
 {
     class BreakpointModel;
-} // namespace slopkit::ui::models
+}
 
 namespace slopkit::ui::widgets
 {
     class ScrollingComboBox;
     class StatusLabel;
-} // namespace slopkit::ui::widgets
+}
 
 namespace slopkit::ui::dialogs
 {
-
-    // The non-modal Breakpoints window: the session's breakpoints, their hit
-    // counters and the add/remove/enable controls. Every change goes through the
-    // controller, which arms or disarms it on the stopped target.
     class BreakpointsDialog : public QDialog
     {
         Q_OBJECT
@@ -35,11 +31,8 @@ namespace slopkit::ui::dialogs
     public:
         explicit BreakpointsDialog(debug::Controller& controller, QWidget* parent = nullptr);
 
-        // Re-reads the table and the hint line.
         void refresh();
 
-        // Adds a breakpoint from an address expression with the current kind and
-        // size; returns the readable failure reason, or an empty string.
         QString add_breakpoint_from_text(const QString& expression);
 
         [[nodiscard]] models::BreakpointModel*    model() const noexcept;
@@ -71,4 +64,4 @@ namespace slopkit::ui::dialogs
         widgets::StatusLabel*       hint_ {};
     };
 
-} // namespace slopkit::ui::dialogs
+}

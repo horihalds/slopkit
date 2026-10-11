@@ -13,10 +13,6 @@ class QTimer;
 
 namespace slopkit::sandbox
 {
-
-    // The practice target's window: a live view over `values()` and the heap
-    // marker. Every row reads its memory location on each refresh, so a write
-    // made from slopkit shows up within a tick instead of being a private copy.
     class SandboxWindow : public QWidget
     {
         Q_OBJECT
@@ -24,20 +20,12 @@ namespace slopkit::sandbox
     public:
         explicit SandboxWindow(QWidget* parent = nullptr);
 
-        // Re-reads the live values into the rows. The ~100 ms refresh timer
-        // calls it; the tests call it directly so a write can be observed
-        // without waiting.
         void refresh();
 
-        // Pauses or resumes the ~500 ms animation and keeps the checkbox in
-        // step.
         void               set_paused(bool paused);
         [[nodiscard]] bool is_paused() const noexcept;
 
     private:
-        // One value cell: its editor, how to read the live value into it and how
-        // to parse an edited one back. `write` is empty for the read-only hex
-        // rows.
         struct Row
         {
             QLineEdit*                          edit {nullptr};
@@ -65,4 +53,4 @@ namespace slopkit::sandbox
         bool             paused_ {false};
     };
 
-} // namespace slopkit::sandbox
+}

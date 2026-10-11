@@ -63,7 +63,7 @@ print(validate(0x1000, 4294967296))
 
     SECTION("no target is attached")
     {
-        const slopkit::script::MemoryApi memory; // no validate seam
+        const slopkit::script::MemoryApi memory;
         slopkit::script::Engine          engine(memory, fixture.symbols.api());
 
         const RunResult result = engine.run("validate(0x1000)");

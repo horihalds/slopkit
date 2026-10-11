@@ -5,7 +5,6 @@
 
 namespace slopkit::expr
 {
-
     namespace
     {
         bool equals_case_insensitive(std::string_view left, std::string_view right)
@@ -27,7 +26,7 @@ namespace slopkit::expr
             }
             return true;
         }
-    } // namespace
+    }
 
     std::expected<std::uint64_t, ResolveError> evaluate(const Expression&       expression,
                                                         Modules                 modules,
@@ -47,9 +46,6 @@ namespace slopkit::expr
                 break;
             }
         }
-        // A symbol resolves after the module map (a loaded image can never be
-        // shadowed) and before the literal parse (a symbol wins over the bare-hex
-        // reading of a name like `deadbeef`).
         if (!base_found)
         {
             for (const auto& symbol : symbols)
@@ -88,8 +84,6 @@ namespace slopkit::expr
                         return std::unexpected(ResolveError {
                             std::format("the address {:X} at level {} is not readable", address, level), level});
                     }
-                    // A validator that itself errors is ignored: the read below
-                    // reports its own, already meaningful text.
                 }
                 const auto pointer = reader(address);
                 if (!pointer)
@@ -103,4 +97,4 @@ namespace slopkit::expr
         return address;
     }
 
-} // namespace slopkit::expr
+}

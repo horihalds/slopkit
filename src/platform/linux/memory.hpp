@@ -9,7 +9,6 @@
 
 namespace slopkit::platform
 {
-
     enum class MemoryPrimitive
     {
         none,
@@ -32,14 +31,9 @@ namespace slopkit::platform
         io_error,
     };
 
-    // Reads into `buffer` and reports how many bytes were read and which
-    // primitive did it. Never attaches with ptrace. A partial read (short of
-    // buffer.size()) is reported as success.
     std::expected<MemoryTransfer, MemoryError>
     read_memory(process::ProcessId pid, std::uint64_t address, std::span<std::byte> buffer);
 
-    // Writes from `data` and reports how many bytes were written and which
-    // primitive did it.
     std::expected<MemoryTransfer, MemoryError>
     write_memory(process::ProcessId pid, std::uint64_t address, std::span<const std::byte> data);
 
@@ -66,4 +60,4 @@ namespace slopkit::platform
         int                write_fd_ {-1};
     };
 
-} // namespace slopkit::platform
+}

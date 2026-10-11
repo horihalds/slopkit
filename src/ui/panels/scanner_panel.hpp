@@ -27,16 +27,10 @@ namespace slopkit::ui::widgets
 {
     class PrimaryButton;
     class ScrollingComboBox;
-} // namespace slopkit::ui::widgets
+}
 
 namespace slopkit::ui::panels
 {
-
-    // The right half of the middle zone: the scan controls. It builds the
-    // ScanConfig, owns the engine and the worker session the engine reads
-    // through, and never blocks on target access. Its bottom row is an empty
-    // band that mirrors the found list's Memory View row height, so the hits
-    // table's bottom edge stays level with the Memory Scan Options panel.
     class ScannerPanel : public QWidget
     {
         Q_OBJECT
@@ -48,16 +42,10 @@ namespace slopkit::ui::panels
 
         [[nodiscard]] scan::ScanEngine& engine() noexcept;
 
-        // Sets the fast-scan alignment field, used by the Settings dialog.
         void set_default_alignment(std::uint64_t alignment);
 
-        // Focuses the scan value field and selects its whole content, so the
-        // user can type a new value immediately; a no-op when the field is
-        // disabled because the scan type needs no value.
         void focus_value_input();
 
-        // Polled by the window's tick: refreshes the enable state and the
-        // progress bar, and logs a changed engine message.
         void refresh();
 
         // Reports whether a debug session is running; while it is, pausing for a
@@ -67,26 +55,13 @@ namespace slopkit::ui::panels
 
         [[nodiscard]] int progress_percent() const noexcept;
 
-        // Entry point of the target's main module (the flagged image, else the
-        // lowest-based one), or its base when the plugin reports no entry; 0
-        // before a memory map has been applied.
         [[nodiscard]] std::uint64_t main_module_address() const noexcept;
 
-        // The seam the window joins its cross-panel chain through: the last
-        // control of the scanner's own run. It exists only so the window can
-        // splice the found list's controls after the pause check; the widget
-        // itself stays private.
-        [[nodiscard]] QWidget* tab_order_last() const noexcept; // Pause the game while scanning
+        [[nodiscard]] QWidget* tab_order_last() const noexcept;
 
-        // The widget whose height the empty bottom row mirrors, so the hits
-        // table's bottom edge stays level with the `Memory Scan Options` panel
-        // (docs/UI_DESIGN.md#windows-dialogs-and-layout). The found list's
-        // Memory View row is the production value; no source means an empty row.
         void set_bottom_row_source(QWidget& row);
 
     signals:
-        // The current memory map as file-backed module images, empty when
-        // detached; the found list uses it to mark and group static hits.
         void memoryMapApplied(std::vector<process::ModuleInfo> modules);
 
     private:
@@ -106,13 +81,8 @@ namespace slopkit::ui::panels
         void activate_scan_from_input();
         void update_value_inputs();
 
-        // Rewrites the fast-scan alignment field to the selected value type's
-        // width, but only while the field is blank or still holds the previous
-        // type's default, so a step the user typed explicitly survives.
         void apply_default_alignment();
 
-        // Re-reads and rewrites the value boxes in the other base when the Hex
-        // checkbox is toggled, leaving any box it cannot convert as typed.
         void convert_value_base_fields(bool to_hex);
 
         [[nodiscard]] scan::ScanType                               current_scan_type() const noexcept;
@@ -133,8 +103,6 @@ namespace slopkit::ui::panels
         QPushButton*                undo_button_ {};
         QPushButton*                cancel_button_ {};
 
-        // The empty row that mirrors `bottom_row_source_`'s height; see
-        // set_bottom_row_source.
         QWidget*          bottom_band_ {};
         QPointer<QWidget> bottom_row_source_ {};
 
@@ -145,8 +113,6 @@ namespace slopkit::ui::panels
         QCheckBox*      copy_on_write_check_ {};
         QCheckBox*      fast_scan_check_ {};
         QLineEdit*      alignment_edit_ {};
-        // The value type the alignment field was last defaulted for; a change of
-        // type rewrites the field only while it still holds this type's width.
         scan::ValueType alignment_value_type_ {scan::ValueType::int32};
         QCheckBox*      pause_scanning_check_ {};
 
@@ -162,22 +128,11 @@ namespace slopkit::ui::panels
         std::string                   worker_plugin_;
         std::optional<process::JobId> handoff_pending_;
 
-        // Starts the engine, either directly or after a successful suspend of the
-        // target; `refine` picks next_scan over first_scan.
         void start_engine(scan::ScanConfig config, bool refine);
-        // Queues a scan behind a suspend when pausing is on and available, else
-        // starts it immediately.
         void begin_scan(scan::ScanConfig config, bool refine);
-        // Resumes a target this panel suspended once the engine has stopped; safe
-        // to call every tick.
         void maybe_resume_target();
-        // Enables the pause checkbox and picks its tooltip from the current
-        // attach/capability/debug state.
         void update_pause_check();
 
-        // Pause-while-scanning state machine, all touched on the UI thread: the
-        // built config waiting for the in-flight suspend, the suspend/resume
-        // jobs, and whether this panel currently holds the target stopped.
         struct PendingScan
         {
             scan::ScanConfig config;
@@ -189,16 +144,9 @@ namespace slopkit::ui::panels
         std::optional<process::JobId> resume_pending_;
         bool                          target_suspended_ {false};
         bool                          resume_warn_logged_ {false};
-        // The handoff reports whether the target's plugin can suspend, and the
-        // window reports whether a debug session is running; both gate the check.
         bool                          can_suspend_ {false};
         bool                          debug_session_active_ {false};
 
-        // The target's memory map, fetched once per attach so the `All memory`
-        // range spans the whole process address space (0 to the user-space
-        // ceiling) independently of the mapped pages. `map_pid_`/`map_plugin_`
-        // record which target the pending or last request belongs to, so a
-        // completion for a superseded target is dropped.
         std::optional<process::JobId>    map_pending_;
         process::ProcessId               map_pid_ {0};
         std::string                      map_plugin_;
@@ -209,4 +157,4 @@ namespace slopkit::ui::panels
         scan::ScanEngine engine_;
     };
 
-} // namespace slopkit::ui::panels
+}

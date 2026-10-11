@@ -32,20 +32,12 @@ namespace slopkit::plugins::wine_proton
 {
     namespace
     {
-        // The injector starts a fresh wine process, which can be slow on a cold
-        // prefix; the request timeout applies to every exchange after that.
         constexpr std::chrono::milliseconds kLaunchTimeout {20000};
         constexpr std::chrono::milliseconds kRequestTimeout {std::chrono::milliseconds {kAgentRequestTimeoutMs}};
         constexpr std::chrono::milliseconds kShutdownTimeout {200};
-        // A transient failure must not kill the agent for the session, but the
-        // target may pay the injection cost only this many times, and never
-        // twice within the cooldown.
         constexpr unsigned                  kMaxAgentRevives = 3;
         constexpr std::chrono::seconds      kReviveCooldown {5};
 
-        // One target's agent plus the policy that decides whether a later call
-        // may bring a fresh one up. Every field is guarded by g_mutex; the
-        // AgentClient itself is thread-safe once a shared_ptr copies it out.
         struct AgentState
         {
             std::shared_ptr<AgentClient>          client;
@@ -55,9 +47,6 @@ namespace slopkit::plugins::wine_proton
             std::string                           reason;
             bool                                  permanent {false};
             bool                                  bringing_up {false};
-            // The last agent-derived module list, so `modules` can answer while
-            // our own pause has the target (and the agent's threads) stopped and
-            // the list cannot have changed.
             bool                                  has_modules {false};
             std::vector<process::ModuleInfo>      modules;
             std::condition_variable               idle;
@@ -65,13 +54,8 @@ namespace slopkit::plugins::wine_proton
 
         std::mutex                                                              g_mutex;
         std::unordered_map<process::ProcessId, std::shared_ptr<AgentState>>     g_agents;
-        // The threads the last identification found for each pid's agent, so a
-        // debug attach can name them; cleared with the session.
         std::unordered_map<process::ProcessId, std::vector<process::ProcessId>> g_agent_threads;
 
-        // A call that keeps its target's agent in flight, so close() never
-        // unmaps a region another thread is still transacting on. The counter
-        // is set under g_mutex; the exchange itself runs outside it.
         class CallScope
         {
         public:
@@ -120,10 +104,6 @@ namespace slopkit::plugins::wine_proton
             return state.reason.empty() ? std::string("the resident agent is not available") : state.reason;
         }
 
-        // Brings a fresh agent up for `pid`, honouring the revive policy, and
-        // returns it; nullptr means "use the host path or answer busy", with the
-        // reason recorded on the state. The launch runs without g_mutex and
-        // `bringing_up` keeps two threads from injecting at once.
         std::shared_ptr<AgentClient> ensure_client(AgentState& state, process::ProcessId pid)
         {
             {
@@ -150,7 +130,6 @@ namespace slopkit::plugins::wine_proton
             const auto                   target    = derive_wine_target(pid);
             if (!target)
             {
-                // Not a Wine process at all: no retry can ever help.
                 failure   = target.error();
                 permanent = true;
             }
@@ -199,9 +178,6 @@ namespace slopkit::plugins::wine_proton
             return nullptr;
         }
 
-        // Records a failed exchange. Only once every advertised slot has been
-        // retired is the client dropped and a bounded revive scheduled; a single
-        // failed slot leaves the rest of the pool serving.
         void note_failure(const std::shared_ptr<AgentClient>& client,
                           AgentState&                         state,
                           process::ProcessId                  pid,
@@ -249,8 +225,6 @@ namespace slopkit::plugins::wine_proton
             state.has_modules = true;
         }
 
-        // The host path for a read: process_vm/procfs, the same primitive the
-        // linux-proc plugin uses.
         std::expected<support::MemoryResult, support::AccessFault>
         host_read(support::Session& session, std::uint64_t address, std::span<std::byte> buffer)
         {
@@ -275,8 +249,6 @@ namespace slopkit::plugins::wine_proton
             return support::MemoryResult {host->bytes, support::method_flag(host->primitive)};
         }
 
-        // Field 28 of /proc/<pid>/task/<tid>/stat is startstack: the top of the
-        // thread's stack, below which its live frames sit.
         std::optional<std::uint64_t> thread_stack_start(process::ProcessId pid, process::ProcessId tid)
         {
             std::ifstream stat(std::format("/proc/{}/task/{}/stat", pid, tid));
@@ -289,8 +261,6 @@ namespace slopkit::plugins::wine_proton
             {
                 return std::nullopt;
             }
-            // comm is field 2 and may itself hold spaces and parentheses, so
-            // count from the last ')' on: the first token there is field 3.
             const auto close = line.rfind(')');
             if (close == std::string::npos)
             {
@@ -310,9 +280,6 @@ namespace slopkit::plugins::wine_proton
             return std::nullopt;
         }
 
-        // Scans the stack window below `startstack` for the live marker every
-        // agent loop keeps. The read goes through the host memory path, so it
-        // needs no ptrace window and cannot collide with an allocation.
         bool thread_holds_magic(support::Session& session, std::uint64_t startstack)
         {
             constexpr std::size_t  kChunk = 64 * 1024;
@@ -327,7 +294,6 @@ namespace slopkit::plugins::wine_proton
                 const auto read = session.mem.read(address, std::span<std::byte>(buffer.data(), want));
                 if (!read)
                 {
-                    // Unmapped inside the window: step over it and keep walking.
                     continue;
                 }
                 for (std::size_t offset = 0; offset + sizeof(std::uint64_t) <= read->bytes; ++offset)
@@ -343,8 +309,6 @@ namespace slopkit::plugins::wine_proton
             return false;
         }
 
-        // The agent's threads: the name fast path first, then the live stack
-        // marker for an agent whose thread description did not take.
         std::vector<process::ProcessId> scan_agent_threads(support::Session& session, process::ProcessId pid)
         {
             const auto                      threads = platform::read_threads(pid);
@@ -370,7 +334,7 @@ namespace slopkit::plugins::wine_proton
             }
             return found;
         }
-    } // namespace
+    }
 
     std::expected<std::uint64_t, support::AllocationError>
     AgentService::allocate(support::Session& session, std::uint64_t size, std::uint64_t near_address)
@@ -379,8 +343,6 @@ namespace slopkit::plugins::wine_proton
         AgentState& state = call->state();
         if (session.suspended)
         {
-            // Our own SIGSTOP pause stops the agent's threads too: answer with a
-            // retryable busy error and never disable the agent.
             return std::unexpected(
                 support::AllocationError {SLOPKIT_ERR_IO, "the target is paused; try again once it is running"});
         }
@@ -451,8 +413,6 @@ namespace slopkit::plugins::wine_proton
         const auto client = ensure_client(state, session.pid);
         if (!client)
         {
-            // No agent (yet): the host's /proc/maps view keeps the memory map
-            // visible instead of failing the call.
             return platform::read_maps(session.pid);
         }
 
@@ -484,8 +444,6 @@ namespace slopkit::plugins::wine_proton
         AgentState& state = call->state();
         if (session.suspended)
         {
-            // Our own pause stops the agent's threads and the target cannot have
-            // changed its loader list while stopped, so the recorded list stands.
             if (const auto cached = cached_modules(state))
             {
                 return *cached;
@@ -515,8 +473,6 @@ namespace slopkit::plugins::wine_proton
             if (!batch)
             {
                 note_failure(client, state, session.pid, batch.error());
-                // A target stopped by the debugger cannot have changed its
-                // loader list; the last list recorded for it still answers.
                 if (session.debug.attached())
                 {
                     if (const auto cached = cached_modules(state))
@@ -565,7 +521,6 @@ namespace slopkit::plugins::wine_proton
         {
             return false;
         }
-        // The whole range must sit inside the single region QUERY reported.
         return address + size <= info->base + info->size;
     }
 
@@ -588,8 +543,6 @@ namespace slopkit::plugins::wine_proton
         const auto moved = client->read(address, buffer, kRequestTimeout);
         if (!moved)
         {
-            // A failed exchange falls back to the path the host uses while the
-            // target is stopped, so a read never dies with the agent.
             note_failure(client, state, session.pid, moved.error());
             return host_read(session, address, buffer);
         }
@@ -632,13 +585,12 @@ namespace slopkit::plugins::wine_proton
                 return;
             }
             state            = entry->second;
-            state->permanent = true; // no bring-up may start while closing
+            state->permanent = true;
         }
 
         std::shared_ptr<AgentClient> client;
         {
             std::unique_lock lock(g_mutex);
-            // Wait for every in-flight request before the region is unmapped.
             state->idle.wait(lock,
                              [&]
                              {
@@ -651,8 +603,6 @@ namespace slopkit::plugins::wine_proton
 
         if (client)
         {
-            // SHUTDOWN frees what the agent allocated and unmaps the region; the
-            // per-session directory goes with the transport.
             client->shutdown(kShutdownTimeout);
         }
     }
@@ -661,9 +611,6 @@ namespace slopkit::plugins::wine_proton
     {
         auto found = scan_agent_threads(session, session.pid);
         {
-            // Remember the last scan so the close path can clear it; the threads
-            // are re-listed on every call because the agent creates workers
-            // lazily and a stale list could miss one that would then be seized.
             const std::lock_guard lock(g_mutex);
             g_agent_threads[session.pid] = found;
         }
@@ -677,4 +624,4 @@ namespace slopkit::plugins::wine_proton
         return found;
     }
 
-} // namespace slopkit::plugins::wine_proton
+}

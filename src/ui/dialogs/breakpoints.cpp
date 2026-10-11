@@ -15,11 +15,10 @@
 
 namespace slopkit::ui::dialogs
 {
-
     namespace
     {
         constexpr int kKindRole = Qt::UserRole;
-    } // namespace
+    }
 
     BreakpointsDialog::BreakpointsDialog(debug::Controller& controller, QWidget* parent)
         : QDialog(parent), controller_(controller)
@@ -218,4 +217,4 @@ namespace slopkit::ui::dialogs
         return hint_;
     }
 
-} // namespace slopkit::ui::dialogs
+}

@@ -22,8 +22,6 @@ namespace slopkit::script
             NumberKind       kind;
         };
 
-        // The token vocabulary, mirroring `scan::value_size` for the widths:
-        // `ptr` is the host pointer width, 8 on the only target this builds for.
         constexpr TokenInfo kTokens[] = {
             { "u8", 1, NumberKind::unsigned_integer},
             { "i8", 1,   NumberKind::signed_integer},
@@ -88,7 +86,7 @@ namespace slopkit::script
                 return static_cast<double>(static_cast<std::int64_t>(raw));
             }
         }
-    } // namespace
+    }
 
     std::optional<std::size_t> type_width(std::string_view token)
     {
@@ -156,8 +154,6 @@ namespace slopkit::script
             return bytes;
         }
 
-        // Truncates toward zero and keeps the low `width` bytes, which is the
-        // two's-complement representation for both signed and unsigned tokens.
         return store_little_endian(static_cast<std::uint64_t>(static_cast<std::int64_t>(value)), info->width);
     }
 
@@ -175,4 +171,4 @@ namespace slopkit::script
         return store_little_endian(value, info->width);
     }
 
-} // namespace slopkit::script
+}

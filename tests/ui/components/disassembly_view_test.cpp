@@ -28,7 +28,7 @@ namespace
     using slopkit::ui::components::DisassemblyDocument;
     using slopkit::ui::components::DisassemblyView;
 
-    constexpr std::uint64_t kCode = 0x2000; // A multiple of the 8 KiB window.
+    constexpr std::uint64_t kCode = 0x2000;
 
     struct ViewFixture
     {
@@ -88,7 +88,6 @@ namespace
         return nullptr;
     }
 
-    // Sends a viewport mouse event the way the toolkit would while dragging.
     void mouse_event(DisassemblyView& view,
                      QEvent::Type     type,
                      const QPoint&    position,
@@ -100,14 +99,12 @@ namespace
         QApplication::sendEvent(view.viewport(), &event);
     }
 
-    // The viewport y inside the painted row `index`; mirrors the listing's own
-    // margin and line height so a press lands on the row itself.
     int row_y(int index)
     {
         const QFontMetrics metrics(slopkit::ui::mono_font());
         return 4 + (metrics.height() + 4) * (index + 1) + 2;
     }
-} // namespace
+}
 
 TEST_CASE("the disassembly view fits its rows to the viewport", "[ui]")
 {
@@ -145,7 +142,6 @@ TEST_CASE("the disassembly view paints the decoded rows", "[ui]")
     CHECK(view.row_text(2) == QStringLiteral("RET"));
     CHECK(fixture.document.row(1).bytes == QStringLiteral("48 89 E5"));
 
-    // A branch target is painted through the module map like the address column.
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
     CHECK(view.row_text(3) == QStringLiteral("JZ app+0x1C"));
 
@@ -174,7 +170,6 @@ TEST_CASE("the disassembly view colours instruction runs from the theme", "[ui]"
     CHECK(push[1].colour == slopkit::ui::dark_theme().syntax_register);
     CHECK(view.row_text(0) == QStringLiteral("PUSH RBP"));
 
-    // The light theme resolves the same runs through its own roles, live.
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
     const auto light_push = view.row_segments(0);
     REQUIRE(light_push.size() == 2);
@@ -192,7 +187,7 @@ TEST_CASE("the disassembly view colours a module-relative rva as an immediate", 
     slopkit::ui::apply_theme(slopkit::ui::dark_theme());
 
     ViewFixture fixture;
-    fixture.put(kCode, {0x74, 0x15, 0xC3}); // JZ +0x15 -> kCode + 0x17; RET
+    fixture.put(kCode, {0x74, 0x15, 0xC3});
 
     DisassemblyView view(fixture.document);
     view.resize(800, 600);
@@ -223,7 +218,7 @@ TEST_CASE("the disassembly view reveals the full address on hover over a shorten
     slopkit::ui::apply_theme(slopkit::ui::dark_theme());
 
     ViewFixture fixture;
-    fixture.put(kCode, {0x74, 0x15, 0xC3}); // JZ +0x15 -> kCode + 0x17; RET
+    fixture.put(kCode, {0x74, 0x15, 0xC3});
 
     DisassemblyView view(fixture.document);
     view.resize(800, 600);
@@ -237,25 +232,20 @@ TEST_CASE("the disassembly view reveals the full address on hover over a shorten
     REQUIRE(jump.size() == 4);
     CHECK(jump[1].text == QStringLiteral("DyingL..._rwdi.exe"));
     CHECK(jump[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x17"));
-    // The non-module runs carry no hover text.
     CHECK(jump[0].full.isEmpty());
     CHECK(jump[2].full.isEmpty());
     CHECK(jump[3].full.isEmpty());
 
     const QFontMetrics metrics(slopkit::ui::mono_font());
-    const int          top       = 4 + (metrics.height() + 4); // the first row's top edge
+    const int          top       = 4 + (metrics.height() + 4);
     const int          text_left = 4 + view.address_width() + 6 + view.bytes_width() + 6;
 
-    // The address column reveals the full address of the row it points at.
     CHECK(view.hover_full_text(QPoint(6, top + 2)) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x0"));
-    // The module run inside the instruction column reveals the branch target.
     const int module_x = text_left + metrics.horizontalAdvance(QStringLiteral("JZ ")) + 1;
     CHECK(view.hover_full_text(QPoint(module_x, top + 2))
           == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x17"));
-    // A run that was not shortened (the RVA) reveals nothing.
     const int rva_x = text_left + metrics.horizontalAdvance(QStringLiteral("JZ DyingL..._rwdi.exe+0"));
     CHECK(view.hover_full_text(QPoint(rva_x, top + 2)).isEmpty());
-    // The header band and a point below every row reveal nothing.
     CHECK(view.hover_full_text(QPoint(6, 2)).isEmpty());
     CHECK(view.hover_full_text(QPoint(6, 6000)).isEmpty());
 
@@ -268,7 +258,7 @@ TEST_CASE("a patched row keeps the warning colour on its plain runs", "[ui]")
     slopkit::ui::apply_theme(slopkit::ui::dark_theme());
 
     ViewFixture fixture;
-    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3}); // PUSH RBP; MOV RBP, RSP; RET
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
 
     DisassemblyView view(fixture.document);
     view.resize(800, 600);
@@ -285,7 +275,6 @@ TEST_CASE("a patched row keeps the warning colour on its plain runs", "[ui]")
                         }));
     fixture.document.ensure_rows(3);
 
-    // `NOP` has no classified run, so the whole patched row stays warning-coloured.
     const auto patched = view.row_segments(1);
     REQUIRE(patched.size() == 1);
     CHECK(patched[0].text == QStringLiteral("NOP"));
@@ -300,7 +289,7 @@ TEST_CASE("a .byte row is painted as one muted run", "[ui]")
     slopkit::ui::apply_theme(slopkit::ui::dark_theme());
 
     ViewFixture fixture;
-    fixture.put(kCode, {0xC3, 0x06}); // RET; .byte 06
+    fixture.put(kCode, {0xC3, 0x06});
 
     DisassemblyView view(fixture.document);
     view.resize(800, 600);
@@ -326,7 +315,7 @@ TEST_CASE("the disassembly view scrolls by whole instructions and clamps", "[ui]
 {
     application();
     ViewFixture fixture;
-    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90}); // NOP
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
 
     DisassemblyView view(fixture.document);
     view.resize(800, 600);
@@ -353,7 +342,6 @@ TEST_CASE("the disassembly view scrolls by whole instructions and clamps", "[ui]
     QApplication::sendEvent(&view, &page_up);
     CHECK(view.first_address() == start);
 
-    // The wheel steps three instruction rows.
     const QPointF centre(view.viewport()->rect().center());
     QWheelEvent   wheel(centre,
                         QPointF(view.viewport()->mapToGlobal(centre.toPoint())),
@@ -366,7 +354,6 @@ TEST_CASE("the disassembly view scrolls by whole instructions and clamps", "[ui]
     QApplication::sendEvent(view.viewport(), &wheel);
     CHECK(view.first_address() == kCode + 3);
 
-    // Scrolling up at the window start steps to the previous aligned window.
     view.set_first_address(kCode);
     REQUIRE(view.first_address() == kCode);
     QApplication::sendEvent(&view, &up);
@@ -455,7 +442,6 @@ TEST_CASE("the disassembly listing wraps the bytes column when the pane narrows"
 {
     application();
     ViewFixture fixture;
-    // 15 bytes: redundant operand-size prefixes in front of `MOV RAX, imm64`.
     fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
 
     DisassemblyView view(fixture.document);
@@ -464,16 +450,13 @@ TEST_CASE("the disassembly listing wraps the bytes column when the pane narrows"
     view.set_first_address(kCode);
     fixture.pass();
 
-    // A wide pane fits the whole instruction on one line, like before.
     REQUIRE(view.bytes_per_line() >= 15);
     CHECK(view.row_lines(0) == 1);
 
-    // The narrowest useful pane still shows every byte: one token per line.
     view.resize(200, 600);
     CHECK(view.bytes_per_line() == 1);
     CHECK(view.row_lines(0) == 15);
 
-    // Widening gives the bytes column its room back and unwraps the row.
     view.resize(1400, 600);
     CHECK(view.row_lines(0) == 1);
     CHECK(view.bytes_per_line() >= 15);
@@ -485,7 +468,6 @@ TEST_CASE("the wrapped listing keeps the cursor and pages by whole rows", "[ui]"
 {
     application();
     ViewFixture fixture;
-    // 15 bytes: redundant operand-size prefixes in front of `MOV RAX, imm64`.
     fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
 
     DisassemblyView view(fixture.document);
@@ -497,7 +479,6 @@ TEST_CASE("the wrapped listing keeps the cursor and pages by whole rows", "[ui]"
     REQUIRE(fixture.document.row(0).address == kCode);
     const QString top = view.row_text(0);
 
-    // Narrowing wraps the bytes but keeps the top instruction and the anchor.
     view.resize(200, 600);
     CHECK(view.bytes_per_line() == 1);
     CHECK(view.row_lines(0) == 15);
@@ -505,7 +486,6 @@ TEST_CASE("the wrapped listing keeps the cursor and pages by whole rows", "[ui]"
     CHECK(view.row_text(0) == top);
     CHECK(fixture.document.window_base() == kCode);
 
-    // PageDown moves by exactly the post-wrap rows that fit.
     const std::size_t page = view.visible_rows();
     REQUIRE(page >= 1);
     REQUIRE(page < fixture.document.row_count());
@@ -546,7 +526,6 @@ TEST_CASE("the wrapped listing walks past a window boundary", "[ui]")
     QApplication::sendEvent(&view, &down);
     CHECK(view.first_address() == kCode + DisassemblyDocument::kWindowSize);
 
-    // The next live pass asks for the next aligned window.
     const auto forward = fixture.document.next_live_request();
     REQUIRE(forward.size() == 1);
     CHECK(forward[0].address == kCode + DisassemblyDocument::kWindowSize);
@@ -556,7 +535,6 @@ TEST_CASE("the wrapped listing walks past a window boundary", "[ui]")
     REQUIRE(view.first_address() == kCode + DisassemblyDocument::kWindowSize);
     CHECK(view.row_text(0) == QStringLiteral("NOP"));
 
-    // Stepping back up seats the previous aligned base, then its last row.
     QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
     QApplication::sendEvent(&view, &up);
     CHECK(view.first_address() == kCode);
@@ -588,7 +566,6 @@ TEST_CASE("the disassembly view menu offers Go To and a Copy submenu", "[ui]")
     QAction* go_to = action(menu, QStringLiteral("Go To..."));
     REQUIRE(go_to != nullptr);
     CHECK(go_to == view.goto_action());
-    // The byte view owns the window's single Ctrl+G, so the listing has none.
     CHECK(go_to->shortcut().isEmpty());
 
     bool asked = false;
@@ -635,7 +612,6 @@ TEST_CASE("the disassembly view Back returns to the previous top address", "[ui]
     view.set_first_address(kCode);
     fixture.pass();
 
-    // A fresh view has nothing to undo: Back is present but disabled.
     QMenu fresh;
     view.populate_menu(fresh, 0);
     QAction* fresh_back = action(fresh, QStringLiteral("Back"));
@@ -672,13 +648,10 @@ TEST_CASE("the disassembly view follows an instruction's referenced address", "[
     view.resize(800, 600);
     view.show();
     view.set_first_address(kCode);
-    // CALL rel32 (target kCode+5), then a `.byte 0x06`.
     fixture.put(kCode, {0xE8, 0x00, 0x00, 0x00, 0x00, 0x06});
     fixture.pass();
     fixture.document.ensure_rows(2);
 
-    // The call row offers both follows; a row with no reference offers neither
-    // but still a Back.
     QMenu referenced;
     view.populate_menu(referenced, 0);
     QAction* follow        = action(referenced, QStringLiteral("Follow"));
@@ -695,7 +668,6 @@ TEST_CASE("the disassembly view follows an instruction's referenced address", "[
     CHECK(action(plain, QStringLiteral("Follow in Memory View")) == nullptr);
     CHECK(action(plain, QStringLiteral("Back")) != nullptr);
 
-    // "Follow in Memory View" only announces the address; the listing stays put.
     std::uint64_t requested = 0;
     QObject::connect(&view,
                      &DisassemblyView::followInMemoryViewRequested,
@@ -709,12 +681,10 @@ TEST_CASE("the disassembly view follows an instruction's referenced address", "[
     CHECK(view.first_address() == kCode);
     CHECK_FALSE(view.can_go_back());
 
-    // "Follow" moves the listing onto the target and enables Back.
     follow->trigger();
     CHECK(view.first_address() == kCode + 5);
     REQUIRE(view.can_go_back());
 
-    // Following the address already at the top records nothing.
     view.clear_history();
     view.navigate_to(view.first_address());
     CHECK_FALSE(view.can_go_back());
@@ -746,7 +716,6 @@ TEST_CASE("the disassembly view offers the instruction accesses command", "[ui]"
     view.resize(800, 600);
     view.show();
     view.set_first_address(kCode);
-    // MOV EAX, [RBX+0x10], then a NOP with no memory operand.
     fixture.put(kCode, {0x8B, 0x43, 0x10, 0x90});
     fixture.pass();
     fixture.document.ensure_rows(2);
@@ -769,7 +738,6 @@ TEST_CASE("the disassembly view offers the instruction accesses command", "[ui]"
     accesses->trigger();
     CHECK(requested == 0);
 
-    // A row that touches no memory disables the entry.
     QMenu plain;
     view.populate_menu(plain, 1);
     QAction* plain_accesses = action(plain, QStringLiteral("Find out what addresses this instruction accesses"));
@@ -789,13 +757,11 @@ TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
     view.resize(800, 600);
     view.show();
     view.set_first_address(kCode);
-    // PUSH RBP; MOV RBP, RSP; RET; .byte 0x06
     fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3, 0x06});
     fixture.pass();
     fixture.document.set_modules({module_image("app", kCode, 0x1000)});
     fixture.document.ensure_rows(4);
 
-    // A decoded row offers the NOP entry and no restore entry.
     QMenu decoded;
     view.populate_menu(decoded, 1);
     QAction* nop = action(decoded, QStringLiteral("NOP Instruction"));
@@ -815,7 +781,6 @@ TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
     nop->trigger();
     CHECK(requested == 1);
 
-    // A `.byte` row still shows the entry, disabled with the explanation.
     QMenu byte_row;
     view.populate_menu(byte_row, 3);
     QAction* disabled = action(byte_row, QStringLiteral("NOP Instruction"));
@@ -840,7 +805,6 @@ TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
     REQUIRE(restore != nullptr);
     CHECK(restore->toolTip().contains(QStringLiteral("MOV RBP, RSP")));
 
-    // A later row inside the region offers the same restore.
     QMenu inside;
     view.populate_menu(inside, 3);
     CHECK(action(inside, QStringLiteral("Restore Original Instruction at app+0x1")) != nullptr);
@@ -856,7 +820,6 @@ TEST_CASE("the disassembly view offers NOP Instruction and the restore", "[ui]")
     restore->trigger();
     CHECK(restored == 1);
 
-    // The listing reads the bytes the target holds: three plain NOP rows.
     CHECK(view.row_text(1) == QStringLiteral("NOP"));
     CHECK(view.row_text(2) == QStringLiteral("NOP"));
     CHECK(view.row_text(3) == QStringLiteral("NOP"));
@@ -872,11 +835,10 @@ TEST_CASE("the disassembly view offers Edit Instruction and a double-click opens
     view.resize(800, 600);
     view.show();
     view.set_first_address(kCode);
-    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0x06}); // PUSH RBP; MOV RBP, RSP; .byte 0x06
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0x06});
     fixture.pass();
     fixture.document.ensure_rows(3);
 
-    // A decoded row offers the edit entry; a `.byte` row shows it disabled.
     QMenu decoded;
     view.populate_menu(decoded, 1);
     QAction* edit = action(decoded, QStringLiteral("Edit Instruction..."));
@@ -901,7 +863,6 @@ TEST_CASE("the disassembly view offers Edit Instruction and a double-click opens
     REQUIRE(disabled != nullptr);
     CHECK_FALSE(disabled->isEnabled());
 
-    // Double-clicking empty space below the rows acts on the first row.
     requested = 99;
     const QPoint blank(10, 5000);
     QMouseEvent  double_click(QEvent::MouseButtonDblClick,
@@ -924,11 +885,10 @@ TEST_CASE("the disassembly view offers Hook Instruction", "[ui]")
     view.resize(800, 600);
     view.show();
     view.set_first_address(kCode);
-    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0x06}); // PUSH RBP; MOV RBP, RSP; .byte 0x06
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0x06});
     fixture.pass();
     fixture.document.ensure_rows(3);
 
-    // A decoded row offers the hook entry.
     QMenu decoded;
     view.populate_menu(decoded, 1);
     QAction* hook = action(decoded, QStringLiteral("Hook Instruction..."));
@@ -946,7 +906,6 @@ TEST_CASE("the disassembly view offers Hook Instruction", "[ui]")
     hook->trigger();
     CHECK(requested == 1);
 
-    // A `.byte` row shows the entry, disabled with the explanation.
     QMenu byte_row;
     view.populate_menu(byte_row, 2);
     QAction* disabled = action(byte_row, QStringLiteral("Hook Instruction..."));
@@ -974,7 +933,6 @@ TEST_CASE("the disassembly view keeps its automatic columns until a drag", "[ui]
     CHECK(address_width > 0);
     CHECK(bytes_width > 0);
 
-    // A press below the header is a selection, never a resize: the widths stay.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
     mouse_event(view, QEvent::MouseMove, QPoint(400, row_y(0)), Qt::LeftButton, Qt::LeftButton);
     mouse_event(view, QEvent::MouseButtonRelease, QPoint(400, row_y(0)), Qt::LeftButton, Qt::NoButton);
@@ -997,7 +955,6 @@ TEST_CASE("dragging the address boundary reshapes the address column", "[ui]")
     fixture.pass();
 
     const int    before = view.address_width();
-    // A press within the header's grab tolerance of the address boundary.
     const QPoint origin(before, 4);
 
     mouse_event(view, QEvent::MouseButtonPress, origin, Qt::LeftButton, Qt::LeftButton);
@@ -1021,7 +978,6 @@ TEST_CASE("dragging the bytes boundary rewraps the bytes column", "[ui]")
 {
     application();
     ViewFixture fixture;
-    // 15 bytes: redundant operand-size prefixes in front of `MOV RAX, imm64`.
     fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
 
     DisassemblyView view(fixture.document);
@@ -1032,10 +988,8 @@ TEST_CASE("dragging the bytes boundary rewraps the bytes column", "[ui]")
 
     REQUIRE(view.bytes_per_line() >= 15);
     const int wide     = view.bytes_width();
-    // The bytes boundary sits one margin and gap past the address boundary.
     const int boundary = view.address_width() + wide + 10;
 
-    // Widen to the left: one token per line, never a collapsed column.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(boundary, 4), Qt::LeftButton, Qt::LeftButton);
     mouse_event(view, QEvent::MouseMove, QPoint(-1000, 4), Qt::LeftButton, Qt::LeftButton);
     mouse_event(view, QEvent::MouseButtonRelease, QPoint(-1000, 4), Qt::LeftButton, Qt::NoButton);
@@ -1043,7 +997,6 @@ TEST_CASE("dragging the bytes boundary rewraps the bytes column", "[ui]")
     CHECK(view.bytes_per_line() == 1);
     CHECK(view.row_lines(0) == 15);
 
-    // Widen back to the right: the column grows and the row unwraps again.
     const int narrow    = view.bytes_width();
     const int boundary2 = view.address_width() + narrow + 10;
     mouse_event(view, QEvent::MouseButtonPress, QPoint(boundary2, 4), Qt::LeftButton, Qt::LeftButton);
@@ -1080,7 +1033,6 @@ TEST_CASE("the disassembly view selects the clicked instruction", "[ui]")
                      });
     CHECK_FALSE(view.selected_address().has_value());
 
-    // A left click on a row selects its address and announces it once.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
     mouse_event(view, QEvent::MouseButtonRelease, QPoint(60, row_y(0)), Qt::LeftButton, Qt::NoButton);
     REQUIRE(view.selected_address().has_value());
@@ -1089,18 +1041,15 @@ TEST_CASE("the disassembly view selects the clicked instruction", "[ui]")
     REQUIRE(last.has_value());
     CHECK(*last == kCode);
 
-    // A second click on the same row changes nothing.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
     mouse_event(view, QEvent::MouseButtonRelease, QPoint(60, row_y(0)), Qt::LeftButton, Qt::NoButton);
     CHECK(changes == 1);
 
-    // A right press targets the row under it too.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(2)), Qt::RightButton, Qt::RightButton);
     REQUIRE(view.selected_address().has_value());
     CHECK(*view.selected_address() == kCode + 2);
     CHECK(changes == 2);
 
-    // The header band clears the selection.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, 2), Qt::LeftButton, Qt::LeftButton);
     CHECK_FALSE(view.selected_address().has_value());
     CHECK(changes == 3);
@@ -1116,7 +1065,6 @@ TEST_CASE("an undecodable row cannot be the selected instruction", "[ui]")
     view.resize(800, 600);
     view.show();
     view.set_first_address(kCode);
-    // NOP, then a `.byte 0x06` the decoder cannot decode.
     fixture.put(kCode, {0x90, 0x06});
     fixture.pass();
     fixture.document.ensure_rows(2);
@@ -1125,7 +1073,6 @@ TEST_CASE("an undecodable row cannot be the selected instruction", "[ui]")
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
     REQUIRE(view.selected_address().has_value());
 
-    // The `.byte` row is not an instruction: it refuses and clears the band.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(1)), Qt::LeftButton, Qt::LeftButton);
     CHECK_FALSE(view.selected_address().has_value());
 
@@ -1160,7 +1107,6 @@ TEST_CASE("a jump clears the selected instruction", "[ui]")
     CHECK_FALSE(view.selected_address().has_value());
     CHECK(changes == 1);
 
-    // Back to a selected row: the jump home clears it again.
     mouse_event(view, QEvent::MouseButtonPress, QPoint(60, row_y(0)), Qt::LeftButton, Qt::LeftButton);
     REQUIRE(view.selected_address().has_value());
     CHECK(view.back());
@@ -1185,8 +1131,6 @@ TEST_CASE("the selected instruction survives a scroll", "[ui]")
     REQUIRE(view.selected_address().has_value());
     CHECK(*view.selected_address() == kCode);
 
-    // The address, not a pixel, is remembered: scrolling the row away and back
-    // keeps it selected.
     QKeyEvent page_down(QEvent::KeyPress, Qt::Key_PageDown, Qt::NoModifier);
     QApplication::sendEvent(&view, &page_down);
     CHECK(view.first_address() != kCode);

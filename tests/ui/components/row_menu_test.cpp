@@ -23,7 +23,7 @@ namespace
         }
         return nullptr;
     }
-} // namespace
+}
 
 TEST_CASE("the row-menu factories set the enabled flag and the explanation", "[ui]")
 {
@@ -68,7 +68,6 @@ TEST_CASE("the shared watch commands are disabled without a target", "[ui]")
     CHECK_FALSE(accesses->isEnabled());
     CHECK(writes->toolTip() == QStringLiteral("Attach to a target first."));
 
-    // A disabled entry cannot be triggered, so no command is armed.
     writes->trigger();
     accesses->trigger();
     CHECK(armed == 0);
@@ -117,7 +116,6 @@ TEST_CASE("a row-menu entry can show another action's key as a hint", "[ui]")
     // The key is copied and pinned as a widget-local hint that never claims it.
     CHECK(item->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")));
     CHECK(item->shortcutContext() == Qt::WidgetShortcut);
-    // Only the key column changes.
     CHECK(item->text() == QStringLiteral("Change value…"));
     CHECK(item->toolTip() == QStringLiteral("Writes the typed value."));
     CHECK(item->isEnabled());

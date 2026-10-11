@@ -61,7 +61,6 @@ TEST_CASE("an auto attach is skipped while a session is live", "[ui]")
     CHECK(address_list->load_table(path));
     QCoreApplication::processEvents();
 
-    // The live session is kept and the skip is reported.
     CHECK(target.pid == 42);
     CHECK(access.list_calls.load() == 0);
 
@@ -150,7 +149,6 @@ TEST_CASE("a legacy name table keeps matching through the toggle", "[ui]")
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
 
-    // A ticked toggle without a path keeps the pre-exe_path behaviour.
     const QString path = scratch_settings_file("auto_attach_legacy.skt");
     write_table_with_settings(path, "alpha", true, true);
 
@@ -178,7 +176,6 @@ TEST_CASE("a path with the toggle off is not used for auto attach", "[ui]")
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
 
-    // The toggle is off, so the empty name is the selected field: no attach.
     const QString path = scratch_settings_file("auto_attach_path_off.skt");
     write_table_with_settings(path, "", true, false, "/usr/bin/beta");
 

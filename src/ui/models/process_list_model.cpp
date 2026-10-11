@@ -171,8 +171,6 @@ namespace slopkit::ui::models
         for (int index = 0; index < static_cast<int>(processes_.size()); ++index)
         {
             const auto& info = processes_[static_cast<std::size_t>(index)];
-            // The Applications view keeps only desktop entries; the Processes
-            // view keeps everything.
             if (applications_only_ && !platform::is_desktop_application(info.exe_path, application_executables_))
             {
                 continue;
@@ -225,4 +223,4 @@ namespace slopkit::ui::models
                           });
     }
 
-} // namespace slopkit::ui::models
+}

@@ -7,9 +7,6 @@ namespace slopkit::script
 {
     namespace
     {
-        // The engine's own vocabulary, in bind order: `engine.cpp`'s install_*
-        // functions bind exactly these names. The guard test keeps the two in
-        // step, so a new global has to be added here too.
         constexpr ApiEntry kCatalog[] = {
             {           "print","print(...)",                          "Writes its arguments to the script output.",ApiKind::global_function                                                                                                                              },
             {             "mem",                 "mem",             "The target's memory: typed reads, raw bytes and writes.",           ApiKind::table},
@@ -84,10 +81,6 @@ namespace slopkit::script
             {     "hook.remove",   "hook.remove(spec)",                                  "Removes a hook and frees its cave.",  ApiKind::table_function}
         };
 
-        // The base globals `lua.open_libraries(base, string, table, math)` binds,
-        // minus `print` (the engine rebinds it). The guard test checks every name
-        // here against a live engine, so an entry for a library the engine does
-        // not open cannot creep in.
         constexpr std::string_view kLuaStandardGlobals[] = {
             "_G",     "_VERSION", "assert",   "collectgarbage", "dofile",       "error",    "getmetatable",
             "ipairs", "load",     "loadfile", "next",           "pairs",        "pcall",    "rawequal",
@@ -129,7 +122,7 @@ namespace slopkit::script
         {
             return name.find('.') != std::string_view::npos;
         }
-    } // namespace
+    }
 
     std::span<const ApiEntry> api_catalog()
     {
@@ -224,12 +217,12 @@ namespace slopkit::script
             }
             else if (character == ',' && depth == 0)
             {
-                ++parameters; // `[optional]` brackets are notation, not nesting
+                ++parameters;
             }
         }
         if (close != std::string_view::npos && close > open + 1)
         {
-            ++parameters; // one more parameter than there are top-level commas
+            ++parameters;
         }
 
         if (parameters == 0)
@@ -238,4 +231,4 @@ namespace slopkit::script
         }
         return typed < parameters ? typed : parameters - 1;
     }
-} // namespace slopkit::script
+}

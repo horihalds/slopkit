@@ -15,11 +15,8 @@ namespace slopkit::ui::widgets
 {
     class StatusLabel;
 
-    // Returns an error message, or an empty string when `text` is acceptable.
     using InputValidator = std::function<QString(const QString&)>;
 
-    // Everything an InputBox needs. An empty `ok_text` falls back to "OK"; an
-    // empty `validate` leaves the field unvalidated.
     struct InputBoxOptions
     {
         QString        title;
@@ -31,10 +28,6 @@ namespace slopkit::ui::widgets
         InputValidator validate;
     };
 
-    // A themed single-line input dialog. An optional validator runs on every
-    // edit and again on accept; while the text is invalid the OK button stays
-    // disabled and the validator's message is shown beneath the field. Nothing
-    // about its position is hard-coded - the compositor places it.
     class InputBox : public QDialog
     {
         Q_OBJECT
@@ -42,8 +35,6 @@ namespace slopkit::ui::widgets
     public:
         explicit InputBox(InputBoxOptions options, QWidget* parent = nullptr);
 
-        // Runs the box modally. The platform's window-title decoration is given
-        // the title on its own; the application display name is not appended.
         int exec() override;
 
         [[nodiscard]] QString      text() const;
@@ -51,7 +42,6 @@ namespace slopkit::ui::widgets
         [[nodiscard]] QPushButton* accept_button() const noexcept;
 
     public slots:
-        // Re-runs the validator and refuses to close while the text is invalid.
         void accept() override;
 
     protected:
@@ -68,7 +58,5 @@ namespace slopkit::ui::widgets
         QPushButton*    accept_button_ {};
     };
 
-    // Shows the box modally and returns the accepted text, or nothing when it
-    // was cancelled.
     [[nodiscard]] std::optional<QString> get_text(const InputBoxOptions& options, QWidget* parent);
-} // namespace slopkit::ui::widgets
+}

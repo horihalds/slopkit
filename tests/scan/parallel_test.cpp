@@ -4,8 +4,6 @@
 
 TEST_CASE("a parallel first scan matches the sequential one", "[scan]")
 {
-    // Large enough to span two 32 MB shards so the pool really has work to
-    // hand out, with one sparse `int32 == 15` needle per MiB.
     constexpr std::size_t  kBufferBytes = 40u << 20;
     std::vector<std::byte> bytes(kBufferBytes);
     std::size_t            expected = 0;
@@ -98,7 +96,6 @@ TEST_CASE("a parallel scan can be cancelled", "[scan]")
     engine.first_scan(exact_config(ValueType::int32, 10), slopkit::scan::make_buffer_source(small, kBase));
     REQUIRE(wait(engine).hit_count == 8);
 
-    // A large, deliberately slow source that the cancellation can interrupt.
     auto                        data = std::make_shared<std::vector<std::byte>>(8u << 20);
     slopkit::scan::MemorySource slow;
     slow.read = [data](std::uint64_t address, std::size_t size) -> std::expected<std::vector<std::byte>, AccessError>
@@ -182,7 +179,6 @@ TEST_CASE("scanned bytes advance monotonically during a scan", "[scan]")
 
 TEST_CASE("a parallel refinement matches the sequential one", "[scan]")
 {
-    // 1 MiB of dense `int32 == 7`, so the result set spans hundreds of batches.
     constexpr std::size_t  kBytes = 1u << 20;
     std::vector<std::byte> buffer(kBytes);
     for (std::size_t offset = 0; offset + sizeof(std::int32_t) <= kBytes; offset += 4)
@@ -256,7 +252,6 @@ TEST_CASE("a refinement coalesces its reads into 4 KiB batches", "[scan]")
     REQUIRE(snapshot.state == ScanState::done);
     CHECK(snapshot.hit_count == kBytes / 4);
 
-    // One read per 4 KiB batch, not one per candidate, and no fallback reads.
     CHECK(counter->read_into_calls.load() <= kBytes / (4 * 1024) + 1);
     CHECK(counter->read_calls.load() == 0);
 }

@@ -18,7 +18,6 @@
 
 namespace slopkit::ui::models
 {
-
     namespace
     {
         int compare_bytes(const std::vector<std::byte>& lhs, const std::vector<std::byte>& rhs)
@@ -31,8 +30,6 @@ namespace slopkit::ui::models
             return lhs < rhs ? -1 : (lhs > rhs ? 1 : 0);
         }
 
-        // Ordering tier: main-image hits (0) before other module-backed hits (1)
-        // before the dynamic ones (2).
         int hit_tier(const ui::ModuleSpans& spans, std::uint64_t address)
         {
             if (const ui::ModuleSpan* main = spans.main();
@@ -42,7 +39,7 @@ namespace slopkit::ui::models
             }
             return spans.containing(address) != nullptr ? 1 : 2;
         }
-    } // namespace
+    }
 
     FoundResultsModel::FoundResultsModel(QObject* parent)
         : QAbstractTableModel(parent), hits_(std::make_shared<const std::vector<scan::ScanHit>>())
@@ -254,7 +251,6 @@ namespace slopkit::ui::models
         {
             return ui::format_cell_address_full(ui::AddressMode::module_relative, module_spans_, hit->address);
         }
-        // Copy keeps the untruncated name so a pasted address still resolves.
         return ui::format_cell_address_full(address_mode_, module_spans_, hit->address) + QStringLiteral(": ")
              + to_qstring(scan::format_value(config_.value_type, hit->value, config_.hex));
     }
@@ -314,11 +310,6 @@ namespace slopkit::ui::models
         return cells_.at(static_cast<std::size_t>(row));
     }
 
-    // Shows the top `scan::kDisplayPage` rows of the whole-list ordering: the
-    // main-image hits first, then the other module-backed hits, then the dynamic
-    // ones, each group ordered by the current sort column with the address as the
-    // tie-breaker. The whole source range is considered through std::partial_sort,
-    // so only the visible window is ordered and kept.
     void FoundResultsModel::rebuild_window()
     {
         const std::size_t total = hits_->size();
@@ -331,9 +322,6 @@ namespace slopkit::ui::models
                           order_.end(),
                           [this](int lhs, int rhs)
                           {
-                              // The tier groups the main image, the other
-                              // module-backed hits and the dynamic hits; the
-                              // sort order only orders within each group.
                               const int left_tier =
                                   hit_tier(module_spans_, (*hits_)[static_cast<std::size_t>(lhs)].address);
                               const int right_tier =
@@ -378,4 +366,4 @@ namespace slopkit::ui::models
         }
     }
 
-} // namespace slopkit::ui::models
+}

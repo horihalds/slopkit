@@ -21,8 +21,6 @@
 
 namespace
 {
-    // A shared counter, so the parent can tell the child kept running across a
-    // validation: the child's own copy of a private variable would be invisible.
     class ValidateChild
     {
     public:
@@ -83,7 +81,6 @@ namespace
         volatile std::uint64_t* counter_ {nullptr};
     };
 
-    // A modest readable region of the child, small enough to probe whole.
     std::optional<slopkit::platform::MappedRegion> small_readable_region(std::uint32_t pid)
     {
         for (const auto& region : slopkit::platform::read_maps(pid))
@@ -110,7 +107,7 @@ namespace
         }
         FAIL("the target stopped making progress");
     }
-} // namespace
+}
 
 TEST_CASE("linux-proc validates mapped and unmapped ranges through the ABI", "[linux_proc][validate]")
 {
@@ -130,7 +127,6 @@ TEST_CASE("linux-proc validates mapped and unmapped ranges through the ABI", "[l
     auto region = small_readable_region(child.pid());
     REQUIRE(region.has_value());
 
-    // A mapped, readable range is valid, in whole and in part.
     auto part = session->validate_memory(region->start, 8);
     REQUIRE(part.has_value());
     CHECK(*part);
@@ -139,15 +135,12 @@ TEST_CASE("linux-proc validates mapped and unmapped ranges through the ABI", "[l
     REQUIRE(whole.has_value());
     CHECK(*whole);
 
-    // The target keeps running across the validations.
     wait_for_progress(child);
 
-    // An unmapped address is a successful "no", never an error.
     auto zero = session->validate_memory(0, 8);
     REQUIRE(zero.has_value());
     CHECK_FALSE(*zero);
 
-    // A range that starts mapped and overruns the mapping end is invalid.
     const auto maps = slopkit::platform::read_maps(child.pid());
     REQUIRE_FALSE(maps.empty());
     const auto last    = maps.back();
@@ -155,7 +148,6 @@ TEST_CASE("linux-proc validates mapped and unmapped ranges through the ABI", "[l
     REQUIRE(overrun.has_value());
     CHECK_FALSE(*overrun);
 
-    // A zero size is an argument error, not a "no".
     auto empty = session->validate_memory(region->start, 0);
     REQUIRE_FALSE(empty.has_value());
     CHECK(empty.error() == slopkit::process::AccessError::invalid_argument);
@@ -187,12 +179,10 @@ TEST_CASE("wine-proton validation falls back to the host probe for a native targ
     REQUIRE(mapped.has_value());
     CHECK(*mapped);
 
-    // An unmapped address is a successful "no", never an error.
     const auto unmapped = session->validate_memory(0, 8);
     REQUIRE(unmapped.has_value());
     CHECK_FALSE(*unmapped);
 
-    // A zero size is still an argument error, checked before the agent.
     const auto empty = session->validate_memory(region->start, 0);
     REQUIRE_FALSE(empty.has_value());
     CHECK(empty.error() == slopkit::process::AccessError::invalid_argument);

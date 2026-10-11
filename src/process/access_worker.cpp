@@ -18,14 +18,8 @@
 
 namespace slopkit::process
 {
-
     namespace
     {
-        // Reads one byte from the target to learn whether its memory is actually
-        // reachable: an attach and the process metadata can succeed while every
-        // read is refused (e.g. Yama denies a target slopkit is not an ancestor
-        // of). Returns the reason on failure, or nullopt when the read succeeds
-        // or there is no address worth probing.
         std::optional<AccessError> check_memory_access(Session& session, std::span<const ModuleInfo> modules)
         {
             std::uint64_t address = 0;
@@ -60,9 +54,6 @@ namespace slopkit::process
             return std::nullopt;
         }
 
-        // The name a region belongs to: the loaded module whose image contains
-        // the region's start, else the filename of the region's backing file. An
-        // anonymous mapping has no name.
         std::string module_name_for(const RegionInfo& region, std::span<const ModuleInfo> modules)
         {
             const auto owner =
@@ -82,8 +73,6 @@ namespace slopkit::process
             return {};
         }
 
-        // Decodes a little-endian pointer of at most eight bytes; a shorter read
-        // is padded with zeroes.
         std::uint64_t decode_pointer(std::span<const std::byte> bytes)
         {
             std::uint64_t value = 0;
@@ -94,8 +83,6 @@ namespace slopkit::process
             return value;
         }
 
-        // A log record is one line (docs/LOGGING.md), so a printed string or a
-        // Lua error that carries a newline is flattened before it is logged.
         std::string one_line(std::string_view text)
         {
             std::string line {text};
@@ -104,19 +91,14 @@ namespace slopkit::process
             return line;
         }
 
-        // The interesting part of a Lua error: its message, without the
-        // traceback that follows it.
         std::string error_message(std::string_view text)
         {
             return one_line(text.substr(0, text.find('\n')));
         }
-    } // namespace
+    }
 
     AccessWorker::AccessWorker(ProcessAccess& access, script::SymbolTable& symbols) : access_(access), symbols_(symbols)
     {
-        // A std::jthread may run its start routine before its constructor
-        // returns, so run() must not be reachable while the members it touches
-        // (mutex_, cv_, requests_, completion_hook_) are still being built.
         worker_ = std::jthread {[this](std::stop_token token)
                                 {
                                     run(token);
@@ -126,13 +108,8 @@ namespace slopkit::process
 
     AccessWorker::~AccessWorker()
     {
-        // Stop the worker and wait for the in-flight call before touching the
-        // queues, so no callback can be invoked while its owner is destroyed and
-        // no worker thread outlives the App.
         worker_.request_stop();
         {
-            // stopping_ is what the wait predicate reads, so it is published
-            // under the mutex that guards it, like submit() does with the queue.
             const std::lock_guard lock(mutex_);
             stopping_ = true;
             cv_.notify_all();
@@ -143,7 +120,7 @@ namespace slopkit::process
         }
 
         const std::lock_guard lock(mutex_);
-        completions_.clear(); // Pending callbacks are dropped, never invoked.
+        completions_.clear();
         requests_.clear();
         completion_hook_ = nullptr;
 
@@ -178,8 +155,6 @@ namespace slopkit::process
             log::debug(log::category::process,
                        std::format("completed job {} ({})", request.id, job_kind_name(request.kind)));
 
-            // A stop request that arrived while the job ran drops the result
-            // instead of delivering it after shutdown started.
             if (token.stop_requested())
             {
                 break;
@@ -189,15 +164,10 @@ namespace slopkit::process
             completions_.push_back(Completion {std::move(request.on_done), std::move(result)});
             if (completion_hook_)
             {
-                // Worker thread: the hook only posts a wake-up, it never touches
-                // the UI.
                 completion_hook_();
             }
         }
 
-        // Both loop exits (the stopping_ check at the top and the mid-job
-        // break) land here, so the hooks always run before the thread returns
-        // and the destructor's join makes the caller's exit wait for them.
         deactivate_active_scripts();
     }
 
@@ -232,7 +202,6 @@ namespace slopkit::process
                 completions_.pop_front();
             }
 
-            // Run outside the lock, on the calling (UI) thread.
             if (completion.on_done)
             {
                 completion.on_done(std::move(completion.result));
@@ -340,9 +309,6 @@ namespace slopkit::process
 
     bool AccessWorker::submit_read_many(JobId id, std::vector<ReadManyItem> items, JobCallback on_done)
     {
-        // The live pass batches a bounded set of displayed values; a runaway
-        // list is a programming error, so refuse it instead of monopolising the
-        // worker.
         constexpr std::size_t kMaxItems = 1024;
         if (items.size() > kMaxItems)
         {
@@ -365,9 +331,6 @@ namespace slopkit::process
                                                   std::size_t                  pointer_size,
                                                   JobCallback                  on_done)
     {
-        // The re-resolution pass batches a bounded set of displayed entries; a
-        // runaway list is a programming error, so refuse it instead of
-        // monopolising the worker.
         constexpr std::size_t kMaxItems = 1024;
         if (requests.size() > kMaxItems)
         {
@@ -564,7 +527,6 @@ namespace slopkit::process
     {
         ProbeResult result;
 
-        // The probe uses a throwaway session: it never becomes the app session.
         auto probe = access_.attach(request.pid, request.plugin_id);
         if (!probe)
         {
@@ -623,8 +585,6 @@ namespace slopkit::process
                     "attach to pid {} via {} failed: {}", request.pid, request.plugin_id, describe(*result.error)));
             if (!handoff)
             {
-                // A failed re-attach leaves no session behind, matching the old
-                // synchronous attach that cleared the target first.
                 session_.reset();
                 engine_.reset();
                 clear_active_scripts();
@@ -641,8 +601,6 @@ namespace slopkit::process
 
         if (handoff)
         {
-            // The panel takes over the session and reads the target itself, but
-            // it still needs the metadata, notably the suspend capability.
             result.info           = std::move(info);
             result.handed_session = std::move(*attached);
             return result;
@@ -663,8 +621,6 @@ namespace slopkit::process
 
         result.info          = std::move(info);
         session_             = std::move(*attached);
-        // One engine per session: its Lua state, globals included, is reused by
-        // every run against this target and dropped with the session.
         script_pointer_size_ = 8;
         engine_.emplace(memory_api(), symbol_api());
         clear_active_scripts();
@@ -715,8 +671,6 @@ namespace slopkit::process
 
         if (!session_)
         {
-            // No session at all: every requested address is unreadable, but the
-            // batch still completes so the caller's in-flight guard clears.
             result.items.assign(request.read_items.size(), std::unexpected(AccessError::internal));
             log::warning(log::category::process,
                          std::format("batched read of {} address(es) requested without an attached target",
@@ -732,8 +686,6 @@ namespace slopkit::process
             {
                 if (*read < bytes.size())
                 {
-                    // A short read still carries usable bytes; keep only what
-                    // the backend actually produced.
                     bytes.resize(*read);
                 }
                 result.items.emplace_back(std::move(bytes));
@@ -852,9 +804,6 @@ namespace slopkit::process
         {
             return script_pointer_size_ == 0 ? sizeof(void*) : script_pointer_size_;
         };
-        // The lambdas read the worker's session rather than capture it, so they
-        // never outlive it: a script only ever runs inside a script job, where
-        // the session is present.
         api.read = [this](std::uint64_t address, std::size_t size) -> std::expected<std::vector<std::byte>, std::string>
         {
             if (!session_)
@@ -880,8 +829,6 @@ namespace slopkit::process
             }
             return {};
         };
-        // The region list `aobscan` walks. Module names are best-effort: a target
-        // that cannot list modules still scans, its regions just carry no name.
         api.regions = [this]() -> std::expected<std::vector<script::MemoryRegion>, std::string>
         {
             if (!session_)
@@ -914,8 +861,6 @@ namespace slopkit::process
             }
             return regions;
         };
-        // Target allocation, from the plugin ABI 1.6 operations. A session whose
-        // plugin leaves the slots null reports `unsupported` here.
         api.allocate = [this](std::size_t size, std::uint64_t near) -> std::expected<std::uint64_t, std::string>
         {
             if (!session_)
@@ -956,9 +901,6 @@ namespace slopkit::process
             log::debug(log::category::script, std::format("freed allocation at {:#x}", address));
             return {};
         };
-        // Address validation from the plugin ABI 1.7 operation (or the host's
-        // probe-read fallback). No log record per call: it would fire once per
-        // level per row per resolve pass.
         api.validate = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
         {
             if (!session_)
@@ -972,8 +914,6 @@ namespace slopkit::process
             }
             return *valid;
         };
-        // The module snapshot `expression` resolves module names against, in the
-        // same shape the resolve job passes to `expr::evaluate`.
         api.modules = [this]() -> std::expected<std::vector<expr::ModuleRef>, std::string>
         {
             if (!session_)
@@ -999,8 +939,6 @@ namespace slopkit::process
     script::SymbolApi AccessWorker::symbol_api()
     {
         script::SymbolApi api = symbols_.api();
-        // Wrap the table's closures so each write is traced under the `script`
-        // category; a rejected name is reported by the engine, not here.
         script::SymbolApi logging;
         logging.set = [inner = api.set](std::string_view name, std::uint64_t value) -> std::expected<void, std::string>
         {
@@ -1020,7 +958,6 @@ namespace slopkit::process
             }
             return result;
         };
-        // A read, not a mutation, so it is passed through without a log record.
         logging.lookup = [inner = api.lookup](std::string_view name) -> std::optional<std::uint64_t>
         {
             return inner(name);
@@ -1034,9 +971,6 @@ namespace slopkit::process
         result.id          = request.id;
         result.description = request.description;
 
-        // Refuse before running anything when there is no target, so a script
-        // can never touch a stale session. The caller turns this into the
-        // message it shows and logs.
         if (!session_ || !engine_)
         {
             if (request.function.empty())
@@ -1083,8 +1017,6 @@ namespace slopkit::process
 
     void AccessWorker::remember_lifecycle(const Request& request, const ScriptResult& result)
     {
-        // A plain run or a refusal leaves the tracked set alone, so it mirrors
-        // the Active checkbox: only an accepted hook changes it.
         if (!result.lifecycle.has_value() || !result.lifecycle->ok)
         {
             return;
@@ -1112,16 +1044,12 @@ namespace slopkit::process
                                         const std::optional<std::uint64_t>&   interval_ms,
                                         std::chrono::steady_clock::time_point now)
     {
-        // The pass iterates a copy, so the record is looked up again here. A
-        // script that deactivated itself in this pass has no record left.
         const auto found = std::ranges::find(active_scripts_, description, &ActiveScript::description);
         if (found == active_scripts_.end())
         {
             return;
         }
         found->last_tick = now;
-        // Only a tick that declared an interval re-tunes the cadence; one that
-        // declared nothing keeps the value its `activate` left behind.
         if (interval_ms)
         {
             found->interval_ms = interval_ms;
@@ -1135,8 +1063,6 @@ namespace slopkit::process
             return;
         }
 
-        // The verdict cannot be acted on: nobody is left to follow a refusal
-        // and the exit must not be delayed by trying again.
         std::vector<ActiveScript> pending = std::move(active_scripts_);
         clear_active_scripts();
 
@@ -1189,39 +1115,28 @@ namespace slopkit::process
     {
         ScriptUpdatesResult result;
 
-        // Nothing to tick without a target; the pass is simply not due, so no
-        // record is written either.
         if (!session_ || !engine_)
         {
             return result;
         }
 
-        // Iterate a copy: a failing script erases itself from the tracked set,
-        // and every other script must still be ticked in activation order.
         const std::vector<ActiveScript> pending = active_scripts_;
         const auto                      now     = std::chrono::steady_clock::now();
         for (const ActiveScript& script : pending)
         {
-            // A script's own declared interval only ever slows it down: the pass
-            // still arrives at the Settings interval, and a script that has not
-            // reached its own cadence is left alone while the others tick on.
             if (script.last_tick && script.interval_ms)
             {
                 const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - *script.last_tick);
                 if (elapsed.count() >= 0 && static_cast<std::uint64_t>(elapsed.count()) < *script.interval_ms)
                 {
-                    continue; // this script's own cadence has not elapsed yet
+                    continue;
                 }
             }
 
             const script::UpdateResult outcome = engine_->run_update(script.chunk);
-            // `outcome.output` is dropped on purpose: a hook that runs at the
-            // user's interval cannot feed the Log window without flooding it.
 
             if (outcome.ok)
             {
-                // A script without an `update` of its own is a silent skip, so
-                // only a hook that actually ran counts as updated.
                 if (outcome.ran)
                 {
                     ++result.updated;
@@ -1230,9 +1145,6 @@ namespace slopkit::process
                 continue;
             }
 
-            // The tick failed: undo whatever activate() did and stop tracking
-            // the script, in this same job. The UI clears the tick from this
-            // completion, so it must not submit a deactivate of its own.
             deactivate_and_report(script, "after a failed update");
             std::erase_if(active_scripts_,
                           [&](const ActiveScript& tracked)
@@ -1257,9 +1169,6 @@ namespace slopkit::process
     {
         SuspendResult result;
 
-        // Refuse without touching the target when there is no session or the
-        // worker's session is not the pid the caller prepared the job for: a
-        // target replaced between the click and the job must not be stopped.
         if (!session_)
         {
             result.error = AccessError::unsupported;
@@ -1327,8 +1236,6 @@ namespace slopkit::process
     AttachResult AccessWorker::do_detach()
     {
         session_.reset();
-        // The Lua state belongs to the session: dropping it drops the script
-        // globals, so a later attach starts from a clean state.
         engine_.reset();
         clear_active_scripts();
         attached_ = false;
@@ -1341,8 +1248,6 @@ namespace slopkit::process
 
         if (!session_)
         {
-            // No session at all: the whole batch fails so the caller's in-flight
-            // guard clears, but nothing is read.
             result.error = AccessError::internal;
             log::warning(log::category::process,
                          std::format("resolve of {} expression(s) requested without an attached target",
@@ -1360,9 +1265,6 @@ namespace slopkit::process
             }
             return decode_pointer(*bytes);
         };
-        // Validate each dereference through the session's ABI 1.7 operation (or
-        // the host probe fallback), so a failing level names the level and the
-        // address instead of the reader's raw error.
         const auto validator = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
         {
             const auto valid = session_->validate(address, size);
@@ -1375,8 +1277,6 @@ namespace slopkit::process
 
         result.items.reserve(request.resolve_items.size());
         std::size_t                        failed  = 0;
-        // One snapshot for the whole batch: the symbols are resolved on this
-        // thread while scripts may write the table on it, guarded by the table.
         const std::vector<expr::SymbolRef> symbols = symbols_.snapshot();
         for (const auto& item : request.resolve_items)
         {
@@ -1415,4 +1315,4 @@ namespace slopkit::process
         return result;
     }
 
-} // namespace slopkit::process
+}

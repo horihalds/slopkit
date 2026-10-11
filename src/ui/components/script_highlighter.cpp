@@ -9,13 +9,8 @@
 
 namespace slopkit::ui::components
 {
-
     namespace
     {
-        // The block state a continuation line carries: 0 is ordinary source,
-        // `kStringStateBase + 2*level` is inside a long string and
-        // `kCommentStateBase + 2*level` is inside a long comment, where `level`
-        // is the number of `=` signs in the opening bracket.
         constexpr int kNormalState      = 0;
         constexpr int kStringStateBase  = 1;
         constexpr int kCommentStateBase = 2;
@@ -40,7 +35,6 @@ namespace slopkit::ui::components
             return (state - (is_comment_state(state) ? kCommentStateBase : kStringStateBase)) / 2;
         }
 
-        // The Lua keywords, in one place.
         const QSet<QString>& keywords()
         {
             static const QSet<QString> set {
@@ -54,9 +48,6 @@ namespace slopkit::ui::components
             return set;
         }
 
-        // Every global the script API and the Lua standard library define, straight
-        // from the catalogue, so the highlighter cannot drift from the completion
-        // list and a name is highlighted iff the engine actually exposes it.
         const QSet<QString>& api_globals()
         {
             static const QSet<QString> set = []
@@ -85,8 +76,6 @@ namespace slopkit::ui::components
             return format;
         }
 
-        // Matches a long-bracket opener `[=*[` at `index`; returns the offset
-        // just past the second bracket and reports the `=` count, or -1.
         [[nodiscard]] int long_bracket_open(const QString& text, int index, int* level)
         {
             if (index >= text.size() || text.at(index) != QLatin1Char('['))
@@ -108,8 +97,6 @@ namespace slopkit::ui::components
             return -1;
         }
 
-        // The offset just past the matching `]=*]` for `level`, or -1 when the
-        // block ends before it closes.
         [[nodiscard]] int long_bracket_close(const QString& text, int from, int level)
         {
             const QString close = QStringLiteral("]") + QString(level, QLatin1Char('=')) + QStringLiteral("]");
@@ -117,8 +104,6 @@ namespace slopkit::ui::components
             return at < 0 ? -1 : at + close.size();
         }
 
-        // The offset just past a short string starting at the quote `index`
-        // handles escapes; an unterminated string ends with the block.
         [[nodiscard]] int short_string_end(const QString& text, int index)
         {
             const QChar quote = text.at(index);
@@ -146,7 +131,6 @@ namespace slopkit::ui::components
                 || (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
         }
 
-        // The offset just past `[pP]`/`[eE]` and its optional sign and digits.
         [[nodiscard]] int exponent_end(const QString& text, int index)
         {
             int i = index + 1;
@@ -161,8 +145,6 @@ namespace slopkit::ui::components
             return i;
         }
 
-        // The offset just past a number literal starting at `index` (which is a
-        // digit, or a `.` followed by one): decimal, hex, float and exponent.
         [[nodiscard]] int number_end(const QString& text, int index)
         {
             int i = index;
@@ -217,7 +199,7 @@ namespace slopkit::ui::components
         {
             return ch.isLetterOrNumber() || ch == QLatin1Char('_');
         }
-    } // namespace
+    }
 
     ScriptHighlighter::ScriptHighlighter(QTextDocument* document) : QSyntaxHighlighter(document) {}
 
@@ -233,8 +215,6 @@ namespace slopkit::ui::components
 
         int index = 0;
 
-        // A long string or long comment left open on the previous block carries
-        // over; find where it closes, or colour the rest and keep the state.
         const int incoming = previousBlockState();
         if (incoming > 0)
         {
@@ -262,7 +242,6 @@ namespace slopkit::ui::components
                 continue;
             }
 
-            // `--` starts a comment; `--[[`/`--[=[` a long one.
             if (ch == QLatin1Char('-') && index + 1 < text.size() && text.at(index + 1) == QLatin1Char('-'))
             {
                 int       level = 0;
@@ -281,10 +260,9 @@ namespace slopkit::ui::components
                     continue;
                 }
                 setFormat(index, text.size() - index, comment_format);
-                return; // a line comment runs to the end of the block
+                return;
             }
 
-            // `[[`/`[=[` starts a long string.
             if (ch == QLatin1Char('['))
             {
                 int       level = 0;
@@ -304,7 +282,6 @@ namespace slopkit::ui::components
                 }
             }
 
-            // A short string, single or double quoted.
             if (ch == QLatin1Char('"') || ch == QLatin1Char('\''))
             {
                 const int end = short_string_end(text, index);
@@ -313,7 +290,6 @@ namespace slopkit::ui::components
                 continue;
             }
 
-            // A number, including a leading `.` fraction.
             if (ch.isDigit() || (ch == QLatin1Char('.') && index + 1 < text.size() && text.at(index + 1).isDigit()))
             {
                 const int end = number_end(text, index);
@@ -322,7 +298,6 @@ namespace slopkit::ui::components
                 continue;
             }
 
-            // An identifier: a keyword, an API global, or nothing.
             if (is_identifier_start(ch))
             {
                 int end = index + 1;
@@ -349,4 +324,4 @@ namespace slopkit::ui::components
         setCurrentBlockState(kNormalState);
     }
 
-} // namespace slopkit::ui::components
+}

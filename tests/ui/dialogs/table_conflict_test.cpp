@@ -10,13 +10,10 @@
 
 #include "ui/dialogs/table_conflict.hpp"
 
-// Defined in test_main.cpp; the single QApplication every widget suite shares.
 QApplication& slopkit_test_application();
 
 namespace
 {
-    // A QApplication may only exist once per process, so every case uses the one
-    // instance the whole test binary shares.
     void ensure_application()
     {
         static_cast<void>(slopkit_test_application());
@@ -36,8 +33,6 @@ namespace
         };
     }
 
-    // Runs `action` on the next visible conflict prompt from inside a nested
-    // event loop; used to drive the modal dialog a test cannot reach directly.
     void on_dialog(const std::function<void(TableConflictDialog&)>& action)
     {
         QTimer::singleShot(0,
@@ -55,8 +50,6 @@ namespace
                            });
     }
 
-    // Runs the prompt and clicks the button with `label`, or rejects it when the
-    // button is missing.
     TableConflictChoice choose(const QString& label)
     {
         TableConflictDialog dialog {sample_info()};
@@ -77,8 +70,6 @@ namespace
         return dialog.choice();
     }
 
-    // Concatenated label texts, so a test can look for a path or a count without
-    // caring which line it landed on.
     QString all_label_text(const TableConflictDialog& dialog)
     {
         QString text;
@@ -115,7 +106,7 @@ namespace
                         merge_is_default = button->isDefault();
                     }
                 }
-                shown.reject(); // the window close button and Esc map to Cancel
+                shown.reject();
             });
         dialog.exec();
 
@@ -165,4 +156,4 @@ namespace
         CHECK(all_label_text(dialog).contains(QStringLiteral("never saved")));
     }
 
-} // namespace
+}

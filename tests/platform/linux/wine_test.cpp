@@ -56,7 +56,7 @@ namespace
         }
         return false;
     }
-} // namespace
+}
 
 TEST_CASE("wine detection classifies synthetic processes", "[wine]")
 {

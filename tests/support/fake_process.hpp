@@ -26,33 +26,16 @@
 
 namespace slopkit::test
 {
-
-    // A QApplication may only exist once per process; every widget suite shares
-    // the one `test_main.cpp` creates.
     QApplication& application();
 
-    // Two processes both the UI and the worker suites can list.
     std::vector<process::ProcessInfo> sample_processes();
 
-    // A file-backed image at `base`, and a label for `name`.
     process::ModuleInfo module_image(std::string_view name, std::uint64_t base, std::uint64_t size);
 
-    // A fully-populated attached target for the suites that do not drive a real attach.
     process::AttachedTarget fake_target();
 
-    // A fresh settings file under `SLOPKIT_TMP_DIR/<suite>`; the previous file is
-    // removed so a case never reads another case's leftovers.
     QString scratch_settings_file(std::string_view suite, std::string_view name);
 
-    // The bytes a fake target serves. Which member a suite seeds decides how the
-    // fake reads:
-    //   * `windows` — address-keyed fixed windows (the UI suites); an unmapped
-    //     address reads as an empty buffer,
-    //   * `flat` at `base` — one flat window (the worker suite); out-of-range
-    //     reads fail with `not_found`,
-    //   * `bytes` — sparse per-byte overrides (the memory-view suite); every other
-    //     byte reads as zero.
-    // Writes go back into `flat` or `bytes`; a window-only fake is read-only.
     struct FakeMemory
     {
         std::map<std::uint64_t, std::vector<std::byte>> windows;
@@ -65,7 +48,6 @@ namespace slopkit::test
             return windows[address];
         }
 
-        // Sparse per-byte accessor: a read defaults to zero, a write stores the byte.
         [[nodiscard]] std::byte& at(std::uint64_t address)
         {
             return bytes[address];
@@ -76,7 +58,6 @@ namespace slopkit::test
         std::expected<std::size_t, process::AccessError> write(std::uint64_t address, std::span<const std::byte> data);
     };
 
-    // A tiny in-memory target a Session can wrap.
     class FakeBackend final : public process::SessionBackend
     {
     public:
@@ -85,11 +66,7 @@ namespace slopkit::test
 
         std::shared_ptr<FakeMemory>                        memory;
         std::shared_ptr<std::set<std::uint64_t>>           unreadable {std::make_shared<std::set<std::uint64_t>>()};
-        // When set, every read fails with this error, modelling a target whose
-        // metadata is readable but whose memory cannot be.
         std::optional<process::AccessError>                read_error;
-        // `module_list` wins when non-empty; otherwise `module_count` blank images
-        // are reported, with a file-backed main image at the flat window's base.
         std::vector<process::ModuleInfo>                   module_list;
         std::vector<process::RegionInfo>                   region_list;
         std::size_t                                        module_count {0};
@@ -106,9 +83,6 @@ namespace slopkit::test
         std::optional<process::AccessError>                resume_error;
         std::atomic<int>                                   suspends {0};
         std::atomic<int>                                   resumes {0};
-        // Shared counters owned by the FakeAccess that built this backend, so a
-        // test observes suspend/resume jobs from outside the worker, whichever
-        // session (app or handoff) the backend belongs to.
         std::shared_ptr<std::atomic<int>>                  suspend_calls;
         std::shared_ptr<std::atomic<int>>                  resume_calls;
         // Allocation capability and recording. `can_allocate` gates the
@@ -155,8 +129,6 @@ namespace slopkit::test
         std::expected<bool, process::AccessError>          validate(std::uint64_t address, std::size_t size) override;
     };
 
-    // A ProcessAccess serving a fixed process list that can be told to fail the
-    // attach, so a dialog can be driven without a real target.
     class FakeAccess final : public process::ProcessAccess
     {
     public:
@@ -206,4 +178,4 @@ namespace slopkit::test
         return done();
     }
 
-} // namespace slopkit::test
+}

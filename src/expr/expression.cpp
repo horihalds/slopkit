@@ -5,7 +5,6 @@
 
 namespace slopkit::expr
 {
-
     namespace
     {
         std::string_view trim(std::string_view value)
@@ -28,7 +27,6 @@ namespace slopkit::expr
             }
         }
 
-        // Reads a token up to the next '+' or ']' and trims it.
         std::string_view read_token(std::string_view text, std::size_t& pos)
         {
             const std::size_t start = pos;
@@ -41,8 +39,6 @@ namespace slopkit::expr
 
         constexpr std::size_t kMaxBracketDepth {32};
 
-        // Parses `operand ( "+" offset )*` at `pos`, appending to `expression`.
-        // A '[' operand recurses into its chain and closes with one dereference.
         std::expected<void, Error> parse_chain(
             std::string_view text, std::size_t& pos, Expression& expression, std::size_t depth, bool& saw_bracket)
         {
@@ -59,7 +55,7 @@ namespace slopkit::expr
                     return std::unexpected(Error {"more than 32 pointer levels"});
                 }
                 saw_bracket = true;
-                ++pos; // skip '['
+                ++pos;
                 skip_ws(text, pos);
                 if (pos >= text.size())
                 {
@@ -85,10 +81,8 @@ namespace slopkit::expr
                 {
                     return std::unexpected(Error {"unbalanced '['"});
                 }
-                ++pos; // skip ']'
+                ++pos;
 
-                // A group whose chain carried no offsets still dereferences its
-                // base, so it owns an entry.
                 if (expression.offsets.size() == offsets_before)
                 {
                     expression.offsets.push_back(Offset {});
@@ -119,7 +113,7 @@ namespace slopkit::expr
                 {
                     break;
                 }
-                ++pos; // skip '+'
+                ++pos;
                 skip_ws(text, pos);
                 const auto token = read_token(text, pos);
                 if (token.empty())
@@ -135,7 +129,7 @@ namespace slopkit::expr
             }
             return {};
         }
-    } // namespace
+    }
 
     std::size_t Expression::pointer_levels() const noexcept
     {
@@ -211,8 +205,6 @@ namespace slopkit::expr
             return std::unexpected(Error {"the expression is empty"});
         }
 
-        // A bracket-free expression keeps the legacy rule: one dereference
-        // between consecutive offsets, and none after the last.
         if (!saw_bracket)
         {
             for (std::size_t i = 0; i + 1 < expression.offsets.size(); ++i)
@@ -223,4 +215,4 @@ namespace slopkit::expr
         return expression;
     }
 
-} // namespace slopkit::expr
+}

@@ -34,9 +34,6 @@ namespace slopkit::ui::components
             int end;
         };
 
-        // The [begin, end) span of every top-level parameter inside a
-        // signature's parentheses; `[optional]` brackets are notation, not
-        // nesting.
         [[nodiscard]] std::vector<ParameterSpan> parameter_spans(const QString& signature)
         {
             const int open = signature.indexOf(QLatin1Char('('));
@@ -77,7 +74,7 @@ namespace slopkit::ui::components
             }
             return spans;
         }
-    } // namespace
+    }
 
     void
     ScriptCompletionModel::set_context(const QString& receiver, const QString& prefix, const QString& document_text)
@@ -87,7 +84,6 @@ namespace slopkit::ui::components
 
         const bool dotted = !receiver.isEmpty();
 
-        // The API comes first (group 0).
         for (const script::ApiEntry* entry : script::matches(receiver.toStdString(), prefix.toStdString()))
         {
             CompletionItem item;
@@ -103,7 +99,6 @@ namespace slopkit::ui::components
 
         if (!dotted)
         {
-            // The names the edited text defines (group 1), once each.
             QStringList seen;
             for (const script_context::DocumentName& name : script_context::document_names(document_text))
             {
@@ -121,8 +116,6 @@ namespace slopkit::ui::components
             }
         }
 
-        // The Lua library (group 2): the globals, or a `string`/`table`/`math`
-        // member when the receiver is one of those tables.
         if (!dotted)
         {
             for (const std::string_view global : script::lua_standard_globals())
@@ -362,7 +355,7 @@ namespace slopkit::ui::components
         int y = caret_bottom.y() + 2;
         if (y + height() > viewport_bottom.y())
         {
-            y = caret_top.y() - height() - 2; // flip above the caret line
+            y = caret_top.y() - height() - 2;
         }
         move(QPoint(caret_bottom.x(), y));
 
@@ -463,7 +456,7 @@ namespace slopkit::ui::components
         int y = caret_bottom.y() + 2;
         if (y + height > viewport_bottom.y())
         {
-            y = caret_top.y() - height - 2; // flip above the caret line
+            y = caret_top.y() - height - 2;
         }
         move(QPoint(caret_top.x(), y));
 
@@ -543,4 +536,4 @@ namespace slopkit::ui::components
             painter.drawText(QPoint(8, metrics.height() + baseline), summary_);
         }
     }
-} // namespace slopkit::ui::components
+}

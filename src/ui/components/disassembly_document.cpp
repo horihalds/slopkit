@@ -16,10 +16,8 @@
 
 namespace slopkit::ui::components
 {
-
     namespace
     {
-        // The requested read may not run past the canonical user-space ceiling.
         std::size_t clamp_size(std::uint64_t address, std::uint64_t size) noexcept
         {
             if (address > scan::kMaxUserAddress)
@@ -30,7 +28,6 @@ namespace slopkit::ui::components
             return static_cast<std::size_t>(std::min(size, room));
         }
 
-        // Space-joined `XX` tokens for one line of a row's byte column.
         QString joined_bytes(std::span<const std::byte> bytes)
         {
             std::string text;
@@ -44,7 +41,7 @@ namespace slopkit::ui::components
             }
             return to_qstring(text);
         }
-    } // namespace
+    }
 
     DisassemblyDocument::DisassemblyDocument(process::AccessWorker&   worker,
                                              process::AttachedTarget& target,
@@ -60,11 +57,6 @@ namespace slopkit::ui::components
         visible_rows_  = std::max<std::size_t>(1, visible_rows);
         first_address_ = std::min(first_address, scan::kMaxUserAddress);
 
-        // Keep the live window while the cursor stays inside it; leaving it
-        // seats the cursor on a fresh, page-aligned window and drops the pass in
-        // flight. The previous rows stay painted until the new base's payload
-        // lands - the reset happens then, keyed on the base, so a byte-identical
-        // window is re-decoded too.
         const std::uint64_t base = window_base_for(first_address_);
         if (!window_anchored_ || base != window_base_)
         {
@@ -152,8 +144,6 @@ namespace slopkit::ui::components
         }
         machine_mode_ = mode;
 
-        // The same bytes decode differently, so the cache has to go; the bytes
-        // themselves are mode-independent and stay.
         instructions_.clear();
         decoded_offset_   = 0;
         decode_exhausted_ = false;
@@ -251,7 +241,7 @@ namespace slopkit::ui::components
     {
         if (!pending_.has_value() || !target_.valid() || target_.pid != requested_pid_)
         {
-            return; // Nothing was submitted, or the target moved on in flight.
+            return;
         }
 
         const ui::LiveReading* reading = nullptr;
@@ -265,15 +255,12 @@ namespace slopkit::ui::components
         }
         if (reading == nullptr)
         {
-            return; // Not our window.
+            return;
         }
 
         bool dirty = false;
         if (reading->readable && !reading->bytes.empty())
         {
-            // Re-decode when this window's payload is new for its base. Keying
-            // on the base and not the bytes re-decodes a byte-identical window
-            // (all-NOP pages) as well.
             const bool same_base = decoded_base_.has_value() && *decoded_base_ == pending_->base;
             if (!same_base || bytes_ != reading->bytes)
             {
@@ -303,8 +290,6 @@ namespace slopkit::ui::components
 
     std::size_t DisassemblyDocument::ensure_rows(std::size_t minimum)
     {
-        // Only sweep the window whose payload has actually landed; while a step
-        // is in flight the previous window's rows stay painted untouched.
         if (!readable_ || !decoded_base_.has_value() || *decoded_base_ != window_base_ || decode_exhausted_
             || instructions_.size() >= minimum)
         {
@@ -324,8 +309,6 @@ namespace slopkit::ui::components
         instructions_.insert(instructions_.end(), block.begin(), block.end());
         decoded_offset_ += static_cast<std::size_t>(block.back().address - base) + block.back().length;
 
-        // `decode_block` stops early only for a truncated tail, which the window
-        // cannot extend past, so no further sweep would make progress.
         if (decoded_offset_ >= bytes_.size() || block.size() < want)
         {
             decode_exhausted_ = true;
@@ -360,11 +343,9 @@ namespace slopkit::ui::components
         }
         if (!readable_)
         {
-            return 1; // The single `??` token.
+            return 1;
         }
 
-        // How many of the instruction's bytes the decoded window holds; a byte
-        // that the window cannot cover renders as an empty row.
         const disasm::Instruction& instruction = instructions_[index];
         const std::uint64_t        base        = rows_base();
         if (instruction.address < base)
@@ -401,8 +382,6 @@ namespace slopkit::ui::components
             std::copy(
                 bytes.begin(), bytes.end(), bytes_.begin() + static_cast<std::ptrdiff_t>(address - *decoded_base_));
         }
-        // The listing shows the bytes the target now holds without waiting for
-        // the next live pass, which would reach the same bytes anyway.
         reset_decode();
         emit rowsChanged();
     }
@@ -429,7 +408,7 @@ namespace slopkit::ui::components
         }
         if (!readable_)
         {
-            return QStringLiteral("??"); // `tokens` is 1, so `first` is 0.
+            return QStringLiteral("??");
         }
 
         const disasm::Instruction& instruction = instructions_[index];
@@ -549,7 +528,7 @@ namespace slopkit::ui::components
             {
                 if (patch_write_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 patch_write_.reset();
 
@@ -606,7 +585,7 @@ namespace slopkit::ui::components
             {
                 if (patch_write_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 patch_write_.reset();
 
@@ -702,8 +681,6 @@ namespace slopkit::ui::components
             return false;
         }
 
-        // Re-assembling the original text reproduces it, so accepting the box
-        // unchanged is not an edit and records no patch.
         if (replacement->size() == originals.size()
             && std::equal(replacement->begin(), replacement->end(), originals.begin()))
         {
@@ -734,7 +711,7 @@ namespace slopkit::ui::components
             {
                 if (patch_write_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 patch_write_.reset();
 
@@ -801,10 +778,6 @@ namespace slopkit::ui::components
             return analysis;
         }
 
-        // The neighbourhood the generator decides from: every decoded row with
-        // its cached bytes and the addresses its text prints. The spans point
-        // into the document's own cache and instruction stream, which stay put
-        // for the length of the call.
         std::vector<script::HookRow> rows;
         rows.reserve(instructions_.size());
         for (const disasm::Instruction& instruction : instructions_)
@@ -857,7 +830,6 @@ namespace slopkit::ui::components
             return std::nullopt;
         }
 
-        // The last instruction whose start is at or before `address`.
         std::size_t low  = 0;
         std::size_t high = instructions_.size();
         while (low < high)
@@ -898,10 +870,6 @@ namespace slopkit::ui::components
 
     std::vector<RowSegment> DisassemblyDocument::instruction_segments(const disasm::Instruction& instruction) const
     {
-        // One classified slice of `instruction.text`: where it sits in the raw
-        // text and the run(s) that replace it. An address inside a module becomes
-        // a module-name run, a plain `+` and an immediate `0x`-prefixed RVA run;
-        // every other slice is one run.
         struct Mark
         {
             std::size_t             offset {};
@@ -938,20 +906,15 @@ namespace slopkit::ui::components
             }
 
             const ui::ModuleSpan*   span        = module_spans_.containing(ref.address);
-            // The module run paints the shortened label; it carries the full
-            // `<module>+0x<RVA>` for the hover only when the label was shortened.
             const QString           module_name = span != nullptr ? to_qstring(span->label()) : QString {};
             const QString           full        = span != nullptr && span->label() != span->name
                                                     ? ui::format_module_relative_full(*span, ref.address)
                                                     : QString {};
-            const QString           offset_text = relative->mid(module_name.size()); // "+0xRVA"
+            const QString           offset_text = relative->mid(module_name.size());
             std::vector<RowSegment> runs;
             runs.push_back({module_name, SegmentKind::module, full});
             if (!offset_text.isEmpty())
             {
-                // The separator stays in the row's own colour and the
-                // `0x`-prefixed RVA prints as the number it is, matching a
-                // memory displacement.
                 runs.push_back({offset_text.left(1), SegmentKind::plain});
                 if (const QString rva = offset_text.mid(1); !rva.isEmpty())
                 {
@@ -984,7 +947,7 @@ namespace slopkit::ui::components
         {
             if (mark.offset < cursor)
             {
-                continue; // an overlapping slice was already painted
+                continue;
             }
             if (mark.offset > cursor)
             {
@@ -1003,4 +966,4 @@ namespace slopkit::ui::components
         return segments;
     }
 
-} // namespace slopkit::ui::components
+}

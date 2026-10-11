@@ -7,7 +7,6 @@ namespace
     using slopkit::process::ScriptResult;
     using slopkit::process::ScriptUpdatesResult;
 
-    // Attaches the fake target on the worker and waits for the completion.
     bool attach_target(AccessWorker& worker)
     {
         AttachResult attached;
@@ -25,7 +24,6 @@ namespace
                     });
     }
 
-    // Submits one script job and returns its result once the completion arrived.
     ScriptResult run_script(AccessWorker& worker, std::string chunk, std::size_t pointer_size = 8)
     {
         ScriptResult result;
@@ -48,8 +46,6 @@ namespace
         return result;
     }
 
-    // Submits one lifecycle job for `function` (activate/deactivate) and returns
-    // its result once the completion arrived.
     ScriptResult run_lifecycle(AccessWorker& worker, std::string chunk, std::string function)
     {
         ScriptResult result;
@@ -72,7 +68,6 @@ namespace
         return result;
     }
 
-    // Submits one lifecycle job for a named script and returns its result.
     ScriptResult
     run_lifecycle_as(AccessWorker& worker, std::string description, std::string chunk, std::string function)
     {
@@ -96,7 +91,6 @@ namespace
         return result;
     }
 
-    // Submits one update pass and returns its result once the completion arrived.
     ScriptUpdatesResult run_updates(AccessWorker& worker)
     {
         ScriptUpdatesResult result;
@@ -115,7 +109,6 @@ namespace
         return result;
     }
 
-    // The captured records of one category, in order.
     std::vector<slopkit::log::Record> category_records(const std::vector<slopkit::log::Record>& records,
                                                        std::string_view                         category)
     {
@@ -130,7 +123,6 @@ namespace
         return filtered;
     }
 
-    // True when any record's message contains `text`.
     bool any_message_contains(const std::vector<slopkit::log::Record>& records, std::string_view text)
     {
         for (const slopkit::log::Record& record : records)
@@ -142,7 +134,7 @@ namespace
         }
         return false;
     }
-} // namespace
+}
 
 TEST_CASE("submissions do not block and completions arrive after the job finishes", "[process]")
 {
@@ -158,7 +150,6 @@ TEST_CASE("submissions do not block and completions arrive after the job finishe
                            completed = true;
                        });
 
-    // The call returned while the worker is still blocked in the fake.
     access.wait_until_entered();
     CHECK_FALSE(completed.load());
 
@@ -283,7 +274,6 @@ TEST_CASE("an attach handoff moves the session out of the worker", "[process]")
                  }));
     CHECK_FALSE(worker.attached());
 
-    // The worker no longer owns a session...
     ReadResult after;
     worker.submit_read(worker.next_job_id(),
                        kBase,
@@ -299,7 +289,6 @@ TEST_CASE("an attach handoff moves the session out of the worker", "[process]")
                  }));
     CHECK(after.error == AccessError::internal);
 
-    // ...but the handed-over session is fully usable.
     auto session = std::move(*handed.handed_session);
     CHECK(session.pid() == 7);
     access.backend()->memory->flat[0] = std::byte {0x11};
@@ -385,7 +374,6 @@ TEST_CASE("probe jobs report the access method and module/thread counts", "[proc
 TEST_CASE("probe and attach report an unreadable target", "[process]")
 {
     GatedAccess access {false};
-    // Metadata and attach keep working; only the memory read is refused.
     access.read_error = AccessError::permission_denied;
     AccessWorker worker {access};
 
@@ -500,7 +488,6 @@ TEST_CASE("destruction drops queued callbacks and waits for the in-flight job", 
 
         access.wait_until_entered();
 
-        // Release the blocked job so the destructor's join can return.
         std::thread releaser {[&]
                               {
                                   access.open_gate();
@@ -509,7 +496,6 @@ TEST_CASE("destruction drops queued callbacks and waits for the in-flight job", 
         releaser.join();
     }
 
-    // Neither the in-flight nor the queued callback may run after shutdown.
     CHECK(called.load() == 0);
 }
 
@@ -518,7 +504,6 @@ TEST_CASE("memory map jobs report the target modules and regions", "[process]")
     GatedAccess  access {false};
     AccessWorker worker {access};
 
-    // Before any attach the worker owns no session.
     MemoryMapResult before;
     worker.submit_memory_map(worker.next_job_id(),
                              [&](JobResult&& result)
@@ -546,7 +531,6 @@ TEST_CASE("memory map jobs report the target modules and regions", "[process]")
                      return attached;
                  }));
 
-    // Place a readable region on the target so the map has something to report.
     slopkit::process::RegionInfo region;
     region.start    = 0x1000;
     region.end      = 0x2000;
@@ -612,7 +596,6 @@ TEST_CASE("a failed read job logs exactly one warning", "[process][log]")
                 ++warnings;
             }
         }
-        // The failure is decided (and therefore logged) exactly once, by the worker.
         CHECK(warnings == 1);
     }
 
@@ -873,7 +856,6 @@ print(mem.pointer_size())
     CHECK(result.run.output[1] == "0");
     CHECK(result.run.output[2] == "8");
 
-    // The write really reached the fake target.
     CHECK(access.backend()->memory->flat[4] == std::byte {0x42});
     CHECK(access.backend()->writes.load() >= 1);
 }
@@ -1020,8 +1002,6 @@ TEST_CASE("a script update pass ticks every active script", "[process]")
 
         CHECK(result.updated == 2);
         CHECK(result.failed.empty());
-        // A later chunk reads what the two hooks left behind: 'AB' proves the
-        // pass kept the activation order.
         CHECK(run_script(worker, "return order").run.returned == "AB");
     }
 
@@ -1047,7 +1027,6 @@ TEST_CASE("a script update pass ticks every active script", "[process]")
 
         CHECK(result.updated == 1);
         CHECK(result.failed.empty());
-        // The hook-less chunk never saw the ticker's lingering global.
         CHECK(run_script(worker, "return ticks").run.returned == "1");
     }
 
@@ -1084,13 +1063,10 @@ function update() return false, "nope" end
         CHECK(result.failed[0].reason == "nope");
         CHECK(worker.active_scripts() == 0);
 
-        // The same job ran deactivate: its printed line and accepted verdict
-        // both reached the log, exactly like the shutdown path.
         const auto script = category_records(records, "script");
         CHECK(any_message_contains(script, "undone"));
         CHECK(any_message_contains(script, "script 'helper' deactivated: ok"));
 
-        // The next pass no longer ticks the unticked script.
         records.clear();
         const ScriptUpdatesResult again = run_updates(worker);
         CHECK(again.updated == 0);
@@ -1117,12 +1093,10 @@ function update() return false, "nope" end
         REQUIRE(fast.lifecycle.has_value());
         REQUIRE(fast.lifecycle->ok);
 
-        // The first tick follows activation, so both scripts run once.
         const ScriptUpdatesResult first = run_updates(worker);
         CHECK(first.updated == 2);
         CHECK(first.failed.empty());
 
-        // Immediately after, only the undeclared script is due again.
         const ScriptUpdatesResult second = run_updates(worker);
         CHECK(second.updated == 1);
         CHECK(second.failed.empty());
@@ -1167,7 +1141,6 @@ function update() return false, "nope" end
         const ScriptUpdatesResult first = run_updates(worker);
         CHECK(first.updated == 1);
 
-        // `update` re-declared 60000, so the next pass leaves the script alone.
         const ScriptUpdatesResult second = run_updates(worker);
         CHECK(second.updated == 0);
         CHECK(second.failed.empty());
@@ -1293,8 +1266,6 @@ end
         REQUIRE(result.lifecycle->ok);
     }
 
-    // The worker thread stopped and ran the hook while the engine was alive:
-    // its printed line and its accepted verdict both reached the log.
     const auto script = category_records(records, "script");
     CHECK(any_message_contains(script, "shutdown marker"));
     CHECK(any_message_contains(script, "script 'helper' deactivated: gone"));
@@ -1324,8 +1295,6 @@ function deactivate() return false, "nope" end
         REQUIRE(result.lifecycle->ok);
     }
 
-    // The refusal changed nothing and was not retried: exactly one record, a
-    // warning carrying the hook's message.
     const auto script = category_records(records, "script");
     REQUIRE(script.size() == 1);
     CHECK(script[0].level == slopkit::log::Level::warning);
@@ -1512,7 +1481,6 @@ TEST_CASE("a script's symbols resolve in a later resolve job", "[process]")
     REQUIRE(batch.items[0].address.has_value());
     CHECK(*batch.items[0].address == 0x133B);
 
-    // A second run changes the value the next resolve job sees.
     REQUIRE(run_script(worker, R"(ssymbol("hp", 0x2000))").run.ok);
     ResolveResult second;
     worker.submit_resolve_expressions(worker.next_job_id(),
@@ -1558,7 +1526,6 @@ TEST_CASE("the symbol table survives a detach", "[process]")
     CHECK(symbols.lookup("hp") == 0x55);
     CHECK(symbols.lookup("mp") == 0x66);
 
-    // A re-attach builds a fresh engine but keeps the names.
     REQUIRE(attach_target(worker));
     REQUIRE(run_script(worker, R"(ssymbol("hp", 0x77))").run.ok);
     CHECK(symbols.lookup("hp") == 0x77);
@@ -1655,7 +1622,7 @@ dealloc("buf")
 
 TEST_CASE("a plugin that cannot allocate memory is reported through the worker", "[process]")
 {
-    GatedAccess  access {false}; // the fake plugin does not support allocation
+    GatedAccess  access {false};
     AccessWorker worker {access};
     REQUIRE(attach_target(worker));
 

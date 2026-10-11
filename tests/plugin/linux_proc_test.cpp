@@ -30,7 +30,6 @@ namespace
 
     constexpr std::size_t kPageSize = 4096;
 
-    // Kills and reaps the forked child when the test leaves the scope.
     struct ChildGuard
     {
         pid_t pid {-1};
@@ -52,8 +51,6 @@ namespace
         }
     };
 
-    // The state letter from /proc/<pid>/stat, parsed after the parenthesised
-    // command name so a name containing spaces cannot confuse it.
     char process_state(ProcessId pid)
     {
         std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
@@ -89,7 +86,7 @@ namespace
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
-} // namespace
+}
 
 TEST_CASE("linux-proc is discovered with the expected metadata", "[linux_proc]")
 {
@@ -151,7 +148,6 @@ TEST_CASE("linux-proc lists modules, threads and regions of the current process"
     CHECK(main_module->entry != 0);
     CHECK(main_module->entry >= main_module->base);
 
-    // Exactly one module is flagged as the main image, and it backs the exe.
     const auto flagged = std::ranges::count_if(*modules,
                                                [](const slopkit::process::ModuleInfo& module)
                                                {
@@ -256,8 +252,6 @@ TEST_CASE("linux-proc reads and writes target memory", "[linux_proc]")
     REQUIRE(readback->size() == pattern.size());
     REQUIRE(std::equal(readback->begin(), readback->end(), pattern.begin()));
 
-    // read_into writes straight into the caller buffer through the cached
-    // descriptor, and reports the same bytes as read().
     std::array<std::byte, 16> into {};
     const auto                into_count = session->read_into(address + 64, into);
     REQUIRE(into_count.has_value());
@@ -292,13 +286,11 @@ TEST_CASE("the cached descriptor path reports like the one-shot helper", "[linux
         REQUIRE(buffer[i] == static_cast<std::byte>((128 + i) % 251));
     }
 
-    // The cached-descriptor fallback reports an unmapped address as unmapped.
     std::array<std::byte, 8> none {};
     const auto               missing = access.read(0x1, none);
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error() == slopkit::platform::MemoryError::unmapped);
 
-    // The one-shot helper keeps reporting the same result.
     const auto oneshot = slopkit::platform::read_memory(static_cast<ProcessId>(::getpid()), address + 128, none);
     REQUIRE(oneshot.has_value());
     REQUIRE(oneshot->bytes == none.size());

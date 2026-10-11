@@ -9,7 +9,6 @@
 
 namespace slopkit::ui::models
 {
-
     WatchHitsModel::WatchHitsModel(QObject* parent, AddressText format, AddressText full_format)
         : QAbstractTableModel(parent), format_(std::move(format)), full_format_(std::move(full_format))
     {
@@ -17,8 +16,6 @@ namespace slopkit::ui::models
 
     void WatchHitsModel::sync(const debug::AccessWatch& watch)
     {
-        // A new watch (a different address, or a fresh start at the same one)
-        // replaces every row.
         if (address_ != watch.address() || (watch.state() == debug::WatchState::watching && !watching_))
         {
             beginResetModel();
@@ -147,12 +144,9 @@ namespace slopkit::ui::models
         }
         if (role == widgets::kFullTextRole && index.column() == instruction)
         {
-            // Fall back to the display formatter when no fuller one was given.
             const AddressText& full = full_format_ ? full_format_ : format_;
             return full(hit.recovered != 0 ? hit.recovered : hit.instruction);
         }
-        // Every column holds machine data (addresses, decoded text, thread and
-        // count), so the whole table lines up in the mono family.
         if (role == Qt::FontRole)
         {
             return QVariant::fromValue(mono_font());
@@ -198,4 +192,4 @@ namespace slopkit::ui::models
         }
     }
 
-} // namespace slopkit::ui::models
+}

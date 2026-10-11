@@ -23,19 +23,15 @@
 
 namespace slopkit::ui::models
 {
-
     namespace
     {
-        // The move-only drag payload: the source row, carried as its index.
         constexpr char kRowMimeType[] = "application/x-slopkit-address-row";
 
-        // A script row carries no address and no value: the row is read-only in
-        // the grid and is run through its own row-menu action.
         bool is_script(const table::AddressEntry& entry)
         {
             return entry.kind == table::EntryKind::script;
         }
-    } // namespace
+    }
 
     AddressTableModel::AddressTableModel(table::AddressTable&     table,
                                          process::AccessWorker&   worker,
@@ -76,7 +72,7 @@ namespace slopkit::ui::models
             case address:
                 if (is_script(entry))
                 {
-                    return {}; // A script has no address.
+                    return {};
                 }
                 if (!entry.expression.empty())
                 {
@@ -88,7 +84,7 @@ namespace slopkit::ui::models
             case value:
                 if (is_script(entry))
                 {
-                    return {}; // A script has no value.
+                    return {};
                 }
                 if (std::ranges::find(writing_entries_, entry.id) != writing_entries_.end())
                 {
@@ -154,8 +150,6 @@ namespace slopkit::ui::models
             }
             if (index.column() == address && !entry.expression.empty())
             {
-                // The compact absolute form, even in module-relative mode: the
-                // tooltip is where the full address stays visible.
                 return ui::format_absolute(entry.address);
             }
             if (index.column() == value)
@@ -212,7 +206,6 @@ namespace slopkit::ui::models
     {
         if (!index.isValid())
         {
-            // The invalid (root) index is where a drop between rows lands.
             return Qt::ItemIsDropEnabled;
         }
 
@@ -220,10 +213,6 @@ namespace slopkit::ui::models
         if (const auto row = static_cast<std::size_t>(index.row());
             row < table_.size() && is_script(table_.entries()[row]))
         {
-            // A script row's source is edited through its dialog, never in the
-            // grid; its Description renames the entry inline and its Active
-            // checkbox is interactive, so no other cell is editable and no write
-            // job can be submitted for one.
             if (index.column() == active)
             {
                 item_flags |= Qt::ItemIsUserCheckable;
@@ -281,8 +270,6 @@ namespace slopkit::ui::models
             }
         }
 
-        // With several rows selected, the gesture moves the row the user grabbed
-        // (the cursor), not the topmost selected one.
         const int row = drags_cursor ? cursor : lowest;
         if (row < 0)
         {
@@ -312,7 +299,6 @@ namespace slopkit::ui::models
         const auto from = static_cast<std::size_t>(source);
         if (parent.isValid())
         {
-            // A nest onto the row itself or one of its descendants is refused.
             const int target = parent.row();
             if (target < 0 || target >= count)
             {
@@ -321,9 +307,6 @@ namespace slopkit::ui::models
             return !table_.is_within_subtree(static_cast<std::size_t>(target), from);
         }
 
-        // An insertion strictly inside the moved subtree cannot happen. The no-op
-        // drops (onto itself, the gap above itself) stay allowed so the drop is
-        // rejected by the move rather than silently swallowed.
         const int insert = row < 0 ? count : std::clamp(row, 0, count);
         return !(insert > source && insert < source + static_cast<int>(table_.subtree_size(from)));
     }
@@ -343,9 +326,6 @@ namespace slopkit::ui::models
             return false;
         }
 
-        // Qt hands a drop onto an item as a valid parent and an insertion between
-        // rows as an insertion row; both go through the one drop path so the view
-        // and this fallback cannot diverge.
         if (parent.isValid())
         {
             return drop_row(source, parent.row(), true);
@@ -368,11 +348,9 @@ namespace slopkit::ui::models
         const auto from = static_cast<std::size_t>(source);
         if (target < count && table_.is_within_subtree(static_cast<std::size_t>(target), from))
         {
-            return false; // Onto the row itself or one of its descendants.
+            return false;
         }
 
-        // Mirror AddressTable::move_row's landing rule so the move signals can be
-        // opened before the table changes and a no-op never reports a move.
         const std::size_t landing = static_cast<std::size_t>(target);
         const std::size_t moved   = table_.subtree_size(from);
         std::size_t       before  = landing;
@@ -401,9 +379,6 @@ namespace slopkit::ui::models
         const auto moved_rows = static_cast<int>(moved);
         const auto final_row  = static_cast<int>(destination);
 
-        // A nest that keeps the row in place is a pure re-parent: the row order is
-        // unchanged, so there is no move to announce (beginMoveRows rejects a
-        // zero-distance move) and the repaint below carries the new depth.
         const bool reorders = final_row != source;
         if (reorders)
         {
@@ -416,8 +391,6 @@ namespace slopkit::ui::models
 
         table_.move_row(from, landing, nest);
 
-        // The rows the block passed now stand for different entries: drop their
-        // cached readings so no stale value sticks to a recycled row.
         const int first = std::min(source, final_row);
         const int last  = std::max(source, final_row) + moved_rows;
         for (int row = first; row < last && static_cast<std::size_t>(row) < cells_.size(); ++row)
@@ -456,16 +429,12 @@ namespace slopkit::ui::models
         {
             if (role == Qt::CheckStateRole && index.column() == active)
             {
-                // The panel runs the hook and writes the flag once the verdict
-                // arrives; repaint so the box snaps back until then.
                 emit scriptActiveRequested(row, value.toInt() == Qt::Checked);
                 emit dataChanged(index, index);
                 return false;
             }
             if (role == Qt::EditRole && index.column() == description)
             {
-                // Renaming a script works like renaming a value row; a blank
-                // name is refused, exactly as the script dialog refuses one.
                 const QString name = value.toString().trimmed();
                 if (name.isEmpty())
                 {
@@ -481,8 +450,6 @@ namespace slopkit::ui::models
                 }
                 return false;
             }
-            // Every other script cell is refused in the grid: nothing here can
-            // submit a write job, a freeze pass or a live read for it.
             return false;
         }
 
@@ -531,9 +498,6 @@ namespace slopkit::ui::models
             return;
         }
 
-        // A row whose entry identity changed must not keep the previous entry's
-        // reading. The in-flight request is validated again on apply, so a stale
-        // completion cannot land on the recycled row either.
         for (std::size_t row = 0; row < entries.size(); ++row)
         {
             if (last_entries_[row].id != entries[row].id && row < cells_.size())
@@ -697,7 +661,6 @@ namespace slopkit::ui::models
         const std::size_t first_row = rows.front();
         const auto&       first     = table_.entries()[first_row];
         const std::string input     = text.toStdString();
-        // Parse here as well so a malformed value keeps its detailed message.
         if (const auto parsed = scan::parse_value(first.type, input, first.hex); !parsed)
         {
             log::warning(log::category::ui, std::format("table value rejected: {}", parsed.error().message));
@@ -734,19 +697,15 @@ namespace slopkit::ui::models
             {
                 if (write_pending_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 write_pending_.reset();
                 writing_entries_.clear();
 
                 const auto& freeze = std::get<process::FreezeResult>(result);
-                // A batch stops at its first failure, so the entries before it
-                // are the ones that were written.
                 for (std::size_t index = 0; index < freeze.written && index < entries.size(); ++index)
                 {
                     table_.apply_write(entries[index], cached);
-                    // Show what was just written without raising the change
-                    // highlight, so the user's own write is not flagged as a move.
                     seed_live_write(entries[index]);
                 }
                 note_table_changed();
@@ -817,4 +776,4 @@ namespace slopkit::ui::models
         }
     }
 
-} // namespace slopkit::ui::models
+}

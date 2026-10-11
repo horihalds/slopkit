@@ -31,7 +31,6 @@ TEST_CASE("a batched read returns per-item results in request order", "[process]
                                 std::vector<ReadManyItem> {
                                     {    .address = kBase + 8, .size = 1},
                                     {        .address = kBase, .size = 2},
-                                    // Outside the backing store: fails on its own.
                                     {.address = kBase + 0x100, .size = 4},
         },
                                 [&](JobResult&& result)
@@ -101,7 +100,6 @@ TEST_CASE("a batched resolve evaluates expressions with pointer chains", "[proce
                      return attached;
                  }));
 
-    // Store a pointer value at the module base: it points at base + 0x10.
     constexpr std::uint64_t kPointer = kBase + 0x10;
     auto&                   memory   = access.backend()->memory->flat;
     for (std::size_t i = 0; i < sizeof(kPointer); ++i)
@@ -116,10 +114,10 @@ TEST_CASE("a batched resolve evaluates expressions with pointer chains", "[proce
     ResolveResult batch;
     worker.submit_resolve_expressions(worker.next_job_id(),
                                       std::vector<ResolveRequest> {
-                                          {.key = 1,             .expression = "0x2000"}, // absolute literal
-                                          {.key = 2,   .expression = "firefox-bin+0+20"}, // pointer chain
-                                          {.key = 3,     .expression = "firefox-bin+zz"}, // parse failure
-                                          {.key = 4, .expression = "firefox-bin+1000+0"}, // unreadable pointer
+                                          {.key = 1,             .expression = "0x2000"},
+                                          {.key = 2,   .expression = "firefox-bin+0+20"},
+                                          {.key = 3,     .expression = "firefox-bin+zz"},
+                                          {.key = 4, .expression = "firefox-bin+1000+0"},
     },
                                       modules,
                                       8,
@@ -145,13 +143,10 @@ TEST_CASE("a batched resolve evaluates expressions with pointer chains", "[proce
     REQUIRE(batch.items[1].address.has_value());
     CHECK(*batch.items[1].address == 0x1010 + 0x20);
 
-    // A bad expression fails only its own item.
     CHECK(batch.items[2].key == 3);
     CHECK_FALSE(batch.items[2].address.has_value());
     CHECK(batch.items[2].error == "invalid offset 'zz'");
 
-    // An unreadable pointer level reports the level and the address, and fails
-    // only its own item.
     CHECK(batch.items[3].key == 4);
     CHECK_FALSE(batch.items[3].address.has_value());
     CHECK(batch.items[3].error == "the address 2000 at level 1 is not readable");
@@ -176,7 +171,6 @@ TEST_CASE("a bracket chain resolves and validates its levels", "[process]")
                      return attached;
                  }));
 
-    // Store a pointer value at the module base: it points at base + 0x10.
     constexpr std::uint64_t kPointer = kBase + 0x10;
     auto&                   memory   = access.backend()->memory->flat;
     for (std::size_t i = 0; i < sizeof(kPointer); ++i)
@@ -191,9 +185,9 @@ TEST_CASE("a bracket chain resolves and validates its levels", "[process]")
     ResolveResult batch;
     worker.submit_resolve_expressions(worker.next_job_id(),
                                       std::vector<ResolveRequest> {
-                                          {.key = 1,      .expression = "[firefox-bin]+20"}, // deref the base, then add
-                                          {.key = 2, .expression = "[[firefox-bin]+20]+30"}, // two levels
-                                          {.key = 3,  .expression = "[firefox-bin+1000]+0"}, // unreadable level 1
+                                          {.key = 1,      .expression = "[firefox-bin]+20"},
+                                          {.key = 2, .expression = "[[firefox-bin]+20]+30"},
+                                          {.key = 3,  .expression = "[firefox-bin+1000]+0"},
     },
                                       modules,
                                       8,
@@ -210,19 +204,14 @@ TEST_CASE("a bracket chain resolves and validates its levels", "[process]")
     REQUIRE_FALSE(batch.error.has_value());
     REQUIRE(batch.items.size() == 3);
 
-    // [firefox-bin]+20 dereferences the base before adding.
     CHECK(batch.items[0].key == 1);
     REQUIRE(batch.items[0].address.has_value());
     CHECK(*batch.items[0].address == 0x1030);
 
-    // The nested chain dereferences twice: 0x1000 -> 0x1010, +0x20 -> 0x1030,
-    // deref -> 0, +0x30 -> 0x30.
     CHECK(batch.items[1].key == 2);
     REQUIRE(batch.items[1].address.has_value());
     CHECK(*batch.items[1].address == 0x30);
 
-    // The first level is unmapped: only this row fails, and it names the level
-    // and the address.
     CHECK(batch.items[2].key == 3);
     CHECK_FALSE(batch.items[2].address.has_value());
     CHECK(batch.items[2].error == "the address 2000 at level 1 is not readable");

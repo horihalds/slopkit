@@ -26,17 +26,10 @@ class QTimer;
 namespace slopkit::ui::widgets
 {
     class StatusLabel;
-} // namespace slopkit::ui::widgets
+}
 
 namespace slopkit::ui::dialogs
 {
-
-    // The Add Address dialog: description, address expression, value type, the
-    // dynamic types' size and the hex toggle. It appends a table::AddressEntry;
-    // a pointer-chain expression is resolved through the access worker before
-    // the entry is added, a deref-free one resolves synchronously. While the
-    // user edits, a one-shot debounce resolves the text and previews the
-    // address and the value read there.
     class AddAddressDialog : public QDialog
     {
         Q_OBJECT
@@ -47,7 +40,6 @@ namespace slopkit::ui::dialogs
                          QWidget*               parent  = nullptr,
                          script::SymbolTable&   symbols = script::default_symbol_table());
 
-        // The module images address expressions resolve against.
         void set_modules(std::vector<process::ModuleInfo> modules);
 
     protected:
@@ -62,17 +54,15 @@ namespace slopkit::ui::dialogs
             unresolved,
         };
 
-        // The live preview of the typed expression: the text it describes, its
-        // resolution and the value read at the resolved address.
         struct Preview
         {
-            std::string                           text; // the text this result describes
+            std::string                           text;
             PreviewState                          state {PreviewState::idle};
-            std::uint64_t                         address {};  // valid when state == resolved
-            std::optional<std::vector<std::byte>> value;       // the last value read, if any
-            std::string                           reason;      // why the text is unresolved
-            std::optional<process::JobId>         resolve_job; // in flight
-            std::optional<process::JobId>         read_job;    // in flight
+            std::uint64_t                         address {};
+            std::optional<std::vector<std::byte>> value;
+            std::string                           reason;
+            std::optional<process::JobId>         resolve_job;
+            std::optional<process::JobId>         read_job;
         };
 
         void commit();
@@ -97,7 +87,7 @@ namespace slopkit::ui::dialogs
         ui::ModuleSpans        spans_;
 
         Preview                    preview_;
-        std::optional<std::string> pending_add_; // add this text once its resolve lands
+        std::optional<std::string> pending_add_;
 
         QLineEdit*            description_edit_ {};
         QLineEdit*            address_edit_ {};
@@ -111,4 +101,4 @@ namespace slopkit::ui::dialogs
         widgets::StatusLabel* status_ {};
     };
 
-} // namespace slopkit::ui::dialogs
+}

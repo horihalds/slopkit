@@ -14,7 +14,6 @@
 
 namespace slopkit::platform
 {
-
     namespace
     {
         MemoryError map_errno(int error)
@@ -41,7 +40,7 @@ namespace slopkit::platform
         {
             return "/proc/" + std::to_string(pid) + "/mem";
         }
-    } // namespace
+    }
 
     MemAccess::MemAccess(process::ProcessId pid) noexcept : pid_(pid)
     {
@@ -205,4 +204,4 @@ namespace slopkit::platform
         return access.write(address, data);
     }
 
-} // namespace slopkit::platform
+}

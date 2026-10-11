@@ -27,12 +27,8 @@ namespace slopkit::script
             return true;
         }
 
-    } // namespace
+    }
 
-    // The parser could never produce a base with a `+` (it splits on one) or a
-    // leading `#` (that marks a decimal literal), and a blank name cannot be
-    // typed; those are rejected at registration rather than stored as an
-    // unreachable entry.
     std::optional<std::string> validate_symbol_name(std::string_view name)
     {
         if (name.empty())
@@ -70,7 +66,7 @@ namespace slopkit::script
                                                       });
         if (existing != symbols_.end())
         {
-            existing->value = value; // the first spelling is kept
+            existing->value = value;
             return {};
         }
         symbols_.push_back(expr::SymbolRef {std::string(name), value});
@@ -151,4 +147,4 @@ namespace slopkit::script
         return table;
     }
 
-} // namespace slopkit::script
+}

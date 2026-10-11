@@ -11,8 +11,6 @@ namespace
     using slopkit::ui::widgets::ElidedTooltipDelegate;
     using slopkit::ui::widgets::kFullTextRole;
 
-    // A one-cell model exposing a display text, an optional tooltip and an
-    // optional untruncated text, so each precedence branch can be driven.
     class StubModel : public QAbstractTableModel
     {
     public:
@@ -45,7 +43,7 @@ namespace
             }
         }
     };
-} // namespace
+}
 
 TEST_CASE("the elided tooltip delegate prefers a model tooltip then the full text", "[ui]")
 {
@@ -63,21 +61,16 @@ TEST_CASE("the elided tooltip delegate prefers a model tooltip then the full tex
 
     QHelpEvent event(QEvent::ToolTip, QPoint(1, 1), view.viewport()->mapToGlobal(QPoint(1, 1)));
 
-    // A model tooltip wins over both the full text and the elision rule, so
-    // attaching the delegate to a table cannot drop the model's own tooltips.
     model.display = QStringLiteral("a long clipped cell value");
     model.tooltip = QStringLiteral("Freeze this value");
     model.full    = QStringLiteral("The full untruncated text");
     CHECK(delegate.helpEvent(&event, &view, option, index));
     CHECK(QToolTip::text() == QStringLiteral("Freeze this value"));
 
-    // With no model tooltip, the untruncated text is revealed.
     model.tooltip.clear();
     CHECK(delegate.helpEvent(&event, &view, option, index));
     CHECK(QToolTip::text() == QStringLiteral("The full untruncated text"));
 
-    // Nothing to reveal: the cell fits and there is no fuller spelling, so the
-    // delegate hides the tooltip rather than showing the cell's own text.
     model.display = QStringLiteral("x");
     model.full.clear();
     CHECK(delegate.helpEvent(&event, &view, option, index));

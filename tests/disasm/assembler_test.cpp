@@ -48,8 +48,6 @@ namespace
         return *assembled;
     }
 
-    // Assembles the text the listing prints for `code` and returns both, so a
-    // case can compare them.
     struct RoundTrip
     {
         std::vector<std::byte> original;
@@ -69,7 +67,7 @@ namespace
         result.assembled = *assembled;
         return result;
     }
-} // namespace
+}
 
 TEST_CASE("a register instruction assembles to the known encoding", "[disasm]")
 {
@@ -109,7 +107,6 @@ TEST_CASE("an out-of-reach branch target names the reach", "[disasm]")
     REQUIRE_FALSE(call.has_value());
     CHECK(call.error() == "the encoder rejected 'CALL 0x7F0000000000' (a relative branch reaches at most ±2 GB)");
 
-    // A register branch has no reach to exceed and still encodes.
     CHECK(encoded("JMP RAX") == bytes({0xFF, 0xE0}));
 }
 
@@ -134,7 +131,6 @@ TEST_CASE("re-assembling a decoded instruction reproduces its bytes", "[disasm]"
                                   round_trip({0x48, 0x89, 0xE5}),
                                   round_trip({0xC3}),
                                   round_trip({0x90}),
-                                  // The listing text of an immediate and a displacement assembles back.
                                   round_trip({0xB8, 0x2A, 0x00, 0x00, 0x00}),
                                   round_trip({0x48, 0x8B, 0x45, 0x10})})
     {
@@ -144,8 +140,6 @@ TEST_CASE("re-assembling a decoded instruction reproduces its bytes", "[disasm]"
 
 TEST_CASE("a rip-relative memory operand stays rip-relative", "[disasm]")
 {
-    // MOV RAX, [RIP+0x2F7] and MOV byte ptr [RIP+0x2F7], 1: their text prints
-    // the absolute target, and the context keeps them relative.
     const auto load = round_trip({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00});
     CHECK(load.assembled == load.original);
 
@@ -155,8 +149,6 @@ TEST_CASE("a rip-relative memory operand stays rip-relative", "[disasm]")
 
 TEST_CASE("an absolute operand that has no base falls back to rip-relative", "[disasm]")
 {
-    // `lea` has no absolute memory form, and the decoder reports no memory
-    // operand for it, so the fallback keeps its rip-relative form.
     const auto lea = round_trip({0x48, 0x8D, 0x05, 0xF7, 0x02, 0x00, 0x00});
     CHECK(lea.assembled == lea.original);
 }
@@ -169,12 +161,8 @@ TEST_CASE("a block of instructions assembles in order", "[disasm]")
 
 TEST_CASE("each block instruction is encoded for the address it occupies", "[disasm]")
 {
-    // The JZ sits at 0x2001, after the NOP, and names 0x2008 from 0x2003: the
-    // running address, not the block base, is what its target is measured from.
     CHECK(block("NOP\nJZ 0x2008\nRET") == bytes({0x90, 0x74, 0x05, 0xC3}));
 
-    // A base-less MOV falls back to rip-relative from its own 0x2001, so its
-    // displacement is 0x2010 - 0x2008 and proves the address advanced.
     CHECK(block("NOP\nMOV RBX, [0x2010]") == bytes({0x90, 0x48, 0x8B, 0x1D, 0x08, 0x00, 0x00, 0x00}));
 }
 

@@ -17,12 +17,8 @@ namespace slopkit::script
 {
     namespace
     {
-        // A near jump rel32 is the shortest form the site's jump into the cave
-        // takes, so the window always covers at least this many bytes.
         constexpr std::size_t kWindowMinimum     = 5;
-        // A short instruction still needs a signature this long to be unique.
         constexpr std::size_t kPatternMinimum    = 16;
-        // How many rows one side of the window the pattern prefers to include.
         constexpr std::size_t kPatternNeighbours = 2;
 
         [[nodiscard]] std::string lower_ascii(std::string text)
@@ -34,9 +30,6 @@ namespace slopkit::script
             return text;
         }
 
-        // The assembler's name for a memory operand of `width` bytes, as the
-        // listing prints it (`dword ptr`). A width the assembler cannot name
-        // comes back empty.
         [[nodiscard]] std::optional<std::string_view> size_keyword(unsigned width)
         {
             switch (width)
@@ -64,9 +57,6 @@ namespace slopkit::script
             }
         }
 
-        // Whether the listing already spells the operand's size before its `[`
-        // (`MOVZX EAX, byte ptr [RBX]`), so the generator does not add a second
-        // keyword where the decoder printed one.
         [[nodiscard]] bool size_is_spelled(std::string_view text, std::size_t offset)
         {
             std::size_t end = offset;
@@ -77,12 +67,6 @@ namespace slopkit::script
             return end >= 3 && lower_ascii(std::string {text.substr(end - 3, 3)}) == "ptr";
         }
 
-        // One rewritten listing line. `verify` keeps the decoded absolute
-        // addresses so the generator can prove the line re-encodes; otherwise
-        // every address slice becomes a `0x%X` placeholder the runtime fills. A
-        // memory operand the listing prints without a size keyword (`INC [RBX+1C]`)
-        // gains the explicit size its `MemoryRef` records, which the encoder needs
-        // because no sibling operand spells the width.
         [[nodiscard]] std::string rewrite_line(const HookRow& row, bool verify)
         {
             std::string out;
@@ -120,9 +104,6 @@ namespace slopkit::script
             return out;
         }
 
-        // The rows are decoded from one contiguous cache, so the next row starts
-        // where the previous one ended; a row the cache could not fill ends the
-        // run.
         [[nodiscard]] bool follows(const HookRow& previous, const HookRow& next)
         {
             return !previous.bytes.empty() && previous.address + previous.bytes.size() == next.address;
@@ -133,9 +114,6 @@ namespace slopkit::script
             return row.valid && !row.bytes.empty();
         }
 
-        // The window a hook overwrites: whole instructions from the selected row
-        // until a near jump fits. Sets `reason` and returns nothing when the
-        // listing has not decoded enough bytes after the row.
         [[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>> hook_window(const HookCandidate& candidate,
                                                                                      std::string&         reason)
         {
@@ -159,9 +137,6 @@ namespace slopkit::script
             return std::pair {candidate.selected, last};
         }
 
-        // The pattern span: the window plus up to two rows on each side, widened
-        // until the signature is at least `kPatternMinimum` bytes and clipped at
-        // the decoded listing's ends.
         [[nodiscard]] std::pair<std::size_t, std::size_t> pattern_span(const HookCandidate& candidate,
                                                                        std::size_t          window_first,
                                                                        std::size_t          window_last,
@@ -216,8 +191,6 @@ namespace slopkit::script
             return {first, last};
         }
 
-        // A Lua double-quoted string; the generated text only ever holds hex and
-        // spaces, but escaping keeps the render robust.
         [[nodiscard]] std::string quote(std::string_view text)
         {
             std::string quoted = "\"";
@@ -232,7 +205,7 @@ namespace slopkit::script
             quoted += '"';
             return quoted;
         }
-    } // namespace
+    }
 
     std::string pattern_text(std::span<const std::byte> bytes, std::span<const disasm::EncodingBytes> wildcards)
     {
@@ -291,12 +264,6 @@ namespace slopkit::script
             covered.bytes.assign(row.bytes.begin(), row.bytes.end());
             covered.text = row.text;
 
-            // The listing prints every address absolute. Re-emit each operand as
-            // `0x%X` with its runtime value passed as `site ± delta`, so the
-            // trampoline keeps pointing at the same data after ASLR moves the
-            // module. A memory operand the listing printed without a size gains
-            // its explicit size, so the re-encode cannot fall back to a width
-            // the encoder has to guess.
             std::string line        = rewrite_line(row, false);
             std::string verify_line = rewrite_line(row, true);
             for (const disasm::AddressRef& reference : row.addresses)
@@ -318,9 +285,6 @@ namespace slopkit::script
             verify_text += verify_line;
         }
 
-        // Prove the rewritten trampoline encodes before any of it reaches the
-        // editor, so a broken hook is a refusal, not a script that dies on
-        // activation.
         const std::expected<std::vector<std::byte>, std::string> verified = disasm::assemble_block(
             verify_text, disasm::AssembleBlockContext {.base = target.address, .mode = candidate.mode});
         if (!verified)
@@ -344,9 +308,6 @@ namespace slopkit::script
                 match_offset = offset;
             }
             pattern_bytes.insert(pattern_bytes.end(), row.bytes.begin(), row.bytes.end());
-            // Every register, offset and absolute-address byte a signature may
-            // wildcard; a relative branch or rip-relative displacement is
-            // module-relative and stays literal.
             for (const disasm::EncodingBytes& field : row.pattern_bytes)
             {
                 if (!field.relative)
@@ -370,8 +331,6 @@ namespace slopkit::script
         const std::string site_name = "hook_site_" + suffix;
         const std::string cave_name = "hook_cave_" + suffix;
 
-        // Every `%X` slot of the trampoline, paired with its site-relative value,
-        // in the order the placeholders appear.
         std::vector<std::int64_t> arguments;
         for (const HookInstruction& instruction : target.covered)
         {
@@ -447,4 +406,4 @@ namespace slopkit::script
 
         return out;
     }
-} // namespace slopkit::script
+}

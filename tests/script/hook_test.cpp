@@ -14,8 +14,6 @@ namespace
 {
     using namespace slopkit;
 
-    // A window of eight whole bytes and a one-byte stub, so the payload layout
-    // and the rounded-up cave size are easy to predict.
     script::hook::Spec simple_spec()
     {
         script::hook::Spec spec;
@@ -34,13 +32,12 @@ namespace
         return spec;
     }
 
-    // The bytes the fake target is primed with: the window plus NOP filler.
     void prime_site(FakeMemory& fake)
     {
         fake.put(0x10,
                  {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90});
     }
-} // namespace
+}
 
 TEST_CASE("hook::install writes the cave payload and the padded site in two writes", "[script][hook]")
 {
@@ -55,17 +52,14 @@ TEST_CASE("hook::install writes the cave payload and the padded site in two writ
     REQUIRE(installed.has_value());
     const std::uint64_t cave = *installed;
 
-    // The whole activation costs two target writes.
     CHECK(fixture.fake.write_count == 2);
 
-    // Exactly one cave, sized from the payload: 1 + 4 + 5 rounded up.
     REQUIRE(fixture.fake.allocations.size() == 1);
     REQUIRE(fixture.fake.allocations.count(cave) == 1);
     CHECK(fixture.fake.allocations.at(cave) == 16);
     REQUIRE(fixture.fake.allocate_requests.size() == 1);
     CHECK(fixture.fake.allocate_requests.front().first == site);
 
-    // The site holds a near jump and NOP padding.
     const auto site_offset = static_cast<std::size_t>(site - kScriptBase);
     CHECK(fixture.fake.bytes[site_offset] == std::byte {0xE9});
     for (std::size_t offset = 5; offset < hook_spec.original.size(); ++offset)
@@ -73,14 +67,13 @@ TEST_CASE("hook::install writes the cave payload and the padded site in two writ
         CHECK(fixture.fake.bytes[site_offset + offset] == std::byte {0x90});
     }
 
-    // The cave holds the stub, then the trampoline, then the jump back.
     const auto cave_offset = static_cast<std::size_t>(cave - kScriptBase);
-    CHECK(fixture.fake.bytes[cave_offset] == std::byte {0x90});     // nop
-    CHECK(fixture.fake.bytes[cave_offset + 1] == std::byte {0x48}); // SUB RSP, 0x28
+    CHECK(fixture.fake.bytes[cave_offset] == std::byte {0x90});
+    CHECK(fixture.fake.bytes[cave_offset + 1] == std::byte {0x48});
     CHECK(fixture.fake.bytes[cave_offset + 2] == std::byte {0x83});
     CHECK(fixture.fake.bytes[cave_offset + 3] == std::byte {0xEC});
     CHECK(fixture.fake.bytes[cave_offset + 4] == std::byte {0x28});
-    CHECK(fixture.fake.bytes[cave_offset + 5] == std::byte {0xE9}); // the jump back
+    CHECK(fixture.fake.bytes[cave_offset + 5] == std::byte {0xE9});
 }
 
 TEST_CASE("hook::remove restores the site and frees the cave", "[script][hook]")
@@ -133,7 +126,6 @@ TEST_CASE("hook::install expands the trampoline's site-relative placeholders", "
     const auto          cave   = script::hook::install(hook_spec, memory, site);
     REQUIRE(cave.has_value());
 
-    // site + 0x2000 = 0x3010, encoded as `MOV EAX, 0x3010` (B8 10 30 00 00).
     const auto cave_offset = static_cast<std::size_t>(*cave - kScriptBase);
     CHECK(fixture.fake.bytes[cave_offset] == std::byte {0x90});
     CHECK(fixture.fake.bytes[cave_offset + 1] == std::byte {0xB8});
@@ -147,7 +139,6 @@ TEST_CASE("hook::install refuses bytes that are not the recorded instruction", "
 {
     ScriptFixture            fixture(0x200);
     const script::hook::Spec hook_spec = simple_spec();
-    // A different first byte at the site.
     fixture.fake.put(0x10, {0x00, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48});
 
     MemoryApi           memory = fixture.fake.api();
@@ -156,7 +147,6 @@ TEST_CASE("hook::install refuses bytes that are not the recorded instruction", "
     const auto installed = script::hook::install(hook_spec, memory, site);
     CHECK_FALSE(installed.has_value());
     CHECK(installed.error().find("are not the expected instruction") != std::string::npos);
-    // Nothing was mapped or written.
     CHECK(fixture.fake.write_count == 0);
     CHECK(fixture.fake.allocations.empty());
 }
@@ -175,7 +165,6 @@ TEST_CASE("hook::install frees and refuses a cave out of the site's reach", "[sc
     CHECK_FALSE(installed.has_value());
     CHECK(installed.error().find("out of the site's jump reach") != std::string::npos);
     CHECK(fixture.fake.allocations.empty());
-    // The site was never touched.
     CHECK(fixture.fake.write_count == 0);
 }
 
@@ -192,14 +181,11 @@ TEST_CASE("hook::install frees the cave when the site write is refused", "[scrip
     const auto installed = script::hook::install(hook_spec, memory, site);
     CHECK_FALSE(installed.has_value());
     CHECK(installed.error().find("write refused") != std::string::npos);
-    // The half-written mapping is gone again.
     CHECK(fixture.fake.allocations.empty());
 }
 
 TEST_CASE("hook::install sizes the cave at a real 64-bit site", "[script][hook]")
 {
-    // Regression: sizing the payload by assembling at address zero left the jump
-    // back more than 2 GB from a 64-bit site, so the encoder refused it.
     ScriptFixture fixture(0x200);
     fixture.fake.base                  = 0x563CEBE54F80ull;
     const script::hook::Spec hook_spec = simple_spec();
@@ -220,8 +206,6 @@ TEST_CASE("hook::install remaps when a branch grows to rel32 at the cave", "[scr
 {
     ScriptFixture      fixture(0x200);
     script::hook::Spec hook_spec = simple_spec();
-    // Three jumps that are short next to the site grow to rel32 at the cave, so
-    // the payload outgrows the first, rounded-up mapping.
     hook_spec.trampoline_text    = "jmp 0x%X\njmp 0x%X\njmp 0x%X";
     hook_spec.address_args       = {0x20, 0x30, 0x40};
     prime_site(fixture.fake);
@@ -232,7 +216,6 @@ TEST_CASE("hook::install remaps when a branch grows to rel32 at the cave", "[scr
     const std::expected<std::uint64_t, std::string> installed = script::hook::install(hook_spec, memory, site);
     REQUIRE(installed.has_value());
 
-    // The first cave was too small; only the second mapping is live and fits.
     REQUIRE(fixture.fake.allocate_requests.size() == 2);
     REQUIRE(fixture.fake.allocations.size() == 1);
     CHECK(fixture.fake.allocations.count(*installed) == 1);
@@ -242,7 +225,6 @@ TEST_CASE("hook::install remaps when a branch grows to rel32 at the cave", "[scr
 
 namespace
 {
-    // The window a generated hook patches: eight whole bytes at offset 0x10.
     constexpr std::size_t kHookSiteOffset = 0x10;
     constexpr const char* kHookPattern    = "48 83 EC 28 48 89 D8 48";
 
@@ -264,9 +246,6 @@ namespace
                  {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90});
     }
 
-    // The facts table and the two lifecycle hooks a `Hook Instruction...`
-    // prefill hands the runtime, written by hand so the engine path is tested
-    // before the generator emits it.
     std::string hook_chunk(std::string_view pattern    = kHookPattern,
                            std::string_view trampoline = "SUB RSP, 0x28",
                            std::string_view arguments  = {})
@@ -289,7 +268,7 @@ namespace
         chunk += "function deactivate() return hook.remove(kHook) end\n";
         return chunk;
     }
-} // namespace
+}
 
 TEST_CASE("hook.install and hook.remove round-trip through a Lua chunk", "[script][hook]")
 {
@@ -303,7 +282,6 @@ TEST_CASE("hook.install and hook.remove round-trip through a Lua chunk", "[scrip
     REQUIRE(activated.ok);
     CHECK(activated.message.empty());
 
-    // One cave, near the site, sized from the payload (1 + 4 + 5 rounded up).
     REQUIRE(fixture.fake.allocations.size() == 1);
     const std::uint64_t cave = fixture.fake.allocations.begin()->first;
     CHECK(fixture.fake.allocations.at(cave) == 16);
@@ -311,7 +289,6 @@ TEST_CASE("hook.install and hook.remove round-trip through a Lua chunk", "[scrip
     CHECK(fixture.fake.allocate_requests.front().first == fixture.fake.address(kHookSiteOffset));
     CHECK(fixture.fake.write_count == 2);
 
-    // The site holds the jump and NOP padding; the cave holds the payload.
     const auto site_offset = static_cast<std::size_t>(fixture.fake.address(kHookSiteOffset) - kScriptBase);
     CHECK(fixture.fake.bytes[site_offset] == std::byte {0xE9});
     for (std::size_t offset = 5; offset < original_window().size(); ++offset)
@@ -319,16 +296,15 @@ TEST_CASE("hook.install and hook.remove round-trip through a Lua chunk", "[scrip
         CHECK(fixture.fake.bytes[site_offset + offset] == std::byte {0x90});
     }
     const auto cave_offset = static_cast<std::size_t>(cave - kScriptBase);
-    CHECK(fixture.fake.bytes[cave_offset] == std::byte {0x90});     // the `nop` stub
-    CHECK(fixture.fake.bytes[cave_offset + 1] == std::byte {0x48}); // SUB RSP, 0x28
-    CHECK(fixture.fake.bytes[cave_offset + 5] == std::byte {0xE9}); // the jump back
+    CHECK(fixture.fake.bytes[cave_offset] == std::byte {0x90});
+    CHECK(fixture.fake.bytes[cave_offset + 1] == std::byte {0x48});
+    CHECK(fixture.fake.bytes[cave_offset + 5] == std::byte {0xE9});
 
     const script::LifecycleResult deactivated = fixture.engine.run_lifecycle(chunk, "deactivate");
     INFO(deactivated.message);
     REQUIRE(deactivated.ok);
     CHECK(deactivated.message.empty());
 
-    // The originals are back and the cave is freed.
     const std::vector<std::byte> original = original_window();
     for (std::size_t offset = 0; offset < original.size(); ++offset)
     {
@@ -346,7 +322,6 @@ TEST_CASE("hook.install refuses a pattern that is not unique", "[script][hook]")
     const script::LifecycleResult activated = fixture.engine.run_lifecycle(hook_chunk(), "activate");
     CHECK_FALSE(activated.ok);
     CHECK(activated.message.find("matches more than one place") != std::string::npos);
-    // Nothing was mapped or written.
     CHECK(fixture.fake.write_count == 0);
     CHECK(fixture.fake.allocations.empty());
 }
@@ -366,7 +341,6 @@ TEST_CASE("hook.install restricts the scan to the named module", "[script][hook]
 {
     ScriptFixture fixture(0x200);
     prime_hook_site(fixture.fake);
-    // A second copy in another module: the module field keeps it out of the walk.
     fixture.fake.regions = {
         MemoryRegion {       .base = kScriptBase, .size = 0x80, .readable = true,  .module = "test.so"},
         MemoryRegion {.base = kScriptBase + 0x80, .size = 0x80, .readable = true, .module = "other.so"},
@@ -392,7 +366,6 @@ TEST_CASE("hook.install forwards site-relative trampoline arguments", "[script][
     REQUIRE(fixture.fake.allocations.size() == 1);
     const std::uint64_t cave        = fixture.fake.allocations.begin()->first;
     const auto          cave_offset = static_cast<std::size_t>(cave - kScriptBase);
-    // site (0x1010) + 0x2000 = 0x3010, encoded as `MOV EAX, 0x3010`.
     CHECK(fixture.fake.bytes[cave_offset] == std::byte {0x90});
     CHECK(fixture.fake.bytes[cave_offset + 1] == std::byte {0xB8});
     CHECK(fixture.fake.bytes[cave_offset + 2] == std::byte {0x10});
@@ -424,8 +397,6 @@ TEST_CASE("hook.install refuses a cave the allocator did not place", "[script][h
     MemoryApi memory = fixture.fake.api();
     memory.allocate  = [](std::size_t, std::uint64_t) -> std::expected<std::uint64_t, std::string>
     {
-        // A host that hands back address zero for a mapping it did not make: the
-        // jump-reach message would blame a distance that never existed.
         return 0;
     };
 

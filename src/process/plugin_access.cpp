@@ -16,11 +16,8 @@
 
 namespace slopkit::process
 {
-
     namespace
     {
-        // Bridges a plugin::PluginSession to the SessionBackend the UI sees and
-        // remembers the access method the plugin actually used.
         class PluginSessionBackend final : public SessionBackend
         {
         public:
@@ -148,7 +145,7 @@ namespace slopkit::process
             std::string               plugin_id_;
             std::atomic<AccessMethod> last_method_ {AccessMethod::none};
         };
-    } // namespace
+    }
 
     std::expected<std::vector<ProcessInfo>, AccessError> PluginAccess::list_processes()
     {
@@ -182,4 +179,4 @@ namespace slopkit::process
         return Session(std::move(backend));
     }
 
-} // namespace slopkit::process
+}

@@ -8,7 +8,6 @@
 
 namespace slopkit::debug
 {
-
     namespace
     {
         process::AccessError classify(const slopkit_result& result)
@@ -78,7 +77,7 @@ namespace slopkit::debug
             }
             return stop;
         }
-    } // namespace
+    }
 
     PluginBackend::PluginBackend(plugin::PluginHost& host) : host_(host) {}
 
@@ -313,4 +312,4 @@ namespace slopkit::debug
         return result_frames;
     }
 
-} // namespace slopkit::debug
+}

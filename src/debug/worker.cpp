@@ -4,7 +4,6 @@
 
 namespace slopkit::debug
 {
-
     Worker::Worker(DebugBackend& backend) : backend_(backend)
     {
         worker_ = std::jthread(
@@ -23,8 +22,6 @@ namespace slopkit::debug
         worker_.request_stop();
         cv_.notify_all();
 
-        // A ptrace job may be blocked in the kernel; the stop signal is not a
-        // ptrace call, so it can be sent from here to make the job return.
         if (ptrace_busy_.load())
         {
             const std::uint32_t tid = current_tid_.load();
@@ -94,8 +91,6 @@ namespace slopkit::debug
         request.on_done = std::move(on_done);
         current_tid_.store(tid);
 
-        // Not queued: while a ptrace job blocks the job thread the queue cannot
-        // be serviced, and the interrupt must still reach the target.
         start_run(std::move(request));
         return true;
     }
@@ -218,9 +213,6 @@ namespace slopkit::debug
                 requests_.pop_front();
             }
 
-            // The interrupt never reaches this queue; every queued job is a
-            // ptrace job and runs here, on the one thread that owns the ptrace
-            // relationship.
             JobCallback on_done = std::move(request.on_done);
             ptrace_busy_        = true;
             JobResult result    = execute(request);
@@ -233,7 +225,6 @@ namespace slopkit::debug
     {
         if (interrupt_active_.load())
         {
-            // A second interrupt while one is in flight is dropped.
             complete(std::move(request.on_done), VoidResult {});
             return;
         }
@@ -394,4 +385,4 @@ namespace slopkit::debug
         }
     }
 
-} // namespace slopkit::debug
+}

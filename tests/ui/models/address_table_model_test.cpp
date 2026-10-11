@@ -32,12 +32,10 @@ TEST_CASE("the address-table model edits the table", "[ui]")
     CHECK(model.rowCount() == 1);
     CHECK(model.columnCount() == 5);
 
-    // The flag column leads the list, ahead of Description, and Value is last.
     CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::active) == 0);
     CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::description) == 1);
     CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::value) == 4);
 
-    // The flag column is headed Active; Description still follows it.
     CHECK(model.headerData(0, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Active"));
     CHECK(model.headerData(1, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Description"));
 
@@ -50,19 +48,16 @@ TEST_CASE("the address-table model edits the table", "[ui]")
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::active), Qt::CheckStateRole).toInt()
           == Qt::Unchecked);
 
-    // The Active column doubles as the toggle.
     REQUIRE(
         model.setData(model.index(0, slopkit::ui::models::AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
     CHECK(table.entries()[0].active);
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::active), Qt::CheckStateRole).toInt()
           == Qt::Checked);
 
-    // A description edit lands in the table.
     REQUIRE(model.setData(
         model.index(0, slopkit::ui::models::AddressTableModel::description), QStringLiteral("health"), Qt::EditRole));
     CHECK(table.entries()[0].description == "health");
 
-    // Without a target the value edit is refused and the model says why.
     QString message;
     bool    is_error = false;
     QObject::connect(&model,
@@ -91,7 +86,7 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
     add_int32(table, 0x1040);
     add_int32(table, 0x1044);
     add_int32(table, 0x1048, std::byte {7});
-    table.entries()[2].hex = true; // the third row is a decimal-format odd one out
+    table.entries()[2].hex = true;
 
     slopkit::ui::models::AddressTableModel model {table, worker, target};
 
@@ -106,7 +101,6 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
                          is_error = error;
                      });
 
-    // The precondition: one type and Hex setting across the whole selection.
     const std::size_t                  like_rows[]  = {0, 1};
     const std::size_t                  mixed_rows[] = {0, 2};
     const std::size_t                  single_row[] = {0};
@@ -117,10 +111,8 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
     CHECK_FALSE(model.rows_share_value_format(no_rows));
 
     attach_app_session(worker);
-    // The sparse fake only records writes once a byte exists.
     access.memory->at(0x1040) = std::byte {0};
 
-    // One typed value reaches every selected row and lands in the table too.
     CHECK(model.write_values(like_rows, QStringLiteral("42")));
     CHECK(pump_ui(worker,
                   [&]
@@ -133,16 +125,13 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
     CHECK(table.entries()[1].bytes.front() == std::byte {42});
     CHECK(table.entries()[2].bytes.front() == std::byte {7});
 
-    // A malformed value writes nothing and keeps the detailed reason.
     CHECK_FALSE(model.write_values(like_rows, QStringLiteral("nope")));
     CHECK(is_error);
     CHECK(message.startsWith(QStringLiteral("Value:")));
 
-    // A selection that mixes types or formats is refused before parsing.
     CHECK_FALSE(model.write_values(mixed_rows, QStringLiteral("42")));
     CHECK(message == QStringLiteral("Select entries of the same type and format."));
 
-    // The single-row editor path still writes one row in its own format.
     CHECK(model.setData(
         model.index(2, slopkit::ui::models::AddressTableModel::value), QStringLiteral("2A"), Qt::EditRole));
     CHECK(pump_ui(worker,
@@ -153,7 +142,6 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
     CHECK_FALSE(is_error);
     CHECK(message == QStringLiteral("Value written."));
 
-    // A missing target refuses the write with the same message the old path used.
     slopkit::process::AttachedTarget       detached;
     slopkit::ui::models::AddressTableModel detached_model {table, worker, detached};
     message = {};
@@ -193,22 +181,16 @@ TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui
         return model.data(model.index(0, slopkit::ui::models::AddressTableModel::address), Qt::DisplayRole).toString();
     };
 
-    // Without a module map the address stays absolute even in the default mode.
     CHECK(address_cell() == QStringLiteral("0x1040"));
 
-    // Inside a module image the Address column renders name+RVA.
     model.set_modules({module_image("app", 0x1000, 0x1000)});
     CHECK(address_cell() == QStringLiteral("app+0x40"));
 
-    // A heap address is never labelled.
     CHECK(model.address_text(0x5000000) == QStringLiteral("0x5000000"));
 
-    // Absolute mode restores the raw text.
     model.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(address_cell() == QStringLiteral("0x1040"));
 
-    // A long module name shortens the display but keeps the full spelling for
-    // the hover role.
     model.set_address_mode(slopkit::ui::AddressMode::module_relative);
     model.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x10000)});
     CHECK(address_cell() == QStringLiteral("DyingL..._rwdi.exe+0x40"));
@@ -241,7 +223,6 @@ TEST_CASE("the address-table model shows an entry's expression and its resolved 
     CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+40"));
     CHECK(model.data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x1040"));
 
-    // A plain entry keeps the resolved address in the cell and carries no tooltip.
     table.entries()[0].expression.clear();
     CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("0x1040"));
     CHECK(model.data(address_index, Qt::ToolTipRole).toString().isEmpty());
@@ -276,7 +257,6 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     CHECK(model.supportedDropActions() == Qt::MoveAction);
     CHECK(model.mimeTypes().contains(QStringLiteral("application/x-slopkit-address-row")));
 
-    // A foreign payload or a copy action is rejected.
     QMimeData foreign;
     foreign.setText(QStringLiteral("nope"));
     CHECK_FALSE(model.canDropMimeData(&foreign, Qt::MoveAction, 0, 0, QModelIndex()));
@@ -286,7 +266,6 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     CHECK(model.canDropMimeData(payload.get(), Qt::MoveAction, 0, 0, QModelIndex()));
     CHECK_FALSE(model.canDropMimeData(payload.get(), Qt::CopyAction, 0, 0, QModelIndex()));
 
-    // Seed a live reading per row so a stale value would be visible after a move.
     (void)model.next_live_request();
     const std::vector<slopkit::ui::LiveReading> readings {
         {.id = 0, .readable = true, .bytes = {std::byte {0x7F}, std::byte {0}, std::byte {0}, std::byte {0}}},
@@ -303,7 +282,6 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
                      {
                          ++moved_count;
                      });
-    // Drop row 0 below the last row (insertion row 3).
     CHECK(model.dropMimeData(payload.get(), Qt::MoveAction, 3, 0, QModelIndex()));
     CHECK(moved_count == 1);
 
@@ -311,12 +289,9 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     CHECK(table.entries()[0].description == "second");
     CHECK(table.entries()[1].description == "third");
     CHECK(table.entries()[2].description == "first");
-    // The ids moved with their entries.
     CHECK(table.entries()[2].id == ids[0]);
     CHECK(table.entries()[0].id == ids[1]);
 
-    // The moved and shifted rows lost their stale reading and fall back to the
-    // entries' own cached bytes.
     const auto value_text = [&model](int row)
     {
         return model.data(model.index(row, slopkit::ui::models::AddressTableModel::value), Qt::DisplayRole).toString();
@@ -325,14 +300,12 @@ TEST_CASE("the address-table model reorders rows through a move drop", "[ui]")
     CHECK(value_text(1) == QStringLiteral("3"));
     CHECK(value_text(2) == QStringLiteral("1"));
 
-    // The next live pass asks for the new order.
     const auto requests = model.next_live_request();
     REQUIRE(requests.size() == 3);
     CHECK(requests[0].address == 0x2000);
     CHECK(requests[1].address == 0x3000);
     CHECK(requests[2].address == 0x1000);
 
-    // Dropping a row onto itself changes nothing.
     std::unique_ptr<QMimeData> self {model.mimeData({model.index(0, 0)})};
     REQUIRE(self != nullptr);
     CHECK_FALSE(model.dropMimeData(self.get(), Qt::MoveAction, 0, 0, QModelIndex()));
@@ -364,15 +337,12 @@ TEST_CASE("a drag moves the cursor row among a multi-row selection", "[ui]")
     slopkit::process::AttachedTarget       target;
     slopkit::ui::models::AddressTableModel model {table, worker, target};
 
-    // The dragged row is the cursor's when the cursor is one of the dragged
-    // indexes, not the topmost selected one.
     table.set_selected_rows(std::vector<std::size_t> {0, 2});
     table.set_selected(2);
     std::unique_ptr<QMimeData> payload {model.mimeData({model.index(0, 0), model.index(2, 0)})};
     REQUIRE(payload != nullptr);
     CHECK(payload->data(QStringLiteral("application/x-slopkit-address-row")).toInt() == 2);
 
-    // Without a cursor match it keeps publishing the lowest dragged row.
     table.set_selected(3);
     std::unique_ptr<QMimeData> lowest {model.mimeData({model.index(0, 0), model.index(2, 0)})};
     REQUIRE(lowest != nullptr);
@@ -434,8 +404,6 @@ TEST_CASE("the address-table model nests rows and reports their depth", "[ui]")
                          }
                      });
 
-    // A pure re-parent keeps the row in place: only the depth and the status
-    // change, and no move is announced.
     CHECK(model.drop_row(1, 0, true));
     CHECK(moved_count == 0);
     CHECK(nested_count == 1);
@@ -444,16 +412,13 @@ TEST_CASE("the address-table model nests rows and reports their depth", "[ui]")
     CHECK(depth_of(2) == 0);
     CHECK(table.entries()[1].parent == table.entries()[0].id);
 
-    // A nest onto one of its own descendants is refused and reports nothing.
     CHECK_FALSE(model.drop_row(0, 1, true));
     CHECK(nested_count == 1);
     CHECK(table.entries()[0].description == "first");
 
-    // A no-op nest (already the right child) reports nothing either.
     CHECK_FALSE(model.drop_row(1, 0, true));
     CHECK(nested_count == 1);
 
-    // A nest that crosses the list is a real move: fourth becomes second's child.
     CHECK(model.drop_row(3, 1, true));
     CHECK(moved_count == 1);
     CHECK(nested_count == 2);
@@ -464,8 +429,6 @@ TEST_CASE("the address-table model nests rows and reports their depth", "[ui]")
     CHECK(depth_of(3) == 0);
     CHECK(table.entries()[2].parent == table.entries()[1].id);
 
-    // The Qt fallback path refuses a nest onto the dragged row's own subtree and
-    // allows a nest onto a row outside it.
     std::unique_ptr<QMimeData> first_payload {model.mimeData({model.index(0, 0)})};
     REQUIRE(first_payload != nullptr);
     CHECK_FALSE(model.canDropMimeData(first_payload.get(), Qt::MoveAction, -1, 0, model.index(0, 0)));
@@ -473,7 +436,6 @@ TEST_CASE("the address-table model nests rows and reports their depth", "[ui]")
     CHECK_FALSE(model.canDropMimeData(first_payload.get(), Qt::MoveAction, -1, 0, model.index(2, 0)));
     CHECK(model.canDropMimeData(first_payload.get(), Qt::MoveAction, -1, 0, model.index(3, 0)));
 
-    // A Qt item drop (a valid parent) nests through the same path, in place.
     std::unique_ptr<QMimeData> third_payload {model.mimeData({model.index(3, 0)})};
     REQUIRE(third_payload != nullptr);
     CHECK(model.dropMimeData(third_payload.get(), Qt::MoveAction, -1, 0, model.index(0, 0)));
@@ -481,7 +443,6 @@ TEST_CASE("the address-table model nests rows and reports their depth", "[ui]")
     CHECK(depth_of(3) == 1);
     CHECK(table.entries()[3].parent == table.entries()[0].id);
 
-    // Dropping a row onto itself is refused and changes nothing.
     std::unique_ptr<QMimeData> self {model.mimeData({model.index(0, 0)})};
     REQUIRE(self != nullptr);
     CHECK_FALSE(model.dropMimeData(self.get(), Qt::MoveAction, 0, 0, QModelIndex()));
@@ -509,14 +470,10 @@ TEST_CASE("the address-table model edits only a script row's Description and Act
 
     using slopkit::ui::models::AddressTableModel;
 
-    // The Type cell says what the row is; the address and the value stay blank.
     CHECK(model.data(model.index(1, AddressTableModel::type), Qt::DisplayRole).toString() == QStringLiteral("script"));
     CHECK(model.data(model.index(1, AddressTableModel::address), Qt::DisplayRole).toString().isEmpty());
     CHECK(model.data(model.index(1, AddressTableModel::value), Qt::DisplayRole).toString().isEmpty());
 
-    // The Active cell of a script row carries the checkbox and reflects the
-    // entry's flag; its Description renames it inline, and every other cell
-    // (address, type, value) stays non-editable.
     CHECK(model.data(model.index(1, AddressTableModel::active), Qt::CheckStateRole).toInt() == Qt::Unchecked);
     CHECK(model.flags(model.index(1, AddressTableModel::active)) & Qt::ItemIsUserCheckable);
     for (int column = 0; column < model.columnCount(); ++column)
@@ -536,12 +493,9 @@ TEST_CASE("the address-table model edits only a script row's Description and Act
             CHECK_FALSE(model.flags(index) & Qt::ItemIsUserCheckable);
         }
     }
-    // A value row keeps both.
     CHECK(model.flags(model.index(0, AddressTableModel::description)) & Qt::ItemIsEditable);
     CHECK(model.flags(model.index(0, AddressTableModel::active)) & Qt::ItemIsUserCheckable);
 
-    // The Active checkbox is a request, not a write: the model asks the panel
-    // and leaves the flag for the verdict, then repaints the cell.
     std::size_t requested_row  = 99;
     bool        requested_want = false;
     int         requests       = 0;
@@ -569,13 +523,11 @@ TEST_CASE("the address-table model edits only a script row's Description and Act
     CHECK(requests == 1);
     CHECK(requested_row == 1);
     CHECK(requested_want);
-    CHECK_FALSE(table.entries()[1].active); // unchanged until the verdict
+    CHECK_FALSE(table.entries()[1].active);
     CHECK(changes == 1);
     CHECK(changed_first.row() == 1);
     CHECK(changed_last.row() == 1);
 
-    // Renaming a script row works like renaming a value row: the name is
-    // trimmed, written to the table and reported with a dataChanged.
     changes       = 0;
     changed_first = QModelIndex();
     changed_last  = QModelIndex();
@@ -585,7 +537,6 @@ TEST_CASE("the address-table model edits only a script row's Description and Act
     CHECK(changed_first.row() == 1);
     CHECK(changed_first.column() == static_cast<int>(AddressTableModel::description));
 
-    // A blank or whitespace-only name is refused and keeps the old one.
     bool blank_refused = false;
     QObject::connect(&model,
                      &AddressTableModel::statusChanged,
@@ -597,12 +548,10 @@ TEST_CASE("the address-table model edits only a script row's Description and Act
     CHECK(blank_refused);
     CHECK(table.entries()[1].description == "renamed");
 
-    // No other script cell can be written, so no write job can be submitted.
     CHECK_FALSE(model.setData(model.index(1, AddressTableModel::value), QStringLiteral("1"), Qt::EditRole));
     CHECK_FALSE(model.setData(model.index(1, AddressTableModel::address), QStringLiteral("1000"), Qt::EditRole));
     CHECK(table.entries()[1].description == "renamed");
 
-    // note_entry_changed repaints exactly that row.
     changes = 0;
     model.note_entry_changed(1);
     CHECK(changes == 1);
@@ -610,7 +559,6 @@ TEST_CASE("the address-table model edits only a script row's Description and Act
     CHECK(changed_last.row() == 1);
     CHECK(changed_last.column() == model.columnCount() - 1);
 
-    // The live pass reads only the value row.
     const auto requests2 = model.next_live_request();
     REQUIRE(requests2.size() == 1);
     CHECK(requests2[0].address == 0x1040);

@@ -14,7 +14,6 @@ namespace slopkit::scan
             return value == ' ' || value == '\t' || value == '\r' || value == '\n' || value == '\f' || value == '\v';
         }
 
-        // Value of a hex digit, or -1 when `value` is not one.
         int hex_digit(char value) noexcept
         {
             if (value >= '0' && value <= '9')
@@ -36,7 +35,7 @@ namespace slopkit::scan
         {
             return std::format("'{}' is not a byte (use two hex digits or '?')", token);
         }
-    } // namespace
+    }
 
     std::expected<BytePattern, std::string> BytePattern::parse(std::string_view text)
     {
@@ -65,7 +64,6 @@ namespace slopkit::scan
                 index = end;
                 continue;
             }
-            // A concrete byte is exactly two hex digits.
             if (index + 2 > text.size())
             {
                 return std::unexpected(not_a_byte(text.substr(index, text.size() - index)));
@@ -109,8 +107,6 @@ namespace slopkit::scan
         const std::size_t last = bytes.size() - needle_.size();
         for (std::size_t base = from; base <= last; ++base)
         {
-            // Locate the anchor byte before verifying the rest of the frame, so
-            // a long wildcard-heavy pattern does not compare every candidate.
             if (bytes[base + anchor_] != needle_[anchor_])
             {
                 continue;
@@ -132,4 +128,4 @@ namespace slopkit::scan
         return std::nullopt;
     }
 
-} // namespace slopkit::scan
+}

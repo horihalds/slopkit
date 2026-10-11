@@ -206,7 +206,7 @@ namespace
         }
         return std::nullopt;
     }
-} // namespace
+}
 
 // The only test that proves the whole chain against a real Wine process: the
 // injector runs under the target's own wine, the DLL allocates through Wine's
@@ -234,8 +234,6 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
         return;
     }
 
-    // The plugin normally resolves this through dladdr; the test points it at
-    // the build's plugin directory directly.
     ::setenv("SLOPKIT_AGENT_DIR", SLOPKIT_AGENT_BINARY_DIR, 1);
 
     auto launched = launch_probe(wine, {probe.string()}, 120s);
@@ -282,8 +280,6 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     CHECK(*previous == SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE);
     REQUIRE(agent->protect(*allocated, 0x1000, SLOPKIT_AGENT_PAGE_EXECUTE_READWRITE, 5s).has_value());
 
-    // A write landed in the target, the read brings the same bytes back, and
-    // the region walk reports both the block and the agent's own module.
     std::vector<std::byte> pattern(16);
     for (std::size_t index = 0; index < pattern.size(); ++index)
     {
@@ -401,11 +397,8 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
         saw_kernel = saw_kernel || same_name(module.name, "kernel32.dll");
         saw_ntdll  = saw_ntdll || same_name(module.name, "ntdll.dll");
 
-        // A loader entry is a PE image, so a host .so name can never appear.
         CHECK(module.name.find(".so") == std::string::npos);
 
-        // Every base is covered by a real file mapping in the target's procfs
-        // view, which is what gives the module its host path.
         const auto covering = std::ranges::find_if(maps,
                                                    [&](const slopkit::platform::MappedRegion& map)
                                                    {
@@ -417,8 +410,6 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     CHECK(saw_kernel);
     CHECK(saw_ntdll);
 
-    // QUERY confirms the block is committed and readable while an unmapped
-    // address is not: the same answer validate_memory is built on.
     const auto block = agent->query(*allocated, 5s);
     REQUIRE(block.has_value());
     CHECK(block->state == SLOPKIT_AGENT_MEM_COMMIT);
@@ -447,8 +438,6 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     REQUIRE(agent->free(*allocated, 5s).has_value());
     CHECK_FALSE(agent->owns(*allocated));
 
-    // SHUTDOWN frees what is left and stops the service thread; the destructor
-    // is idempotent, so the client can be left to clean up on its own.
     agent->shutdown(5s);
 }
 

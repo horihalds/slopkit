@@ -37,12 +37,8 @@
 
 namespace slopkit::ui::panels
 {
-
     namespace
     {
-        // A log record is one line (docs/LOGGING.md), so a message that carries
-        // newlines - a printed string that has one, or a Lua error with its
-        // traceback - is flattened before it is logged or shown.
         std::string one_line(std::string_view text)
         {
             std::string line {text};
@@ -51,14 +47,11 @@ namespace slopkit::ui::panels
             return line;
         }
 
-        // The interesting part of a Lua error: its message, without the
-        // traceback that follows it.
         std::string error_message(std::string_view text)
         {
             return one_line(text.substr(0, text.find('\n')));
         }
 
-        // A script's own output is the run's payload: one record per line.
         void log_script_lines(const std::vector<std::string>& lines)
         {
             for (const std::string& line : lines)
@@ -66,7 +59,7 @@ namespace slopkit::ui::panels
                 log::info(log::category::script, one_line(line));
             }
         }
-    } // namespace
+    }
 
     AddressListPanel::AddressListPanel(table::AddressTable&     table,
                                        process::AccessWorker&   worker,
@@ -101,8 +94,6 @@ namespace slopkit::ui::panels
                                                               QHeaderView::ResizeToContents);
         layout->addWidget(table_view_, 1);
 
-        // The row menu's Delete entry and the Del key run the same action, scoped
-        // to the table and its editors so the key shadows no other surface.
         remove_action_ = new QAction(tr("Delete"), this);
         remove_action_->setShortcut(QKeySequence::Delete);
         remove_action_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -122,8 +113,6 @@ namespace slopkit::ui::panels
                     refresh();
                 });
 
-        // The view owns the gesture; every change is mirrored into the table's
-        // durable set. The guard ignores the writes the panel makes itself.
         connect(table_view_->selectionModel(),
                 &QItemSelectionModel::selectionChanged,
                 this,
@@ -190,9 +179,6 @@ namespace slopkit::ui::panels
     void AddressListPanel::refresh()
     {
         bool                          reset       = false;
-        // The model resets only when the row count changed, which is exactly
-        // when it drops the view's selection and current row. That reset is what
-        // re-projects the durable selection; an idle tick leaves the view alone.
         const QMetaObject::Connection reset_watch = connect(model_,
                                                             &QAbstractItemModel::modelReset,
                                                             this,
@@ -201,8 +187,6 @@ namespace slopkit::ui::panels
                                                                 reset = true;
                                                             });
         const bool                    was_syncing = syncing_;
-        // The guard keeps the reset's own selection-clearing from writing the
-        // emptied state back into the table.
         syncing_                                  = true;
         model_->refresh();
         syncing_ = was_syncing;
@@ -213,9 +197,6 @@ namespace slopkit::ui::panels
         }
         maybe_resolve_expressions();
 
-        // The engine and a script's globals are dropped with the target, so a
-        // ticked script row would be a lie once it detaches. Clearing the flag
-        // is itself the transition record, so the sweep is a no-op afterwards.
         if (target_.valid())
         {
             return;
@@ -254,7 +235,6 @@ namespace slopkit::ui::panels
     {
         modules_.set_modules(modules);
         model_->set_modules(std::move(modules));
-        // A new memory map means new bases, so resolve at the next tick.
         force_resolve_ = true;
     }
 
@@ -288,8 +268,6 @@ namespace slopkit::ui::panels
             force_resolve_ = false;
             return;
         }
-        // A new or edited expression resolves at once; otherwise the interval
-        // throttles the repeated pointer reads.
         if (!force_resolve_ && signature == expression_signature_ && now - last_resolve_ < kResolveInterval)
         {
             return;
@@ -302,8 +280,6 @@ namespace slopkit::ui::panels
         resolving_              = true;
         last_resolve_           = now;
 
-        // Keep the submitted texts so a completion can be validated against the
-        // current entries (an entry edited meanwhile is not overwritten).
         const auto submitted_requests = requests;
         const bool submitted          = worker_.submit_resolve_expressions(
             id,
@@ -314,7 +290,7 @@ namespace slopkit::ui::panels
             {
                 if (resolve_job_ != id)
                 {
-                    return; // a later pass superseded this one
+                    return;
                 }
                 resolve_job_.reset();
                 resolving_ = false;
@@ -322,7 +298,7 @@ namespace slopkit::ui::panels
                 const auto& resolved = std::get<process::ResolveResult>(result);
                 if (resolved.error.has_value())
                 {
-                    return; // detached between submit and completion
+                    return;
                 }
 
                 auto entries = table_.entries();
@@ -345,7 +321,6 @@ namespace slopkit::ui::panels
                                                     {
                                                         return candidate.id == item.key;
                                                     });
-                    // Drop an entry removed or edited while the resolve ran.
                     if (entry == entries.end() || entry->expression != request->expression)
                     {
                         continue;
@@ -396,7 +371,6 @@ namespace slopkit::ui::panels
 
     QString AddressListPanel::suggested_table_path() const
     {
-        // An existing table keeps its file name; only the directory can change.
         if (!table_path_.isEmpty())
         {
             const QString name = QFileInfo(table_path_).fileName();
@@ -474,7 +448,6 @@ namespace slopkit::ui::panels
         auto parsed = parse_table(path);
         if (!parsed)
         {
-            // The path is still remembered, so a later save keeps the target.
             set_table_path(path);
             return false;
         }
@@ -496,8 +469,6 @@ namespace slopkit::ui::panels
     void AddressListPanel::save_table_as()
     {
         log::debug(log::category::ui, "save table as requested");
-        // Only the first save of a never-saved table with no remembered
-        // directory creates the default folder, so the chooser can start there.
         if (table_path_.isEmpty() && dialog_directory_.isEmpty())
         {
             const QString directory = default_table_directory();
@@ -553,8 +524,6 @@ namespace slopkit::ui::panels
         const bool was_syncing = syncing_;
         syncing_               = true;
 
-        // Rebuild the highlight from the durable set, then restore the cursor
-        // without disturbing that selection.
         selection->clearSelection();
         for (const std::size_t row : table_.selected_rows())
         {
@@ -585,9 +554,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // The first selected row supplies the format the box validates against;
-        // the model then refuses a selection that mixes types or formats, so one
-        // typed value always fits every row it writes.
         const table::AddressEntry& first = table_.entries()[rows.front()];
         const QString              current =
             model_
@@ -608,10 +574,8 @@ namespace slopkit::ui::panels
         const std::optional<QString> typed = widgets::get_text(options, this);
         if (!typed.has_value())
         {
-            return; // cancelled
+            return;
         }
-        // The model parses and encodes the value and drives the write; it reports
-        // the outcome, including a mixed selection and a malformed value.
         (void)model_->write_values(rows, *typed);
     }
 
@@ -625,9 +589,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // Resolve the rows to their top-level blocks: a row inside a listed
-        // parent's subtree is covered by that parent, so it counts (and is
-        // erased) once.
         std::vector<std::pair<std::size_t, std::size_t>> blocks;
         std::size_t                                      removed = 0;
         for (const std::size_t row : rows)
@@ -684,7 +645,6 @@ namespace slopkit::ui::panels
 
         table_.remove_rows(rows);
         set_status(entries == 1 ? tr("Entry deleted.") : tr("%1 entries deleted.").arg(entries), false);
-        // The deleted rows and the re-projected selection land in one step.
         refresh();
     }
 
@@ -701,8 +661,6 @@ namespace slopkit::ui::panels
         const std::size_t index = static_cast<std::size_t>(row);
         if (table_.entries()[index].kind == table::EntryKind::script)
         {
-            // A script row toggles through its hooks, exactly like the checkable
-            // Active cell, rather than flipping the flag in place.
             toggle_script_active(index, !table_.entries()[index].active);
             return;
         }
@@ -761,8 +719,6 @@ namespace slopkit::ui::panels
         {
             return;
         }
-        // The Lua chunk touches the target, so it needs a live session; the
-        // worker re-checks this before it runs anything.
         if (!target_.valid())
         {
             log::warning(log::category::script, "run script refused: no attached target");
@@ -804,7 +760,7 @@ namespace slopkit::ui::panels
     {
         if (script_job_ != id)
         {
-            return; // a later run superseded this one
+            return;
         }
         script_job_.reset();
 
@@ -813,8 +769,6 @@ namespace slopkit::ui::panels
 
         if (ran.run.ok)
         {
-            // A script may have registered a symbol, so re-resolve at once
-            // instead of waiting for a module-map change.
             force_resolve_ = true;
             set_status(ran.run.returned.empty() ? tr("Script ok.")
                                                 : tr("Script returned %1.").arg(to_qstring(ran.run.returned)),
@@ -822,7 +776,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // The failure is logged exactly once, here, without its traceback.
         const std::string message = error_message(ran.run.error);
         log::warning(log::category::script, message);
         set_status(tr("Script failed: %1").arg(to_qstring(message)), true);
@@ -835,14 +788,11 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // Any refusal must snap the clicked box back to the table's state.
         const auto revert = [this, row]
         {
             model_->note_entry_changed(row);
         };
 
-        // The hook touches the target, so it needs a live session; the worker
-        // re-checks this before it runs anything.
         if (!target_.valid())
         {
             log::warning(log::category::script, "activate refused: no attached target");
@@ -892,20 +842,18 @@ namespace slopkit::ui::panels
     {
         if (script_job_ != id)
         {
-            return; // a later job superseded this one
+            return;
         }
         script_job_.reset();
 
         const auto& ran = std::get<process::ScriptResult>(result);
         if (!ran.lifecycle.has_value())
         {
-            return; // a plain run's completion, not ours
+            return;
         }
         const script::LifecycleResult& outcome = *ran.lifecycle;
         log_script_lines(outcome.output);
 
-        // A reorder or a delete may have landed between the click and the
-        // completion, so the row is re-located by its entry id.
         std::optional<std::size_t> row;
         for (std::size_t index = 0; index < table_.size(); ++index)
         {
@@ -920,8 +868,6 @@ namespace slopkit::ui::panels
 
         if (outcome.ok)
         {
-            // A script may have registered a symbol, so re-resolve at once
-            // instead of waiting for a module-map change.
             force_resolve_ = true;
             if (row.has_value())
             {
@@ -945,7 +891,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // Failure: the flag stays as it was, so the box snaps back.
         if (row.has_value())
         {
             model_->note_entry_changed(*row);
@@ -981,9 +926,6 @@ namespace slopkit::ui::panels
 
     void AddressListPanel::note_script_update_failed(const process::ScriptUpdateFailure& failure)
     {
-        // The worker already deactivated the script and stopped ticking it, so
-        // only its row's flag and the report are left. The row is located by
-        // description, which is what the worker tracked the script under.
         std::optional<std::size_t> row;
         for (std::size_t index = 0; index < table_.size(); ++index)
         {
@@ -995,7 +937,6 @@ namespace slopkit::ui::panels
             }
         }
 
-        // Exactly one warning, whether or not the row is still there to update.
         if (failure.reason.empty())
         {
             log::warning(log::category::script, std::format("script '{}' update failed", failure.description));
@@ -1037,9 +978,6 @@ namespace slopkit::ui::panels
             table_.set_selected(static_cast<int>(row));
             if (!table_.is_row_selected(row))
             {
-                // A right-click outside the selection moves the whole selection
-                // to the clicked row, so the menu's Delete matches what the user
-                // right-clicked. A right-click inside it leaves it alone.
                 table_.set_selected_rows(std::span<const std::size_t>(&row, 1));
                 sync_view_selection();
             }
@@ -1047,8 +985,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // A click below the rows shows the table-area commands alone and leaves
-        // the current selection untouched.
         populate_panel_menu(menu);
     }
 
@@ -1074,9 +1010,6 @@ namespace slopkit::ui::panels
 
         widgets::show_explanations(menu);
 
-        // A script row has no address and no value, so it gets its own two
-        // commands instead of the value-row set; both row kinds then share the
-        // table-area tail.
         if (entry.kind == table::EntryKind::script)
         {
             QAction* run = menu.addAction(tr("Run Script"));
@@ -1102,8 +1035,6 @@ namespace slopkit::ui::panels
         }
         else
         {
-            // The value change asks in the shared input box and acts on the whole
-            // selection, matching the scan results' entry for entry.
             QAction* change_value = menu.addAction(tr("Change value…"));
             connect(change_value, &QAction::triggered, this, &AddressListPanel::change_value);
 
@@ -1152,7 +1083,6 @@ namespace slopkit::ui::panels
                         }
                     });
 
-            // The watch entries arm a hardware slot, so they need a target.
             const std::size_t width =
                 entry.bytes.empty() ? scan::value_size(entry.type) : static_cast<std::size_t>(entry.bytes.size());
             widgets::add_watch_commands(menu,
@@ -1174,11 +1104,8 @@ namespace slopkit::ui::panels
             menu.addAction(remove_action_);
         }
 
-        // The table-area commands follow the row's own entries, after their own
-        // separator, on a value row and a script row alike
-        // (docs/UI_DESIGN.md#windows-dialogs-and-layout).
         menu.addSeparator();
         populate_panel_menu(menu);
     }
 
-} // namespace slopkit::ui::panels
+}

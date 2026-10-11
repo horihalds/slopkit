@@ -89,7 +89,7 @@ ExperimentalAutoDetectBinPacking: false
 PackConstructorInitializers: BinPack
 ConstructorInitializerAllOnOneLineOrOnePerLine: false
 AllowAllConstructorInitializersOnNextLine: true
-FixNamespaceComments: true
+FixNamespaceComments: false
 ForEachMacros:
   - foreach
   - Q_FOREACH

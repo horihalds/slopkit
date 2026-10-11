@@ -24,7 +24,6 @@ namespace
 7f3000000000-7f3000001000 r-xp 00000000 08:01 789 /tmp/libdeleted.so (deleted)
 )";
 
-    // A minimal little-endian 64-bit ELF header carrying `type` and `entry`.
     std::vector<std::byte> make_elf(std::uint16_t type, std::uint64_t entry)
     {
         std::vector<std::byte> bytes(32, std::byte {0});
@@ -32,8 +31,8 @@ namespace
         bytes[1]  = std::byte {'E'};
         bytes[2]  = std::byte {'L'};
         bytes[3]  = std::byte {'F'};
-        bytes[4]  = std::byte {2}; // ELFCLASS64
-        bytes[5]  = std::byte {1}; // ELFDATA2LSB
+        bytes[4]  = std::byte {2};
+        bytes[5]  = std::byte {1};
         bytes[16] = static_cast<std::byte>(type & 0xff);
         bytes[17] = static_cast<std::byte>((type >> 8) & 0xff);
         for (std::size_t i = 0; i < 8; ++i)
@@ -43,12 +42,10 @@ namespace
         return bytes;
     }
 
-    // A minimal PE header whose optional header carries `entry_rva` and whose
-    // COFF characteristics carry IMAGE_FILE_DLL when `is_dll` is set.
     std::vector<std::byte> make_pe(std::uint32_t entry_rva, bool is_dll = false)
     {
         constexpr std::size_t   lfanew              = 0x40;
-        constexpr std::size_t   characteristics_off = 22; // Signature + COFF Characteristics.
+        constexpr std::size_t   characteristics_off = 22;
         constexpr std::uint16_t image_file_dll      = 0x2000;
 
         std::vector<std::byte> bytes(lfanew + 44, std::byte {0});
@@ -71,13 +68,12 @@ namespace
         return bytes;
     }
 
-    // Writes a header fixture to `path`.
     void write_bytes(const std::filesystem::path& path, std::span<const std::byte> bytes)
     {
         std::ofstream file(path, std::ios::binary | std::ios::trunc);
         file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
-} // namespace
+}
 
 TEST_CASE("procfs parses region maps", "[procfs]")
 {
@@ -96,15 +92,12 @@ TEST_CASE("procfs parses region maps", "[procfs]")
     CHECK(regions[1].readable);
     CHECK_FALSE(regions[1].executable);
 
-    // Anonymous mapping: no backing path.
     CHECK(regions[3].path.empty());
     CHECK(regions[3].readable);
     CHECK(regions[3].writable);
 
-    // Kernel pseudo-path is treated as anonymous.
     CHECK(regions[4].path == "[heap]");
 
-    // A deleted file keeps its path and is flagged.
     CHECK(regions[5].deleted);
     CHECK(regions[5].path == "/tmp/libdeleted.so");
 }
@@ -275,18 +268,14 @@ TEST_CASE("the process main module is the flagged image or the lowest base", "[p
     const std::vector<ModuleInfo> none;
     CHECK(main_module(none) == nullptr);
 
-    // Nothing flagged: the lowest-based file-backed image wins.
     const std::vector<ModuleInfo> unflagged {image(0x5000, 0x100, false), image(0x2000, 0x100, false)};
     REQUIRE(main_module(unflagged) != nullptr);
     CHECK(main_module(unflagged)->base == 0x2000);
 
-    // A flagged image wins even when another file-backed image has a lower base.
     const std::vector<ModuleInfo> flagged {image(0x2000, 0x100, false), image(0x5000, 0x100, true)};
     REQUIRE(main_module(flagged) != nullptr);
     CHECK(main_module(flagged)->base == 0x5000);
 
-    // Anonymous and zero-size entries are skipped: a (plugin-bug) flag on an
-    // anonymous mapping never wins, and the fallback skips both kinds.
     ModuleInfo anonymous;
     anonymous.kind    = ModuleKind::anonymous;
     anonymous.base    = 0x1000;
@@ -314,7 +303,6 @@ TEST_CASE("module entry tells a PE executable from a DLL", "[procfs]")
     REQUIRE(dll.has_value());
     CHECK(*dll == PeKind::dll);
 
-    // An ELF header, an MZ-only buffer and garbage are not PE images.
     const std::vector<std::byte> elf_header {std::byte {0x7f}, std::byte {'E'}, std::byte {'L'}, std::byte {'F'}};
     CHECK_FALSE(slopkit::platform::parse_pe_kind(elf_header).has_value());
 
@@ -348,16 +336,13 @@ TEST_CASE("the exe path flags the matching module as the main image", "[procfs]"
     CHECK(modules[0].is_main);
     CHECK_FALSE(modules[1].is_main);
 
-    // The path read from /proc may carry the " (deleted)" suffix.
     CHECK(slopkit::platform::flag_main_module_by_path(modules, "/opt/game/game (deleted)"));
     CHECK(modules[0].is_main);
 
-    // Any previous flag is cleared when the path does not match.
     CHECK_FALSE(slopkit::platform::flag_main_module_by_path(modules, "/usr/bin/other"));
     CHECK_FALSE(modules[0].is_main);
     CHECK_FALSE(modules[1].is_main);
 
-    // An empty exe path never flags anything.
     CHECK_FALSE(slopkit::platform::flag_main_module_by_path(modules, ""));
 }
 
@@ -388,13 +373,11 @@ TEST_CASE("flag_main_pe_image flags the lowest-based non-DLL PE image", "[procfs
 
     const auto pid = static_cast<slopkit::process::ProcessId>(::getpid());
 
-    // The DLL at a lower base is skipped; the executable at a higher base wins.
     std::vector<ModuleInfo> modules {image(dll_path, 0x400000), image(game_path, 0x500000)};
     CHECK(slopkit::platform::flag_main_pe_image(pid, modules));
     CHECK_FALSE(modules[0].is_main);
     CHECK(modules[1].is_main);
 
-    // A previous flag is cleared when no image is an executable.
     std::vector<ModuleInfo> dlls {image(dll_path, 0x400000)};
     dlls[0].is_main = true;
     CHECK_FALSE(slopkit::platform::flag_main_pe_image(pid, dlls));

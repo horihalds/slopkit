@@ -15,8 +15,6 @@
 
 namespace
 {
-    // Answers a fixed depth for its one cell, so the delegate can be exercised
-    // without the address table behind it.
     class DepthModel : public QAbstractTableModel
     {
     public:
@@ -48,7 +46,7 @@ namespace
     private:
         int depth_ {};
     };
-} // namespace
+}
 
 TEST_CASE("the indent delegate insets a nested cell without clipping it", "[ui]")
 {
@@ -56,14 +54,10 @@ TEST_CASE("the indent delegate insets a nested cell without clipping it", "[ui]"
 
     slopkit::ui::widgets::IndentDelegate delegate;
 
-    // The left and right edges of the painted content, against the background at
-    // the cell's top-left corner.
     const auto content_box = [&delegate](int depth)
     {
         DepthModel model {depth};
         QImage     image {240, 30, QImage::Format_ARGB32};
-        // A colour that contrasts with both a light and a dark theme's text, so
-        // the painted content is always detectable against the corner pixel.
         image.fill(QColor(255, 0, 255));
         {
             QPainter             painter {&image};
@@ -95,12 +89,9 @@ TEST_CASE("the indent delegate insets a nested cell without clipping it", "[ui]"
     const auto flat   = content_box(0);
     const auto nested = content_box(1);
 
-    // Both cells drew something.
     REQUIRE(flat.second >= flat.first);
     REQUIRE(nested.second >= nested.first);
 
-    // The nested cell's content starts one indentation step further right, and
-    // still fits inside the cell.
     const int indent = QApplication::style()->pixelMetric(QStyle::PM_TreeViewIndentation);
     CHECK(nested.first > flat.first);
     CHECK(nested.first - flat.first >= indent);

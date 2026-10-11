@@ -32,8 +32,6 @@ TEST_CASE("launching the sandbox returns a live pid", "[app][sandbox]")
     REQUIRE(result.has_value());
     CHECK(*result > 0);
 
-    // The sandbox runs in its own session and is meant to outlive slopkit; stop
-    // and reap the instance this test spawned so nothing is left behind.
     const auto pid = static_cast<pid_t>(*result);
     static_cast<void>(::kill(pid, SIGKILL));
     static_cast<void>(::waitpid(pid, nullptr, 0));
@@ -55,9 +53,6 @@ TEST_CASE("a launched practice target's memory is readable and scannable", "[app
 
     const auto target_pid = static_cast<slopkit::process::ProcessId>(*launched);
 
-    // The child needs a moment before it has mapped its image; retry briefly.
-    // Before this fix the read always failed with permission_denied, so the loop
-    // would exhaust and the REQUIRE below would fail.
     std::optional<slopkit::process::Session> session;
     std::optional<std::vector<std::byte>>    header;
     std::uint64_t                            image_base = 0;

@@ -9,11 +9,8 @@
 
 namespace slopkit::ui
 {
-
     namespace
     {
-        // The label a module is displayed with: its name, or the file name of
-        // its path when the name is empty.
         std::string module_label(const process::ModuleInfo& module)
         {
             if (!module.name.empty())
@@ -43,12 +40,10 @@ namespace slopkit::ui
             }
             return true;
         }
-    } // namespace
+    }
 
     QString elide_module_name(std::string_view name)
     {
-        // Split at the last '.' that is not the first character; a leading dot
-        // is part of the name, so `.hidden` has no extension.
         const std::size_t      dot           = name.rfind('.');
         const bool             has_extension = dot != std::string_view::npos && dot != 0;
         const std::string_view stem          = has_extension ? name.substr(0, dot) : name;
@@ -239,9 +234,6 @@ namespace slopkit::ui
     {
         if (text.find('+') == std::string_view::npos)
         {
-            // A bare module name jumps to the module base; the lookup is
-            // case-insensitive and wins over the hex reading of the text. A
-            // symbol name resolves the same way, after the module lookup.
             if (const ModuleSpan* span = spans.find_by_name(text); span != nullptr)
             {
                 return span->base;
@@ -250,8 +242,6 @@ namespace slopkit::ui
             {
                 return value;
             }
-            // A plain absolute address is bare hex; `0x…` is hex and `#…`
-            // is decimal.
             const auto parsed = scan::parse_address(text);
             return parsed.has_value() ? std::optional<std::uint64_t> {*parsed} : std::nullopt;
         }
@@ -259,7 +249,7 @@ namespace slopkit::ui
         const auto expression = expr::parse(text);
         if (!expression || expression->offsets.size() != 1 || expression->pointer_levels() != 0)
         {
-            return std::nullopt; // a pointer chain needs the worker
+            return std::nullopt;
         }
 
         std::uint64_t base = 0;
@@ -314,4 +304,4 @@ namespace slopkit::ui
         return std::nullopt;
     }
 
-} // namespace slopkit::ui
+}

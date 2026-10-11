@@ -11,10 +11,6 @@
 
 namespace slopkit::ui::models
 {
-
-    // The call stack of the stopped thread: frame index, the address in the
-    // current display mode and the absolute address. It only renders what the
-    // controller supplied.
     class CallStackModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -41,8 +37,8 @@ namespace slopkit::ui::models
 
     private:
         std::vector<QString> address_;
-        std::vector<QString> full_; // the untruncated module+RVA, for hovers
+        std::vector<QString> full_;
         std::vector<QString> absolute_;
     };
 
-} // namespace slopkit::ui::models
+}

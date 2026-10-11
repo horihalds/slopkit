@@ -74,7 +74,7 @@ namespace
     private:
         ProcessId pid_ {};
     };
-} // namespace
+}
 
 TEST_CASE("ptrace seizes, stops and round-trips registers", "[ptrace]")
 {
@@ -90,12 +90,10 @@ TEST_CASE("ptrace seizes, stops and round-trips registers", "[ptrace]")
     CHECK(stop->reason == StopReason::interrupt);
     CHECK(stop->tid == child.pid());
 
-    // The register file is readable while stopped.
     const auto registers = slopkit::platform::get_registers(child.pid());
     REQUIRE(registers.has_value());
     CHECK(registers->rip != 0);
 
-    // Writing a register reads back through a fresh GETREGSET.
     CHECK(slopkit::platform::set_register(child.pid(), "rax", 0x1234'5678'9ABC'DEF0ULL).has_value());
     CHECK(slopkit::platform::set_register(child.pid(), "eflags", registers->rflags).has_value());
     const auto reread = slopkit::platform::get_registers(child.pid());
@@ -118,27 +116,20 @@ TEST_CASE("ptrace round-trips the whole register file, not only named fields", "
     REQUIRE(slopkit::platform::interrupt(child.pid()).has_value());
     REQUIRE(slopkit::platform::wait(std::array {child.pid()}).has_value());
 
-    // The raw NT_PRSTATUS file is the whole register set, including the fields
-    // the per-name setter does not name.
     const auto raw = slopkit::platform::read_registers_raw(child.pid());
     REQUIRE(raw.has_value());
     REQUIRE(raw->size() == sizeof(user_regs_struct));
 
-    // Writing the same bytes back leaves the file byte-identical: the allocation
-    // window relies on this to put a borrowed thread back exactly.
     CHECK(slopkit::platform::write_registers_raw(child.pid(), *raw).has_value());
     const auto again = slopkit::platform::read_registers_raw(child.pid());
     REQUIRE(again.has_value());
     CHECK(*again == *raw);
 
-    // The number the kernel will execute lives in orig_rax and is part of the
-    // file: the setter has to be able to rewrite it to disarm a planted call.
     CHECK(slopkit::platform::set_register(child.pid(), "ORIG_RAX", 0x7FFF'FFFF'FFFF'FFFFULL).has_value());
     const auto disarmed = slopkit::platform::read_registers_raw(child.pid());
     REQUIRE(disarmed.has_value());
     CHECK(*disarmed != *raw);
 
-    // Writing the captured file back puts the original value in place.
     CHECK(slopkit::platform::write_registers_raw(child.pid(), *raw).has_value());
     const auto restored = slopkit::platform::read_registers_raw(child.pid());
     REQUIRE(restored.has_value());
@@ -159,13 +150,11 @@ TEST_CASE("ptrace writes and clears hardware debug registers", "[ptrace]")
     REQUIRE(slopkit::platform::interrupt(child.pid()).has_value());
     REQUIRE(slopkit::platform::wait(std::array {child.pid()}).has_value());
 
-    // An 8-byte aligned address survives a DR0 write/read-back.
     CHECK(slopkit::platform::set_debug_register(child.pid(), 0, 0x4000).has_value());
     const auto slot0 = slopkit::platform::get_debug_register(child.pid(), 0);
     REQUIRE(slot0.has_value());
     CHECK(*slot0 == 0x4000);
 
-    // DR7 enables slot 0; clearing zeroes the slots and the control register.
     CHECK(slopkit::platform::set_debug_register(child.pid(), 7, 0x1).has_value());
     const auto control = slopkit::platform::get_debug_register(child.pid(), 7);
     REQUIRE(control.has_value());
@@ -177,7 +166,6 @@ TEST_CASE("ptrace writes and clears hardware debug registers", "[ptrace]")
     REQUIRE(slopkit::platform::get_debug_register(child.pid(), 7).has_value());
     CHECK(*slopkit::platform::get_debug_register(child.pid(), 7) == 0);
 
-    // Out-of-range slots are refused.
     CHECK_FALSE(slopkit::platform::set_debug_register(child.pid(), 8, 1).has_value());
 
     CHECK(slopkit::platform::detach(child.pid()).has_value());
@@ -195,11 +183,9 @@ TEST_CASE("ptrace reads and writes target words and bytes", "[ptrace]")
     const auto registers = slopkit::platform::get_registers(child.pid());
     REQUIRE(registers.has_value());
 
-    // Peeking the top of the stopped stack yields a word.
     const auto word = slopkit::platform::peek_data(child.pid(), registers->rsp);
     REQUIRE(word.has_value());
 
-    // Writing the same bytes back is a no-op that still round-trips.
     const auto bytes = slopkit::platform::read_bytes(child.pid(), registers->rsp, 8);
     REQUIRE(bytes.has_value());
     CHECK(bytes->size() == 8);
@@ -208,13 +194,11 @@ TEST_CASE("ptrace reads and writes target words and bytes", "[ptrace]")
     REQUIRE(reread.has_value());
     CHECK(*reread == *bytes);
 
-    // A word write with the same value round-trips too.
     CHECK(slopkit::platform::poke_data(child.pid(), registers->rsp, *word).has_value());
     const auto word_again = slopkit::platform::peek_data(child.pid(), registers->rsp);
     REQUIRE(word_again.has_value());
     CHECK(*word_again == *word);
 
-    // An unmapped address is reported, not silently zeroed.
     CHECK_FALSE(slopkit::platform::peek_data(child.pid(), 0x1).has_value());
 
     CHECK(slopkit::platform::detach(child.pid()).has_value());
@@ -229,7 +213,6 @@ TEST_CASE("ptrace continues, interrupts and detaches a running target", "[ptrace
     REQUIRE(slopkit::platform::interrupt(child.pid()).has_value());
     REQUIRE(slopkit::platform::wait(std::array {child.pid()}).has_value());
 
-    // Resume, then interrupt again: the second wait reports the interrupt.
     CHECK(slopkit::platform::cont(child.pid()).has_value());
     CHECK(slopkit::platform::interrupt(child.pid()).has_value());
     const auto stop = slopkit::platform::wait(std::array {child.pid()});
@@ -256,9 +239,6 @@ TEST_CASE("ptrace tells a signal delivery stop from a signal death", "[ptrace]")
     REQUIRE(slopkit::platform::interrupt(child.pid()).has_value());
     REQUIRE(slopkit::platform::wait(std::array {child.pid()}).has_value());
 
-    // Let the child run, then deliver SIGUSR1 from outside: it stops so the
-    // signal can be handled and the child is still alive, so this is a delivery
-    // stop rather than a death.
     REQUIRE(slopkit::platform::cont(child.pid()).has_value());
     REQUIRE(::kill(static_cast<pid_t>(child.pid()), SIGUSR1) == 0);
     const auto delivery = slopkit::platform::wait(std::array {child.pid()});
@@ -267,8 +247,6 @@ TEST_CASE("ptrace tells a signal delivery stop from a signal death", "[ptrace]")
     CHECK(delivery->signal == SIGUSR1);
     REQUIRE(slopkit::platform::read_status(child.pid()).has_value());
 
-    // Letting the signal through applies its default action: the child dies of
-    // it, which is a signal death and not a stop.
     REQUIRE(slopkit::platform::cont(child.pid(), SIGUSR1).has_value());
     const auto death = slopkit::platform::wait(std::array {child.pid()});
     REQUIRE(death.has_value());

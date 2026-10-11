@@ -19,7 +19,7 @@ namespace slopkit::app
             const std::filesystem::path base = directory.empty() ? executable_directory() : directory;
             return base / "slopkit-sandbox";
         }
-    } // namespace
+    }
 
     std::optional<std::filesystem::path> sandbox_binary_path(const std::filesystem::path& directory)
     {
@@ -64,4 +64,4 @@ namespace slopkit::app
         return static_cast<std::int64_t>(pid);
     }
 
-} // namespace slopkit::app
+}

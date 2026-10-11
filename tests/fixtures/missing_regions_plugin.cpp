@@ -1,6 +1,3 @@
-// Test fixture: a plugin built against the pre-`list_regions` ABI. Its vtable is
-// one pointer shorter than the host expects, so the loader must reject it with
-// the "vtable struct too small" diagnostic instead of reading past the end.
 
 #include "plugin/plugin_api.h"
 
@@ -16,10 +13,9 @@ namespace
     }
 
     const slopkit_plugin_vtable g_vtable = make_vtable();
-} // namespace
+}
 
-extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable*
-slopkit_plugin_entry(const slopkit_host_services* /*host*/)
+extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable* slopkit_plugin_entry(const slopkit_host_services*)
 {
     return &g_vtable;
 }

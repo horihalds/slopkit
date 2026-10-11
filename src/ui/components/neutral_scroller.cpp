@@ -10,9 +10,8 @@ namespace slopkit::ui::components
 {
     namespace
     {
-        // The thumb's neutral middle: positive moves scroll down, negative up.
         constexpr int kScrollNeutral = 1'000'000;
-    } // namespace
+    }
 
     NeutralScroller::NeutralScroller(QAbstractScrollArea& view, std::function<void(long long)> row_delta)
         : bar_(view.verticalScrollBar()), row_delta_(std::move(row_delta))
@@ -65,4 +64,4 @@ namespace slopkit::ui::components
         }
     }
 
-} // namespace slopkit::ui::components
+}

@@ -34,7 +34,7 @@ namespace
         std::ofstream file(path.toStdString(), std::ios::binary | std::ios::trunc);
         file << text;
     }
-} // namespace
+}
 
 TEST_CASE("A missing settings file falls back to the defaults", "[settings]")
 {
@@ -218,8 +218,6 @@ TEST_CASE("Obsolete per-window geometry keys are inert", "[settings]")
 
     SettingsController controller(path);
 
-    // The four dropped windows have no slot at all; only the live `log_geometry`
-    // key still warns about its malformed value.
     CHECK(controller.values().window_geometry.empty());
     CHECK(controller.window_geometry(WindowId::log).isEmpty());
 
@@ -241,7 +239,6 @@ TEST_CASE("Obsolete per-window geometry keys are inert", "[settings]")
     }
     CHECK(warnings == 1);
 
-    // Nothing is rewritten: the obsolete values sit in the file verbatim.
     std::ifstream     file(path.toStdString(), std::ios::binary);
     const std::string text {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
     CHECK(text.find("process_list_geometry=not-a-blob") != std::string::npos);
@@ -310,8 +307,6 @@ TEST_CASE("Settings signals fire once per real change", "[settings]")
     controller.set_live_update_enabled(false);
     REQUIRE(live_changes == 1);
 
-    // A setter clamps before comparing, so an out-of-range value still changes
-    // once and lands in range.
     controller.set_live_update_interval_ms(1);
     REQUIRE(interval_changes == 1);
     REQUIRE(controller.values().live_update_interval_ms == 50);
@@ -366,8 +361,6 @@ TEST_CASE("the window applies the persisted settings at construction", "[ui]")
                         return scanner->main_module_address() != 0;
                     }));
 
-    // The viewer opens in the persisted absolute mode even though the module map
-    // resolved.
     auto* viewer = window.memory_viewer();
     REQUIRE(viewer != nullptr);
     CHECK(viewer->parentWidget() == nullptr);
@@ -376,7 +369,6 @@ TEST_CASE("the window applies the persisted settings at construction", "[ui]")
     viewer->set_address(0x1040);
     CHECK(document->display_text(0x1040) == QStringLiteral("0x1040"));
 
-    // The Settings dialog reflects both persisted values without user input.
     auto* dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
     REQUIRE(dialog != nullptr);
     auto* light = radio_labelled(*dialog, QStringLiteral("Light"));

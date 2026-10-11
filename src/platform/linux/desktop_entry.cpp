@@ -14,7 +14,6 @@
 
 namespace slopkit::platform
 {
-
     std::optional<DesktopEntry> parse_desktop_entry(std::string_view text)
     {
         bool         in_group    = false;
@@ -118,7 +117,6 @@ namespace slopkit::platform
             token            = std::string(space == std::string_view::npos ? exec : exec.substr(0, space));
         }
 
-        // Strip a trailing field code such as `%u` or `%F`.
         if (const auto percent = token.find('%'); percent != std::string::npos)
         {
             token.erase(percent);
@@ -241,4 +239,4 @@ namespace slopkit::platform
         return std::ranges::find(executables, base) != executables.end();
     }
 
-} // namespace slopkit::platform
+}

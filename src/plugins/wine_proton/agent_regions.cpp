@@ -8,8 +8,6 @@
 
 namespace slopkit::plugins::wine_proton
 {
-    // Whether a Win32 PAGE_* protection permits a plain read; PAGE_NOACCESS and
-    // PAGE_EXECUTE do not, and PAGE_GUARD is a one-shot trap.
     bool region_protection_readable(std::uint32_t protection)
     {
         if ((protection & 0x100u) != 0)
@@ -63,7 +61,7 @@ namespace slopkit::plugins::wine_proton
                 return false;
             }
         }
-    } // namespace
+    }
 
     std::vector<platform::MappedRegion> merge_regions(const std::vector<AgentRegionEntry>&       agent_entries,
                                                       const std::vector<platform::MappedRegion>& maps)
@@ -85,9 +83,6 @@ namespace slopkit::plugins::wine_proton
             region.executable = protection_executable(entry.protection);
             region.shared     = entry.type != SLOPKIT_AGENT_MEM_PRIVATE;
 
-            // The procfs entry containing this region's start supplies the file
-            // identity; the agent's walk and /proc agree on the committed
-            // boundaries, so the start is enough to pick the right line.
             const auto overlay = std::ranges::find_if(maps,
                                                       [&](const platform::MappedRegion& map)
                                                       {
@@ -107,4 +102,4 @@ namespace slopkit::plugins::wine_proton
         std::ranges::sort(merged, {}, &platform::MappedRegion::start);
         return merged;
     }
-} // namespace slopkit::plugins::wine_proton
+}

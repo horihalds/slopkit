@@ -4,7 +4,6 @@
 
 namespace slopkit
 {
-
     std::string_view version();
 
-} // namespace slopkit
+}

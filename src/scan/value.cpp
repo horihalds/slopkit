@@ -12,7 +12,6 @@
 
 namespace slopkit::scan
 {
-
     namespace
     {
         std::string_view trim(std::string_view value)
@@ -26,7 +25,6 @@ namespace slopkit::scan
             return value.substr(first, last - first + 1);
         }
 
-        // Magnitude of an integer literal plus how it was written.
         struct IntegerLiteral
         {
             std::uint64_t magnitude {};
@@ -108,8 +106,6 @@ namespace slopkit::scan
             }
         }
 
-        // Converts an integer literal into the signed value of `type`, wrapping
-        // hex input to the type's width (0xFFFFFFFF on 4-byte reads as -1).
         std::expected<std::int64_t, ValueError> integer_value(ValueType type, std::string_view text, bool force_hex)
         {
             auto literal = parse_integer_literal(text, force_hex);
@@ -261,8 +257,6 @@ namespace slopkit::scan
             return size == 0 ? 8 : size * 2;
         }
 
-        // Renders a signed value as bare uppercase hex truncated to the width
-        // of its type.
         std::string format_hex(std::int64_t value, ValueType type)
         {
             std::uint64_t     magnitude = static_cast<std::uint64_t>(value);
@@ -274,8 +268,6 @@ namespace slopkit::scan
             return std::format("{:0{}X}", magnitude, format_width(type));
         }
 
-        // Renders a signed value as bare uppercase hex masked to the width of
-        // its type, with no zero padding.
         std::string format_hex_minimal(std::int64_t value, ValueType type)
         {
             std::uint64_t     magnitude = static_cast<std::uint64_t>(value);
@@ -286,7 +278,7 @@ namespace slopkit::scan
             }
             return std::format("{:X}", magnitude);
         }
-    } // namespace
+    }
 
     std::expected<ScanValue, ValueError> parse_value(ValueType type, std::string_view text, bool hex)
     {
@@ -337,8 +329,6 @@ namespace slopkit::scan
 
     std::expected<std::uint64_t, ValueError> parse_address(std::string_view text)
     {
-        // Bare digits and `0x…` read as hex, `#…` as decimal; a leading sign is
-        // peeled off so a negative address keeps its own rejection message.
         std::string_view digits   = trim(text);
         const bool       negative = !digits.empty() && digits.front() == '-';
         if (!digits.empty() && (digits.front() == '+' || digits.front() == '-'))
@@ -401,9 +391,6 @@ namespace slopkit::scan
             {
                 return {};
             }
-            // Format at the stored width so the shortest decimal that reads
-            // back to the same bits is printed: a Float scan of 3.14 shows
-            // "3.14", not the double promotion 3.140000104904175.
             float value {};
             std::memcpy(&value, bytes.data(), sizeof(value));
             return std::format("{}", value);
@@ -517,7 +504,7 @@ namespace slopkit::scan
                  std::span<const std::byte> candidate,
                  const ScanValue&           value,
                  const ScanValue&           value_upper,
-                 bool /*hex*/)
+                 bool)
     {
         if (value_type == ValueType::float32 || value_type == ValueType::float64)
         {
@@ -645,4 +632,4 @@ namespace slopkit::scan
         return value_size(type);
     }
 
-} // namespace slopkit::scan
+}

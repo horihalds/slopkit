@@ -2,7 +2,6 @@
 
 namespace slopkit::ui::panels
 {
-
     DebugEnablement debug_enablement(debug::Controller::State state,
                                      bool                     target_valid,
                                      bool                     has_selected_instruction,
@@ -25,4 +24,4 @@ namespace slopkit::ui::panels
         return enablement;
     }
 
-} // namespace slopkit::ui::panels
+}

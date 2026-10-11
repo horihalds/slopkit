@@ -15,16 +15,9 @@ namespace slopkit::script::hook
 {
     namespace
     {
-        // A near jump reaches ±2 GB; the guard leaves a margin for the payload,
-        // so a cave that passes it always assembles.
         constexpr std::uint64_t kCaveReach = 0x7FFF0000;
-        // The cave is rounded up to this boundary, the mapping granularity the
-        // old generated script budgeted for.
         constexpr std::size_t   kCaveAlign = 16;
-        // The byte a leftover slot of the hooked window is padded with.
         constexpr std::byte     kPad {0x90};
-        // The longest a near jump back to the site can encode: a `jmp` with a
-        // single immediate target is at most a five-byte rel32.
         constexpr std::size_t   kMaxJumpBack = 5;
 
         [[nodiscard]] std::size_t round_up(std::size_t value, std::size_t multiple)
@@ -32,17 +25,12 @@ namespace slopkit::script::hook
             return (value + multiple - 1) / multiple * multiple;
         }
 
-        // The mode the target's instructions encode for, from the pointer width
-        // the session reports (8 bytes when the seam cannot answer).
         [[nodiscard]] disasm::MachineMode machine_mode(const MemoryApi& memory)
         {
             const std::size_t pointer = memory.pointer_size ? memory.pointer_size() : sizeof(std::uint64_t);
             return pointer == 4 ? disasm::MachineMode::legacy_32 : disasm::MachineMode::long_64;
         }
 
-        // Expands each `%X` in `text` with the next absolute address, exactly as
-        // the `assemble` global's Lua `string.format` expansion would. The text
-        // is generated, so `%` only ever introduces a placeholder.
         [[nodiscard]] std::string expand(std::string_view text, std::span<const std::uint64_t> values)
         {
             std::string expanded;
@@ -63,9 +51,6 @@ namespace slopkit::script::hook
             return expanded;
         }
 
-        // The payload the cave holds, assembled from `base`: the user's code,
-        // then the replaced instructions (their `site`-relative addresses
-        // expanded), then a jump back to the byte after the window.
         [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
         build_payload(const Spec& spec, disasm::MachineMode mode, std::uint64_t base, std::uint64_t site)
         {
@@ -107,7 +92,7 @@ namespace slopkit::script::hook
             payload.insert(payload.end(), back->begin(), back->end());
             return payload;
         }
-    } // namespace
+    }
 
     std::expected<std::uint64_t, std::string> install(const Spec& spec, const MemoryApi& memory, std::uint64_t site)
     {
@@ -132,12 +117,6 @@ namespace slopkit::script::hook
 
         const disasm::MachineMode mode = machine_mode(memory);
 
-        // Size the cave from the payload. The measurement assembles at the site
-        // itself: that is the base every site-relative branch target is near -
-        // unlike address zero, whose distance to a 64-bit site the encoder
-        // refuses - so the only estimate left is the jump back, budgeted at its
-        // longest (rel32) form because the cave's exact distance is not known
-        // before it is mapped.
         const std::expected<std::vector<std::byte>, std::string> preview = build_payload(spec, mode, site, site);
         if (!preview)
         {
@@ -145,8 +124,6 @@ namespace slopkit::script::hook
         }
         std::size_t size = spec.cave_size.value_or(round_up(preview->size() + kMaxJumpBack, kCaveAlign));
 
-        // Maps `bytes` of cave near the site, freeing and refusing one out of a
-        // near jump's reach.
         const auto map_cave = [&](std::size_t bytes) -> std::expected<std::uint64_t, std::string>
         {
             const std::expected<std::uint64_t, std::string> mapped = memory.allocate(bytes, site);
@@ -154,8 +131,6 @@ namespace slopkit::script::hook
             {
                 return std::unexpected(mapped.error());
             }
-            // A host that hands back address zero did not map anything, and the
-            // jump-reach message would blame a distance that never existed.
             if (*mapped == 0)
             {
                 return std::unexpected(std::string {"the target's allocator returned no address"});
@@ -181,9 +156,6 @@ namespace slopkit::script::hook
             return std::unexpected(payload.error());
         }
 
-        // Re-encoded branches can grow to rel32 once the payload sits at the
-        // cave; when the caller did not pin a size, remap once with the measured
-        // size so a grown payload still fits.
         if (payload->size() > size && !spec.cave_size)
         {
             (void)memory.deallocate(*cave);
@@ -213,8 +185,6 @@ namespace slopkit::script::hook
             return std::unexpected(wrote.error());
         }
 
-        // The site becomes a near jump into the cave, every leftover byte of the
-        // window NOP-padded.
         const std::expected<std::vector<std::byte>, std::string> jump = disasm::assemble_block(
             std::format("jmp 0x{:X}", *cave), disasm::AssembleBlockContext {.base = site, .mode = mode});
         if (!jump)
@@ -265,4 +235,4 @@ namespace slopkit::script::hook
         }
         return {};
     }
-} // namespace slopkit::script::hook
+}

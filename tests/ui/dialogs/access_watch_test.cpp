@@ -31,7 +31,7 @@ namespace
         }
         return nullptr;
     }
-} // namespace
+}
 
 TEST_CASE("the access watch window renders the watch and its coalesced hits", "[ui]")
 {
@@ -54,7 +54,6 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
     AccessWatchDialog                dialog {controller, worker, target};
     CHECK(dialog.header_text() == QStringLiteral("No watch running."));
 
-    // Arming through the window's own seam starts a watch and clears the status.
     dialog.start_watch(0x4000, Kind::hardware_write, 4);
     REQUIRE(pump_until(controller,
                        [&]
@@ -68,8 +67,6 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
     CHECK(dialog.header_text().contains(QStringLiteral("writes")));
     CHECK(dialog.header_text().contains(QStringLiteral("4 bytes")));
 
-    // Two stops on the watched slot coalesce into one row with a count, and the
-    // code is recovered by decoding the bytes ending at the reported RIP.
     const std::uint32_t slot       = watch_entry(controller)->slot;
     const std::uint64_t rip        = 0x5003;
     (*access.memory)[rip - 31]     = std::vector<std::byte>(32, std::byte {0x90});
@@ -101,7 +98,6 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
                         return dialog.recorded_text_at(0) == QStringLiteral("MOV EAX, [RBX+0x10]");
                     }));
 
-    // Follow asks for the recovered instruction address.
     std::uint64_t followed = 0;
     QObject::connect(&dialog,
                      &AccessWatchDialog::followRequested,
@@ -115,7 +111,6 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
     dialog.follow_button()->click();
     CHECK(followed == rip - 3);
 
-    // Stop leaves the rows in place; Clear empties them.
     dialog.stop_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
@@ -157,12 +152,10 @@ TEST_CASE("the access watch window shows the resolved instruction operands", "[u
     REQUIRE(dialog.instruction_row_count() == 2);
     CHECK(dialog.hint_text().contains(QStringLiteral("Resolved from the registers at 0x1000")));
 
-    // A resolved row can start a watch for its address.
     dialog.select_instruction_row(0);
     REQUIRE(dialog.watch_writes_button()->isEnabled());
     REQUIRE(dialog.watch_accesses_button()->isEnabled());
 
-    // An unresolved row cannot.
     dialog.select_instruction_row(1);
     CHECK_FALSE(dialog.watch_writes_button()->isEnabled());
     CHECK_FALSE(dialog.watch_accesses_button()->isEnabled());
@@ -183,7 +176,6 @@ TEST_CASE("the access watch window reports why a watch could not be armed", "[ui
                            return controller.state() == Controller::State::stopped;
                        }));
 
-    // Fill every debug slot, then ask the window for a watch.
     for (int index = 0; index < 4; ++index)
     {
         const auto id =
@@ -236,7 +228,7 @@ TEST_CASE("the access watch attaches the debugger on demand before arming", "[ui
     CHECK(prompts == 1);
     CHECK(dialog.watch_pending());
     CHECK(controller.state() == Controller::State::starting);
-    CHECK_FALSE(dialog.isVisible()); // only shown once the watch is armed
+    CHECK_FALSE(dialog.isVisible());
 
     REQUIRE(pump_ui(worker,
                     [&]

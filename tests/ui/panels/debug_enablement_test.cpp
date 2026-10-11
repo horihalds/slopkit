@@ -14,12 +14,10 @@ namespace
         Controller::State::stopped,
         Controller::State::running,
     };
-} // namespace
+}
 
 TEST_CASE("the shared debugger enablement covers every session state", "[ui][panels][debugger]")
 {
-    // The full truth table: session state x target validity x selection x
-    // breakpoints. Step Into, Step Over and Step Out share the one stopped gate.
     for (const Controller::State state : states)
     {
         for (const bool target_valid : {false, true})

@@ -9,11 +9,6 @@
 
 namespace slopkit::process
 {
-
-    // Embedded ProcessAccess: reaches plugins loaded into this process through
-    // dlopen. This is the seam where an out-of-process, IPC-based implementation
-    // will replace the embedded one; the UI talks to ProcessAccess and nothing
-    // below it, so the swap needs no UI change.
     class PluginAccess final : public ProcessAccess
     {
     public:
@@ -28,4 +23,4 @@ namespace slopkit::process
         plugin::PluginHost& host_;
     };
 
-} // namespace slopkit::process
+}

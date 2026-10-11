@@ -30,4 +30,4 @@ namespace slopkit::ui
         const QSize own = window_.size();
         window_.move(parent->frameGeometry().center() - QPoint(own.width() / 2, own.height() / 2));
     }
-} // namespace slopkit::ui
+}

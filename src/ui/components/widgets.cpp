@@ -13,14 +13,10 @@
 
 namespace slopkit::ui::widgets
 {
-
     namespace
     {
-        // Every icon size generated for the desktop entry.
         constexpr int kIconSizes[] = {16, 24, 32, 48, 64, 128, 256, 512};
 
-        // Every icon size generated for the action glyphs; menus paint 16
-        // logical px, the rest cover HiDPI/fractional scaling.
         constexpr int kActionIconSizes[] = {16, 24, 32, 48, 64};
 
         constexpr std::string_view action_icon_name(ActionIcon which)
@@ -58,7 +54,7 @@ namespace slopkit::ui::widgets
             }
             std::unreachable();
         }
-    } // namespace
+    }
 
     QColor status_color(StatusKind kind)
     {
@@ -79,8 +75,6 @@ namespace slopkit::ui::widgets
 
     QLabel* section_header(const QString& text, QWidget* parent)
     {
-        // A status label in the muted "info" colour, so the title follows the
-        // theme without a hard-coded colour.
         auto* label = new StatusLabel(parent);
         label->set_status(StatusKind::info, text);
         QFont font = label->font();
@@ -91,8 +85,6 @@ namespace slopkit::ui::widgets
 
     QLabel* hint_text(const QString& text, QWidget* parent)
     {
-        // A status label in the muted "info" colour, so the hint follows the
-        // theme without a hard-coded colour.
         auto* label = new StatusLabel(parent);
         label->set_status(StatusKind::info, text);
         return label;
@@ -103,7 +95,6 @@ namespace slopkit::ui::widgets
         QWidget* previous = nullptr;
         for (QWidget* widget : widgets)
         {
-            // A null entry is an absent optional control, not a break in the run.
             if (widget == nullptr)
             {
                 continue;
@@ -132,8 +123,6 @@ namespace slopkit::ui::widgets
 
     void PrimaryButton::apply_palette()
     {
-        // setPalette() reports a palette change; without the guard that would
-        // recurse forever.
         if (applying_)
         {
             return;
@@ -164,9 +153,6 @@ namespace slopkit::ui::widgets
     {
         QComboBox::showPopup();
 
-        // Trim the popup to the visible rows so its list scrolls instead of
-        // growing over the screen. The chrome - frame, margins and scroll arrows
-        // - is whatever the popup spends beyond the list itself.
         QAbstractItemView* view       = this->view();
         QWidget*           popup      = view != nullptr ? view->window() : nullptr;
         const int          row_height = view != nullptr ? view->sizeHintForRow(0) : 0;
@@ -182,7 +168,6 @@ namespace slopkit::ui::widgets
         }
 
         popup->resize(popup->width(), height);
-        // A popup opened above the combo box has to follow the shorter list.
         if (popup->y() < mapToGlobal(QPoint(0, 0)).y())
         {
             popup->move(popup->x(), mapToGlobal(QPoint(0, 0)).y() - height);
@@ -194,7 +179,6 @@ namespace slopkit::ui::widgets
     {
         setFrameShape(QFrame::StyledPanel);
         setFrameShadow(QFrame::Plain);
-        // The surface shade comes from a palette role, so it follows the theme.
         setBackgroundRole(QPalette::Base);
         setAutoFillBackground(true);
 
@@ -241,16 +225,12 @@ namespace slopkit::ui::widgets
 
     void StatusLabel::apply_color()
     {
-        // setPalette() reports a palette change; without the guard that would
-        // recurse forever.
         if (applying_)
         {
             return;
         }
         applying_ = true;
 
-        // The application palette is the base, so a later theme switch is picked
-        // up again by the palette-change handler.
         QPalette palette = QGuiApplication::palette();
         palette.setColor(QPalette::WindowText, status_color(kind_));
         setPalette(palette);
@@ -280,4 +260,4 @@ namespace slopkit::ui::widgets
         return icon;
     }
 
-} // namespace slopkit::ui::widgets
+}

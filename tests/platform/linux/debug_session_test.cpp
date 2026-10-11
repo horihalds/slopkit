@@ -32,14 +32,9 @@ namespace
     using slopkit::process::AccessError;
     using slopkit::process::ProcessId;
 
-    // Shared with the forked child: it runs debug_target in a loop so the parent
-    // always has a stable code address to break on, and counts the SIGUSR1
-    // deliveries its own handler sees.
     volatile std::uint32_t g_tick       = 0;
     volatile std::uint32_t g_usr1       = 0;
     volatile std::uint32_t g_go         = 0;
-    // The marked thread's own counter and tid, so an attach can be told to leave
-    // that one thread running.
     volatile std::uint32_t g_marked     = 0;
     volatile std::uint32_t g_marked_tid = 0;
 
@@ -53,8 +48,6 @@ namespace
         g_tick = g_tick + 1;
     }
 
-    // A forked child running the given body, so each test controls what the
-    // target does without a second binary.
     class ChildProcess
     {
     public:
@@ -72,7 +65,7 @@ namespace
                 ::prctl(PR_SET_PDEATHSIG, SIGKILL);
                 if (::getppid() != parent)
                 {
-                    ::_exit(0); // the parent died between fork() and prctl()
+                    ::_exit(0);
                 }
                 body();
                 ::_exit(0);
@@ -157,7 +150,6 @@ namespace
         return 0;
     }
 
-    // Waits until the child has advanced past `above`, proving it is running.
     bool await_tick(MemAccess& memory, std::uint32_t above)
     {
         for (int waited = 0; waited < 2000; waited += 5)
@@ -171,8 +163,6 @@ namespace
         return false;
     }
 
-    // Waits until the marked thread's counter advances past `above`, proving an
-    // exempt thread kept running while the rest of the target was stopped.
     bool await_marked(MemAccess& memory, std::uint32_t above)
     {
         for (int waited = 0; waited < 2000; waited += 5)
@@ -187,8 +177,6 @@ namespace
         return false;
     }
 
-    // Waits until the target reports `want` threads in procfs, so that a session
-    // attaching right after sees them all.
     bool await_threads(ProcessId pid, std::size_t want)
     {
         for (int waited = 0; waited < 2000; waited += 5)
@@ -202,8 +190,6 @@ namespace
         return false;
     }
 
-    // A real `syscall` instruction inside the target's own libc. The child is a
-    // fork of this process, so the address the host resolves is the child's too.
     std::uint64_t find_syscall_gadget(MemAccess& memory)
     {
         auto*      entry = static_cast<std::byte*>(::dlsym(RTLD_DEFAULT, "syscall"));
@@ -224,7 +210,7 @@ namespace
         }
         return 0;
     }
-} // namespace
+}
 
 TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
 {
@@ -245,7 +231,6 @@ TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
     CHECK(*leader == child.pid());
     CHECK(session.attached());
 
-    // Attaching twice is idempotent.
     REQUIRE(session.attach().has_value());
 
     const auto target = reinterpret_cast<std::uint64_t>(&debug_target);
@@ -262,7 +247,6 @@ TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
     CHECK(reread->rax == 0xDEAD'BEEF);
     CHECK_FALSE(session.set_register(*leader, "NOT_A_REGISTER", 1).has_value());
 
-    // Run into the software trap.
     REQUIRE(session.arm_software(0, target, true).has_value());
     CHECK(read_byte(memory, target) == std::byte {0xCC});
 
@@ -273,14 +257,12 @@ TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
     CHECK(hit->address == target + 1);
     CHECK_FALSE(hit->debug_slot.has_value());
 
-    // Step over the trap: the original byte runs and the trap is re-armed.
     const auto stepped = session.resume(target);
     REQUIRE(stepped.has_value());
     CHECK(stepped->reason == StopReason::single_step);
     CHECK(stepped->address != target);
     CHECK(read_byte(memory, target) == std::byte {0xCC});
 
-    // A plain single step progresses one instruction.
     const auto single = session.step(stepped->tid);
     REQUIRE(single.has_value());
     CHECK(single->reason == StopReason::single_step);
@@ -291,7 +273,6 @@ TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
     REQUIRE_FALSE(frames->empty());
     CHECK(frames->front().pc == single->address);
 
-    // Running on hits the re-armed trap again, then leave and remove it.
     const auto again = session.resume(0);
     REQUIRE(again.has_value());
     CHECK(again->reason == StopReason::breakpoint);
@@ -303,7 +284,6 @@ TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
     REQUIRE(session.arm_software(0, target, false).has_value());
     CHECK(read_byte(memory, target) == *before);
 
-    // A hardware execute breakpoint fires and names its DR slot.
     REQUIRE(session.arm_hardware(0, 1, target, 1, true).has_value());
     const auto hardware = session.resume(0);
     REQUIRE(hardware.has_value());
@@ -315,7 +295,7 @@ TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
     REQUIRE(session.arm_hardware(0, 1, target, 1, false).has_value());
 
     REQUIRE(session.detach().has_value());
-    CHECK(session.detach().has_value()); // idempotent
+    CHECK(session.detach().has_value());
     CHECK(::kill(static_cast<pid_t>(child.pid()), 0) == 0);
     const auto status = slopkit::platform::read_status(child.pid());
     REQUIRE(status.has_value());
@@ -348,7 +328,6 @@ TEST_CASE("debug session forwards the target's own signal", "[debug_session]")
     REQUIRE(session.attach().has_value());
     REQUIRE(session.arm_software(0, target, true).has_value());
 
-    // Release the child now that it is stopped and the trap is armed.
     const std::array<std::byte, 1> go {std::byte {1}};
     REQUIRE(slopkit::platform::write_bytes(child.pid(), reinterpret_cast<std::uint64_t>(&g_go), go).has_value());
 
@@ -496,8 +475,6 @@ TEST_CASE("debug session arms a hardware watch after its own interrupt", "[debug
 
 TEST_CASE("debug session arms a hardware watch on a threaded target", "[debug_session]")
 {
-    // A threaded target: the maintenance SIGSTOP group-stops every thread, but
-    // only the first stop is reaped before the arm runs.
     ChildProcess child(
         []
         {
@@ -513,7 +490,6 @@ TEST_CASE("debug session arms a hardware watch on a threaded target", "[debug_se
 
     MemAccess    memory(child.pid());
     DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
-    // Both threads have to exist before attaching, or the session seizes one.
     REQUIRE(await_threads(child.pid(), 2));
 
     const auto watched = reinterpret_cast<std::uint64_t>(&g_tick);
@@ -577,8 +553,6 @@ TEST_CASE("debug session runs a remote syscall at its stops", "[debug_session]")
     REQUIRE(session.set_register(*leader, "RIP", gadget).has_value());
     REQUIRE(session.set_register(*leader, "RAX", SYS_getpid).has_value());
 
-    // The kernel stops the thread at the syscall's entry, before the syscall
-    // runs and before the instruction after the gadget executes.
     const auto entry = session.step_syscall(*leader);
     REQUIRE(entry.has_value());
     CHECK(entry->reason == StopReason::syscall);
@@ -586,7 +560,6 @@ TEST_CASE("debug session runs a remote syscall at its stops", "[debug_session]")
     REQUIRE(entry->syscall_entry.has_value());
     CHECK(*entry->syscall_entry);
 
-    // Then at its exit, whose RAX is the result of the call we planted.
     const auto exited = session.step_syscall(*leader);
     REQUIRE(exited.has_value());
     CHECK(exited->reason == StopReason::syscall);
@@ -598,7 +571,6 @@ TEST_CASE("debug session runs a remote syscall at its stops", "[debug_session]")
     REQUIRE(result.has_value());
     CHECK(result->rax == static_cast<std::uint64_t>(child.pid()));
 
-    // The target's own context goes back before it is handed over.
     REQUIRE(session.set_register(*leader, "RIP", saved->rip).has_value());
     REQUIRE(session.set_register(*leader, "RAX", saved->rax).has_value());
     REQUIRE(session.detach().has_value());
@@ -618,7 +590,6 @@ TEST_CASE("debug session reports a killed target", "[debug_session]")
     MemAccess    memory(child.pid());
     DebugSession session(child.pid(), memory, ForeignSignalPolicy::forward);
 
-    // Attach and resume on one thread; the fatal signal is delivered from here.
     std::promise<bool>                                        attached;
     std::expected<slopkit::platform::StopStatus, AccessError> stop {std::unexpected(AccessError::internal)};
     std::thread                                               runner(
@@ -646,9 +617,6 @@ TEST_CASE("debug session reports a killed target", "[debug_session]")
 
 TEST_CASE("debug session leaves an excluded thread running", "[debug_session]")
 {
-    // Two threads: an ordinary one that hammers debug_target, and a marked one
-    // that publishes its tid and counts. The attach is told to leave the marked
-    // tid alone, so it keeps running while the ordinary thread is stopped.
     ChildProcess child(
         []
         {
@@ -666,7 +634,6 @@ TEST_CASE("debug session leaves an excluded thread running", "[debug_session]")
     DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
     REQUIRE(await_threads(child.pid(), 2));
 
-    // The marked thread published its own tid.
     std::uint32_t marked_tid = 0;
     for (int waited = 0; waited < 2000 && marked_tid == 0; waited += 5)
     {
@@ -687,16 +654,13 @@ TEST_CASE("debug session leaves an excluded thread running", "[debug_session]")
     REQUIRE(leader.has_value());
     CHECK(session.attached());
 
-    // The excluded thread keeps counting...
     const auto before = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_marked)).value_or(0);
     REQUIRE(await_marked(memory, before));
 
-    // ...while the seized thread is stopped: its counter no longer advances.
     const auto frozen = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)).value_or(0);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     CHECK(read_u32(memory, reinterpret_cast<std::uint64_t>(&g_tick)).value_or(~0u) == frozen);
 
-    // The reduced set still detaches cleanly, leaving every thread detached.
     CHECK(session.detach().has_value());
     CHECK_FALSE(session.attached());
 }

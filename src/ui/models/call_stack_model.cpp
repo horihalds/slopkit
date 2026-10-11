@@ -7,7 +7,6 @@
 
 namespace slopkit::ui::models
 {
-
     CallStackModel::CallStackModel(QObject* parent) : QAbstractTableModel(parent) {}
 
     void CallStackModel::set_frames(std::span<const slopkit::debug::Frame> frames,
@@ -103,4 +102,4 @@ namespace slopkit::ui::models
         }
     }
 
-} // namespace slopkit::ui::models
+}

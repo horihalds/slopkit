@@ -8,7 +8,6 @@
 
 namespace slopkit::ui::models
 {
-
     namespace
     {
         QString kind_text(slopkit::debug::Kind kind)
@@ -26,7 +25,7 @@ namespace slopkit::ui::models
                 return QStringLiteral("Software");
             }
         }
-    } // namespace
+    }
 
     BreakpointModel::BreakpointModel(slopkit::debug::Controller& controller, QObject* parent)
         : QAbstractTableModel(parent), controller_(controller)
@@ -38,8 +37,6 @@ namespace slopkit::ui::models
     {
         beginResetModel();
         const auto entries = controller_.breakpoints();
-        // A hidden entry (the access watch) owns a slot but is not a user
-        // breakpoint, so it stays out of this window.
         rows_.clear();
         for (const slopkit::debug::Breakpoint& entry : entries)
         {
@@ -110,15 +107,12 @@ namespace slopkit::ui::models
             }
             return {};
         case Qt::FontRole:
-            // Only the machine columns line up; the kind text and the enable
-            // checkbox keep the UI font.
             if (index.column() == size || index.column() == address || index.column() == hits)
             {
                 return QVariant::fromValue(mono_font());
             }
             return {};
         case Qt::ForegroundRole:
-            // A disabled breakpoint is muted; so is one that has not been armed.
             return !entry.enabled || !entry.armed ? QVariant(active_theme().text_muted) : QVariant {};
         default:
             return {};
@@ -176,4 +170,4 @@ namespace slopkit::ui::models
         return true;
     }
 
-} // namespace slopkit::ui::models
+}

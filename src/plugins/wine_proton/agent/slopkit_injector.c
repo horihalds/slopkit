@@ -1,20 +1,3 @@
-/*
- * The one-shot injector the wine-proton plugin runs under the target's own
- * wine binary and WINEPREFIX: it finds the target process by image path, loads
- * the resident agent DLL into it with CreateRemoteThread(LoadLibraryW) and
- * exits. It must be built for the same bitness as the target, so the plugin
- * picks slopkit-injector-x86_64.exe or slopkit-injector-i686.exe.
- *
- * It is deliberately CRT-free (-nostdlib): the only imports are kernel32 and
- * the Toolhelp snapshot API. All messages go to stdout/stderr as UTF-8, which
- * the Linux side reads back; the exit codes are the contract:
- *
- *   0  the agent is loaded (either just now or already present)
- *   1  bad usage
- *   2  the target could not be identified (not found or ambiguous)
- *   3  injection failed (snapshot, OpenProcess, write or remote load)
- */
-
 #define WIN32_LEAN_AND_MEAN
 #define _WIN32_WINNT 0x0600
 

@@ -22,4 +22,4 @@ namespace slopkit::ui
         return result;
     }
 
-} // namespace slopkit::ui
+}

@@ -103,8 +103,6 @@ TEST_CASE("region flags, address range and alignment restrict the scan", "[scan]
 
 TEST_CASE("a whole-address-space scan stops at the last mapped region", "[scan]")
 {
-    // A sparse space: the region list decides where the scan reads, so the
-    // user-space ceiling passed in the filter never becomes a stray read.
     FakeSpace space;
     space.bytes.assign(0x6000, std::byte {});
     space.regions = {
@@ -145,7 +143,6 @@ TEST_CASE("cancelling a scan keeps the previous results", "[scan]")
     engine.first_scan(exact_config(ValueType::int32, 10), slopkit::scan::make_buffer_source(small, kBase));
     REQUIRE(wait(engine).hit_count == 8);
 
-    // A large, deliberately slow source that the cancellation can interrupt.
     auto                        data = std::make_shared<std::vector<std::byte>>(8u << 20);
     slopkit::scan::MemorySource slow;
     slow.read = [data](std::uint64_t address, std::size_t size) -> std::expected<std::vector<std::byte>, AccessError>

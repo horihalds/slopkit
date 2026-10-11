@@ -6,7 +6,6 @@
 
 namespace slopkit::ui
 {
-
     namespace
     {
         QColor rgb(float red, float green, float blue)
@@ -14,8 +13,6 @@ namespace slopkit::ui
             return QColor::fromRgbF(red, green, blue);
         }
 
-        // The active theme the component library reads from; refreshed by
-        // apply_theme().
         Theme g_active = dark_theme();
 
         void assign_group(QPalette& palette, QPalette::ColorGroup group, const Theme& theme)
@@ -40,7 +37,7 @@ namespace slopkit::ui
             palette.setColor(group, QPalette::Link, theme.accent);
             palette.setColor(group, QPalette::LinkVisited, theme.accent_active);
         }
-    } // namespace
+    }
 
     Theme dark_theme()
     {
@@ -100,7 +97,6 @@ namespace slopkit::ui
         assign_group(palette, QPalette::Active, theme);
         assign_group(palette, QPalette::Inactive, theme);
 
-        // Disabled controls keep their surfaces but fade their text.
         assign_group(palette, QPalette::Disabled, theme);
         palette.setColor(QPalette::Disabled, QPalette::WindowText, theme.text_muted);
         palette.setColor(QPalette::Disabled, QPalette::Text, theme.text_muted);
@@ -120,9 +116,6 @@ namespace slopkit::ui
             return;
         }
 
-        // Tell the platform which colour scheme is in use so the native parts
-        // (file dialogs, window decorations) follow, then install our palette on
-        // top of it.
         if (QStyleHints* hints = QGuiApplication::styleHints())
         {
             const bool dark = theme.background.lightness() < 128;
@@ -136,4 +129,4 @@ namespace slopkit::ui
         return g_active;
     }
 
-} // namespace slopkit::ui
+}

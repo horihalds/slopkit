@@ -53,7 +53,6 @@ TEST_CASE("the address list Value column follows live memory", "[ui]")
     slopkit::ui::LiveValues live {worker, target, settings};
     live.add_surface(&panel);
 
-    // The stored value shows until the first reading lands.
     CHECK(value_text() == QStringLiteral("1"));
 
     (*access.memory)[0x1040] = {std::byte {7}, std::byte {0}, std::byte {0}, std::byte {0}};
@@ -64,7 +63,6 @@ TEST_CASE("the address list Value column follows live memory", "[ui]")
                         return value_text() == QStringLiteral("7");
                     }));
 
-    // A changed reading is flagged until the next change.
     (*access.memory)[0x1040][0] = std::byte {9};
     live.request_now();
     REQUIRE(pump_ui(worker,
@@ -74,7 +72,6 @@ TEST_CASE("the address list Value column follows live memory", "[ui]")
                     }));
     CHECK(foreground() == slopkit::ui::active_theme().warning);
 
-    // A settled read clears the highlight.
     live.request_now();
     REQUIRE(pump_ui(worker,
                     [&]
@@ -140,8 +137,6 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
     attach_app_session(worker);
     panel.set_modules({module_image("app", module_base, 0x1000)});
 
-    // One refresh resolves the whole batch: the chain dereferences, the
-    // module-relative entry is a plain offset.
     panel.refresh();
     REQUIRE(pump_ui(worker,
                     [&]
@@ -173,8 +168,6 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
                         return table.entries()[0].address == 0x300004;
                     }));
 
-    // A failing resolve keeps the last good address and is dropped silently:
-    // the reason never reaches the status line.
     access.unreadable->insert(module_base);
     table.entries()[0].expression = "app+0+8";
     status.clear();
@@ -228,7 +221,6 @@ TEST_CASE("an unreadable address shows a question mark", "[ui]")
                         return value_text(0) == QStringLiteral("5") && value_text(1) == QStringLiteral("?");
                     }));
 
-    // The failing row is muted and explains itself; the readable one is not.
     const QModelIndex failing = model->index(1, slopkit::ui::models::AddressTableModel::value);
     CHECK(model->data(failing, Qt::ForegroundRole).value<QColor>() == slopkit::ui::active_theme().text_muted);
     CHECK(model->data(failing, Qt::ToolTipRole).toString() == QStringLiteral("Not readable"));
@@ -274,12 +266,10 @@ TEST_CASE("a value being written is left out of the live pass", "[ui]")
                         return value_text() == QStringLiteral("2");
                     }));
 
-    // A write in flight keeps its placeholder and is absent from the pass.
     REQUIRE(model->setData(value_index, QStringLiteral("99"), Qt::EditRole));
     CHECK(value_text() == QStringLiteral("Writing..."));
     CHECK(panel.next_live_request().empty());
 
-    // The completion shows the written value without a change highlight.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -307,8 +297,6 @@ TEST_CASE("the address list delete confirmation follows the address mode", "[ui]
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
 
-    // Dismisses the modal confirmation and returns its text. `delete_selected`
-    // is synchronous, so the timer fires inside the box's nested event loop.
     const auto confirmation_text = [&panel]()
     {
         QString prompt;
@@ -330,14 +318,11 @@ TEST_CASE("the address list delete confirmation follows the address mode", "[ui]
         return prompt;
     };
 
-    // No module map yet: the confirmation echoes the absolute address.
     CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
 
-    // Inside a module image the confirmation echoes module+RVA.
     panel.set_modules({module_image("app", 0x1000, 0x1000)});
     CHECK(confirmation_text() == QStringLiteral("Delete app+0x40?"));
 
-    // Absolute mode switches the confirmation back.
     panel.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(confirmation_text() == QStringLiteral("Delete 0x1040?"));
 }
@@ -368,7 +353,6 @@ TEST_CASE("the address list nests by drag and deletes the whole subtree", "[ui]"
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
 
-    // The panel builds the nesting-aware view and delegate.
     auto* view = panel.findChild<slopkit::ui::components::AddressTableView*>();
     REQUIRE(view != nullptr);
     CHECK(view->showDropIndicator());
@@ -377,13 +361,11 @@ TEST_CASE("the address list nests by drag and deletes the whole subtree", "[ui]"
     auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
     REQUIRE(model != nullptr);
 
-    // A drag onto a row's middle nests through the model's drop path.
     CHECK(model->drop_row(1, 0, true));
     CHECK(model->drop_row(2, 1, true));
     CHECK(table.depth_of(1) == 1);
     CHECK(table.depth_of(2) == 2);
 
-    // Deleting the parent names the whole subtree and removes it.
     table.set_selected(0);
     QString prompt;
     QTimer::singleShot(0,
@@ -461,8 +443,6 @@ TEST_CASE("the address list deletes the whole selection in one command", "[ui]")
                         records.push_back(record);
                                             }};
 
-    // Answers the modal confirmation from inside its nested loop and returns the
-    // box's title and text.
     QString    prompt;
     QString    box_title;
     const auto answer = [&prompt, &box_title](bool accept)
@@ -498,7 +478,6 @@ TEST_CASE("the address list deletes the whole selection in one command", "[ui]")
                            });
     };
 
-    // Select rows 0 and 2 through the view, then delete both in one command.
     selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
     selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
     REQUIRE(table.selected_rows().size() == 2);
@@ -513,7 +492,6 @@ TEST_CASE("the address list deletes the whole selection in one command", "[ui]")
     CHECK(status == QStringLiteral("2 entries deleted."));
     CHECK_FALSE(is_error);
 
-    // One aggregated record, never one per row.
     int removals = 0;
     int single   = 0;
     for (const slopkit::log::Record& record : records)
@@ -557,7 +535,7 @@ TEST_CASE("a deleted selection counts each subtree once", "[ui]")
     add("B", 0x2040);
     add("C", 0x3040);
     add("D", 0x4040);
-    REQUIRE(table.move_row(1, 0, true)); // B under A
+    REQUIRE(table.move_row(1, 0, true));
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
     auto*                                 view = panel.findChild<slopkit::ui::components::AddressTableView*>();
@@ -603,7 +581,6 @@ TEST_CASE("a deleted selection counts each subtree once", "[ui]")
                            });
     };
 
-    // A parent row and an unrelated row: the parent's child is counted once.
     selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
     selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
     REQUIRE(table.selected_rows().size() == 2);
@@ -637,7 +614,7 @@ TEST_CASE("a parent and its child in the selection collapse to one block", "[ui]
     add("A", 0x1040);
     add("B", 0x2040);
     add("C", 0x3040);
-    REQUIRE(table.move_row(1, 0, true)); // B under A
+    REQUIRE(table.move_row(1, 0, true));
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
     auto*                                 view = panel.findChild<slopkit::ui::components::AddressTableView*>();
@@ -742,7 +719,6 @@ TEST_CASE("a cancelled delete keeps the rows and the selection", "[ui]")
     CHECK(table.size() == 3);
     CHECK(table.selected_rows().size() == 2);
 
-    // A second press acts on the selection the cancelled box left behind.
     QTimer::singleShot(0,
                        []
                        {
@@ -800,7 +776,6 @@ TEST_CASE("delete falls back to the cursor and refuses with nothing to delete", 
                          status = text;
                      });
 
-    // Without a selected set the cursor row alone is the command input.
     table.set_selected(1);
     QTimer::singleShot(0,
                        []
@@ -827,7 +802,6 @@ TEST_CASE("delete falls back to the cursor and refuses with nothing to delete", 
     CHECK(table.entries()[0].description == "A");
     CHECK(status == QStringLiteral("Entry deleted."));
 
-    // Nothing selected and no cursor row: the current refusal stands.
     table.set_selected(-1);
     std::vector<slopkit::log::Record> records;
     SinkGuard                         sink {[&records](const slopkit::log::Record& record)
@@ -879,7 +853,6 @@ TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
         }
     };
 
-    // Without a target the entries are present but disabled.
     slopkit::process::AttachedTarget      none;
     slopkit::ui::panels::AddressListPanel detached_panel {table, worker, none};
     QMenu                                 detached_menu;
@@ -892,8 +865,6 @@ TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
     CHECK_FALSE(watch_accesses->isEnabled());
     CHECK(watch_writes->toolTip() == QStringLiteral("Attach to a target first."));
 
-    // With a target attached they emit the entry's address and width, with the
-    // writes or the read/write kind.
     slopkit::process::AttachedTarget      target = fake_target();
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
 
@@ -970,7 +941,6 @@ TEST_CASE("the address list row menu toggles the Active flag", "[ui]")
     CHECK(active->isCheckable());
     CHECK(active->isChecked() == table.entries()[0].active);
 
-    // Triggering the entry flips the flag off and reports it on the status line.
     active->trigger();
     CHECK_FALSE(table.entries()[0].active);
     CHECK(status == QStringLiteral("Entry inactive."));
@@ -985,7 +955,6 @@ TEST_CASE("the address list reorders rows by dragging and saves the order", "[ui
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
 
-    // Seed a table file with three named entries.
     const auto      path = std::filesystem::path(SLOPKIT_TMP_DIR) / "address_list_panel_test" / "reorder.skt";
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
@@ -1011,7 +980,6 @@ TEST_CASE("the address list reorders rows by dragging and saves the order", "[ui
     auto*                                 view = panel.findChild<QTableView*>();
     REQUIRE(view != nullptr);
 
-    // The view accepts an internal move only.
     CHECK(view->dragDropMode() == QAbstractItemView::InternalMove);
     CHECK(view->defaultDropAction() == Qt::MoveAction);
     CHECK(view->showDropIndicator());
@@ -1023,7 +991,6 @@ TEST_CASE("the address list reorders rows by dragging and saves the order", "[ui
     auto* model = view->model();
     REQUIRE(model != nullptr);
 
-    // Move the first row below the last, as the view does on an internal move.
     std::unique_ptr<QMimeData> payload {model->mimeData({model->index(0, 0)})};
     REQUIRE(payload != nullptr);
     REQUIRE(model->dropMimeData(payload.get(), Qt::MoveAction, 3, 0, QModelIndex()));
@@ -1031,7 +998,6 @@ TEST_CASE("the address list reorders rows by dragging and saves the order", "[ui
     CHECK(table.entries()[1].description == "mana");
     CHECK(table.entries()[2].description == "health");
 
-    // Saving writes that row order, and a reopen restores it.
     panel.save_table();
 
     const auto archive = slopkit::table::read_archive(path);
@@ -1083,8 +1049,6 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
                              QStringLiteral("Add Script…"),
                              QStringLiteral("Table Settings…")});
 
-    // A value row keeps its own commands and gains neither script command; both
-    // row kinds end with the shared table-area tail.
     QMenu value_menu;
     panel.populate_row_menu(value_menu, 0);
     const QList<QString> value_texts = action_texts(value_menu.actions());
@@ -1094,7 +1058,6 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
     CHECK_FALSE(value_texts.contains(QStringLiteral("Edit Script…")));
     CHECK(value_texts.mid(value_texts.size() - 3) == table_commands);
 
-    // An out-of-range row gets nothing.
     QMenu empty_menu;
     panel.populate_row_menu(empty_menu, 9);
     CHECK(action_texts(empty_menu.actions()).isEmpty());
@@ -1107,7 +1070,6 @@ TEST_CASE("the address list changes the value of every selected entry", "[ui]")
     FakeAccess                       access;
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target = fake_target();
-    // The sparse fake only records writes once a byte exists.
     access.memory->at(0x1040)               = std::byte {1};
 
     slopkit::table::AddressTable table;
@@ -1120,8 +1082,6 @@ TEST_CASE("the address list changes the value of every selected entry", "[ui]")
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
     attach_app_session(worker);
 
-    // `change_value` runs the shared input box modally; type into it as it opens
-    // and accept, so the whole selection is written as one batch.
     QTimer::singleShot(0,
                        []
                        {
@@ -1144,7 +1104,6 @@ TEST_CASE("the address list changes the value of every selected entry", "[ui]")
                   {
                       return access.memory->at(0x1040) == std::byte {42} && access.memory->at(0x1044) == std::byte {42};
                   }));
-    // The entry outside the selection is untouched.
     CHECK(table.entries()[2].bytes.front() == std::byte {1});
 }
 
@@ -1164,8 +1123,6 @@ TEST_CASE("the address list table menu carries the table-area commands", "[ui]")
     const QList<QString> table_commands {
         QStringLiteral("Add Address Manually…"), QStringLiteral("Add Script…"), QStringLiteral("Table Settings…")};
 
-    // The panel menu holds exactly the three table-area commands, no separator
-    // and everything enabled, exactly as the removed buttons were.
     QMenu panel_menu;
     panel.populate_panel_menu(panel_menu);
     CHECK(action_texts(panel_menu.actions()) == table_commands);
@@ -1175,8 +1132,6 @@ TEST_CASE("the address list table menu carries the table-area commands", "[ui]")
         CHECK(action->isEnabled());
     }
 
-    // The two dialog requests are raised from their entries; Add Script is the
-    // panel's own dialog, so it raises neither.
     int add_requests      = 0;
     int settings_requests = 0;
     QObject::connect(&panel,
@@ -1199,7 +1154,6 @@ TEST_CASE("the address list table menu carries the table-area commands", "[ui]")
     CHECK(add_requests == 1);
     CHECK(settings_requests == 1);
 
-    // An empty table is not a dead end: the same three entries show.
     slopkit::table::AddressTable          empty_table;
     slopkit::ui::panels::AddressListPanel empty_panel {empty_table, worker, target};
     QMenu                                 empty_menu;
@@ -1231,11 +1185,9 @@ TEST_CASE("the address list prefills the Add Script window from a hook request",
     CHECK(description_edit->text() == description);
     CHECK(script_edit->toPlainText() == source);
 
-    // The dialog is up and the table has gained nothing yet.
     CHECK(dialog->isVisible());
     CHECK(table.empty());
 
-    // Add is the only thing that creates the row.
     auto* commit = dialog->findChild<QPushButton*>(QStringLiteral("commit_button"));
     REQUIRE(commit != nullptr);
     commit->click();
@@ -1271,8 +1223,6 @@ TEST_CASE("the address list context menu covers rows and the empty area", "[ui]"
     const QList<QString> table_commands {
         QStringLiteral("Add Address Manually…"), QStringLiteral("Add Script…"), QStringLiteral("Table Settings…")};
 
-    // A click on a value row moves the selection there and shows its own
-    // commands followed by the shared table-area tail.
     const QModelIndex value_index = view->model()->index(0, 0);
     REQUIRE_FALSE(view->visualRect(value_index).isEmpty());
     table.set_selected(-1);
@@ -1283,7 +1233,6 @@ TEST_CASE("the address list context menu covers rows and the empty area", "[ui]"
     CHECK(value_texts.mid(value_texts.size() - 3) == table_commands);
     CHECK(table.selected() == 0);
 
-    // A click on a script row keeps its own commands plus the same tail.
     const QModelIndex script_index = view->model()->index(1, 0);
     REQUIRE_FALSE(view->visualRect(script_index).isEmpty());
     QMenu script_menu;
@@ -1297,8 +1246,6 @@ TEST_CASE("the address list context menu covers rows and the empty area", "[ui]"
                              QStringLiteral("Table Settings…")});
     CHECK(table.selected() == 1);
 
-    // A click below the rows shows only the table commands and leaves the
-    // selection exactly where it was.
     table.set_selected(0);
     const QPoint below {view->viewport()->width() / 2, view->viewport()->height() - 2};
     REQUIRE_FALSE(view->indexAt(below).isValid());
@@ -1342,24 +1289,19 @@ TEST_CASE("the address list mirrors an extended selection into the table", "[ui]
         return std::vector<std::size_t> {rows.begin(), rows.end()};
     };
 
-    // A Ctrl-click-style toggle of two rows lands in the table's set.
     selection->select(model->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
     selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
     CHECK(selected_rows() == std::vector<std::size_t> {0, 2});
 
-    // An idle refresh leaves the selection the user just made alone.
     panel.refresh();
     CHECK(selected_rows() == std::vector<std::size_t> {0, 2});
     CHECK(selection->selectedRows().size() == 2);
 
-    // The model reset an added row triggers re-projects the durable set, so the
-    // highlight does not silently vanish on the next tick.
     add_int32(table, 0x1070);
     panel.refresh();
     REQUIRE(table.size() == 4);
     CHECK(selection->selectedRows().size() == 2);
 
-    // Clearing the view's selection empties the durable set too.
     selection->clearSelection();
     CHECK(selected_rows().empty());
 
@@ -1383,7 +1325,6 @@ TEST_CASE("the address list Delete entry and Del key share one action", "[ui]")
     auto* view = panel.findChild<slopkit::ui::components::AddressTableView*>();
     REQUIRE(view != nullptr);
 
-    // Exactly one action carries the Delete key, on the view and its children.
     QAction* remove = nullptr;
     for (QAction* action : view->actions())
     {
@@ -1397,7 +1338,6 @@ TEST_CASE("the address list Delete entry and Del key share one action", "[ui]")
     CHECK(remove->text() == QStringLiteral("Delete"));
     CHECK(remove->shortcutContext() == Qt::WidgetWithChildrenShortcut);
 
-    // Both row-menu variants add that very action, so the menu renders `Del`.
     QMenu script_menu;
     panel.populate_row_menu(script_menu, 1);
     CHECK(script_menu.actions().contains(remove));
@@ -1442,13 +1382,11 @@ TEST_CASE("a right-click aligns the selection with the clicked row", "[ui]")
     selection->select(model->index(2, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
     REQUIRE(selected_rows() == std::vector<std::size_t> {0, 2});
 
-    // A right-click on a row inside the selection leaves the whole set alone.
     QMenu inside;
     panel.populate_context_menu(inside, view->visualRect(model->index(0, 0)).center());
     CHECK(table.selected() == 0);
     CHECK(selected_rows() == std::vector<std::size_t> {0, 2});
 
-    // A right-click on a row outside it collapses the selection to that row.
     QMenu outside;
     panel.populate_context_menu(outside, view->visualRect(model->index(1, 0)).center());
     CHECK(table.selected() == 1);
@@ -1456,7 +1394,6 @@ TEST_CASE("a right-click aligns the selection with the clicked row", "[ui]")
     REQUIRE(selection->selectedRows().size() == 1);
     CHECK(selection->selectedRows().front().row() == 1);
 
-    // A click below the rows leaves the selection untouched.
     const QPoint below {view->viewport()->width() / 2, view->viewport()->height() - 2};
     REQUIRE_FALSE(view->indexAt(below).isValid());
     QMenu empty;
@@ -1471,7 +1408,6 @@ TEST_CASE("Run Script without an attached target is refused", "[ui]")
 {
     application();
 
-    // Nothing is attached, so the panel refuses before submitting anything.
     FakeAccess                       access;
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
@@ -1537,7 +1473,6 @@ TEST_CASE("Run Script logs its output and reports the outcome", "[ui]")
                         return status != QStringLiteral("Running script…");
                     }));
 
-    // The script's own output is logged under the script category, in order.
     std::vector<std::string> script_records;
     for (const slopkit::log::Record& record : records)
     {
@@ -1617,7 +1552,6 @@ TEST_CASE("a failing script reports its first error line once", "[ui]")
 
 namespace
 {
-    // The status text and its error flag, fed by the panel's signal.
     struct ScriptStatus
     {
         QString text;
@@ -1634,7 +1568,7 @@ namespace
                              status.is_error = error;
                          });
     }
-} // namespace
+}
 
 TEST_CASE("the script row's Active checkbox runs activate and deactivate", "[ui]")
 {
@@ -1664,7 +1598,6 @@ function deactivate() return true end
     const QModelIndex active_index = model->index(0, slopkit::ui::models::AddressTableModel::active);
     REQUIRE(model->data(active_index, Qt::CheckStateRole).toInt() == Qt::Unchecked);
 
-    // Ticking submits one activate job and leaves the flag for the verdict.
     CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole));
     CHECK(status.text == QStringLiteral("Activating…"));
     CHECK_FALSE(table.entries()[0].active);
@@ -1679,7 +1612,6 @@ function deactivate() return true end
     CHECK(table.entries()[0].active);
     CHECK(model->data(active_index, Qt::CheckStateRole).toInt() == Qt::Checked);
 
-    // Unticking runs deactivate() and clears the flag again.
     CHECK_FALSE(model->setData(active_index, Qt::Unchecked, Qt::CheckStateRole));
     CHECK(status.text == QStringLiteral("Deactivating…"));
     REQUIRE(pump_ui(worker,
@@ -1721,7 +1653,6 @@ function update() end
     const QModelIndex active_index = model->index(0, slopkit::ui::models::AddressTableModel::active);
     const auto        failure      = slopkit::process::ScriptUpdateFailure {.description = "helper", .reason = "nope"};
 
-    // True when any captured record's message contains `text`.
     const auto has_record = [](const std::vector<slopkit::log::Record>& records, std::string_view text)
     {
         for (const auto& record : records)
@@ -1768,15 +1699,11 @@ function update() end
         REQUIRE(script_records.size() == 1);
         CHECK(script_records[0].message == "script 'helper' update failed: nope");
 
-        // No deactivate job was submitted: the status stayed on the report and
-        // the worker still tracks the script.
         CHECK(worker.active_scripts() == 1);
     }
 
     SECTION("a failure for a row that is no longer active is only logged")
     {
-        // The row was never ticked (or a detach already cleared it): the flag
-        // and the status line are left alone, the record is still written.
         std::vector<slopkit::log::Record> records;
         SinkGuard                         sink {[&records](const slopkit::log::Record& record)
                                                 {
@@ -1794,7 +1721,7 @@ function update() end
     SECTION("a manual hook job in flight is not disturbed")
     {
         CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole));
-        REQUIRE(status.text == QStringLiteral("Activating…")); // the activate job is in flight
+        REQUIRE(status.text == QStringLiteral("Activating…"));
 
         std::vector<slopkit::log::Record> records;
         SinkGuard                         sink {[&records](const slopkit::log::Record& record)
@@ -1804,7 +1731,6 @@ function update() end
 
         panel.note_script_update_failed(failure);
 
-        // The in-flight activate owns the row and the status line.
         CHECK_FALSE(table.entries()[0].active);
         CHECK(status.text == QStringLiteral("Activating…"));
         CHECK(has_record(records, "script 'helper' update failed: nope"));
@@ -1890,7 +1816,7 @@ TEST_CASE("toggling a script row without a target is refused", "[ui]")
 
     FakeAccess                       access;
     slopkit::process::AccessWorker   worker {access};
-    slopkit::process::AttachedTarget target; // nothing is attached
+    slopkit::process::AttachedTarget target;
 
     slopkit::table::AddressTable table;
     REQUIRE(table.add_script("helper", "function activate() return true end") == 0);
@@ -1932,14 +1858,13 @@ TEST_CASE("a second script toggle while one is in flight is refused", "[ui]")
     attach_app_session(worker);
 
     const QModelIndex active_index = model->index(0, slopkit::ui::models::AddressTableModel::active);
-    CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole)); // in flight
+    CHECK_FALSE(model->setData(active_index, Qt::Checked, Qt::CheckStateRole));
     CHECK(status.text == QStringLiteral("Activating…"));
-    CHECK_FALSE(model->setData(active_index, Qt::Unchecked, Qt::CheckStateRole)); // refused
+    CHECK_FALSE(model->setData(active_index, Qt::Unchecked, Qt::CheckStateRole));
 
     CHECK(status.is_error);
     CHECK(status.text == QStringLiteral("A script is already running."));
 
-    // Let the first job finish so nothing is left pending.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -2008,7 +1933,7 @@ TEST_CASE("detaching clears active script rows only once", "[ui]")
 
     FakeAccess                       access;
     slopkit::process::AccessWorker   worker {access};
-    slopkit::process::AttachedTarget target; // detached
+    slopkit::process::AttachedTarget target;
 
     slopkit::table::AddressTable table;
     add_int32(table, 0x1040);
@@ -2025,7 +1950,6 @@ TEST_CASE("detaching clears active script rows only once", "[ui]")
                         records.push_back(record);
                                             }};
 
-    // A row left ticked while the target goes away would be a lie.
     table.entries()[0].active = true;
     table.entries()[1].active = true;
 
@@ -2044,12 +1968,11 @@ TEST_CASE("detaching clears active script rows only once", "[ui]")
 
     panel.refresh();
 
-    CHECK(table.entries()[0].active); // value rows keep their flag
+    CHECK(table.entries()[0].active);
     CHECK_FALSE(table.entries()[1].active);
     CHECK(status.text == QStringLiteral("Scripts deactivated: the target detached."));
     CHECK(detached_records() == 1);
 
-    // The second tick finds nothing left to clear and writes no record.
     panel.refresh();
     CHECK(detached_records() == 1);
 }
@@ -2077,7 +2000,6 @@ TEST_CASE("a script completion for a deleted row is harmless", "[ui]")
     CHECK_FALSE(model->setData(
         model->index(0, slopkit::ui::models::AddressTableModel::active), Qt::Checked, Qt::CheckStateRole));
 
-    // The row vanishes between the click and the verdict.
     table.remove(0);
 
     REQUIRE(pump_ui(worker,
@@ -2098,7 +2020,6 @@ TEST_CASE("the address list renames a script row from its Description cell", "[u
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
 
-    // Seed a table file with one script row so a rename can be saved and read back.
     const auto      path = std::filesystem::path(SLOPKIT_TMP_DIR) / "address_list_panel_test" / "script_rename.skt";
     std::error_code error;
     std::filesystem::create_directories(path.parent_path(), error);
@@ -2119,17 +2040,14 @@ TEST_CASE("the address list renames a script row from its Description cell", "[u
     REQUIRE(model != nullptr);
     const QModelIndex description = model->index(0, slopkit::ui::models::AddressTableModel::description);
 
-    // The Description cell is editable and a double-click opens the editor,
-    // exactly as it does for a value row.
     CHECK(model->flags(description) & Qt::ItemIsEditable);
     CHECK(view->editTriggers().testFlag(QAbstractItemView::DoubleClicked));
     CHECK(view->editTriggers().testFlag(QAbstractItemView::EditKeyPressed));
     panel.show();
     view->setCurrentIndex(description);
     view->edit(description);
-    CHECK(view->viewport()->findChild<QLineEdit*>() != nullptr); // the editor opened
+    CHECK(view->viewport()->findChild<QLineEdit*>() != nullptr);
 
-    // Committing a name renames the entry and survives a Save Table / reopen.
     CHECK(model->setData(description, QStringLiteral("renamed"), Qt::EditRole));
     CHECK(table.entries()[0].description == "renamed");
 

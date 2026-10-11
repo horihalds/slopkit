@@ -69,7 +69,7 @@ namespace
         info.exe_path = std::move(exe_path);
         return info;
     }
-} // namespace
+}
 
 TEST_CASE("table settings default to empty and detect configuration", "[table]")
 {

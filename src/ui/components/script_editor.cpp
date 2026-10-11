@@ -29,15 +29,10 @@
 
 namespace slopkit::ui::components
 {
-
     namespace
     {
-        // The indentation of one tab stop: four spaces, matching the script
-        // dialog's own skeleton.
         constexpr int kIndentSize = 4;
 
-        // The opening size: at least this many mono columns, growing with the
-        // document's longest line up to the cap, and this many text lines tall.
         constexpr int kMinColumns     = 60;
         constexpr int kDefaultColumns = 100;
         constexpr int kMaxColumns     = 140;
@@ -50,8 +45,6 @@ namespace slopkit::ui::components
                 || ch == QLatin1Char('{') || ch == QLatin1Char('}');
         }
 
-        // An extra selection that paints the single character at `position` in
-        // the accent colour.
         [[nodiscard]] QTextEdit::ExtraSelection
         bracket_selection(QTextDocument* document, int position, const Theme& theme)
         {
@@ -65,9 +58,6 @@ namespace slopkit::ui::components
             return selection;
         }
 
-        // True when `trimmed` starts with a keyword that closes a block, or
-        // with the closing half of a bracket pair, and so should resume one stop
-        // further out.
         [[nodiscard]] bool starts_closing_token(const QString& trimmed)
         {
             if (!trimmed.isEmpty()
@@ -86,17 +76,12 @@ namespace slopkit::ui::components
                 || word == QLatin1String("until");
         }
 
-        // `line` up to a trailing `--` comment, trimmed: the part that decides
-        // whether the line opens a block.
         [[nodiscard]] QString code_part(const QString& line)
         {
             const int comment = line.indexOf(QLatin1String("--"));
             return (comment < 0 ? line : line.left(comment)).trimmed();
         }
 
-        // True when `line` opens a block the following line belongs to: a keyword
-        // that wants a matching `end`/`until`, or a bracket left open at the
-        // line's end. The next line then indents one stop further in.
         [[nodiscard]] bool opens_block(const QString& line)
         {
             const QString code = code_part(line);
@@ -118,7 +103,7 @@ namespace slopkit::ui::components
             return word == QLatin1String("then") || word == QLatin1String("do") || word == QLatin1String("function")
                 || word == QLatin1String("else") || word == QLatin1String("repeat");
         }
-    } // namespace
+    }
 
     ScriptEditorGutter::ScriptEditorGutter(ScriptEditor* editor) : QWidget(editor), editor_(editor) {}
 
@@ -148,8 +133,6 @@ namespace slopkit::ui::components
                 this,
                 [this]
                 {
-                    // The longest line and so the size hint follow the text; the
-                    // floor stays put, so an already-shown window is not resized.
                     longest_columns_.reset();
                     updateGeometry();
                     update_completion(true);
@@ -266,7 +249,7 @@ namespace slopkit::ui::components
         }
         if (line > 0 && line > blockCount())
         {
-            return; // a line outside the document is ignored
+            return;
         }
 
         error_line_ = line;
@@ -414,8 +397,6 @@ namespace slopkit::ui::components
 
     void ScriptEditor::keyPressEvent(QKeyEvent* event)
     {
-        // An open completion list owns the navigation and accept keys; `Esc`
-        // closes it and leaves the text (and the dialog) untouched.
         if (completion_->is_open())
         {
             if (event->key() == Qt::Key_Escape)
@@ -471,8 +452,6 @@ namespace slopkit::ui::components
             return;
         }
 
-        // Backspace that follows four or more spaces takes the whole stop at
-        // once, so the caret walks the indentation a stop at a time.
         if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier)
         {
             QTextCursor   cursor = textCursor();
@@ -522,8 +501,6 @@ namespace slopkit::ui::components
         const QString                                   receiver   = identifier ? identifier->receiver : QString {};
         const QString prefix = identifier ? text.mid(identifier->begin, position - identifier->begin) : QString {};
 
-        // Only a caret in code that touches a word (or follows a dot) can open
-        // the list; anything else closes it.
         if (identifier && (!prefix.isEmpty() || !receiver.isEmpty()))
         {
             if (completion_->is_open() || allow_open)
@@ -543,7 +520,7 @@ namespace slopkit::ui::components
         const QString                                   receiver   = identifier ? identifier->receiver : QString {};
         const QString prefix = identifier ? text.mid(identifier->begin, position - identifier->begin) : QString {};
         completion_->show_at(caret_rect(), receiver, prefix);
-        refresh_hints(); // the open list supersedes the hint
+        refresh_hints();
     }
 
     void ScriptEditor::accept_completion()
@@ -566,8 +543,6 @@ namespace slopkit::ui::components
         }
 
         QTextCursor cursor = textCursor();
-        // One edit block, so a single Ctrl+Z undoes the name and the inserted
-        // parentheses together.
         cursor.beginEditBlock();
         cursor.setPosition(identifier->begin);
         cursor.setPosition(identifier->end, QTextCursor::KeepAnchor);
@@ -600,7 +575,6 @@ namespace slopkit::ui::components
             return;
         }
 
-        // A catalogue function wins (a dotted `mem.read` or a plain global).
         const QString full = call->receiver.isEmpty() ? call->name : call->receiver + QLatin1Char('.') + call->name;
         if (const script::ApiEntry* entry = script::find(full.toStdString()))
         {
@@ -611,7 +585,6 @@ namespace slopkit::ui::components
             return;
         }
 
-        // A function the document defines shows its own parameter list.
         for (const script_context::DocumentName& name : script_context::document_names(text))
         {
             if (name.function && name.name == call->name)
@@ -665,7 +638,6 @@ namespace slopkit::ui::components
         }
         cursor.endEditBlock();
 
-        // Keep the indented lines selected.
         QTextCursor selection(document()->findBlockByNumber(first_block));
         selection.movePosition(QTextCursor::StartOfBlock);
         QTextCursor tail(document()->findBlockByNumber(last_block));
@@ -686,9 +658,6 @@ namespace slopkit::ui::components
         }
         QString indent = line.left(leading);
 
-        // A line that opens with a closing keyword or bracket resumes one stop
-        // further out; one whose text before the caret leaves a block open hands
-        // one stop further in to the line it starts.
         const QString trimmed = line.trimmed();
         if (!trimmed.isEmpty() && starts_closing_token(trimmed))
         {
@@ -710,4 +679,4 @@ namespace slopkit::ui::components
         setTextCursor(cursor);
     }
 
-} // namespace slopkit::ui::components
+}

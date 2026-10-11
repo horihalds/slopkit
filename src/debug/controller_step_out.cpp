@@ -7,7 +7,6 @@
 
 namespace slopkit::debug
 {
-
     void Controller::step_out()
     {
         if (state_ != State::stopped)
@@ -22,8 +21,6 @@ namespace slopkit::debug
 
         const std::uint64_t return_address = backtrace_[1].pc;
 
-        // The user's own trap at the return address already ends the run there,
-        // so it is reused instead of adding a duplicate entry.
         if (const Breakpoint* existing = breakpoints_.software_at(return_address); existing != nullptr)
         {
             if (!existing->armed)
@@ -69,9 +66,6 @@ namespace slopkit::debug
 
     void Controller::disarm_step_out(const Breakpoint& entry)
     {
-        // A plain disarm whose completion is ignored: the entry is already gone
-        // from the table, and a failure (for example on a target that has
-        // exited) must not surface as a user-facing warning.
         const JobId job = worker_.next_job_id();
         worker_.submit_software_breakpoint(job, entry.slot, entry.address, false, [](JobResult&&) {});
     }
@@ -81,8 +75,6 @@ namespace slopkit::debug
         const auto* armed = std::get_if<VoidResult>(&result);
         if (armed == nullptr || !step_out_id_.has_value())
         {
-            // A stop, or Stop Debugging, may have cancelled the step-out while
-            // the insert was still in flight.
             return;
         }
         if (armed->error)
@@ -102,8 +94,6 @@ namespace slopkit::debug
 
     void Controller::begin_step_out_run()
     {
-        // Lift a trap sitting exactly at RIP for the resumed instruction, exactly
-        // as step_over() does, so the run does not immediately re-trap on it.
         const std::uint64_t pc   = rip();
         const Breakpoint*   trap = pc != 0 ? breakpoints_.software_at(pc) : nullptr;
         const StepPlan      plan = plan_step(pc, trap != nullptr ? trap->address : 0, trap != nullptr ? trap->size : 1);
@@ -124,8 +114,6 @@ namespace slopkit::debug
 
     void Controller::finish_step_out()
     {
-        // The transient trap was hit: disarm and erase it before the stop is
-        // reported, so it never surfaces as a phantom breakpoint.
         drop_step_out();
     }
 
@@ -145,4 +133,4 @@ namespace slopkit::debug
         emit breakpointsChanged();
     }
 
-} // namespace slopkit::debug
+}

@@ -12,7 +12,6 @@ namespace
 {
     using slopkit::process::ScriptUpdateFailure;
 
-    // Activates a script on the worker and waits for its verdict.
     bool activate_script(slopkit::process::AccessWorker& worker, std::string chunk)
     {
         bool ok = false;
@@ -33,7 +32,7 @@ namespace
                 });
         return ok;
     }
-} // namespace
+}
 
 TEST_CASE("the script update ticker submits one pass per interval", "[ui]")
 {
@@ -50,7 +49,6 @@ TEST_CASE("the script update ticker submits one pass per interval", "[ui]")
             failures.push_back(failure);
         });
 
-    // Nothing is ticked yet: no job is submitted at all.
     CHECK_FALSE(updates.tick(std::chrono::milliseconds {50}));
 
     attach_app_session(worker);
@@ -71,7 +69,6 @@ function update() return false, "nope" end
         REQUIRE(failures.size() == 1);
         CHECK(failures[0].description == "helper");
         CHECK(failures[0].reason == "nope");
-        // The worker already ran deactivate and stopped ticking it.
         CHECK(worker.active_scripts() == 0);
     }
 
@@ -105,7 +102,6 @@ function update() end
                         {
                             return failures.empty();
                         }));
-        // The spacing rule refuses a second pass inside the same interval.
         CHECK_FALSE(updates.tick(std::chrono::milliseconds {60'000}));
     }
 }

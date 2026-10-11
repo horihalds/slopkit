@@ -12,7 +12,6 @@
 
 namespace slopkit::plugin
 {
-
     PluginHost::PluginHost() = default;
 
     PluginHost::~PluginHost() = default;
@@ -45,11 +44,7 @@ namespace slopkit::plugin
         std::vector<std::filesystem::path> directories;
         if (!executable_dir.empty())
         {
-            // Build tree: plugins live next to the executable.
             directories.push_back(executable_dir / "plugins");
-            // Installed layout: <prefix>/<libdir>/slopkit/plugins, resolved
-            // exe-relative so any install prefix works without an environment
-            // variable (see SLOPKIT_PLUGIN_RELATIVE_DIR).
             directories.push_back(executable_dir / SLOPKIT_PLUGIN_RELATIVE_DIR);
         }
         if (const char* path = std::getenv("SLOPKIT_PLUGIN_PATH"); path != nullptr)
@@ -75,7 +70,6 @@ namespace slopkit::plugin
             std::error_code error;
             if (!std::filesystem::is_directory(directory, error))
             {
-                // A missing plugin directory is not fatal.
                 log::debug(log::category::plugin, std::format("discovery: {} is not a directory", directory.string()));
                 continue;
             }
@@ -126,8 +120,6 @@ namespace slopkit::plugin
             }
         }
 
-        // Most specific first: lower precedence wins; ties broken by id for
-        // deterministic ordering.
         std::sort(loaded.begin(),
                   loaded.end(),
                   [](const std::unique_ptr<Plugin>& lhs, const std::unique_ptr<Plugin>& rhs)
@@ -187,7 +179,6 @@ namespace slopkit::plugin
             auto processes = plugin->list_processes();
             if (!processes)
             {
-                // A plugin that cannot enumerate contributes nothing.
                 log::debug(
                     log::category::plugin,
                     std::format("{} could not list processes: {}", plugin->id(), process::describe(processes.error())));
@@ -239,4 +230,4 @@ namespace slopkit::plugin
         return merged;
     }
 
-} // namespace slopkit::plugin
+}

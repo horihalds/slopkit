@@ -25,7 +25,7 @@ namespace
         REQUIRE(expression.has_value());
         return *expression;
     }
-} // namespace
+}
 
 TEST_CASE("parse_literal reads hexadecimal and decimal literals", "[expr]")
 {
@@ -33,7 +33,7 @@ TEST_CASE("parse_literal reads hexadecimal and decimal literals", "[expr]")
     {
         CHECK(parse_literal("0x4096").value() == 0x4096);
         CHECK(parse_literal("0X4096").value() == 0x4096);
-        CHECK(parse_literal("4096").value() == 0x4096); // a bare token is hex
+        CHECK(parse_literal("4096").value() == 0x4096);
         CHECK(parse_literal("deadbeef").value() == 0xDEADBEEF);
     }
 
@@ -49,7 +49,7 @@ TEST_CASE("parse_literal reads hexadecimal and decimal literals", "[expr]")
         CHECK_FALSE(parse_literal("zz").has_value());
         CHECK_FALSE(parse_literal("0xzz").has_value());
         CHECK_FALSE(parse_literal("0x").has_value());
-        CHECK_FALSE(parse_literal("12zz").has_value()); // trailing garbage
+        CHECK_FALSE(parse_literal("12zz").has_value());
     }
 }
 
@@ -481,7 +481,6 @@ TEST_CASE("evaluate validates every dereference", "[expr]")
         CHECK(*bracket == *legacy);
         CHECK(*bracket == 0x1000);
 
-        // [a]+10 dereferences the base before adding: no legacy spelling.
         const auto deref_base = evaluate(parse_ok("[a]+10"), modules, empty_symbols, reader);
         REQUIRE(deref_base.has_value());
         CHECK(*deref_base == 0x1010);
@@ -516,7 +515,6 @@ TEST_CASE("evaluate validates every dereference", "[expr]")
         CHECK(resolved.error().failed_level == 2);
         CHECK(resolved.error().message.find("at level 2") != std::string::npos);
         CHECK(resolved.error().message.find("1018") != std::string::npos);
-        // Only level 1 was read; level 2 was validated and skipped.
         CHECK(reads == 1);
     }
 

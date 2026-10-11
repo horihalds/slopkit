@@ -24,21 +24,12 @@
 
 namespace slopkit::table
 {
-
     namespace
     {
         constexpr std::string_view kFormatToken         = "slopkit-table 5";
-        // Reader compatibility: 4 predates nesting, so its index lines carry no
-        // ` parent="…"` suffix; 3 predates script entries, so it simply has no
-        // `.lua` members. The writer always emits the current token, and an older
-        // build refuses it explicitly instead of mis-parsing the new lines.
         constexpr std::string_view kPreviousFormatToken = "slopkit-table 4";
         constexpr std::string_view kOldestFormatToken   = "slopkit-table 3";
 
-        // The optional suffix an index line carries to name a child's parent:
-        // the parent's member path sits between these quotes. A member path can
-        // never contain a `"` (`entry_member_name` replaces it), so the suffix is
-        // unambiguous.
         constexpr std::string_view kParentSuffix = " parent=\"";
 
         std::string_view trim(std::string_view value)
@@ -88,8 +79,6 @@ namespace slopkit::table
                 {  "f64",    scan::ValueType::float64},
                 {  "str",     scan::ValueType::string},
                 {"bytes", scan::ValueType::byte_array},
-                // The removed "All" entry was a 4-byte integer scan; tables
-                // saved while it existed still load as 4 Bytes.
                 {  "all",      scan::ValueType::int32},
             };
             for (const auto& [name, type] : kTypes)
@@ -102,9 +91,6 @@ namespace slopkit::table
             return std::nullopt;
         }
 
-        // Runs the key/value token loop over a member body, calling `visit` for
-        // every token. A broken token returns an error naming the member; the
-        // visitor may reject a key or a value as well.
         template<typename Visitor>
         std::expected<void, std::string>
         parse_key_values(std::string_view text, std::string_view context, Visitor&& visit)
@@ -164,7 +150,7 @@ namespace slopkit::table
                     {
                         return std::unexpected(std::format("{}: unterminated string", context));
                     }
-                    ++position; // closing quote
+                    ++position;
                 }
                 else
                 {
@@ -196,9 +182,6 @@ namespace slopkit::table
             return std::nullopt;
         }
 
-        // Parses one entry body (`type=… hex=… size=… expr="…"`). The description
-        // is the member name and is not part of the body; the frozen flag and the
-        // cached value bytes are not persisted.
         std::expected<AddressEntry, std::string> parse_entry_body(std::string_view text, std::string_view member)
         {
             AddressEntry entry;
@@ -324,21 +307,17 @@ namespace slopkit::table
             return settings;
         }
 
-        // First member with `name`, or nullptr. The archive is read into memory
-        // first, so the returned pointer stays valid for the caller's scope.
         const std::string* find_member(const std::vector<ArchiveMember>& members, std::string_view name)
         {
             const auto found = std::ranges::find(members, name, &ArchiveMember::name);
             return found == members.end() ? nullptr : &found->text;
         }
 
-        // The reader used to evaluate a pointer-free expression without a target;
-        // it is never reached when `pointer_levels()` is 0.
         std::expected<std::uint64_t, std::string> no_pointer_reader(std::uint64_t)
         {
             return std::unexpected(std::string {"a pointer read was required"});
         }
-    } // namespace
+    }
 
     std::string_view type_token(scan::ValueType type) noexcept
     {
@@ -385,8 +364,6 @@ namespace slopkit::table
 
         std::vector<std::string>                       taken;
         std::vector<std::string>                       order;
-        // An entry's stable id -> its member path, so a child can name its
-        // parent on the index line.
         std::unordered_map<std::uint64_t, std::string> member_of;
         taken.reserve(table.size());
         order.reserve(table.size());
@@ -401,14 +378,10 @@ namespace slopkit::table
             member_of[entry.id]      = member;
             if (script)
             {
-                // A script member holds the Lua source and nothing else: no
-                // header and no added newline.
                 members.push_back(ArchiveMember {.name = member, .text = entry.script});
             }
             else
             {
-                // An entry that was never given an expression still has to be
-                // reachable; its address is written as the hex literal it already is.
                 const std::string expression =
                     entry.expression.empty() ? std::format("{:X}", entry.address) : entry.expression;
                 members.push_back(ArchiveMember {
@@ -427,8 +400,6 @@ namespace slopkit::table
         for (std::size_t row = 0; row < order.size(); ++row)
         {
             index += order[row];
-            // A child names its parent here, not in the body: a script body is
-            // verbatim Lua and could not carry the key.
             if (const std::uint64_t parent = table.entries()[row].parent; parent != 0)
             {
                 if (const auto found = member_of.find(parent); found != member_of.end())
@@ -508,7 +479,6 @@ namespace slopkit::table
 
         std::vector<AddressEntry>                        entries;
         std::vector<std::string>                         listed;
-        // (child index, parent member path) recorded while parsing index.txt.
         std::vector<std::pair<std::size_t, std::string>> parent_links;
         std::size_t                                      position = 0;
         while (position <= index->size())
@@ -519,8 +489,6 @@ namespace slopkit::table
             const std::string_view line = trim(raw);
             if (!line.empty())
             {
-                // A child line carries an optional ` parent="<member>"` suffix;
-                // split it off before looking the member up.
                 std::string_view           member_view = line;
                 std::optional<std::string> parent_member;
                 if (const auto suffix = line.find(kParentSuffix); suffix != std::string_view::npos)
@@ -554,9 +522,6 @@ namespace slopkit::table
                 }
                 if (*kind == EntryKind::script)
                 {
-                    // A script member's body is the Lua source verbatim: the
-                    // member name is the description and nothing has to be
-                    // parsed out of the body.
                     AddressEntry script;
                     script.kind        = EntryKind::script;
                     script.description = member_stem(member);
@@ -580,8 +545,6 @@ namespace slopkit::table
                         log::warning(log::category::table, std::format("{}: {}", path.string(), message));
                         return std::unexpected(message);
                     }
-                    // A literal base resolves without a target; a module or pointer
-                    // expression is left at 0 for the panel's resolve pass.
                     if (expression->pointer_levels() == 0)
                     {
                         const auto resolved =
@@ -607,8 +570,6 @@ namespace slopkit::table
             position = newline + 1;
         }
 
-        // An `entries/` member the index does not list is a damaged archive: the
-        // order list is the only source of order, so a stray file is an error.
         for (const ArchiveMember& member : members)
         {
             if (member.name.starts_with("entries/") && std::ranges::find(listed, member.name) == listed.end())
@@ -619,8 +580,6 @@ namespace slopkit::table
             }
         }
 
-        // A parent must be listed before its child, which is also what keeps the
-        // child block directly after the parent in the flat order.
         std::vector<std::pair<std::size_t, std::size_t>> parent_positions;
         for (const auto& [child, parent_member] : parent_links)
         {
@@ -661,4 +620,4 @@ namespace slopkit::table
         return {};
     }
 
-} // namespace slopkit::table
+}

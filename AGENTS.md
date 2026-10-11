@@ -30,6 +30,11 @@ Read the routing table first, then only the file it points at.
   rule is in `docs/UI_DESIGN.md`.
 - A fact that has an owning file appears only there. When it changes, update the
   owner in the same task; do not restate it somewhere else.
+- Code should speak for itself: a comment is allowed only to explain a deviation
+  or a deliberately strange decision — an OS or library quirk, a workaround, an
+  ordering or lifetime constraint, or a coupling a reader cannot see from the
+  code. Never restate what the code, the type or an owning `docs/` file already
+  says, and never leave commented-out code.
 
 ## Change scope and install rule
 

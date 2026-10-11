@@ -1,10 +1,3 @@
-/*
- * A trivial console target for the wine-gated end-to-end test: it prints its
- * Windows process id in a fixed form and then idles so the injected agent has a
- * process to live in until the test kills it. It is built for both bitnesses but
- * never installed.
- */
-
 #define WIN32_LEAN_AND_MEAN
 
 #include <windows.h>

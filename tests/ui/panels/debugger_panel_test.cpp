@@ -25,13 +25,10 @@ TEST_CASE("debugger pane shows the register file and the call stack", "[ui][pane
 
     DebuggerPanel pane(controller);
 
-    // Idle: the placeholder register rows are present and read-only, and the
-    // call stack is empty.
     CHECK(pane.register_model()->rowCount() == 18);
     CHECK_FALSE(pane.register_model()->editable());
     CHECK(pane.call_stack_table()->model()->rowCount() == 0);
 
-    // A stopped session makes the register table editable.
     controller.start(42, "fake");
     REQUIRE(pump_until(controller,
                        [&]
@@ -40,7 +37,6 @@ TEST_CASE("debugger pane shows the register file and the call stack", "[ui][pane
                        }));
     CHECK(pane.register_model()->editable());
 
-    // Ending the session returns it to read-only.
     controller.stop();
     REQUIRE(pump_until(controller,
                        [&]
@@ -63,7 +59,6 @@ TEST_CASE("debugger pane renders its tables in the embedded mono font", "[ui][pa
     CHECK(pane.register_table()->font().family() == family);
     CHECK(pane.call_stack_table()->font().family() == family);
 
-    // The registers keep the padded hex form the pane renders.
     controller.start(42, "fake");
     REQUIRE(pump_until(controller,
                        [&]

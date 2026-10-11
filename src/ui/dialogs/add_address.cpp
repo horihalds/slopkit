@@ -33,11 +33,10 @@
 
 namespace slopkit::ui::dialogs
 {
-
     namespace
     {
         constexpr std::size_t kMaxSize          = 4096;
-        constexpr int         kDefaultTypeIndex = static_cast<int>(scan::ValueType::int32); // 4 Bytes
+        constexpr int         kDefaultTypeIndex = static_cast<int>(scan::ValueType::int32);
         constexpr int         kPreviewDelayMs   = 250;
 
         bool parse_size(std::string_view text, std::size_t& out)
@@ -55,7 +54,7 @@ namespace slopkit::ui::dialogs
             out = static_cast<std::size_t>(value);
             return true;
         }
-    } // namespace
+    }
 
     AddAddressDialog::AddAddressDialog(table::AddressTable&   table,
                                        process::AccessWorker& worker,
@@ -88,8 +87,6 @@ namespace slopkit::ui::dialogs
         preview_label_->setFont(mono_font());
         preview_label_->setWordWrap(true);
         {
-            // A muted hint, so an unresolved note reads like information and not
-            // an error; the colour comes from the theme through the status colour.
             QPalette preview_palette = preview_label_->palette();
             preview_palette.setColor(QPalette::WindowText, widgets::status_color(widgets::StatusKind::info));
             preview_label_->setPalette(preview_palette);
@@ -159,13 +156,9 @@ namespace slopkit::ui::dialogs
                 this,
                 [this]
                 {
-                    // The bytes are unchanged, so a toggle only re-formats them.
                     refresh_preview();
                 });
 
-        // One-shot debounce: the preview resolves only once the user pauses, so
-        // typing a bracketed chain does not submit a job per keystroke. It is not
-        // periodic, so the app keeps its single timer (the live tick).
         preview_timer_ = new QTimer(this);
         preview_timer_->setSingleShot(true);
         preview_timer_->setInterval(kPreviewDelayMs);
@@ -183,8 +176,6 @@ namespace slopkit::ui::dialogs
     void AddAddressDialog::set_modules(std::vector<process::ModuleInfo> modules)
     {
         spans_.set_modules(modules);
-        // A new memory map means new module bases, so any in-flight resolve or
-        // read is stale and the current text is re-resolved against the new map.
         clear_preview();
         if (add_button_ != nullptr)
         {
@@ -200,8 +191,6 @@ namespace slopkit::ui::dialogs
     void AddAddressDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);
-        // Every opening starts from a clean form, so a previous entry is never
-        // submitted twice by accident and a late completion is inert.
         reset_form();
     }
 
@@ -228,8 +217,6 @@ namespace slopkit::ui::dialogs
         status_->clear_status();
         update_size_row();
 
-        // The setText() calls above fire the change signals; clear last so the
-        // preview is left empty and its debounce timer stopped.
         pending_add_.reset();
         clear_preview();
     }
@@ -242,15 +229,12 @@ namespace slopkit::ui::dialogs
         const auto        expression = expr::parse(text);
         if (!expression)
         {
-            // Only a malformed expression is refused; a well-formed one that does
-            // not resolve is added unresolved (see the plan's FR1/FR2).
             reject_address(QString::fromStdString(expression.error().message));
             return;
         }
 
         if (preview_.text == text && preview_.state == PreviewState::resolved)
         {
-            // Reuse the live preview so a settled expression adds at once.
             add_entry(preview_.address, text);
             return;
         }
@@ -286,8 +270,6 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        // A resolve already in flight for exactly this text is reused, so an Add
-        // click on top of a preview resolve does not submit a second job.
         if (preview_.resolve_job.has_value() && preview_.text == text)
         {
             if (pending_add_.has_value())
@@ -298,8 +280,6 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        // An edit (a resolve for a different text) abandons a pending Add: the
-        // user has moved on from the text they confirmed.
         if (pending_add_.has_value() && *pending_add_ != text)
         {
             pending_add_.reset();
@@ -316,8 +296,6 @@ namespace slopkit::ui::dialogs
 
         if (expression->pointer_levels() == 0)
         {
-            // At most one offset: resolve it here. The reader is never reached, so
-            // no target access happens on the UI thread.
             const auto resolved =
                 expr::evaluate(*expression,
                                ui::module_refs(spans_),
@@ -335,7 +313,6 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        // A bracketed/pointer chain is always resolved live by the worker.
         preview_.text    = text;
         preview_.state   = PreviewState::resolving;
         preview_.address = 0;
@@ -377,7 +354,7 @@ namespace slopkit::ui::dialogs
     {
         if (!preview_.resolve_job.has_value() || *preview_.resolve_job != id)
         {
-            return; // a later edit, opening or module map superseded this resolve
+            return;
         }
         preview_.resolve_job.reset();
         if (pending_add_.has_value())
@@ -419,8 +396,6 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        // The value read is target access, so it goes through the worker and only
-        // while a target is attached.
         if (worker_.attached())
         {
             if (const auto size = preview_value_size(); size.has_value())
@@ -444,8 +419,6 @@ namespace slopkit::ui::dialogs
         if (pending_add_.has_value() && *pending_add_ == text)
         {
             pending_add_.reset();
-            // A resolve failure never blocks the add: the expression is kept and
-            // the address stays unresolved (0) until the list re-resolves it.
             log::info(log::category::ui,
                       std::format("add address accepted unresolved: {} ({})", text, preview_.reason));
             add_entry(0, text);
@@ -478,7 +451,7 @@ namespace slopkit::ui::dialogs
     {
         if (!preview_.read_job.has_value() || *preview_.read_job != id)
         {
-            return; // a later edit or resolve superseded this read
+            return;
         }
         preview_.read_job.reset();
 
@@ -585,9 +558,8 @@ namespace slopkit::ui::dialogs
         entry.bytes.assign(size, std::byte {0});
         table_.add(std::move(entry));
 
-        // A confirmed add closes the dialog; the new row is the feedback.
         log::info(log::category::ui, "add address accepted");
         accept();
     }
 
-} // namespace slopkit::ui::dialogs
+}

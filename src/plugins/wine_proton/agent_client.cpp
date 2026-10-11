@@ -24,9 +24,6 @@ namespace slopkit::plugins::wine_proton
 {
     namespace
     {
-        // dladdr resolves this anchor to the plugin's own library, which is how
-        // the agent binaries that ship beside it are found without a search
-        // path. SLOPKIT_AGENT_DIR overrides it for tests.
         const int kAgentDirectoryAnchor = 0;
 
         std::optional<std::filesystem::path> agent_binary_directory()
@@ -51,10 +48,6 @@ namespace slopkit::plugins::wine_proton
             std::string output;
         };
 
-        // Runs `arguments` with `environment` (the target's own), combining
-        // stdout and stderr into one bounded capture. The child is killed and
-        // reported as timed out if it outlives `timeout`, so the tool can never
-        // hang on a wedged wine.
         std::expected<SpawnOutcome, std::string> run_process(const std::vector<std::string>& arguments,
                                                              const std::vector<std::string>& environment,
                                                              std::chrono::milliseconds       timeout)
@@ -151,7 +144,7 @@ namespace slopkit::plugins::wine_proton
             return outcome;
         }
 
-    } // namespace
+    }
 
     std::string injector_failure_message(std::string_view output)
     {
@@ -263,8 +256,6 @@ namespace slopkit::plugins::wine_proton
                 "the injector exited with {}: {}", spawned->exit_code, injector_failure_message(spawned->output)));
         }
 
-        // The transport owns the slot pool; the handshake claims one slot just
-        // like every later request does.
         const auto exchange =
             [&transport](const slopkit_agent_record& record,
                          std::chrono::milliseconds   wait) -> std::expected<slopkit_agent_record, std::string>
@@ -282,8 +273,6 @@ namespace slopkit::plugins::wine_proton
         const auto answer = exchange(hello, timeout);
         const auto refuse = [&](const std::string& reason)
         {
-            // The DLL is in the target now; ask it to leave before the region
-            // goes away so no service thread keeps polling an unlinked file.
             slopkit_agent_record shutdown {};
             shutdown.op = SLOPKIT_AGENT_OP_SHUTDOWN;
             (void)exchange(shutdown, std::chrono::milliseconds {200});
@@ -321,8 +310,6 @@ namespace slopkit::plugins::wine_proton
                                       target.pointer_size == 4 ? 32 : 64));
         }
 
-        // Size the slot pool from the capacity the agent advertised; an agent
-        // that reports none degrades to a single slot and still works.
         transport->advertise_capacity(answer->slot_count);
 
         AgentClient client(std::make_shared<AgentTransport>(std::move(*transport)), std::move(spawned->output));
@@ -482,8 +469,6 @@ namespace slopkit::plugins::wine_proton
         }
         if (answer->status == SLOPKIT_AGENT_STATUS_UNSUPPORTED)
         {
-            // No gap within ±2 GB. The hint is best effort, so place it
-            // anywhere rather than failing the call.
             return allocate(size, 0, timeout);
         }
         if (answer->status != SLOPKIT_AGENT_STATUS_OK || answer->address == 0)
@@ -632,8 +617,6 @@ namespace slopkit::plugins::wine_proton
         for (std::uint32_t index = 0; index < answer->size; ++index)
         {
             const auto& entry = entries[index];
-            // Every name must sit inside the payload on a UTF-16 boundary; a
-            // range that does not is refused before any byte is read.
             if ((entry.name_offset % 2u) != 0 || (entry.name_length % 2u) != 0
                 || entry.name_offset > SLOPKIT_AGENT_PAYLOAD_SIZE
                 || entry.name_length > SLOPKIT_AGENT_PAYLOAD_SIZE - entry.name_offset)
@@ -764,4 +747,4 @@ namespace slopkit::plugins::wine_proton
         }
     }
 
-} // namespace slopkit::plugins::wine_proton
+}

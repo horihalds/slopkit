@@ -5,7 +5,6 @@
 
 namespace slopkit::ui::models
 {
-
     void LiveCells::reset(std::size_t rows)
     {
         cells_.assign(rows, LiveCell {});
@@ -50,7 +49,7 @@ namespace slopkit::ui::models
             const LiveCandidate value = candidate(row);
             if (!value.readable)
             {
-                continue; // Nothing to read: a zero-width row, or one being written.
+                continue;
             }
             requests.push_back(LiveRequest {.id = row, .address = value.address, .size = value.size});
             pending_.push_back(Pending {.row = row, .identity = value.identity});
@@ -83,11 +82,11 @@ namespace slopkit::ui::models
             const std::size_t  row     = pending.row;
             if (reading.id != row || row >= cells_.size())
             {
-                continue; // Out of order; leave the row alone.
+                continue;
             }
             if (!valid(row, pending.identity))
             {
-                continue; // The row changed identity since the request.
+                continue;
             }
 
             LiveCell&  cell      = cells_[row];
@@ -128,4 +127,4 @@ namespace slopkit::ui::models
         pending_.clear();
     }
 
-} // namespace slopkit::ui::models
+}

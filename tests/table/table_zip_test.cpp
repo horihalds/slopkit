@@ -25,7 +25,7 @@ namespace
         fs::create_directories(directory, error);
         return directory / name;
     }
-} // namespace
+}
 
 TEST_CASE("a table archive round-trips every member's text", "[table]")
 {
@@ -109,8 +109,6 @@ TEST_CASE("a truncated archive keeps the signature but fails to read", "[table]"
     };
     REQUIRE(write_archive(path, members).has_value());
 
-    // Cut the archive after the local file header: the signature still matches,
-    // but the central directory is gone.
     fs::resize_file(path, 10);
     CHECK(is_zip_archive(path));
     CHECK_FALSE(read_archive(path).has_value());

@@ -31,7 +31,6 @@
 
 namespace slopkit::ui::dialogs
 {
-
     namespace
     {
         bool parse_number(std::string_view text, std::uint64_t& out)
@@ -44,7 +43,7 @@ namespace slopkit::ui::dialogs
             return error == std::errc {} && end == text.data() + text.size();
         }
 
-    } // namespace
+    }
 
     SettingsDialog::SettingsDialog(plugin::PluginHost& host,
                                    scan::ScanEngine&   engine,
@@ -99,8 +98,6 @@ namespace slopkit::ui::dialogs
                 });
         categories_->setCurrentRow(0);
 
-        // The dialog is a view: it shows the persisted values and follows the
-        // controller, so an external change keeps the radios in step.
         set_dark_theme(settings_.values().dark_theme);
         set_address_mode(settings_.values().address_mode);
         set_auto_load_last_table(settings_.values().auto_load_last_table);
@@ -489,4 +486,4 @@ namespace slopkit::ui::dialogs
         }
     }
 
-} // namespace slopkit::ui::dialogs
+}

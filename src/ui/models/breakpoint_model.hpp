@@ -11,11 +11,6 @@
 
 namespace slopkit::ui::models
 {
-
-    // A read-only view over the session's breakpoint table, with the Enabled
-    // column checkable: a toggle is routed to the controller, which re-arms or
-    // disarms the breakpoint. The rows are a snapshot, refreshed on every
-    // breakpointsChanged.
     class BreakpointModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -50,4 +45,4 @@ namespace slopkit::ui::models
         std::vector<slopkit::debug::Breakpoint> rows_;
     };
 
-} // namespace slopkit::ui::models
+}

@@ -30,8 +30,6 @@ namespace slopkit::sandbox
 {
     namespace
     {
-        // The animation runs at 2 Hz, the rows re-read the values at 10 Hz: light
-        // enough that the sandbox stays idle at well under a percent of a core.
         constexpr int kRefreshIntervalMs   = 100;
         constexpr int kAnimationIntervalMs = 500;
 
@@ -80,7 +78,7 @@ namespace slopkit::sandbox
         {
             return hex_dump(heap_marker());
         }
-    } // namespace
+    }
 
     SandboxWindow::SandboxWindow(QWidget* parent) : QWidget(parent)
     {
@@ -114,7 +112,6 @@ namespace slopkit::sandbox
         layout->addWidget(ui::widgets::section_header(tr("Exposed values"), this));
         layout->addWidget(ui::widgets::hint_text(tr("Each row is a live view over this process' memory."), this));
 
-        // Column headings shared by every panel's grid.
         const auto headers = [this](QGridLayout* grid)
         {
             grid->addWidget(ui::widgets::section_header(tr("Value"), this), 0, 0);
@@ -122,7 +119,6 @@ namespace slopkit::sandbox
             grid->addWidget(ui::widgets::section_header(tr("Current"), this), 0, 2);
         };
 
-        // Integers.
         {
             auto* panel = new ui::widgets::Panel(tr("Integers"), this);
             auto* grid  = new QGridLayout();
@@ -210,7 +206,6 @@ namespace slopkit::sandbox
             layout->addWidget(panel);
         }
 
-        // Floating point and text.
         {
             auto* panel = new ui::widgets::Panel(tr("Floating point and text"), this);
             auto* grid  = new QGridLayout();
@@ -292,7 +287,6 @@ namespace slopkit::sandbox
             layout->addWidget(panel);
         }
 
-        // Byte patterns.
         {
             auto* panel = new ui::widgets::Panel(tr("Byte patterns"), this);
             auto* grid  = new QGridLayout();
@@ -398,9 +392,6 @@ namespace slopkit::sandbox
     {
         for (const Row& row : rows_)
         {
-            // Leave a focused editor alone so the refresh never clobbers what the
-            // user is typing; signals are blocked so re-reading a value cannot
-            // bounce back as an edit.
             if (row.edit->hasFocus())
             {
                 continue;
@@ -455,4 +446,4 @@ namespace slopkit::sandbox
         log::info(log::category::ui, "sandbox values reset");
     }
 
-} // namespace slopkit::sandbox
+}

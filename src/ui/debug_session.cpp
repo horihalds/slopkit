@@ -10,7 +10,6 @@ namespace slopkit::ui
 {
     namespace
     {
-        // "<name> (<pid>)", the identity the prompt names.
         QString target_label(const process::AttachedTarget& target)
         {
             return QStringLiteral("%1 (%2)").arg(QString::fromStdString(target.name), QString::number(target.pid));
@@ -33,7 +32,7 @@ namespace slopkit::ui
             box.exec();
             return box.result() == widgets::MessageBoxResult::yes;
         }
-    } // namespace
+    }
 
     DebugSessionGate::DebugSessionGate(debug::Controller&       controller,
                                        process::AttachedTarget& target,
@@ -72,15 +71,11 @@ namespace slopkit::ui
         {
         case debug::Controller::State::running:
         case debug::Controller::State::stopped:
-            // A session is already up: nothing to attach, nothing to ask.
             ready();
             return;
         case debug::Controller::State::starting:
             if (!starting_)
             {
-                // The Debugger pane (or another window's gate) is already
-                // attaching; this gate did not start it and cannot wait for it
-                // without stealing its completion.
                 emit progress(
                     QStringLiteral("An attach is already under way; repeat the command once the session is up."), true);
                 emit abandoned();
@@ -152,4 +147,4 @@ namespace slopkit::ui
         emit abandoned();
     }
 
-} // namespace slopkit::ui
+}

@@ -69,8 +69,6 @@ namespace
         return engine.snapshot();
     }
 
-    // A source over an owned, mutable buffer so tests can change memory between
-    // scans.
     [[maybe_unused]] slopkit::scan::MemorySource mutable_source(std::shared_ptr<std::vector<std::byte>> bytes)
     {
         slopkit::scan::MemorySource source;
@@ -97,7 +95,6 @@ namespace
         return source;
     }
 
-    // A synthetic address space with several regions of differing attributes.
     struct FakeSpace
     {
         std::uint64_t           base  = 0x1000;
@@ -133,9 +130,6 @@ namespace
         }
     };
 
-    // A one-region source over an owned buffer with an unreadable hole in
-    // [hole_begin, hole_end). A read that would touch the hole returns only the
-    // readable prefix before it, exactly like a short process read.
     [[maybe_unused]] slopkit::scan::MemorySource hole_source(std::shared_ptr<std::vector<std::byte>> bytes,
                                                              std::uint64_t                           base,
                                                              std::uint64_t                           hole_begin,
@@ -148,11 +142,11 @@ namespace
             std::uint64_t       stop = end;
             if (address < hole_begin && end > hole_begin)
             {
-                stop = hole_begin; // the read stops at the hole
+                stop = hole_begin;
             }
             else if (address >= hole_begin && address < hole_end)
             {
-                stop = address; // starting inside the hole reads nothing
+                stop = address;
             }
             return static_cast<std::size_t>(stop - address);
         };
@@ -212,7 +206,6 @@ namespace
         return config;
     }
 
-    // Read-call and byte counters a counting_source wrapper fills in.
     struct ReadCounter
     {
         std::atomic<std::size_t> read_calls {0};
@@ -220,8 +213,6 @@ namespace
         std::atomic<std::size_t> bytes_read {0};
     };
 
-    // Wraps `inner` and counts the read calls and bytes it hands out, so a test
-    // can assert that a refinement coalesces its candidates into a few reads.
     [[maybe_unused]] slopkit::scan::MemorySource counting_source(slopkit::scan::MemorySource  inner,
                                                                  std::shared_ptr<ReadCounter> counter)
     {
@@ -261,7 +252,6 @@ namespace
         return source;
     }
 
-    // Restores the process-wide log level on scope exit.
     class LevelGuard
     {
     public:
@@ -296,4 +286,4 @@ namespace
     private:
         slopkit::log::SinkId id_;
     };
-} // namespace
+}

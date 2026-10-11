@@ -37,4 +37,4 @@ namespace slopkit::ui::components
         entries_.clear();
     }
 
-} // namespace slopkit::ui::components
+}

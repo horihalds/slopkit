@@ -4,7 +4,6 @@
 
 namespace slopkit::debug
 {
-
     WatchState AccessWatch::state() const noexcept
     {
         return state_;
@@ -47,7 +46,6 @@ namespace slopkit::debug
 
     void AccessWatch::start(std::uint64_t address, Kind kind, std::size_t size, std::uint64_t breakpoint_id)
     {
-        // Starting a new watch replaces the running one, rows included.
         state_         = WatchState::watching;
         address_       = address;
         kind_          = kind;
@@ -107,4 +105,4 @@ namespace slopkit::debug
         hits_.push_back(WatchHit {rip, tid, 1});
     }
 
-} // namespace slopkit::debug
+}

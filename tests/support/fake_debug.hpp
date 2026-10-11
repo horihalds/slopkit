@@ -27,7 +27,6 @@ namespace slopkit::tests
     using slopkit::process::AccessError;
     using slopkit::process::ProcessId;
 
-    // The 18-register file the debugger expects, with RIP set.
     inline std::vector<RegisterValue> default_registers(std::uint64_t rip = 0x1000)
     {
         std::vector<RegisterValue> registers;
@@ -79,7 +78,6 @@ namespace slopkit::tests
     public:
         using StopReply = std::expected<StopEvent, AccessError>;
 
-        // --- scripted input (written by the test thread) ----------------------
         void fail_attach(AccessError error)
         {
             const std::lock_guard lock(state_mutex_);
@@ -116,7 +114,6 @@ namespace slopkit::tests
             stop_replies_.push_back(std::move(reply));
         }
 
-        // The blocking simulation: a flag crossed between threads, so an atomic.
         std::atomic<bool>       block_continue {false};
         std::mutex              continue_mutex;
         std::condition_variable continue_cv;
@@ -124,7 +121,6 @@ namespace slopkit::tests
         std::atomic<bool>       continue_released {false};
         std::atomic<bool>       interrupted {false};
 
-        // --- recorded output (written by the debug worker thread) -------------
         [[nodiscard]] std::vector<std::string> calls() const
         {
             const std::lock_guard lock(state_mutex_);
@@ -250,15 +246,12 @@ namespace slopkit::tests
             if (block_continue.load())
             {
                 continue_entered = true;
-                std::unique_lock lock(continue_mutex); // state_mutex_ is free here
+                std::unique_lock lock(continue_mutex);
                 continue_cv.wait(lock,
                                  [this]
                                  {
                                      return continue_released.load();
                                  });
-                // Consume the release, so the next continue blocks again: a real
-                // continue stops on every stop, and the maintenance round-trip
-                // relies on the resume blocking until the next stop.
                 continue_released = false;
             }
             return next_stop();
@@ -283,7 +276,7 @@ namespace slopkit::tests
             }
             interrupted = true;
             {
-                const std::lock_guard lock(continue_mutex); // state_mutex_ is free here
+                const std::lock_guard lock(continue_mutex);
                 continue_released = true;
             }
             continue_cv.notify_all();
@@ -397,7 +390,6 @@ namespace slopkit::tests
         std::vector<std::tuple<std::uint32_t, std::string, std::uint64_t>>                     register_writes_;
     };
 
-    // Drives a controller/worker until `predicate` is true, pumping completions.
     template<typename Controller, typename Predicate>
     bool pump_until(Controller& controller, Predicate predicate, int iterations = 2000)
     {
@@ -414,7 +406,6 @@ namespace slopkit::tests
         return predicate();
     }
 
-    // Waits until a plain predicate holds, without a controller to pump.
     template<typename Predicate>
     bool wait_until(Predicate predicate, int iterations = 2000)
     {
@@ -429,4 +420,4 @@ namespace slopkit::tests
         return predicate();
     }
 
-} // namespace slopkit::tests
+}

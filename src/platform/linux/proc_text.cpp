@@ -7,7 +7,6 @@
 
 namespace slopkit::platform
 {
-
     std::string_view trim(std::string_view value)
     {
         while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())) != 0)
@@ -78,4 +77,4 @@ namespace slopkit::platform
         return result;
     }
 
-} // namespace slopkit::platform
+}

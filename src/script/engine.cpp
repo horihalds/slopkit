@@ -27,19 +27,11 @@ namespace slopkit::script
 {
     namespace
     {
-        // The VM-instruction hook fires every this many instructions; it is what
-        // turns the instruction budget and the wall-clock deadline into an abort.
         constexpr int kHookInstructionCount = 1000;
 
-        // How many bytes `mem.read_string` fetches per target read while it looks
-        // for the NUL terminator, and the default upper bound when the script
-        // passes none.
         constexpr std::size_t kStringChunk      = 64;
         constexpr std::size_t kStringDefaultMax = 256;
 
-        // How many bytes `aobscan` reads per target read. Consecutive chunks
-        // overlap by the pattern size so a match on a boundary is still found,
-        // and a huge region never becomes one allocation.
         constexpr std::size_t kAobChunk = 64 * 1024;
 
         constexpr const char* kBudgetError   = "script exceeded its instruction budget";
@@ -65,14 +57,12 @@ namespace slopkit::script
             return true;
         }
 
-        // Pops the top of the stack and returns it as text, exactly like Lua's
-        // `tostring` (which is what `print` uses for each of its arguments).
         std::string to_text(lua_State* state, int index)
         {
             std::size_t length      = 0;
             const char* text        = luaL_tolstring(state, index, &length);
             std::string description = text != nullptr ? std::string(text, length) : std::string {};
-            lua_pop(state, 1); // luaL_tolstring always pushes its result
+            lua_pop(state, 1);
             return description;
         }
 
@@ -89,10 +79,6 @@ namespace slopkit::script
             return identity;
         }
 
-        // The verdict a hook call returns: `ok` is false only for an explicit
-        // `false` first value, and `message` is the second return value when
-        // there is one. Shared by `run_lifecycle` and `run_update` so the two
-        // cannot drift apart.
         struct HookVerdict
         {
             bool        ok {true};
@@ -115,11 +101,11 @@ namespace slopkit::script
                 const sol::object reason = call.get<sol::object>(1);
                 reason.push(state);
                 verdict.message = to_text(state, -1);
-                lua_pop(state, 1); // the value pushed above
+                lua_pop(state, 1);
             }
             return verdict;
         }
-    } // namespace
+    }
 
     struct Engine::Impl
     {
@@ -128,16 +114,10 @@ namespace slopkit::script
         EngineConfig config;
         sol::state   lua;
 
-        // The script-local registry behind `rlabel`/`slabel`/`ulabel`, plus the
-        // chunk it belongs to: a run of a different chunk drops them, so labels
-        // never leak between scripts while a script's own hooks share theirs.
         SymbolTable                labels;
         std::optional<std::string> labels_owner;
 
         std::vector<std::string>              output;
-        // What this run last passed to `update_interval`; unset when it declared
-        // none. Reset at the top of every entry point so a value never leaks
-        // from one run (or one chunk) into the next.
         std::optional<std::uint64_t>          declared_interval_ms;
         std::size_t                           ticks {0};
         std::chrono::steady_clock::time_point deadline;
@@ -146,7 +126,6 @@ namespace slopkit::script
             : api(std::move(memory_api)), symbols(std::move(symbol_api)), config(engine_config)
         {
             lua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::table, sol::lib::math);
-            // The instruction hook finds its Impl through the state's extra space.
             *static_cast<Impl**>(lua_getextraspace(lua.lua_state())) = this;
             install_print();
             install_memory();
@@ -162,8 +141,6 @@ namespace slopkit::script
             install_hook();
         }
 
-        // The VM-instruction hook that turns the instruction budget and the
-        // wall-clock deadline into an abort.
         static void budget_hook(lua_State* hooked, lua_Debug*)
         {
             auto* self = *static_cast<Impl**>(lua_getextraspace(hooked));
@@ -178,10 +155,6 @@ namespace slopkit::script
             }
         }
 
-        // Runs `body` (which makes exactly one protected call) under a fresh
-        // instruction/time budget and always removes the hook afterwards. The
-        // call's result is returned; a failing call leaves `valid()` false and
-        // its error on the stack.
         template<typename Body>
         sol::protected_function_result call_guarded(Body&& body)
         {
@@ -196,9 +169,6 @@ namespace slopkit::script
             return result;
         }
 
-        // Scopes the label table to the chunk currently running: a different
-        // chunk starts with an empty registry while the same chunk keeps its
-        // labels, so a script's `activate`/`deactivate` see what it registered.
         void begin_chunk(std::string_view chunk)
         {
             if (labels_owner && *labels_owner == chunk)
@@ -209,8 +179,6 @@ namespace slopkit::script
             labels_owner = std::string(chunk);
         }
 
-        // `print` appends one line per call to the run's output instead of
-        // writing to stdout.
         void install_print()
         {
             lua.set_function("print",
@@ -232,7 +200,7 @@ namespace slopkit::script
                                  }
                                  if (output.size() >= kMaxOutputLines)
                                  {
-                                     return; // the cap: further lines are dropped
+                                     return;
                                  }
                                  if (line.size() > kMaxOutputLine)
                                  {
@@ -262,8 +230,6 @@ namespace slopkit::script
                                      throw std::runtime_error("mem.read: unknown value type '" + token + "'");
                                  }
                                  const double value = read_number(address, *width, token);
-                                 // Integer tokens come back as Lua integers so a
-                                 // value prints as `42`, not `42.0`.
                                  if (is_integer_token(token))
                                  {
                                      return sol::make_object(lua.lua_state(), static_cast<std::int64_t>(value));
@@ -304,9 +270,6 @@ namespace slopkit::script
                              });
         }
 
-        // The ten typed reads and the inferring `write`: the one-line
-        // counterparts of `mem.read`/`mem.write` that name the type in the
-        // function, over the same `script::codec` value vocabulary.
         void install_typed_access()
         {
             struct ReadBinding
@@ -341,8 +304,6 @@ namespace slopkit::script
                                      {
                                          throw std::runtime_error(name + ": " + decoded.error());
                                      }
-                                     // Integer tokens come back as Lua integers so a
-                                     // value prints as `42`, not `42.0`.
                                      if (is_integer_token(token))
                                      {
                                          return sol::make_object(lua.lua_state(), static_cast<std::int64_t>(*decoded));
@@ -386,10 +347,6 @@ namespace slopkit::script
                              });
         }
 
-        // Turns a Lua value into a symbol value: `rsymbol` with no argument means
-        // 0, and anything else must be an integral number in `0 .. 2^64-1`.
-        // `expected` names the requirement in the error, so a caller with its own
-        // wording (`update_interval`) can keep `rsymbol`/`slabel` unchanged.
         std::uint64_t value_argument(const std::string&                function,
                                      const sol::optional<sol::object>& value,
                                      std::string_view                  expected = "a 64-bit unsigned integer")
@@ -450,15 +407,12 @@ namespace slopkit::script
             }
         }
 
-        // The value a name resolves to, and whether the script-local table
-        // answered (`local`) or the process-wide symbols did.
         struct NameHit
         {
             std::uint64_t value {};
             bool          local {};
         };
 
-        // Labels first, then the shared table; a name can live in either.
         [[nodiscard]] std::optional<NameHit> resolve_name(std::string_view name) const
         {
             if (const std::optional<std::uint64_t> local = labels.lookup(name))
@@ -475,8 +429,6 @@ namespace slopkit::script
             return std::nullopt;
         }
 
-        // Stores a label, mirroring `store_symbol`: a rejected name throws with
-        // the function that asked for it.
         void store_label(const std::string& function, std::string_view name, std::uint64_t value)
         {
             const std::expected<void, std::string> stored = labels.set(name, value);
@@ -486,9 +438,6 @@ namespace slopkit::script
             }
         }
 
-        // Binds `rsymbol`/`ssymbol`/`usymbol`; a bad argument or a rejected name
-        // throws, which sol2 turns into a Lua error carrying the function name,
-        // exactly like a failed `mem` access.
         void install_symbols()
         {
             lua.set_function("rsymbol",
@@ -525,10 +474,6 @@ namespace slopkit::script
                              });
         }
 
-        // Binds `update_interval(milliseconds)`: how often this script's `update`
-        // hook asks to run. The last call in a run wins, so a script can re-tune
-        // its cadence from the chunk, `activate` or `update`; 0 means "due on
-        // every pass".
         void install_update_interval()
         {
             lua.set_function("update_interval",
@@ -539,8 +484,6 @@ namespace slopkit::script
                              });
         }
 
-        // Binds `rlabel`/`slabel`/`ulabel`, the script-local twin of the symbol
-        // triple, with the same argument checks and error wording.
         void install_labels()
         {
             lua.set_function("rlabel",
@@ -566,11 +509,6 @@ namespace slopkit::script
                              });
         }
 
-        // Binds `label(name)` (the script's own labels), `symbol(name)` (labels
-        // first, then the process-wide table) and `expression(text)` (a full
-        // address expression). An unknown name is the value 0, not an error; a
-        // malformed name or an unresolvable expression throws under the
-        // function's name.
         void install_resolution()
         {
             lua.set_function("label",
@@ -615,11 +553,6 @@ namespace slopkit::script
                         throw std::runtime_error("expression: " + parsed.error().message);
                     }
 
-                    // The base is a script label first, then a
-                    // process-wide symbol, then (via the evaluator)
-                    // a module name and a literal. Passing only the
-                    // name that answered makes the script's own name
-                    // beat a module with the same spelling.
                     std::vector<expr::SymbolRef> symbol_entries;
                     std::vector<expr::ModuleRef> module_entries;
                     if (const std::optional<NameHit> hit = resolve_name(parsed->base))
@@ -649,8 +582,6 @@ namespace slopkit::script
                         }
                         return decode_pointer_value(*bytes);
                     };
-                    // Validate each dereference through the same seam, so a
-                    // script-level chain names the failing level.
                     const auto validator = [this](std::uint64_t address,
                                                   std::size_t   size) -> std::expected<bool, std::string>
                     {
@@ -676,9 +607,6 @@ namespace slopkit::script
                 });
         }
 
-        // Binds `alloc(name, size[, near])` and `dealloc(name)`: map and unmap
-        // memory in the target from a script. `alloc` publishes the address with
-        // `aobscan`'s rule, so a label or symbol of that name sees it too.
         void install_allocation()
         {
             lua.set_function(
@@ -760,11 +688,6 @@ namespace slopkit::script
                 });
         }
 
-        // Binds `validate(address[, size])`: true when [address, address + size)
-        // is mapped and readable in the target, false otherwise. `size` defaults
-        // to 1 and is probed in bounded chunks. An unmapped or unreadable range
-        // is `false`, not an error; a zero size, a bad argument or a missing
-        // target raises.
         void install_validation()
         {
             lua.set_function(
@@ -807,11 +730,6 @@ namespace slopkit::script
                 });
         }
 
-        // Binds `assemble(address, text[, ...])`: turns a block of the listing's
-        // instructions into bytes with `disasm::assemble_block` and writes them
-        // into the target at `address`. Extra arguments expand the text with
-        // Lua's `string.format` first. A wrong argument type raises; everything
-        // else is a `false, reason` pair, so a typo writes nothing.
         void install_assembly()
         {
             lua.set_function(
@@ -838,8 +756,6 @@ namespace slopkit::script
                     std::string text  = text_object.as<std::string>();
                     if (format.size() > 0)
                     {
-                        // The expansion runs on the Lua stack, so every extra
-                        // argument is passed to `string.format` as it is.
                         const int stack_top = lua_gettop(state);
                         lua_getglobal(state, "string");
                         lua_getfield(state, -1, "format");
@@ -888,9 +804,6 @@ namespace slopkit::script
                 });
         }
 
-        // Stores the address of a successful scan under `name`: into the label
-        // the script already owns, else into an existing global symbol (so an
-        // address field can resolve it), else into a freshly registered label.
         void store_hit(const std::string& function, std::string_view name, std::uint64_t address)
         {
             if (const std::optional<NameHit> hit = resolve_name(name); hit && !hit->local)
@@ -905,11 +818,6 @@ namespace slopkit::script
             store_label(function, name, address);
         }
 
-        // Walks the readable regions in ascending address order and collects the
-        // lowest `limit` addresses where `pattern` matches. `module`, when set,
-        // restricts the walk to that module's regions. Every failure is thrown
-        // with `function`'s name, never a `longjmp`, so the walk's containers are
-        // destroyed.
         std::vector<std::uint64_t> scan_memory(const scan::BytePattern&          pattern,
                                                const std::optional<std::string>& module,
                                                std::size_t                       limit,
@@ -969,7 +877,7 @@ namespace slopkit::script
                     const std::expected<std::vector<std::byte>, std::string> bytes = api.read(cursor, want);
                     if (!bytes)
                     {
-                        break; // abandon this region and continue with the next
+                        break;
                     }
                     for (std::size_t from = 0; matches.size() < limit;)
                     {
@@ -979,8 +887,6 @@ namespace slopkit::script
                             break;
                         }
                         const std::uint64_t address = cursor + *offset;
-                        // Consecutive chunks overlap, so a match near a chunk's
-                        // end can surface once more in the next one.
                         if (matches.empty() || address != matches.back())
                         {
                             matches.push_back(address);
@@ -993,7 +899,7 @@ namespace slopkit::script
                     }
                     if (want >= remaining)
                     {
-                        break; // the chunk reached the region's end
+                        break;
                     }
                     cursor += want - overlap;
                 }
@@ -1001,10 +907,6 @@ namespace slopkit::script
             return matches;
         }
 
-        // Binds `aobscan(name, pattern[, module])`: it walks the target's
-        // readable memory for a wildcard byte pattern, stores the address of the
-        // first match under `name` and returns whether it was found, with the
-        // address as a second value.
         void install_aobscan()
         {
             lua.set_function(
@@ -1055,8 +957,6 @@ namespace slopkit::script
                 });
         }
 
-        // Reads a required string field of a hook facts table, raising under the
-        // calling function's name when it is missing or not a string.
         std::string hook_string(sol::table table, std::string_view field, std::string_view function)
         {
             sol::object value = table[std::string {field}];
@@ -1068,8 +968,6 @@ namespace slopkit::script
             return value.as<std::string>();
         }
 
-        // Parses a generated hook's facts table into a `hook::Spec`, raising
-        // under the calling function's name when a field has the wrong type.
         [[nodiscard]] hook::Spec parse_hook(sol::table table, std::string_view function)
         {
             hook::Spec spec;
@@ -1142,11 +1040,6 @@ namespace slopkit::script
             return spec;
         }
 
-        // Binds `hook.install(spec)` and `hook.remove(spec)`, the two calls a
-        // generated hook script makes. `install` demands a unique pattern,
-        // verifies the site, maps a cave near it and patches the site; `remove`
-        // puts the originals back and frees the cave. Both return `true` alone on
-        // success, or `false, reason` on a refusal.
         void install_hook()
         {
             sol::table hook_table = lua.create_named_table("hook");
@@ -1272,8 +1165,6 @@ namespace slopkit::script
             }
         }
 
-        // Reads `size` bytes for one of the typed globals: the same seam as
-        // `mem.read`, but every failure names the function the script called.
         std::vector<std::byte> read_for(const std::string& function, std::uint64_t address, std::size_t size)
         {
             if (!api.read)
@@ -1301,8 +1192,6 @@ namespace slopkit::script
             }
         }
 
-        // The narrowest type that holds a plain Lua value, so `write(addr, v)`
-        // needs no token for the common cases; a float writes `f32`.
         std::string infer_token(const sol::object& value)
         {
             lua_State* state = lua.lua_state();
@@ -1347,8 +1236,6 @@ namespace slopkit::script
             return "i64";
         }
 
-        // Encodes a Lua value for `write`: an integer token keeps the exact 64
-        // bits of a Lua integer, everything else goes through `encode_number`.
         std::expected<std::vector<std::byte>, std::string> encode_value(const std::string& token,
                                                                         const sol::object& value)
         {
@@ -1366,7 +1253,6 @@ namespace slopkit::script
             return encode_number(token, is_integer ? static_cast<double>(integer) : number);
         }
 
-        // Little-endian pointer for an `expression` dereference.
         static std::expected<std::uint64_t, std::string> decode_pointer_value(std::span<const std::byte> bytes)
         {
             if (bytes.empty() || bytes.size() > sizeof(std::uint64_t))
@@ -1397,7 +1283,7 @@ namespace slopkit::script
                 text.append(reinterpret_cast<const char*>(bytes.data()), length);
                 if (length < bytes.size())
                 {
-                    break; // the NUL terminator
+                    break;
                 }
                 offset += chunk;
             }
@@ -1457,7 +1343,7 @@ namespace slopkit::script
             {
                 result.returned = to_text(state, -1);
             }
-            lua_pop(state, 1); // the value pushed above
+            lua_pop(state, 1);
         }
 
         result.ok = true;
@@ -1480,7 +1366,7 @@ namespace slopkit::script
         {
             result = std::unexpected(to_text(state, -1));
         }
-        lua_close(state); // the loaded function (or the error) dies with the state
+        lua_close(state);
         return result;
     }
 
@@ -1503,8 +1389,6 @@ namespace slopkit::script
             return result;
         }
 
-        // The chunk runs first so its globals -- the hooks among them -- are
-        // defined; a chunk that raises never reaches its hook.
         sol::protected_function        chunk_function = loaded;
         sol::protected_function_result chunk_call     = impl.call_guarded(
             [&chunk_function]
@@ -1545,8 +1429,6 @@ namespace slopkit::script
             return result;
         }
 
-        // Nothing, or a truthy first value, is a success; an explicit `false` is
-        // a refusal. A second return value is the message either way.
         const HookVerdict verdict = read_verdict(hook_call, state);
         result.ok                 = verdict.ok;
         result.message            = verdict.message;
@@ -1564,9 +1446,6 @@ namespace slopkit::script
         impl.declared_interval_ms.reset();
         impl.begin_chunk(chunk);
 
-        // Another script may have left an `update` global behind, so remember
-        // what the chunk starts with: only a function this very chunk defines is
-        // its own hook, which is what makes a hook-less chunk a silent skip.
         const void* before = update_identity(state);
 
         sol::load_result loaded = impl.lua.load(chunk, "@script");
@@ -1598,8 +1477,6 @@ namespace slopkit::script
         const void* after = update_identity(state);
         if (after == nullptr || after == before)
         {
-            // The chunk defines no hook of its own: skipped silently and the
-            // tick counts as a success.
             result.output      = std::move(impl.output);
             result.interval_ms = impl.declared_interval_ms;
             return result;
@@ -1633,4 +1510,4 @@ namespace slopkit::script
         return result;
     }
 
-} // namespace slopkit::script
+}

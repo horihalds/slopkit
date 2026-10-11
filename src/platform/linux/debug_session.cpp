@@ -14,16 +14,12 @@
 
 namespace slopkit::platform
 {
-
     namespace
     {
-        // The ABI's hardware breakpoint kinds; the values mirror
-        // slopkit_breakpoint_kind, which the platform layer does not include.
         constexpr std::int32_t kHardwareExecute   = 1;
         constexpr std::int32_t kHardwareWrite     = 2;
         constexpr std::int32_t kHardwareReadWrite = 3;
 
-        // DR7 control bits for one slot: local-enable, R/W and LEN.
         std::uint64_t hardware_control(std::uint32_t slot, std::int32_t kind, std::size_t size)
         {
             std::uint64_t rw = 0;
@@ -51,7 +47,7 @@ namespace slopkit::platform
             }
             return (std::uint64_t {1} << (2 * slot)) | (rw << (16 + 4 * slot)) | (length << (18 + 4 * slot));
         }
-    } // namespace
+    }
 
     DebugSession::DebugSession(process::ProcessId pid, MemAccess& memory, ForeignSignalPolicy policy)
         : pid_(pid), memory_(memory), policy_(policy)
@@ -94,8 +90,6 @@ namespace slopkit::platform
         for (const auto& thread : read_threads(pid_))
         {
             listed = true;
-            // An exempt thread keeps running: it is never seized, never gets the
-            // debug registers and is never waited on by resume or detach.
             if (std::ranges::find(excluded, thread.tid) == excluded.end())
             {
                 tids.push_back(thread.tid);
@@ -107,8 +101,6 @@ namespace slopkit::platform
         }
         if (tids.empty())
         {
-            // Every thread was exempt (or the target went away): there is no
-            // group left to seize.
             return std::unexpected(process::AccessError::not_found);
         }
 
@@ -122,7 +114,6 @@ namespace slopkit::platform
             }
             if (result.error() == process::AccessError::not_found)
             {
-                // The thread went away between the listing and the seize.
                 tids.erase(tids.begin() + static_cast<std::ptrdiff_t>(seized));
                 --seized;
                 continue;
@@ -138,8 +129,6 @@ namespace slopkit::platform
             return std::unexpected(process::AccessError::not_found);
         }
 
-        // Interrupt and wait for each thread so the whole group is stopped
-        // before any breakpoint is armed.
         for (const auto tid : tids)
         {
             const std::array<process::ProcessId, 1> one {tid};
@@ -199,8 +188,6 @@ namespace slopkit::platform
             group_window_ = false;
         }
 
-        // Restore the original bytes so no int3 is left in the target, then
-        // clear the slots and detach every thread.
         for (const auto& [address, original] : restore)
         {
             const std::array<std::byte, 1> bytes {static_cast<std::byte>(original)};
@@ -264,8 +251,6 @@ namespace slopkit::platform
             const std::lock_guard lock(mutex_);
             if (attached_)
             {
-                // One window at a time: a group window or another donor is
-                // already open.
                 return std::unexpected(process::AccessError::permission_denied);
             }
         }
@@ -325,7 +310,6 @@ namespace slopkit::platform
             const std::lock_guard lock(mutex_);
             if (!attached_ || group_window_)
             {
-                // A group window is handed back whole by detach().
                 return {};
             }
             const auto found = std::find(tids_.begin(), tids_.end(), tid);
@@ -396,9 +380,6 @@ namespace slopkit::platform
 
         if (resume_address != 0 && have_trap)
         {
-            // Step over the trap: rewind RIP (an int3 leaves it one byte past
-            // the trap), restore the original byte, single-step it and write the
-            // int3 back, leaving the target stopped.
             if (const auto rewound = platform::set_register(current, "RIP", resume_address); !rewound)
             {
                 return std::unexpected(rewound.error());
@@ -460,9 +441,6 @@ namespace slopkit::platform
                 }
                 if (stop->reason == StopReason::interrupt)
                 {
-                    // The debugger's own SIGSTOP is a stop to report; a
-                    // job-control stop the target's own runtime produced is
-                    // foreign, so resume it without re-delivering the signal.
                     bool ours = false;
                     {
                         const std::lock_guard lock(mutex_);
@@ -482,7 +460,6 @@ namespace slopkit::platform
                 {
                     break;
                 }
-                // Re-deliver the target's own signal and keep waiting.
                 const auto signal = stop->signal;
                 if (const auto resumed = platform::cont(stop->tid, signal); !resumed)
                 {
@@ -723,8 +700,6 @@ namespace slopkit::platform
             }
             else
             {
-                // The address is kept so a later apply can rewrite the slot and
-                // have the kernel recompute it as disabled.
                 hardware_[slot].armed = false;
             }
         }
@@ -759,8 +734,6 @@ namespace slopkit::platform
                 saved |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(buffer[i])) << (8 * i);
                 caller |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(buffer[8 + i])) << (8 * i);
             }
-            // A frame pointer must grow towards the caller; a null or
-            // non-advancing one ends the walk.
             if (caller == 0 || saved <= frame_pointer)
             {
                 break;
@@ -882,4 +855,4 @@ namespace slopkit::platform
         return {};
     }
 
-} // namespace slopkit::platform
+}

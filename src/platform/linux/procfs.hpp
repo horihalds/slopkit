@@ -10,7 +10,6 @@
 
 namespace slopkit::platform
 {
-
     struct ProcessStatus
     {
         std::string   name;
@@ -20,7 +19,6 @@ namespace slopkit::platform
         int           tracer_pid {0};
     };
 
-    // One line of /proc/<pid>/maps.
     struct MappedRegion
     {
         std::uint64_t start {0};
@@ -30,11 +28,10 @@ namespace slopkit::platform
         bool          executable {false};
         bool          shared {false};
         std::uint64_t offset {0};
-        std::string   path; // Empty for anonymous mappings.
+        std::string   path;
         bool          deleted {false};
     };
 
-    // Live queries.
     [[nodiscard]] std::vector<process::ProcessId>  list_pids();
     [[nodiscard]] std::optional<std::string>       read_exe(process::ProcessId pid);
     [[nodiscard]] std::optional<std::string>       read_cmdline(process::ProcessId pid);
@@ -42,18 +39,10 @@ namespace slopkit::platform
     [[nodiscard]] std::optional<ProcessStatus>     read_status(process::ProcessId pid);
     [[nodiscard]] std::vector<MappedRegion>        read_maps(process::ProcessId pid);
     [[nodiscard]] std::vector<process::ThreadInfo> read_threads(process::ProcessId pid);
-    // The single-letter state of one thread from /proc/<pid>/task/<tid>/stat:
-    // 't' means it sits in a ptrace stop. `std::nullopt` when the thread is gone.
     [[nodiscard]] std::optional<char>              read_thread_state(process::ProcessId pid, process::ProcessId tid);
-    // The syscall number a thread is inside, from
-    // /proc/<pid>/task/<tid>/syscall: a number while it is in a call and -1
-    // while it is not. `std::nullopt` when the file cannot be read (the thread
-    // is gone, or the caller may not look).
     [[nodiscard]] std::optional<std::int64_t>      read_thread_syscall(process::ProcessId pid, process::ProcessId tid);
-    // The kernel symbol a thread is parked on, for the window's log records.
     [[nodiscard]] std::string                      read_thread_wchan(process::ProcessId pid, process::ProcessId tid);
 
-    // Pure parsers, exposed so they can be tested against fixtures.
     [[nodiscard]] std::optional<ProcessStatus> parse_status(std::string_view text);
     [[nodiscard]] std::vector<MappedRegion>    parse_maps(std::string_view text);
     [[nodiscard]] std::vector<std::uint32_t>   parse_task_ids(std::string_view text);
@@ -61,24 +50,12 @@ namespace slopkit::platform
     [[nodiscard]] process::ModuleKind classify_region(const MappedRegion& region);
     [[nodiscard]] std::string         region_name(const MappedRegion& region);
 
-    // Merges regions backed by the same file into modules and keeps every
-    // anonymous mapping as its own module.
     [[nodiscard]] std::vector<process::ModuleInfo> modules_from_maps(const std::vector<MappedRegion>& regions);
 
-    // Fills ModuleInfo::entry for every file-backed module whose first mapping
-    // starts the file, reading the header through /proc/<pid>/root<path>.
-    // Modules that are anonymous, do not start at their file's first mapping,
-    // have a non-absolute path or whose header cannot be read keep a zero entry.
     void fill_module_entry_points(process::ProcessId pid, std::vector<process::ModuleInfo>& modules);
 
-    // Flags the module backed by `exe_path` as the main image: the exact path
-    // first, then the " (deleted)"-stripped form. Clears any previous flag and
-    // returns whether a module was flagged.
     [[nodiscard]] bool flag_main_module_by_path(std::vector<process::ModuleInfo>& modules, std::string_view exe_path);
 
-    // Flags the lowest-based PE image that is not a DLL as the main image,
-    // reading headers through /proc/<pid>/root like fill_module_entry_points.
-    // Clears any previous flag and returns whether a module was flagged.
     [[nodiscard]] bool flag_main_pe_image(process::ProcessId pid, std::vector<process::ModuleInfo>& modules);
 
-} // namespace slopkit::platform
+}

@@ -22,22 +22,14 @@
 
 namespace slopkit::ui::panels
 {
-
     namespace
     {
-        // The alignment the fast scan uses when the field is left blank.
         std::size_t default_alignment(scan::ValueType type) noexcept
         {
             const std::size_t size = scan::value_size(type);
             return size == 0 ? 4 : size;
         }
 
-        // The scanner's empty bottom row. It used to hold the Add Address
-        // Manually and Table Settings buttons the found list's Memory View row
-        // lines up with; the band keeps that row's height by mirroring the
-        // widget's own size hint, never a pixel constant, so a font, theme or
-        // scale change cannot pull the hits table out of level with the Memory
-        // Scan Options panel. No Q_OBJECT: it carries no signals of its own.
         class BottomBand : public QWidget
         {
         public:
@@ -46,15 +38,12 @@ namespace slopkit::ui::panels
                 setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
             }
 
-            // Points the band at the row it mirrors; null means an empty row.
             void set_source(QWidget* source)
             {
                 source_ = source;
                 sync();
             }
 
-            // Re-reads the mirrored height and re-lays out only when it moved,
-            // so a live font or scale change cannot leave the band stale.
             void sync()
             {
                 const int height = source_ != nullptr ? source_->sizeHint().height() : 0;
@@ -75,7 +64,7 @@ namespace slopkit::ui::panels
             QPointer<QWidget> source_;
             int               height_ {0};
         };
-    } // namespace
+    }
 
     ScannerPanel::ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent)
         : QWidget(parent), worker_(worker), target_(target)
@@ -89,9 +78,6 @@ namespace slopkit::ui::panels
 
     ScannerPanel::~ScannerPanel()
     {
-        // The plugin session resumes its own target when it closes, but do not
-        // rely on that here: ask for a resume now. The callback deliberately does
-        // not capture this panel, which may be gone before it is drained.
         if (target_suspended_)
         {
             worker_.submit_resume(worker_.next_job_id(), worker_pid_, [](process::JobResult&&) {});
@@ -110,7 +96,7 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::focus_value_input()
     {
-        if (!value_edit_->isEnabled()) // no value needed for this scan type
+        if (!value_edit_->isEnabled())
         {
             return;
         }
@@ -166,7 +152,6 @@ namespace slopkit::ui::panels
         action_row->addWidget(cancel_button_, 16);
         layout->addLayout(action_row);
 
-        // Hex toggle, then the value (and, for "Value between", the upper bound).
         auto* value_row = new QHBoxLayout();
         hex_check_      = new QCheckBox(tr("Hex"), this);
         value_row->addWidget(hex_check_);
@@ -195,7 +180,7 @@ namespace slopkit::ui::panels
         {
             value_type_combo_->addItem(QString::fromUtf8(name));
         }
-        value_type_combo_->setCurrentIndex(2); // 4 Bytes
+        value_type_combo_->setCurrentIndex(2);
         layout->addWidget(value_type_combo_);
 
         auto* options = new widgets::Panel(tr("Memory Scan Options"), this);
@@ -256,8 +241,6 @@ namespace slopkit::ui::panels
 
         layout->addStretch(1);
 
-        // The empty bottom row lines up with the found list's Memory View row;
-        // the window hands the band the height it mirrors.
         auto* band_row = new QHBoxLayout();
         bottom_band_   = new BottomBand(this);
         band_row->addStretch(1);
@@ -270,9 +253,6 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::apply_tab_order()
     {
-        // The field run ends at the pause check; the hop from there to the
-        // address list is left to the window, because the found list's table and
-        // Memory View button are spliced in between.
         widgets::chain_tab_order({scan_button_,
                                   next_scan_button_,
                                   undo_button_,
@@ -439,7 +419,7 @@ namespace slopkit::ui::panels
         if (engine_.is_running())
         {
             engine_.cancel();
-            return; // Retry once the engine has stopped.
+            return;
         }
 
         worker_session_ = process::Session {};
@@ -469,14 +449,11 @@ namespace slopkit::ui::panels
                                           {
                                               if (handoff_pending_ != job_id)
                                               {
-                                                  return; // Superseded or shut down.
+                                                  return;
                                               }
                                               handoff_pending_.reset();
 
                                               auto& attached = std::get<process::AttachResult>(result);
-                                              // Drop a session whose target changed while the handoff ran;
-                                              // worker_pid_ still reflects the request, so the next tick
-                                              // requests the new target.
                                               if (!target_.valid() || target_.pid != pid || target_.plugin_id != plugin)
                                               {
                                                   return;
@@ -514,7 +491,6 @@ namespace slopkit::ui::panels
         const process::JobId job_id = worker_.next_job_id();
         map_pending_                = job_id;
 
-        // Show the in-flight state; the last known ranges stay in the fields.
         range_updating_ = true;
         module_combo_->clear();
         module_combo_->addItem(tr("Loading…"));
@@ -527,11 +503,9 @@ namespace slopkit::ui::panels
                                       {
                                           if (map_pending_ != job_id)
                                           {
-                                              return; // Superseded or shut down.
+                                              return;
                                           }
                                           map_pending_.reset();
-                                          // Drop a map whose target changed while the job ran; the next
-                                          // tick requests the new target.
                                           if (!target_.valid() || target_.pid != pid || target_.plugin_id != plugin)
                                           {
                                               return;
@@ -549,9 +523,6 @@ namespace slopkit::ui::panels
         modules_   = std::move(result.modules);
         map_ready_ = true;
 
-        // The whole-process entry spans the entire user-space address range
-        // independently of the mapped pages, so the boxes and the dropdown
-        // selection can never disagree.
         apply_range(0, scan::kMaxUserAddress);
         rebuild_range_items();
 
@@ -595,15 +566,11 @@ namespace slopkit::ui::panels
         range_updating_ = true;
         module_combo_->clear();
 
-        // The range is only a tooltip now; the entry text stays a name.
         module_combo_->addItem(tr("All memory"));
         module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(0), Qt::UserRole);
         module_combo_->setItemData(0, QVariant::fromValue<qulonglong>(scan::kMaxUserAddress), Qt::UserRole + 1);
         module_combo_->setItemData(0, range_text(0, scan::kMaxUserAddress), Qt::ToolTipRole);
 
-        // Only file-backed modules are listed, with the main image pinned
-        // directly after "All memory" and the rest ordered by base address;
-        // anonymous mappings stay covered by the whole-process entry.
         const process::ModuleInfo*              main = process::main_module(modules_);
         std::vector<const process::ModuleInfo*> listed;
         for (const auto& module : modules_)
@@ -629,8 +596,6 @@ namespace slopkit::ui::panels
         {
             const std::uint64_t start = module->base;
             const std::uint64_t end   = module->base + module->size;
-            // The shared shortening rule (docs/UI_DESIGN.md): the entry paints
-            // the label, its tooltip carries the full name.
             module_combo_->addItem(ui::elide_module_name(module->name));
             const int row = module_combo_->count() - 1;
             module_combo_->setItemData(row, QVariant::fromValue<qulonglong>(start), Qt::UserRole);
@@ -658,8 +623,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // The collapsed box reveals the selected module's full name on hover;
-        // "All memory" keeps the generic hint.
         if (index == 0)
         {
             module_combo_->setToolTip(tr("Whole process or a single loaded module"));
@@ -793,7 +756,7 @@ namespace slopkit::ui::panels
     {
         if (suspend_pending_.has_value() || pending_scan_.has_value())
         {
-            return; // A start is already in flight.
+            return;
         }
 
         const bool pause = pause_scanning_check_->isChecked() && can_suspend_ && !debug_session_active_
@@ -817,7 +780,7 @@ namespace slopkit::ui::panels
                                    {
                                        if (suspend_pending_ != job_id)
                                        {
-                                           return; // Superseded or shut down.
+                                           return;
                                        }
 
                                        const auto suspended = std::get<process::SuspendResult>(std::move(result));
@@ -832,8 +795,6 @@ namespace slopkit::ui::panels
                                            target_suspended_ = true;
                                        }
 
-                                       // Start the engine inside the completion, and only then clear the
-                                       // pending state, so no tick observes "suspended and idle".
                                        if (pending_scan_)
                                        {
                                            PendingScan pending = std::move(*pending_scan_);
@@ -869,7 +830,7 @@ namespace slopkit::ui::panels
             {
                 if (resume_pending_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 resume_pending_.reset();
 
@@ -883,7 +844,6 @@ namespace slopkit::ui::panels
                 if (*resumed.error == process::AccessError::not_found
                     || *resumed.error == process::AccessError::unsupported)
                 {
-                    // The session is gone; its destructor resumes the target.
                     target_suspended_ = false;
                     return;
                 }
@@ -962,8 +922,6 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::refresh()
     {
-        // The band mirrors another panel's row height, so re-read it here; a
-        // font, theme or scale change is picked up on the next tick.
         if (auto* band = static_cast<BottomBand*>(bottom_band_))
         {
             band->sync();
@@ -990,4 +948,4 @@ namespace slopkit::ui::panels
         update_pause_check();
     }
 
-} // namespace slopkit::ui::panels
+}

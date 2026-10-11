@@ -95,6 +95,17 @@ regression: debug it, do not add it just to make a run green.
 - **Lone-run check:** `ctest -R "the address-table model writes one value to a
   selection of like entries"` passes.
 
+### the address list changes the value of every selected entry
+
+- **Source:** `tests/ui/panels/address_list_panel_test.cpp` (`[ui][panels]`).
+- **Symptom:** `CHECK(pump_ui(worker, ...))` fails after `change_value()`: the
+  two batched writes never land within the pump timeout.
+- **Cause:** the shared `AccessWorker` write races the scheduling of a full
+  `[ui]` run, the same class as the address-table model flake above; both writes
+  complete normally when the case has the process to itself.
+- **Lone-run check:** `ctest -R "the address list changes the value of every
+  selected entry"` passes.
+
 ## Not a flake
 
 A failure that is not listed above — or that also fails alone — is a regression.

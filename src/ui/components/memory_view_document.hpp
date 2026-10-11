@@ -22,9 +22,6 @@
 
 namespace slopkit::ui::components
 {
-
-    // One right-click format entry: a scan value type plus the base its integer
-    // form is rendered in. `hex` is ignored by the real types.
     struct ValueFormat
     {
         scan::ValueType type {scan::ValueType::byte};
@@ -45,20 +42,15 @@ namespace slopkit::ui::components
         utf16,
     };
 
-    // The bytes of one live window block plus the per-byte change mask.
     struct Block
     {
         std::uint64_t          base {};
         std::vector<std::byte> bytes;
-        std::vector<bool>      readable; // per byte
-        std::vector<bool>      changed;  // differs from the previous reading
+        std::vector<bool>      readable;
+        std::vector<bool>      changed;
         bool                   ever_read {false};
     };
 
-    // The live state behind the memory view: a cache of the visible block and
-    // its two neighbours, the per-byte change mask, the value format and the
-    // side-text encoding, and the write submission. It owns no widget, so the
-    // risky part is testable headlessly; MemoryView only paints it.
     class MemoryViewDocument : public QObject, public ui::LiveSurface
     {
         Q_OBJECT
@@ -69,15 +61,11 @@ namespace slopkit::ui::components
                            QObject*                 parent  = nullptr,
                            script::SymbolTable&     symbols = script::default_symbol_table());
 
-        // View geometry: the first visible byte, the auto-fitted row width and
-        // how many rows fit. `first_byte` is kept exactly as requested; the
-        // block window follows the visible block.
         void set_view(std::uint64_t first_byte, std::size_t bytes_per_row, std::size_t visible_rows);
         [[nodiscard]] std::uint64_t first_byte() const noexcept;
         [[nodiscard]] std::size_t   bytes_per_row() const noexcept;
         [[nodiscard]] std::size_t   visible_rows() const noexcept;
 
-        // The live window is only requested while the view is on screen.
         void               set_visible(bool visible);
         [[nodiscard]] bool visible() const noexcept;
 
@@ -89,18 +77,14 @@ namespace slopkit::ui::components
         void                                 set_modules(std::vector<process::ModuleInfo> modules);
         void                                 set_address_mode(ui::AddressMode mode);
         [[nodiscard]] QString                address_text(std::uint64_t address) const;
-        // The same, untruncated: the module name as stored, for hovers.
         [[nodiscard]] QString                full_address_text(std::uint64_t address) const;
         [[nodiscard]] QString                display_text(std::uint64_t address) const;
         [[nodiscard]] const ui::ModuleSpans& module_spans() const;
-        // The symbol registry the Go-to parser resolves a bare name against.
         [[nodiscard]] script::SymbolTable&   symbols() const;
 
-        // LiveSurface: the three window blocks while visible with a target.
         [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
         void apply_live_readings(std::span<const ui::LiveReading> readings) override;
 
-        // What the view paints: one value cell and one text column row.
         struct Cell
         {
             QString text;
@@ -111,15 +95,12 @@ namespace slopkit::ui::components
         [[nodiscard]] Cell    cell(std::uint64_t address) const;
         [[nodiscard]] QString text_row(std::uint64_t row_address) const;
 
-        // Parses `text` for the current format, encodes it and submits the write;
-        // false when it is rejected or a write is in flight.
         bool write_value(std::uint64_t address, const QString& text);
 
     signals:
-        void repaintRequested(); // new bytes or a new change mask
+        void repaintRequested();
 
     private:
-        // One window slot submitted by the pass in flight.
         struct PendingBlock
         {
             std::uint64_t base {};
@@ -151,10 +132,6 @@ namespace slopkit::ui::components
 
         std::map<std::uint64_t, Block> blocks_;
 
-        // Bases of the three window slots submitted in the pass in flight plus
-        // their requested size; reset whenever the window moves, so a stale
-        // reading is dropped. The size lets a failed read still give its block a
-        // buffer to render `?` placeholders from.
         std::array<std::optional<PendingBlock>, 3> pending_bases_ {};
         std::optional<std::uint64_t>               last_window_base_;
         process::ProcessId                         requested_pid_ {0};
@@ -162,4 +139,4 @@ namespace slopkit::ui::components
         std::optional<process::JobId> write_pending_;
     };
 
-} // namespace slopkit::ui::components
+}

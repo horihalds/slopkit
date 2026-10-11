@@ -15,21 +15,15 @@ class QPushButton;
 namespace slopkit::ui::components
 {
     class ScriptEditor;
-} // namespace slopkit::ui::components
+}
 
 namespace slopkit::ui::widgets
 {
     class StatusLabel;
-} // namespace slopkit::ui::widgets
+}
 
 namespace slopkit::ui::dialogs
 {
-
-    // The Add/Edit Script dialog: a description field and a multi-line
-    // monospace editor. Committing appends a script entry, or replaces the
-    // description and the source of the script entry it was opened on. The
-    // owner chooses the mode with reset_for_add() or edit_entry() before showing
-    // the dialog.
     class AddScriptDialog : public QDialog
     {
         Q_OBJECT
@@ -37,26 +31,16 @@ namespace slopkit::ui::dialogs
     public:
         explicit AddScriptDialog(table::AddressTable& table, QWidget* parent = nullptr);
 
-        // Prepares the dialog for appending: a clean form in add mode.
         void reset_for_add();
-        // The same, for a caller that already has the description and the source
-        // (the viewer's Hook Instruction command): both are seeded, the text
-        // stays editable and Add is still the only thing that creates a row.
         void reset_for_add(const QString& description, const QString& source);
 
-        // Prepares the dialog for editing `row`: its description and source are
-        // shown and committing replaces them. A row that is not a script entry
-        // leaves the dialog in add mode.
         void edit_entry(std::size_t row);
 
     protected:
-        // `Esc` belongs to the editor: it swallows the key so the dialog is
-        // only closed by its buttons or the window-manager close button.
         void keyPressEvent(QKeyEvent* event) override;
 
     private:
         void commit();
-        // Compiles the editor's text without running it and reports the verdict.
         void verify();
 
         table::AddressTable&       table_;
@@ -69,4 +53,4 @@ namespace slopkit::ui::dialogs
         widgets::StatusLabel*     status_ {};
     };
 
-} // namespace slopkit::ui::dialogs
+}

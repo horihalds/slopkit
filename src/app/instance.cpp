@@ -14,8 +14,6 @@ namespace slopkit::app
 {
     namespace
     {
-        // A request line, including the path and the newline, is capped so a
-        // runaway client cannot grow the server buffer without bound.
         constexpr std::size_t kMaxRequestBytes = 4096;
 
         bool write_all(int fd, std::string_view data)
@@ -71,11 +69,11 @@ namespace slopkit::app
             }
             return ack.starts_with("ok\n");
         }
-    } // namespace
+    }
 
     std::string instance_socket_name()
     {
-        std::string name(1, '\0'); // Abstract namespace: no filesystem entry.
+        std::string name(1, '\0');
         name += std::format("slopkit-{}", static_cast<unsigned long>(::getuid()));
         return name;
     }
@@ -118,4 +116,4 @@ namespace slopkit::app
         return acknowledged;
     }
 
-} // namespace slopkit::app
+}

@@ -8,7 +8,6 @@
 
 namespace slopkit::process
 {
-
     using ProcessId = std::uint32_t;
 
     enum class ModuleKind
@@ -23,9 +22,7 @@ namespace slopkit::process
         ProcessId                pid {};
         std::string              name;
         std::string              exe_path;
-        // Plugin that owns this entry by default (the most specific claimant).
         std::string              plugin_id;
-        // Every plugin that claims the process, default first.
         std::vector<std::string> claimants;
     };
 
@@ -34,33 +31,21 @@ namespace slopkit::process
         std::uint64_t base {};
         std::uint64_t size {};
         std::uint64_t offset {};
-        // Absolute entry point of the image; 0 when unknown.
         std::uint64_t entry {};
         ModuleKind    kind {ModuleKind::anonymous};
-        // Reported main image (the image the process was started from).
         bool          is_main {};
         std::string   name;
         std::string   path;
     };
 
-    // The target's main image: the flagged module when a plugin reported one,
-    // otherwise the lowest-based file-backed image. nullptr when there is none.
     [[nodiscard]] const ModuleInfo* main_module(std::span<const ModuleInfo> modules) noexcept;
 
-    // The process whose name, or executable basename when match_exe_path is set,
-    // equals `name` case-insensitively. The lowest pid wins; nullptr when none
-    // match or when the name is empty.
     [[nodiscard]] const ProcessInfo*
     match_process_by_name(std::span<const ProcessInfo> processes, std::string_view name, bool match_exe_path) noexcept;
 
-    // The process whose executable basename equals the basename of `exe_path`,
-    // case-insensitively. The lowest pid wins; nullptr for an empty path or
-    // when none match.
     [[nodiscard]] const ProcessInfo* match_process_by_exe_path(std::span<const ProcessInfo> processes,
                                                                std::string_view             exe_path) noexcept;
 
-    // True for a module that backs a file image and can therefore make an
-    // address static: not an anonymous mapping and not a zero-size entry.
     [[nodiscard]] constexpr bool is_file_backed(const ModuleInfo& module) noexcept
     {
         return module.kind != ModuleKind::anonymous && module.size != 0;
@@ -72,8 +57,6 @@ namespace slopkit::process
         std::string   name;
     };
 
-    // One mapped memory region of a target, mirroring slopkit_region_info in the
-    // C ABI. `shared` false with a non-empty path marks a copy-on-write mapping.
     struct RegionInfo
     {
         std::uint64_t start {};
@@ -83,11 +66,9 @@ namespace slopkit::process
         bool          writable {};
         bool          executable {};
         bool          shared {};
-        std::string   path; // Empty for anonymous mappings.
+        std::string   path;
     };
 
-    // Bit flags describing how a plugin can reach a target, mirroring
-    // slopkit_access_method in the C ABI.
     enum class AccessMethod : std::uint32_t
     {
         none       = 0,
@@ -134,4 +115,4 @@ namespace slopkit::process
     std::string_view describe(ModuleKind kind) noexcept;
     std::string      describe(AccessMethod methods);
 
-} // namespace slopkit::process
+}

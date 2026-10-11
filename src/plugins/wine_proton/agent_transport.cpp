@@ -19,11 +19,8 @@ namespace slopkit::plugins::wine_proton
     namespace
     {
         constexpr auto kPollInterval      = std::chrono::microseconds(250);
-        // Bumping the heartbeat at most this often is enough to keep an idle
-        // agent's sleep backoff short while a request is in flight, without
-        // turning the wait loop into a busy one.
         constexpr auto kHeartbeatInterval = std::chrono::milliseconds(2);
-    } // namespace
+    }
 
     std::expected<AgentTransport, std::string> AgentTransport::create(const std::filesystem::path& directory)
     {
@@ -117,9 +114,6 @@ namespace slopkit::plugins::wine_proton
         }
         if (!directory_.empty())
         {
-            // The per-session directory holds the region, the DLL and the
-            // injector; all three are ours to remove. A DLL still mapped by the
-            // target keeps working from the unlinked inode.
             std::error_code error;
             std::filesystem::remove_all(directory_, error);
         }
@@ -193,8 +187,6 @@ namespace slopkit::plugins::wine_proton
         for (std::uint32_t index = 0; index < SLOPKIT_AGENT_SLOT_COUNT; ++index)
         {
             in_use_[index]  = false;
-            // Slots above the advertised capacity are outside the pool, so they
-            // are marked unusable and never counted as retired.
             retired_[index] = index >= pool_size_;
         }
         for (std::uint32_t index = 0; index < pool_size_; ++index)
@@ -246,8 +238,6 @@ namespace slopkit::plugins::wine_proton
         {
             return;
         }
-        // The slot leaves the pool for good: it is not made available again, so
-        // a late answer written into it can never be read as a fresh request's.
         retired_[index] = true;
         in_use_[index]  = false;
         ++retired_in_pool_;
@@ -315,9 +305,6 @@ namespace slopkit::plugins::wine_proton
         slopkit_agent_record outgoing = request;
         outgoing.request_id           = owner.request_id_.fetch_add(1, std::memory_order_relaxed) + 1;
 
-        // The payload rides in the same slot as the record, so it must be in
-        // place before the request is published and copied out before the state
-        // returns to idle.
         if (!request_payload.empty())
         {
             const auto count = std::min(request_payload.size(), sizeof(target.payload));
@@ -363,8 +350,6 @@ namespace slopkit::plugins::wine_proton
             const auto now = std::chrono::steady_clock::now();
             if (now >= deadline)
             {
-                // Retire the slot so a late answer cannot be mistaken for the
-                // next request's, and so the slot is never handed out again.
                 retire();
                 return std::unexpected(std::format("the agent did not answer within {} ms", timeout.count()));
             }
@@ -378,4 +363,4 @@ namespace slopkit::plugins::wine_proton
         }
     }
 
-} // namespace slopkit::plugins::wine_proton
+}

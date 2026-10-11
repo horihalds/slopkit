@@ -32,20 +32,17 @@ TEST_CASE("breakpoint model mirrors the controller table", "[ui][models][breakpo
     CHECK(model.data(model.index(0, BreakpointModel::kind), Qt::DisplayRole).toString() == QStringLiteral("Software"));
     CHECK(model.data(model.index(1, BreakpointModel::kind), Qt::DisplayRole).toString()
           == QStringLiteral("Hardware write"));
-    // The address column echoes the stored expression text verbatim.
     CHECK(model.data(model.index(0, BreakpointModel::address), Qt::DisplayRole).toString() == QStringLiteral("0x1000"));
     CHECK(model.data(model.index(1, BreakpointModel::size), Qt::DisplayRole).toString() == QStringLiteral("4"));
     CHECK(model.data(model.index(0, BreakpointModel::enabled), Qt::CheckStateRole).toInt() == Qt::Checked);
     CHECK(model.id_at(0) == *first);
     CHECK(model.id_at(1) == *second);
 
-    // Toggling the checkbox disables the breakpoint through the controller.
     CHECK(model.setData(model.index(0, BreakpointModel::enabled), Qt::Unchecked, Qt::CheckStateRole));
     REQUIRE(controller.table().find(*first) != nullptr);
     CHECK_FALSE(controller.table().find(*first)->enabled);
     CHECK(model.data(model.index(0, BreakpointModel::enabled), Qt::CheckStateRole).toInt() == Qt::Unchecked);
 
-    // A hit counter is reflected after a refresh.
     controller.table().count_hit(*second);
     model.refresh();
     CHECK(model.data(model.index(1, BreakpointModel::hits), Qt::DisplayRole).toString() == QStringLiteral("1"));
@@ -71,7 +68,6 @@ TEST_CASE("breakpoint model renders its machine columns in the embedded mono fon
     CHECK(model.data(model.index(0, BreakpointModel::address), Qt::FontRole).value<QFont>().family() == family);
     CHECK(model.data(model.index(0, BreakpointModel::hits), Qt::FontRole).value<QFont>().family() == family);
 
-    // The kind word column and the enable checkbox keep the UI font.
     CHECK_FALSE(model.data(model.index(0, BreakpointModel::kind), Qt::FontRole).isValid());
     CHECK_FALSE(model.data(model.index(0, BreakpointModel::enabled), Qt::FontRole).isValid());
 }
@@ -91,7 +87,6 @@ TEST_CASE("breakpoint model hides the access watch entry", "[ui][models][breakpo
     REQUIRE(user.has_value());
     REQUIRE(controller.watch_address(0x4000, Kind::hardware_write, 4).has_value());
 
-    // The watch's hidden slot is not a row here, and Clear All still removes it.
     BreakpointModel model(controller);
     REQUIRE(model.rowCount() == 1);
     CHECK(model.id_at(0) == *user);

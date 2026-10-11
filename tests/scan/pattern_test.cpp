@@ -27,7 +27,7 @@ namespace
         REQUIRE(pattern.has_value());
         return *pattern;
     }
-} // namespace
+}
 
 TEST_CASE("the byte pattern accepts the documented spellings", "[scan]")
 {

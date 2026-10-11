@@ -39,7 +39,6 @@ TEST_CASE("loading a table reports the entry count and emits tableLoaded", "[ui]
     CHECK(table.size() == 1);
     CHECK(loaded_signals == 1);
 
-    // An unreadable path fails without emitting the signal.
     CHECK_FALSE(panel.load_table(QStringLiteral("/nonexistent/slopkit/table.skt")));
     CHECK(loaded_signals == 1);
 }
@@ -214,7 +213,6 @@ TEST_CASE("opening into an empty table loads without prompting", "[ui]")
     CHECK(view->model()->index(0, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
           == QStringLiteral("only-row"));
 
-    // A file that cannot be read reports and never prompts.
     auto* address_status =
         window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
     REQUIRE(address_status != nullptr);
@@ -353,7 +351,7 @@ TEST_CASE("merging an open request keeps the path and adds only new rows", "[ui]
         slopkit::table::AddressTable table;
         table.settings().target_process = "incoming-target";
         slopkit::table::AddressEntry shared;
-        shared.address     = 0x1000; // matches the open table, so it is skipped
+        shared.address     = 0x1000;
         shared.description = "shared-row";
         shared.type        = slopkit::scan::ValueType::int32;
         shared.bytes       = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
@@ -395,7 +393,6 @@ TEST_CASE("merging an open request keeps the path and adds only new rows", "[ui]
     CHECK(view->model()->index(1, slopkit::ui::models::AddressTableModel::description).data(Qt::DisplayRole).toString()
           == QStringLiteral("fresh-row"));
 
-    // Re-merging the same file changes nothing.
     CHECK(window.open_table_request(incoming_path));
     REQUIRE(view->model()->rowCount() == 2);
 }
@@ -476,7 +473,7 @@ TEST_CASE("the auto-load switch off leaves the table empty", "[ui]")
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
-    CHECK(address_list->table_path() == table_path); // remembered for a later save
+    CHECK(address_list->table_path() == table_path);
 
     auto* view = address_list->findChild<QTableView*>();
     REQUIRE(view != nullptr);
@@ -524,11 +521,9 @@ TEST_CASE("a never-saved table is offered as the attached process name", "[ui]")
     slopkit::table::AddressTable          table;
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
 
-    // No remembered directory: the default table directory is proposed.
     CHECK(panel.suggested_table_path()
           == QDir(slopkit::ui::default_table_directory()).filePath(QStringLiteral("firefox.skt")));
 
-    // A remembered directory wins over the default location.
     const QString remembered = QFileInfo(scratch_settings_file("save_prefill_dir.ini")).absolutePath();
     panel.set_dialog_directory(remembered);
     CHECK(panel.suggested_table_path() == QDir(remembered).filePath(QStringLiteral("firefox.skt")));
@@ -540,7 +535,7 @@ TEST_CASE("a never-saved table with a detached target falls back to untitled", "
 
     FakeAccess                            access;
     slopkit::process::AccessWorker        worker {access};
-    slopkit::process::AttachedTarget      target; // detached: no session, no pid
+    slopkit::process::AttachedTarget      target;
     slopkit::table::AddressTable          table;
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
 
@@ -562,7 +557,6 @@ TEST_CASE("an existing table keeps its file name in the suggested save path", "[
     panel.set_table_path(path);
     CHECK(panel.suggested_table_path() == path);
 
-    // Only the directory may change; the file name survives.
     const QString remembered = QFileInfo(path).absolutePath();
     panel.set_dialog_directory(remembered);
     CHECK(panel.suggested_table_path() == QDir(remembered).filePath(QStringLiteral("existing_save_path.skt")));
@@ -595,12 +589,10 @@ TEST_CASE("saving a never-saved table proposes the target name and creates the d
     panel.save_table_as();
 
     CHECK(captured == QDir(directory).filePath(QStringLiteral("firefox.skt")));
-    CHECK(QDir(directory).exists()); // the first save can start in the default folder
+    CHECK(QDir(directory).exists());
     CHECK(QFileInfo::exists(chosen));
     CHECK(panel.table_path() == chosen);
 
-    // Leave the user's home as we found it: drop the scratch file and remove the
-    // default folder only when this case had to create it.
     std::error_code error;
     std::filesystem::remove(chosen.toStdString(), error);
     if (!existed)
@@ -650,7 +642,6 @@ TEST_CASE("saving into a missing directory reports a failure", "[ui]")
     slopkit::table::AddressTable          table;
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
 
-    // A remembered directory keeps the default folder out of the flow.
     const QString remembered = QFileInfo(scratch_settings_file("save_missing_dir.ini")).absolutePath();
     panel.set_dialog_directory(remembered);
 
@@ -688,7 +679,6 @@ TEST_CASE("a never-saved table saved through the window is remembered in the set
     target.session_live = true;
     slopkit::plugin::PluginHost     host;
     slopkit::ui::SettingsController settings {scratch_settings_file("save_new_table.ini")};
-    // A remembered directory keeps the default location out of the flow.
     const QString                   remembered = QFileInfo(scratch_settings_file("save_new_dir.ini")).absolutePath();
     settings.set_last_directory(remembered);
     slopkit::ui::MainWindow window {worker, target, host, settings, shared_debug_controller()};
@@ -705,7 +695,7 @@ TEST_CASE("a never-saved table saved through the window is remembered in the set
             return std::optional<QString> {chosen};
         });
 
-    address_list->save_table(); // Ctrl+S on a table that was never saved
+    address_list->save_table();
 
     CHECK(captured == QDir(remembered).filePath(QStringLiteral("firefox.skt")));
     CHECK(QFileInfo::exists(chosen));

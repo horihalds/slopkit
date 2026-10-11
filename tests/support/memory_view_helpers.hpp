@@ -54,7 +54,7 @@ namespace
     constexpr std::size_t   kRowBytes = 16;
     constexpr std::size_t   kRows     = 24;
     constexpr std::uint64_t kExtent   = kRowBytes * kRows;
-    constexpr std::uint64_t kBase     = 0x1800; // A multiple of kExtent.
+    constexpr std::uint64_t kBase     = 0x1800;
 
     template<typename Predicate>
     [[maybe_unused]] bool pump_worker(slopkit::process::AccessWorker& worker, Predicate done)
@@ -129,7 +129,6 @@ namespace
         return value;
     }
 
-    // A document with a live target attached, its window parked on kBase.
     struct Fixture
     {
         FakeAccess                       access;
@@ -144,7 +143,6 @@ namespace
             document.set_view(kBase, kRowBytes, kRows);
         }
 
-        // Refills the visible window's three blocks from memory and applies them.
         void pass()
         {
             const auto                            requests = document.next_live_request();
@@ -158,7 +156,6 @@ namespace
         }
     };
 
-    // Removes the registered sink even when a failing assertion unwinds the case.
     class SinkGuard
     {
     public:
@@ -175,4 +172,4 @@ namespace
     private:
         slopkit::log::SinkId id_;
     };
-} // namespace
+}

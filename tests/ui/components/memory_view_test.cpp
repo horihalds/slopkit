@@ -17,19 +17,16 @@ TEST_CASE("the memory view auto-fits its rows to the widget", "[ui]")
     REQUIRE(wide > 0);
     CHECK(view.horizontalScrollBarPolicy() == Qt::ScrollBarAlwaysOff);
 
-    // A narrower widget fits fewer bytes per row.
     view.resize(360, 600);
     const std::size_t narrow = view.bytes_per_row();
     REQUIRE(narrow > 0);
     CHECK(narrow <= wide);
 
-    // Hiding the text column gives its space back to the value cells.
     const std::size_t with_text = view.bytes_per_row();
     view.set_text_column_visible(false);
     CHECK_FALSE(view.text_column_visible());
     CHECK(view.bytes_per_row() >= with_text);
 
-    // The row width is always a whole number of format units.
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
     view.relayout();
     CHECK(view.bytes_per_row() % 4 == 0);
@@ -44,36 +41,29 @@ TEST_CASE("a resize, format, encoding or text-column change keeps the top addres
     MemoryView view(fixture.document);
     view.show();
 
-    // A one-byte row width parks the anchor on an address that no wider row
-    // width divides, so every re-fit below would move it without the fix.
     view.resize(60, 600);
     REQUIRE(view.bytes_per_row() == 1);
     view.set_first_byte(0x1807);
     REQUIRE(view.first_byte() == 0x1807);
 
-    // A wider widget re-fits the row width and leaves the anchor alone.
     view.resize(800, 600);
     REQUIRE(view.bytes_per_row() > 1);
     CHECK(view.first_byte() == 0x1807);
 
-    // A narrower widget does too.
     view.resize(360, 600);
     REQUIRE(view.bytes_per_row() > 1);
     CHECK(view.first_byte() == 0x1807);
 
-    // A value-format change re-fits the width the same way.
     view.resize(800, 600);
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
     view.relayout();
     CHECK(view.bytes_per_row() % 4 == 0);
     CHECK(view.first_byte() == 0x1807);
 
-    // An encoding change does too.
     fixture.document.set_encoding(TextEncoding::utf8);
     view.relayout();
     CHECK(view.first_byte() == 0x1807);
 
-    // Hiding the text column gives its space back without moving the anchor.
     view.set_text_column_visible(false);
     CHECK_FALSE(view.text_column_visible());
     CHECK(view.first_byte() == 0x1807);
@@ -86,12 +76,10 @@ TEST_CASE("the memory view document keeps an unaligned top address and still win
     Fixture fixture;
     fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0x5A});
 
-    const std::uint64_t anchor = kBase + 8; // Not a multiple of the row width.
+    const std::uint64_t anchor = kBase + 8;
     fixture.document.set_view(anchor, kRowBytes, kRows);
     CHECK(fixture.document.first_byte() == anchor);
 
-    // The three slots are contiguous and their union still covers the visible
-    // range, so every painted cell falls inside a requested block.
     const std::vector<slopkit::ui::LiveRequest> requests = fixture.document.next_live_request();
     REQUIRE(requests.size() == 3);
     CHECK(requests[1].address == requests[0].address + requests[0].size);
@@ -135,12 +123,10 @@ TEST_CASE("the memory view scrolls by whole rows and clamps at zero", "[ui]")
     QApplication::sendEvent(&view, &page_up);
     CHECK(view.first_byte() == start);
 
-    // Scrolling up at the start of the address space clamps at zero.
     view.set_first_byte(0);
     QApplication::sendEvent(&view, &up);
     CHECK(view.first_byte() == 0);
 
-    // The wheel scrolls three rows per notch, offset and all.
     view.set_first_byte(start);
     const QPointF centre(view.viewport()->rect().center());
     QWheelEvent   wheel_down(centre,
@@ -154,7 +140,6 @@ TEST_CASE("the memory view scrolls by whole rows and clamps at zero", "[ui]")
     QApplication::sendEvent(view.viewport(), &wheel_down);
     CHECK(view.first_byte() == start + 3 * bpr);
 
-    // Scrolling down saturates at the user-space ceiling.
     view.set_first_byte(slopkit::scan::kMaxUserAddress - 8);
     QApplication::sendEvent(&view, &down);
     CHECK(view.first_byte() == slopkit::scan::kMaxUserAddress);
@@ -172,7 +157,7 @@ TEST_CASE("the memory view edits a cell inline", "[ui]")
     view.resize(800, 600);
     view.show();
     view.set_first_byte(kBase);
-    fixture.pass(); // Fill the window the view just asked for.
+    fixture.pass();
 
     const std::uint64_t        cell_address = view.first_byte();
     const std::optional<QRect> cell         = view.cell_rect(cell_address);
@@ -206,7 +191,6 @@ TEST_CASE("the memory view edits a cell inline", "[ui]")
                             return fixture.access.memory->at(cell_address) == std::byte {0xEF};
                         }));
 
-    // Escape cancels the second edit without writing.
     double_click_at(cell->center());
     REQUIRE(view.editor()->isVisible());
     view.editor()->setText(QStringLiteral("0x01"));
@@ -265,7 +249,6 @@ TEST_CASE("the memory view options menu switches the display", "[ui]")
     CHECK(action(format_menu, QStringLiteral("Float")) != nullptr);
     CHECK(action(format_menu, QStringLiteral("Double")) != nullptr);
 
-    // The active format and encoding are checked.
     QMenu* byte_menu = submenu(format_menu, QStringLiteral("Byte"));
     REQUIRE(byte_menu != nullptr);
     CHECK(action(byte_menu, QStringLiteral("Hex"))->isChecked());
@@ -281,7 +264,6 @@ TEST_CASE("the memory view options menu switches the display", "[ui]")
     CHECK(show_text->isCheckable());
     CHECK(show_text->isChecked());
 
-    // The top entry asks the dialog to prompt for an address and carries Ctrl+G.
     QAction* go_to = action(&menu, QStringLiteral("Go To..."));
     REQUIRE(go_to != nullptr);
     CHECK(go_to == view.goto_action());
@@ -297,7 +279,6 @@ TEST_CASE("the memory view options menu switches the display", "[ui]")
     go_to->trigger();
     CHECK(asked);
 
-    // Choosing 4 Bytes (hex) re-lays out and keeps the top byte on screen.
     const std::uint64_t anchor = view.first_byte();
     action(submenu(format_menu, QStringLiteral("4 Bytes")), QStringLiteral("Hex"))->trigger();
     CHECK(fixture.document.format().type == slopkit::scan::ValueType::int32);
@@ -337,7 +318,6 @@ TEST_CASE("the memory view Back returns to the previous top address", "[ui]")
         return nullptr;
     };
 
-    // A fresh view has nothing to undo: Back is present but disabled.
     QMenu fresh;
     view.populate_options_menu(fresh);
     QAction* fresh_back = action(&fresh, QStringLiteral("Back"));
@@ -366,7 +346,6 @@ TEST_CASE("the memory view Back returns to the previous top address", "[ui]")
     view.set_first_byte(0x1900);
     CHECK_FALSE(view.can_go_back());
 
-    // Re-navigating to the address already at the top records nothing.
     view.navigate_to(0x1900);
     CHECK_FALSE(view.can_go_back());
 
@@ -381,13 +360,11 @@ TEST_CASE("the memory view header labels each column with its offset", "[ui]")
     view.resize(800, 600);
     view.show();
 
-    // A byte view: two hex digits per column, no `0x` prefix.
     REQUIRE(view.bytes_per_row() >= 4);
     CHECK(view.column_offset_text(0) == QStringLiteral("00"));
     CHECK(view.column_offset_text(1) == QStringLiteral("01"));
     CHECK(view.column_offset_text(view.bytes_per_row() - 1).size() == 2);
 
-    // A 4-byte view steps by four.
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
     view.relayout();
     REQUIRE(view.bytes_per_row() >= 8);
@@ -409,18 +386,14 @@ TEST_CASE("the memory view reveals the full address on hover over a shortened mo
 
     fixture.document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", kBase, kExtent)});
 
-    // The first painted row's y and a point inside the address column.
     const QFontMetrics metrics(slopkit::ui::mono_font());
     const QPoint       address_hover(5, 4 + (metrics.height() + 4) + 2);
 
     CHECK(view.hover_full_text(address_hover) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x0"));
-    // The value cells hold values, not addresses, so a hover there reveals nothing.
     CHECK(view.hover_full_text(QPoint(500, address_hover.y())).isEmpty());
-    // The header band and a point below every row reveal nothing.
     CHECK(view.hover_full_text(QPoint(5, 2)).isEmpty());
     CHECK(view.hover_full_text(QPoint(5, 6000)).isEmpty());
 
-    // A module name that fits shows nothing new.
     fixture.document.set_modules({module_image("app", kBase, kExtent)});
     CHECK(view.hover_full_text(address_hover).isEmpty());
 

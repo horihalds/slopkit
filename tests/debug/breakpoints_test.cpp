@@ -49,7 +49,6 @@ TEST_CASE("breakpoint table refuses duplicates and exhausted hardware slots", "[
     REQUIRE_FALSE(fifth.has_value());
     CHECK(fifth.error().find("slot") != std::string::npos);
 
-    // The four data breakpoints landed in DR slots 0-3.
     for (std::uint32_t slot = 0; slot < BreakpointTable::hardware_slots; ++slot)
     {
         CHECK(table.hardware_in_slot(slot) != nullptr);
@@ -70,7 +69,6 @@ TEST_CASE("breakpoint sizes follow the kind", "[debug][breakpoints]")
     CHECK_FALSE(BreakpointTable::valid_size(Kind::hardware_write, 3));
     CHECK_FALSE(BreakpointTable::valid_size(Kind::hardware_read_write, 16));
 
-    // A software breakpoint with an explicit size is normalised, not refused.
     BreakpointTable table;
     const auto      id = table.add("s", 0x1000, Kind::software, 4);
     REQUIRE(id.has_value());

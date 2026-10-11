@@ -43,7 +43,6 @@ namespace
 
     constexpr std::size_t kPageSize = 4096;
 
-    // Kills and reaps the forked child when the test leaves the scope.
     struct ChildGuard
     {
         pid_t pid {-1};
@@ -103,8 +102,6 @@ namespace
         }
     }
 
-    // Writes a single value to a /proc control file, which is how a user
-    // namespace gets its single identity mapping.
     bool write_control_file(const std::string& path, const std::string& value)
     {
         std::ofstream file(path, std::ios::trunc);
@@ -115,10 +112,6 @@ namespace
         return file.good();
     }
 
-    // Runs a child in its own mount namespace in which `hide` is an empty tmpfs,
-    // so the host still sees that directory but the child cannot: the shape a
-    // pressure-vessel container gives a Proton game. Returns the child, or -1
-    // when the kernel refuses the namespaces.
     pid_t spawn_isolated_child(const std::filesystem::path& hide)
     {
         int ready[2] = {-1, -1};
@@ -140,8 +133,6 @@ namespace
             {
                 ::_exit(70);
             }
-            // Becoming the mapped user of the new namespace is what makes the
-            // mount below privileged enough to succeed.
             const bool mapped = write_control_file("/proc/self/setgroups", "deny")
                              && write_control_file("/proc/self/uid_map", std::format("0 {} 1\n", ::getuid()))
                              && write_control_file("/proc/self/gid_map", std::format("0 {} 1\n", ::getgid()));
@@ -187,7 +178,7 @@ namespace
         }
         return child;
     }
-} // namespace
+}
 
 TEST_CASE("wine-proton is discovered with the expected metadata", "[wine_proton]")
 {
@@ -238,8 +229,6 @@ TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
     REQUIRE(threads.has_value());
     CHECK_FALSE(threads->empty());
 
-    // The region list falls back to the host's /proc/maps view when the agent
-    // cannot serve, so introspection survives a target the agent cannot reach.
     const auto regions = session->regions();
     REQUIRE(regions.has_value());
     CHECK_FALSE(regions->empty());
@@ -247,8 +236,6 @@ TEST_CASE("wine-proton lists modules and threads of a session", "[wine_proton]")
 
 TEST_CASE("wine-proton falls back to the host path when the agent cannot serve", "[wine_proton]")
 {
-    // A real, readable page, so the host path can succeed where the agent
-    // cannot even start.
     auto* page =
         static_cast<std::byte*>(::mmap(nullptr, kPageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     REQUIRE(page != MAP_FAILED);
@@ -316,8 +303,6 @@ TEST_CASE("wine-proton serves a stopped target from the host path", "[wine_proto
     std::uint32_t leader = 0;
     REQUIRE(vtable->debug_attach(handle, &leader).code == SLOPKIT_OK);
 
-    // The child is a fork of this process, so a function of this binary is at
-    // the same address and mapped in both.
     const auto address  = reinterpret_cast<std::uint64_t>(&process_state);
     const auto expected = *reinterpret_cast<const std::byte*>(&process_state);
 
@@ -363,8 +348,6 @@ TEST_CASE("wine-proton reports clean errors", "[wine_proton]")
     {
         auto self = access.attach(static_cast<ProcessId>(::getpid()), "wine-proton");
         REQUIRE(self.has_value());
-        // The agent cannot serve a native target, so the read falls back to the
-        // host path, which reports the unmapped address itself.
         const auto result = self->read(0, 16);
         REQUIRE_FALSE(result.has_value());
         CHECK(result.error() == AccessError::not_found);
@@ -541,7 +524,6 @@ TEST_CASE("the agent is staged where the target can reach it", "[wine_proton]")
         }
         ChildGuard guard(child);
 
-        // The host sees the directory, the target's namespace does not.
         REQUIRE(std::filesystem::exists(base / "hidden"));
         CHECK_FALSE(target_can_reach(static_cast<ProcessId>(child), base / "hidden"));
 
@@ -624,8 +606,6 @@ TEST_CASE("a paused target is not a failure for the agent hooks", "[wine_proton]
     CHECK(read->bytes == buffer.size());
     CHECK(std::equal(buffer.begin(), buffer.end(), page));
 
-    // Allocation cannot run on a stopped target: a retryable busy error, never a
-    // session-long disable.
     const auto alloc = AgentService::allocate(session, kPageSize, 0);
     REQUIRE_FALSE(alloc.has_value());
     CHECK(alloc.error().code == SLOPKIT_ERR_IO);
@@ -633,12 +613,9 @@ TEST_CASE("a paused target is not a failure for the agent hooks", "[wine_proton]
     REQUIRE_FALSE(freed.has_value());
     CHECK(freed.error().code == SLOPKIT_ERR_IO);
 
-    // With no agent-derived list recorded yet, modules reports the pause rather
-    // than a host-derived list.
     const auto modules = AgentService::modules(session);
     REQUIRE_FALSE(modules.has_value());
 
-    // Resume: the same session keeps serving, so the pause disabled nothing.
     session.suspended  = false;
     const auto resumed = AgentService::read(session, address, buffer);
     REQUIRE(resumed.has_value());

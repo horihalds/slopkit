@@ -48,12 +48,8 @@
 
 namespace slopkit::ui
 {
-
     namespace
     {
-        // The production attach question of a practice-target launch: themed,
-        // question icon, Yes/No with Yes as the default, since the user has just
-        // asked for a target to practise on.
         bool ask_sandbox_attach(QWidget* parent, process::ProcessId pid)
         {
             return widgets::confirm(
@@ -62,7 +58,7 @@ namespace slopkit::ui
                 QStringLiteral("Attach to the practice target (pid %1)?").arg(static_cast<qulonglong>(pid)),
                 widgets::MessageBoxButton::yes);
         }
-    } // namespace
+    }
 
     MainWindow::MainWindow(process::AccessWorker&   worker,
                            process::AttachedTarget& target,
@@ -75,7 +71,6 @@ namespace slopkit::ui
         : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings), debug_(debug),
           symbols_(symbols), initial_table_path_(initial_table_path)
     {
-        // The production launch and attach question; a test swaps them out.
         sandbox_launcher_ = []
         {
             return app::launch_sandbox();
@@ -95,20 +90,13 @@ namespace slopkit::ui
         build_central();
         build_dialogs();
 
-        // Remember the window's own frame: the stored blob overrides the default
-        // size while an absent one keeps it, and hiding (including on quit) writes
-        // the current frame back. The keeper is a child, so no member is needed.
         new WindowGeometryKeeper(*this, settings_, WindowId::main, this);
 
-        // A table path handed over on the command line is opened in preference to
-        // the remembered auto-load table.
         if (!initial_table_path_.isEmpty())
         {
             static_cast<void>(open_table_request(initial_table_path_));
         }
 
-        // Event-driven updates only: the tick polls the scan progress, applies a
-        // missed drain and submits the freeze pass.
         tick_timer_ = new QTimer(this);
         connect(tick_timer_, &QTimer::timeout, this, &MainWindow::on_tick);
         tick_timer_->start(50);
@@ -121,7 +109,6 @@ namespace slopkit::ui
         auto parsed = address_list_->parse_table(path);
         if (!parsed)
         {
-            // parse_table already reported "Open failed: ..." through the panel.
             return false;
         }
 
@@ -192,14 +179,11 @@ namespace slopkit::ui
                 [this]
                 {
                     log::debug(log::category::ui, "quit requested");
-                    // Close the window so the geometry keeper writes the frame;
-                    // Qt's last-window-closed rule still ends the session.
                     close();
                 });
 
         open_process_action_ = new QAction(tr("Open Process"), this);
         open_process_action_->setIcon(widgets::action_icon(widgets::ActionIcon::target));
-        // No standard key exists for "pick a process".
         open_process_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+T")));
         open_process_action_->setShortcutContext(Qt::WindowShortcut);
 
@@ -210,7 +194,6 @@ namespace slopkit::ui
 
         save_table_action_ = new QAction(tr("Save Table"), this);
         save_table_action_->setIcon(widgets::action_icon(widgets::ActionIcon::diskette));
-        // Shared by the File and Table menus; one action, so no shortcut ambiguity.
         save_table_action_->setShortcut(QKeySequence::Save);
         save_table_action_->setShortcutContext(Qt::WindowShortcut);
 
@@ -264,8 +247,6 @@ namespace slopkit::ui
         process_label_->setObjectName(QStringLiteral("process_label"));
         statusBar()->addWidget(process_label_);
 
-        // The address list reports its outcomes here, in the permanent right
-        // slot, so a transient status message never hides it.
         address_status_ = new widgets::StatusLabel(this);
         address_status_->setObjectName(QStringLiteral("address_status"));
         statusBar()->addPermanentWidget(address_status_, 1);
@@ -276,9 +257,6 @@ namespace slopkit::ui
         scanner_    = new panels::ScannerPanel(worker_, target_, this);
         found_list_ = new panels::FoundListPanel(scanner_->engine(), address_table_, this);
 
-        // The scanner's empty bottom row mirrors the found list's Memory View
-        // row, keeping the hits table's bottom edge level with the Memory Scan
-        // Options panel.
         scanner_->set_bottom_row_source(*found_list_->tab_order_last());
 
         connect(found_list_,
@@ -307,8 +285,6 @@ namespace slopkit::ui
                     debug_.set_modules(modules);
                     memory_view_->set_modules(std::move(modules));
                 });
-        // Pausing for a scan fights the debugger, so the panel needs the debug
-        // session state to gate its pause checkbox.
         connect(&debug_,
                 &debug::Controller::stateChanged,
                 this,
@@ -349,9 +325,6 @@ namespace slopkit::ui
         auto* vertical_splitter = new QSplitter(Qt::Vertical, this);
         vertical_splitter->addWidget(middle_splitter);
         vertical_splitter->addWidget(address_list_);
-        // The scan zone keeps the scanner's content height, so the hits table's
-        // bottom edge stays level with the Memory Scan Options panel; the address
-        // list takes every remaining pixel of window height.
         vertical_splitter->setStretchFactor(0, 0);
         vertical_splitter->setStretchFactor(1, 1);
 
@@ -360,7 +333,6 @@ namespace slopkit::ui
         scan_progress_->setValue(0);
         scan_progress_->setFormat(QStringLiteral("%p%"));
 
-        // The scan progress spans the width of the window above the split zones.
         auto* column        = new QWidget(this);
         auto* column_layout = new QVBoxLayout(column);
         column_layout->setContentsMargins(0, 0, 0, 0);
@@ -373,10 +345,6 @@ namespace slopkit::ui
 
     void MainWindow::apply_tab_order()
     {
-        // Declaring the whole junction as one run makes the cross-panel links
-        // unambiguous, whatever order the panels chained their own controls in:
-        // the scanner's field run, then the found list's hits table and Memory
-        // View button, then the address list.
         widgets::chain_tab_order({scanner_->tab_order_last(),
                                   found_list_->tab_order_first(),
                                   found_list_->tab_order_last(),
@@ -386,8 +354,6 @@ namespace slopkit::ui
     void MainWindow::build_dialogs()
     {
         process_list_ = new dialogs::ProcessListDialog(worker_, target_, this);
-        // The picker spawns centred over the main window and does not remember its
-        // frame; its 600x440 size is locked in the dialog's constructor.
         new WindowCenterer(*process_list_);
         connect(process_list_,
                 &dialogs::ProcessListDialog::targetChanged,
@@ -407,8 +373,6 @@ namespace slopkit::ui
         memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_, nullptr, symbols_);
         new WindowGeometryKeeper(*memory_view_, settings_, WindowId::memory_viewer, memory_view_.get());
 
-        // The one live cadence, driven by the window's tick; surfaces register
-        // here so a single poll submits a single batched read.
         live_values_ = new LiveValues(worker_, target_, settings_, this);
         live_values_->add_surface(found_list_);
         live_values_->add_surface(address_list_);
@@ -440,9 +404,6 @@ namespace slopkit::ui
         breakpoints_ = new dialogs::BreakpointsDialog(debug_, this);
         new WindowGeometryKeeper(*breakpoints_, settings_, WindowId::breakpoints, breakpoints_);
 
-        // The Access Watch window is a view over the controller's one watch and
-        // over the resolved listing operands; it also routes its own Follow
-        // requests into the Memory Viewer.
         access_watch_ = new dialogs::AccessWatchDialog(debug_, worker_, target_, this);
         new WindowGeometryKeeper(*access_watch_, settings_, WindowId::access_watch, access_watch_);
         connect(access_watch_,
@@ -452,8 +413,6 @@ namespace slopkit::ui
                 {
                     on_memory_view_requested(address);
                 });
-        // The gate's attach lines (attaching, attached, cancelled, failed) land
-        // in the main status area, since no dialog is up while it asks.
         connect(&access_watch_->debug_gate(),
                 &ui::DebugSessionGate::progress,
                 this,
@@ -465,7 +424,6 @@ namespace slopkit::ui
                 &dialogs::MemoryViewerDialog::instructionAccessesResolved,
                 this,
                 &MainWindow::show_instruction_accesses);
-        // The listing command's attach and capture also report into the status line.
         connect(&memory_view_->debug_gate(),
                 &ui::DebugSessionGate::progress,
                 this,
@@ -480,15 +438,11 @@ namespace slopkit::ui
                 {
                     address_list_->report_status(text.toStdString(), error);
                 });
-        // Hook Instruction hands its generated script to the address list, which
-        // opens its Add Script window prefilled; no row exists until Add.
         connect(memory_view_.get(),
                 &dialogs::MemoryViewerDialog::hookScriptRequested,
                 address_list_,
                 &panels::AddressListPanel::add_hook_script);
 
-        // The dialog is a view over the shared controller; the window is the only
-        // component that applies the persisted values to the live views.
         settings_dialog_ = new dialogs::SettingsDialog(host_, scanner_->engine(), settings_, this);
         new WindowCenterer(*settings_dialog_);
         connect(settings_dialog_,
@@ -517,7 +471,6 @@ namespace slopkit::ui
                     memory_view_->set_address_mode(mode);
                 });
 
-        // Apply the mode restored from disk before the window is first shown.
         const ui::AddressMode persisted_mode = settings_.values().address_mode;
         found_list_->set_address_mode(persisted_mode);
         address_list_->set_address_mode(persisted_mode);
@@ -531,8 +484,6 @@ namespace slopkit::ui
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
 
-        // Seed the remembered table and the dialog directory, then wire the
-        // remembering slots so the seed value is not written back.
         const Settings& persisted = settings_.values();
         address_list_->set_table_path(persisted.last_table_path);
         address_list_->set_dialog_directory(persisted.last_directory);
@@ -541,9 +492,6 @@ namespace slopkit::ui
         connect(address_list_, &panels::AddressListPanel::tablePathChanged, this, &MainWindow::remember_table_path);
         connect(log_, &dialogs::LogDialog::logSaved, this, &MainWindow::remember_file_path);
 
-        // With the switch on, the remembered table is loaded exactly like a manual
-        // Ctrl+O; a failure only reports and keeps the path remembered. An explicit
-        // launch path wins over the remembered one.
         if (initial_table_path_.isEmpty() && persisted.auto_load_last_table && !persisted.last_table_path.isEmpty())
         {
             static_cast<void>(address_list_->load_table(persisted.last_table_path));
@@ -611,8 +559,6 @@ namespace slopkit::ui
         {
             return;
         }
-        // The window is shown by the dialog itself once the watch is armed, so a
-        // declined or failed attach never pops an empty window.
         access_watch_->arm_watch(address, kind, ui::watch_size(width));
     }
 
@@ -654,8 +600,6 @@ namespace slopkit::ui
         log::info(log::category::ui, std::format("practice target started (pid {})", *result));
         address_list_->report_status(std::format("Practice target started (pid {}).", *result), false);
 
-        // Ask before taking the still-running target over; a declined question
-        // keeps the launch and leaves any current target untouched.
         const auto pid = static_cast<process::ProcessId>(*result);
         if (!sandbox_attach_prompt_(this, pid))
         {
@@ -726,7 +670,6 @@ namespace slopkit::ui
         items.reserve(addresses.size());
         for (const std::uint64_t address : addresses)
         {
-            // The found list writes bare addresses, not address-table entries.
             items.push_back(process::WriteItem {.id = 0, .address = address, .bytes = bytes});
         }
 
@@ -740,7 +683,7 @@ namespace slopkit::ui
             {
                 if (found_write_pending_ != job_id)
                 {
-                    return; // superseded or shut down
+                    return;
                 }
                 found_write_pending_.reset();
 
@@ -793,8 +736,6 @@ namespace slopkit::ui
     {
         const table::TableSettings& settings = address_table_.settings();
 
-        // Which field identifies the process is the toggle's choice; a ticked
-        // toggle without a path keeps the pre-exe_path behaviour.
         const bool use_path = settings.match_exe_path && !settings.exe_path.empty();
 
         if (!settings.auto_attach)
@@ -816,12 +757,9 @@ namespace slopkit::ui
         const std::string identifier     = use_path ? settings.exe_path : settings.target_process;
         const bool        match_exe_path = settings.match_exe_path;
 
-        // The listing picks the process; the shared step attaches to it.
         lookup_and_attach(
             [use_path, match_exe_path, identifier](std::span<const process::ProcessInfo> processes)
             {
-                // A ticked toggle without a path falls back to the old
-                // name-or-executable-basename match.
                 return use_path ? process::match_process_by_exe_path(processes, identifier)
                                 : process::match_process_by_name(processes, identifier, match_exe_path);
             },
@@ -833,7 +771,6 @@ namespace slopkit::ui
 
     void MainWindow::lookup_and_attach(ProcessMatcher match, std::string_view context, std::string missing)
     {
-        // One listing at a time; a newer request supersedes whatever is in flight.
         if (target_lookup_pending_.has_value())
         {
             return;
@@ -851,7 +788,7 @@ namespace slopkit::ui
             {
                 if (target_lookup_pending_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 target_lookup_pending_.reset();
 
@@ -886,7 +823,7 @@ namespace slopkit::ui
     {
         if (auto_attach_pending_.has_value())
         {
-            return; // Another attach already runs.
+            return;
         }
 
         // Keep the process identity before the listing result goes away.
@@ -909,7 +846,7 @@ namespace slopkit::ui
             {
                 if (auto_attach_pending_ != attach_job)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 auto_attach_pending_.reset();
 
@@ -966,9 +903,6 @@ namespace slopkit::ui
         process_label_->setText(to_qstring(target_.label()));
         found_list_->set_target_attached(target_.valid());
         table_settings_->refresh_target();
-        // The debug gating depends on the attached target, so a fresh attach or
-        // detach must update the viewer's Start/Stop surfaces, not only the
-        // controller's own state signals.
         memory_view_->refresh_target_state();
     }
 
@@ -1014,4 +948,4 @@ namespace slopkit::ui
         }
     }
 
-} // namespace slopkit::ui
+}

@@ -13,7 +13,6 @@
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 
-// Defined in test_main.cpp; one QApplication is shared by every test file.
 QApplication& slopkit_test_application();
 
 namespace
@@ -22,8 +21,6 @@ namespace
     using slopkit::ui::widgets::InputBoxOptions;
     using slopkit::ui::widgets::StatusLabel;
 
-    // Runs `action` on the next visible InputBox from inside its nested event
-    // loop; used to drive the modal box a test cannot reach directly.
     void on_box(const std::function<void(InputBox&)>& action)
     {
         QTimer::singleShot(0,
@@ -60,7 +57,7 @@ namespace
         }
         return {};
     }
-} // namespace
+}
 
 TEST_CASE("an InputBox without a validator accepts any text", "[input_box]")
 {
@@ -106,7 +103,6 @@ TEST_CASE("get_text returns the accepted text and nothing on dismissal", "[input
         });
     CHECK_FALSE(slopkit::ui::widgets::get_text(options, nullptr).has_value());
 
-    // The window close button is a rejection too.
     on_box(
         [](InputBox& box)
         {
@@ -129,16 +125,13 @@ TEST_CASE("an InputBox validator gates the OK button and shows the message", "[i
     auto* status = box.findChild<StatusLabel*>();
     REQUIRE(status != nullptr);
 
-    // The initial text is invalid: OK is disabled and the message is shown.
     CHECK_FALSE(box.accept_button()->isEnabled());
     CHECK(status->text() == QStringLiteral("only hex digits are allowed"));
 
-    // accept() is refused while invalid, so the dialog stays open.
     box.accept();
     CHECK(box.isVisible());
     CHECK(box.result() != QDialog::Accepted);
 
-    // A valid edit re-enables OK and clears the message.
     box.line_edit()->setText(QStringLiteral("deadbeef"));
     CHECK(box.accept_button()->isEnabled());
     CHECK(status->text().isEmpty());

@@ -48,7 +48,6 @@ namespace
         {
             if (pid_ != 0)
             {
-                // SIGKILL terminates a stopped process as well.
                 ::kill(static_cast<pid_t>(pid_), SIGKILL);
                 int status = 0;
                 ::waitpid(static_cast<pid_t>(pid_), &status, 0);
@@ -72,8 +71,6 @@ namespace
         ProcessId pid_ {};
     };
 
-    // The state letter from /proc/<pid>/stat, parsed after the parenthesised
-    // command name so a name containing spaces cannot confuse it.
     char process_state(ProcessId pid)
     {
         std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
@@ -112,14 +109,13 @@ namespace
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
     }
-} // namespace
+}
 
 TEST_CASE("process control suspends and resumes a running target", "[process_control]")
 {
     ChildProcess child;
     REQUIRE(child.valid());
 
-    // The child sleeps in pause(), i.e. it is running, not stopped.
     REQUIRE(wait_for_state(child.pid(), {'S', 'R'}, std::chrono::seconds(2)));
 
     REQUIRE(slopkit::platform::suspend_process(child.pid()).has_value());
@@ -135,8 +131,6 @@ TEST_CASE("process control tolerates repeated signals", "[process_control]")
     REQUIRE(child.valid());
     REQUIRE(wait_for_state(child.pid(), {'S', 'R'}, std::chrono::seconds(2)));
 
-    // Stopping an already-stopped process and continuing an already-running
-    // process are both harmless.
     CHECK(slopkit::platform::suspend_process(child.pid()).has_value());
     REQUIRE(wait_for_state(child.pid(), {'T'}, std::chrono::seconds(2)));
     CHECK(slopkit::platform::suspend_process(child.pid()).has_value());

@@ -137,13 +137,11 @@ namespace
         return texts;
     }
 
-    // A fresh settings file for this suite's cases.
     [[maybe_unused]] QString scratch_settings_file(std::string_view name)
     {
         return slopkit::test::scratch_settings_file("ui_test", name);
     }
 
-    // The scanner panel's Start/Stop fields, located by their placeholder text.
     [[maybe_unused]] QLineEdit* address_field(QWidget& panel, const char* placeholder)
     {
         for (auto* edit : panel.findChildren<QLineEdit*>())
@@ -156,7 +154,6 @@ namespace
         return nullptr;
     }
 
-    // Attaches the app-wide session to the fake backend on pid 42.
     [[maybe_unused]] void attach_app_session(slopkit::process::AccessWorker& worker)
     {
         bool attached = false;
@@ -174,9 +171,6 @@ namespace
                         }));
     }
 
-    // The UI fixtures hand a debug controller to the Memory Viewer and the Main
-    // Window. The existing suites never start a session, so one shared
-    // controller per translation unit is enough; it is created on first use.
     [[maybe_unused]] slopkit::debug::Controller& shared_debug_controller()
     {
         static slopkit::tests::FakeDebugBackend backend;
@@ -184,7 +178,6 @@ namespace
         return controller;
     }
 
-    // Writes a `.skt` table carrying only the given settings.
     [[maybe_unused]] void write_table_with_settings(const QString&     path,
                                                     const std::string& target,
                                                     bool               auto_attach,
@@ -199,7 +192,6 @@ namespace
         REQUIRE(slopkit::table::save(std::filesystem::path(path.toStdString()), table).has_value());
     }
 
-    // Writes a `.skt` table with one described int32 row and an optional target.
     [[maybe_unused]] void write_entry_table(const QString&     path,
                                             const QString&     description,
                                             std::uint64_t      address,
@@ -216,7 +208,6 @@ namespace
         REQUIRE(slopkit::table::save(std::filesystem::path(path.toStdString()), table).has_value());
     }
 
-    // The scan-range dropdown, located by its tooltip.
     [[maybe_unused]] QComboBox* range_combo(QWidget& panel)
     {
         for (auto* combo : panel.findChildren<QComboBox*>())
@@ -229,7 +220,6 @@ namespace
         return nullptr;
     }
 
-    // The nearest widgets::Panel ancestor of a widget, or nullptr.
     [[maybe_unused]] QWidget* ancestor_panel(QWidget* widget)
     {
         for (auto* parent = widget->parentWidget(); parent != nullptr; parent = parent->parentWidget())
@@ -301,8 +291,6 @@ namespace
         return -1;
     }
 
-    // Asserts that both widgets are in `window`'s focus chain and that no other
-    // focusable control sits between them, i.e. Tab reaches `after` from `before`.
     [[maybe_unused]] void check_tab_order(QWidget& window, const QWidget* before, const QWidget* after)
     {
         const int before_index = focusable_chain_index(window, before);
@@ -324,7 +312,6 @@ namespace
         return nullptr;
     }
 
-    // Restores the process-wide log level on scope exit.
     class LevelGuard
     {
     public:
@@ -360,8 +347,6 @@ namespace
         slopkit::log::SinkId id_;
     };
 
-    // A live surface that records what one pass asks for and what it applies,
-    // so the coordinator's cadence and gating can be asserted directly.
     class StubLiveSurface : public slopkit::ui::LiveSurface
     {
     public:
@@ -387,9 +372,6 @@ namespace
         }
     };
 
-    // A live ticker that records how often it was asked, with which interval,
-    // and whether it claimed to have submitted, so the coordinator's cadence and
-    // gating can be asserted directly.
     class StubLiveTicker : public slopkit::ui::LiveTicker
     {
     public:
@@ -411,7 +393,6 @@ namespace
         }
     };
 
-    // Adds an int32 entry with the given stored bytes.
     [[maybe_unused]] void
     add_int32(slopkit::table::AddressTable& table, std::uint64_t address, std::byte stored = std::byte {1})
     {
@@ -422,8 +403,6 @@ namespace
         table.add(entry);
     }
 
-    // Wraps the found-results model as a surface: the model is not a widget and
-    // the whole panel/engine is not needed to exercise the live path.
     class ModelLiveSurface : public slopkit::ui::LiveSurface
     {
     public:
@@ -443,8 +422,6 @@ namespace
         slopkit::ui::models::FoundResultsModel& model_;
     };
 
-    // A whole-list result set of 300 hits whose first 256 stored hits are all
-    // heap hits, with one static hit at index 280, past the display page.
     [[maybe_unused]] std::shared_ptr<std::vector<slopkit::scan::ScanHit>> late_static_result()
     {
         auto whole = std::make_shared<std::vector<slopkit::scan::ScanHit>>();
@@ -452,8 +429,6 @@ namespace
         {
             slopkit::scan::ScanHit hit;
             hit.address               = 0x100000 + static_cast<std::uint64_t>(i) * 4;
-            // Big-endian so a byte-wise compare orders the values like the
-            // integers they stand for.
             const std::uint32_t value = static_cast<std::uint32_t>(i);
             hit.value                 = {static_cast<std::byte>((value >> 24) & 0xFF),
                                          static_cast<std::byte>((value >> 16) & 0xFF),
@@ -474,4 +449,4 @@ namespace
         snapshot.result_hits = whole;
         return snapshot;
     }
-} // namespace
+}

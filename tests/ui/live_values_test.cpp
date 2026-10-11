@@ -13,15 +13,12 @@ TEST_CASE("the live coordinator runs one gated pass per interval", "[ui]")
     StubLiveSurface surface;
     surface.requests.push_back({.id = 0, .address = 0x1000, .size = 4});
 
-    // A detached target submits nothing.
     slopkit::process::AttachedTarget detached;
     slopkit::ui::LiveValues          detached_live {worker, detached, settings};
     detached_live.add_surface(&surface);
     detached_live.poll();
     CHECK(surface.request_calls == 0);
 
-    // With a target the first poll submits one batched pass; no session is
-    // attached to the worker yet, so the reading comes back unreadable.
     slopkit::process::AttachedTarget target = fake_target();
     slopkit::ui::LiveValues          live {worker, target, settings};
     live.add_surface(&surface);
@@ -35,7 +32,6 @@ TEST_CASE("the live coordinator runs one gated pass per interval", "[ui]")
     REQUIRE(surface.readables.size() == 1);
     CHECK_FALSE(surface.readables[0]);
 
-    // While a pass is in flight a second request does not queue another job.
     surface.request_calls = 0;
     live.request_now();
     live.request_now();
@@ -46,14 +42,12 @@ TEST_CASE("the live coordinator runs one gated pass per interval", "[ui]")
                         return surface.apply_calls == 2;
                     }));
 
-    // An empty request set submits nothing.
     surface.requests.clear();
     surface.request_calls = 0;
     live.request_now();
     CHECK(surface.request_calls == 1);
     CHECK(surface.apply_calls == 2);
 
-    // Disabled: nothing is requested even with a target attached.
     settings.set_live_update_enabled(false);
     surface.request_calls = 0;
     live.request_now();
@@ -68,7 +62,6 @@ TEST_CASE("the live coordinator asks each ticker on the same cadence", "[ui]")
     slopkit::process::AccessWorker  worker {access};
     slopkit::ui::SettingsController settings {scratch_settings_file("live_ticker.ini")};
 
-    // A detached target never asks a ticker.
     slopkit::process::AttachedTarget detached;
     StubLiveTicker                   detached_ticker;
     slopkit::ui::LiveValues          detached_live {worker, detached, settings};
@@ -110,7 +103,7 @@ TEST_CASE("the live coordinator asks each ticker on the same cadence", "[ui]")
 
     SECTION("a ticker is asked even when nothing is displayed to read")
     {
-        StubLiveSurface surface; // no requests: the read pass submits nothing
+        StubLiveSurface surface;
         StubLiveTicker  ticker;
         ticker.submits_now = true;
         slopkit::ui::LiveValues live {worker, target, settings};
@@ -133,11 +126,10 @@ TEST_CASE("the live coordinator asks each ticker on the same cadence", "[ui]")
         live.add_surface(&surface);
         live.add_ticker(&ticker);
 
-        live.poll(); // submits the read pass and ticks once
+        live.poll();
         CHECK(surface.request_calls == 1);
         CHECK(ticker.calls == 1);
 
-        // The read pass is still in flight; a forced poll still ticks.
         live.request_now();
         CHECK(ticker.calls == 2);
 

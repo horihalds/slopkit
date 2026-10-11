@@ -94,7 +94,7 @@ namespace slopkit::ui
             }
             return value.toByteArray();
         }
-    } // namespace
+    }
 
     SettingsController::SettingsController(QObject* parent) : SettingsController(default_file_path(), parent) {}
 
@@ -341,4 +341,4 @@ namespace slopkit::ui
         return QDir(directory).filePath(QStringLiteral("slopkit/slopkit.ini"));
     }
 
-} // namespace slopkit::ui
+}

@@ -4,7 +4,6 @@
 
 namespace slopkit::scan
 {
-
     std::string_view describe(ValueType type) noexcept
     {
         const auto index = static_cast<std::size_t>(type);
@@ -35,4 +34,4 @@ namespace slopkit::scan
         return "unknown";
     }
 
-} // namespace slopkit::scan
+}

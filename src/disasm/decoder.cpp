@@ -34,10 +34,6 @@ namespace slopkit::disasm
             return mode == MachineMode::legacy_32 ? legacy_32 : long_64;
         }
 
-        // One Intel-style formatter shared by every call. It is stateless per
-        // format, so decoding stays on a single (the UI) thread. Hex output
-        // carries an explicit `0x` prefix in uppercase digits, matching the
-        // address read-outs.
         [[nodiscard]] const ZydisFormatter& formatter() noexcept
         {
             static const ZydisFormatter instance = []
@@ -59,9 +55,6 @@ namespace slopkit::disasm
             return std::format(".byte 0x{:02X}", static_cast<unsigned>(value));
         }
 
-        // Maps a formatter token onto the slice kind a listing colours. Delimiters,
-        // parentheses, mnemonics, prefixes and absolute-address slices deliberately
-        // stay unclassified: the document renders those addresses itself.
         [[nodiscard]] std::optional<TokenKind> token_kind(ZydisTokenType type)
         {
             switch (type)
@@ -78,8 +71,6 @@ namespace slopkit::disasm
             }
         }
 
-        // Zydis reports register names lower-case; the listing and the debugger
-        // both print them upper-case, so normalise here.
         [[nodiscard]] std::string register_name(ZydisRegister reg)
         {
             if (reg == ZYDIS_REGISTER_NONE)
@@ -101,9 +92,6 @@ namespace slopkit::disasm
             return result;
         }
 
-        // Every explicit memory operand of a decoded instruction, skipping the
-        // address-generation forms (`lea`) that touch no memory. `text` is the
-        // already-formatted instruction text the operand slices point into.
         [[nodiscard]] std::vector<MemoryRef> collect_memory(const ZydisDecodedInstruction& decoded,
                                                             const ZydisDecodedOperand*     operands,
                                                             std::string_view               text,
@@ -129,8 +117,6 @@ namespace slopkit::disasm
                 ref.rip_relative = operand.mem.base == ZYDIS_REGISTER_RIP || operand.mem.base == ZYDIS_REGISTER_EIP;
                 ref.writes       = (operand.actions & ZYDIS_OPERAND_ACTION_MASK_WRITE) != 0;
 
-                // The slice the operand occupies in the printed text, so a caller
-                // can show or copy the operand exactly as the listing prints it.
                 char operand_buffer[128] {};
                 if (ZYAN_SUCCESS(ZydisFormatterFormatOperand(
                         &formatter(), &decoded, &operand, operand_buffer, sizeof(operand_buffer), address, nullptr)))
@@ -150,37 +136,21 @@ namespace slopkit::disasm
             return refs;
         }
 
-        // Every byte range of the instruction's own encoding a generated
-        // signature may wildcard, so a caller can mask them in an AoB pattern or
-        // re-emit the instruction elsewhere. Zydis reports each raw field's byte
-        // offset, so this stays a straight mapping.
         [[nodiscard]] std::vector<EncodingBytes> collect_encoding_bytes(const ZydisDecodedInstruction& decoded,
                                                                         const ZydisDecodedOperand*     operands)
         {
             std::vector<EncodingBytes> fields;
 
-            // The ModRM byte carries the mod/reg/rm register fields and the
-            // addressing mode, so any instruction that has one exposes it as a
-            // wildcard: byte granularity cannot mask the register sub-fields
-            // alone. Zydis reports no size, but a present ModRM follows at least
-            // the opcode, so its offset is never zero; an absent one stays zero.
             if (decoded.raw.modrm.offset != 0)
             {
                 fields.push_back({decoded.raw.modrm.offset, 1, false});
             }
 
-            // The SIB byte names the index and base registers of a memory
-            // operand, so it is wildcarded whenever it is present. It follows the
-            // ModRM, so its offset is set only when the byte was decoded.
             if (decoded.raw.sib.offset != 0)
             {
                 fields.push_back({decoded.raw.sib.offset, 1, false});
             }
 
-            // The displacement of the instruction's memory operand. A rip-relative
-            // form is measured from the next instruction (relative, so it stays
-            // literal); every other form - a base/index offset (`[RBP-04]`) or a
-            // base-less absolute address - is wildcarded.
             if (decoded.raw.disp.size != 0)
             {
                 bool relative = false;
@@ -197,10 +167,6 @@ namespace slopkit::disasm
                     {decoded.raw.disp.offset, static_cast<std::size_t>(decoded.raw.disp.size) / 8, relative});
             }
 
-            // A relative branch/call displacement is measured from the next
-            // instruction; a 4- or 8-byte immediate is a value the listing may
-            // print as an absolute address. Smaller immediates are plain operands
-            // (`sub rsp, 0x28`) and stay literal.
             for (const auto& immediate : decoded.raw.imm)
             {
                 if (immediate.size == 0)
@@ -220,8 +186,6 @@ namespace slopkit::disasm
             return fields;
         }
 
-        // A decode attempt that keeps the raw Zydis status so a block sweep can
-        // tell a truncated tail (stop) from an undefined opcode (`.byte` row).
         struct Attempt
         {
             ZyanStatus  status {};
@@ -257,8 +221,6 @@ namespace slopkit::disasm
                                                                                     nullptr);
             if (!ZYAN_SUCCESS(tokenized))
             {
-                // The token stream is the only source of slice offsets; if it is
-                // unavailable, fall back to the one-shot text with no slices.
                 const ZyanStatus formatted = ZydisFormatterFormatInstruction(&formatter(),
                                                                              &decoded,
                                                                              operands,
@@ -282,9 +244,6 @@ namespace slopkit::disasm
                 };
             }
 
-            // Concatenating the token values reproduces the one-shot text, while
-            // each absolute-address token marks a slice and pairs with the next
-            // operand whose absolute address Zydis can calculate.
             std::string             text;
             std::vector<AddressRef> addresses;
             std::vector<TokenSpan>  tokens;
@@ -330,8 +289,6 @@ namespace slopkit::disasm
                 }
             }
 
-            // Written before the text is moved into the record, so the operand
-            // slices still point into the string.
             std::vector<MemoryRef>     memory         = collect_memory(decoded, operands, text, address);
             std::vector<EncodingBytes> encoding_bytes = collect_encoding_bytes(decoded, operands);
 
@@ -347,7 +304,7 @@ namespace slopkit::disasm
                 true
             };
         }
-    } // namespace
+    }
 
     std::optional<Instruction> decode(std::span<const std::byte> code, std::uint64_t address, MachineMode mode)
     {
@@ -380,4 +337,4 @@ namespace slopkit::disasm
         return instructions;
     }
 
-} // namespace slopkit::disasm
+}

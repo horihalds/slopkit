@@ -12,7 +12,6 @@
 
 namespace slopkit::ui::models
 {
-
     namespace
     {
         constexpr std::array<std::string_view, 18> kRegisterNames = {
@@ -36,12 +35,11 @@ namespace slopkit::ui::models
             "RFLAGS",
         };
 
-        // The em dash a value cell shows until the debugger supplies a value.
         QString placeholder()
         {
             return QString(QChar(0x2014));
         }
-    } // namespace
+    }
 
     RegisterModel::RegisterModel(QObject* parent) : QAbstractTableModel(parent)
     {
@@ -100,8 +98,6 @@ namespace slopkit::ui::models
 
     std::optional<std::uint64_t> RegisterModel::parse_value(std::string_view text)
     {
-        // Same literal rule as the address fields: bare hex, `#` decimal, `0x`
-        // accepted, so a cell prefilled with format_padded_hex round-trips.
         const auto parsed = expr::parse_literal(text);
         return parsed.has_value() ? std::optional<std::uint64_t> {*parsed} : std::nullopt;
     }
@@ -129,7 +125,6 @@ namespace slopkit::ui::models
         case Qt::DisplayRole:
             return index.column() == name ? QString::fromStdString(entry.name) : entry.value;
         case Qt::ForegroundRole:
-            // Unread values and in-flight writes stay muted.
             return index.column() == value && (!entry.read || entry.pending) ? QVariant(active_theme().text_muted)
                                                                              : QVariant {};
         case Qt::TextAlignmentRole:
@@ -205,4 +200,4 @@ namespace slopkit::ui::models
         return true;
     }
 
-} // namespace slopkit::ui::models
+}

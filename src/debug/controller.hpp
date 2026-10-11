@@ -23,11 +23,6 @@
 
 namespace slopkit::debug
 {
-
-    // Owns the debug session for the UI: the state machine, the session
-    // breakpoint table, the register/backtrace cache and the trap-to-breakpoint
-    // resolution. Every target access is submitted to the worker and applied by
-    // drain() on the UI thread.
     class Controller : public QObject
     {
         Q_OBJECT
@@ -73,17 +68,12 @@ namespace slopkit::debug
         [[nodiscard]] bool                           has_target() const noexcept;
         [[nodiscard]] QString                        state_text() const;
 
-        // Attaches and leaves the target running: only a breakpoint hit, a watch
-        // hit or interrupt() stops it.
         void start(process::ProcessId pid, std::string_view plugin_id);
         void stop();
         void resume();
         void interrupt();
         void step_into();
         void step_over();
-        // Runs the target out of the current function with one transient hidden
-        // software breakpoint at the caller's return address. A call stack
-        // without a caller frame reports a warning and changes nothing.
         void step_out();
 
         std::expected<std::uint64_t, std::string> add_breakpoint(std::string expression, Kind kind, std::size_t size);
@@ -91,9 +81,6 @@ namespace slopkit::debug
         void                                      set_breakpoint_enabled(std::uint64_t id, bool enabled);
         void                                      clear_breakpoints();
 
-        // Starts (or replaces, when one is already running) the address watch: a
-        // hidden read/write hardware breakpoint on `address` that the controller
-        // keeps consuming, and the target is left running for the next hit.
         std::expected<void, std::string> watch_address(std::uint64_t address, Kind kind, std::size_t size);
         void                             stop_watch();
         void                             clear_watch_hits();
@@ -102,11 +89,6 @@ namespace slopkit::debug
         void write_register(std::string_view name, std::uint64_t value);
         void refresh();
 
-        // Reads the register file of the running target once: the target is
-        // stopped just long enough for the read and put back exactly as it was,
-        // and nothing about the session (state, stop, listing position) changes.
-        // `on_captured` runs on the UI thread whether or not the read produced
-        // values. A stopped session or no session at all invokes it immediately.
         void capture_registers(std::function<void()> on_captured);
 
         void        set_completion_hook(CompletionHook hook);
@@ -119,12 +101,9 @@ namespace slopkit::debug
         void backtraceChanged();
         void breakpointsChanged();
         void message(slopkit::debug::Controller::MessageKind kind, const QString& text);
-        // Emitted once per drain() when hits arrived, never once per hit.
         void watchChanged();
 
     private:
-        // One arm/disarm waiting for the invisible maintenance stop that makes a
-        // debug register writable while the target runs.
         struct PendingSlotOp
         {
             std::uint64_t id {};
@@ -175,21 +154,14 @@ namespace slopkit::debug
         std::string                  plugin_id_;
         std::uint32_t                leader_ {};
         bool                         stop_requested_ {false};
-        // A maintenance stop is one the controller asked for purely to install or
-        // remove a debug register; it is never reported to the UI.
         bool                         maintenance_stop_ {false};
         std::vector<PendingSlotOp>   pending_slot_ops_;
         std::vector<std::uint64_t>   pending_removals_;
         AccessWatch                  watch_;
         bool                         watch_dirty_ {false};
-        // A one-shot invisible register read: `capture_` runs once the stop it
-        // asked for has been consumed, and `capture_pending_` marks that stop.
         std::function<void()>        capture_;
         bool                         capture_pending_ {false};
-        // The transient hidden software breakpoint a step-out armed, while its
-        // stop is still pending; cleared as soon as that stop is consumed or any
-        // other stop cancels the step-out.
         std::optional<std::uint64_t> step_out_id_ {};
     };
 
-} // namespace slopkit::debug
+}

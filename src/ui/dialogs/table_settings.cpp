@@ -17,7 +17,6 @@
 
 namespace slopkit::ui::dialogs
 {
-
     TableSettingsDialog::TableSettingsDialog(table::AddressTable&           table,
                                              const process::AttachedTarget& target,
                                              QWidget*                       parent)
@@ -106,9 +105,6 @@ namespace slopkit::ui::dialogs
 
     TableSettingsDialog::~TableSettingsDialog()
     {
-        // Hiding the dialog takes the focus off the edits, so QLineEdit emits
-        // editingFinished while this object's most-derived type is already gone;
-        // Qt aborts such a slot call. Drop the connections before ~QDialog runs.
         disconnect(target_edit_, nullptr, this, nullptr);
         disconnect(exe_path_edit_, nullptr, this, nullptr);
     }
@@ -182,7 +178,6 @@ namespace slopkit::ui::dialogs
         }
         commit();
 
-        // The button copies the identity only; the user ticks the checkboxes.
         if (target_.exe_path.empty())
         {
             status_->set_status(widgets::StatusKind::warning,
@@ -244,4 +239,4 @@ namespace slopkit::ui::dialogs
         status_->set_status(widgets::StatusKind::info, tr("Table settings updated."));
     }
 
-} // namespace slopkit::ui::dialogs
+}

@@ -28,30 +28,22 @@
 
 namespace slopkit::ui::components
 {
-
     namespace
     {
         constexpr int kMargin      = 4;
         constexpr int kCellPadding = 10;
 
-        // The gap between an instruction's text and its `NOPed:` annotation.
         constexpr int kMarkerGap = 8;
 
-        // The gap between the address, bytes and instruction columns: one shared
-        // value, so both boundaries tighten together and the header stays aligned
-        // with the rows painted below it.
         constexpr int kColumnGap = 6;
 
-        // The instruction column never shrinks below this many monospace glyphs;
-        // the bytes column gives up its width first and wraps instead.
         constexpr int kMinInstructionChars = 16;
 
-        // A `.byte` row is an undecodable byte and paints muted, like `??`.
         bool is_muted(const DisassemblyDocument::Row& row)
         {
             return !row.readable || row.text.startsWith(QLatin1String(".byte"));
         }
-    } // namespace
+    }
 
     DisassemblyView::DisassemblyView(DisassemblyDocument& document, QWidget* parent)
         : QAbstractScrollArea(parent), document_(document), scroller_(*this,
@@ -71,8 +63,6 @@ namespace slopkit::ui::components
 
         connect(&document_, &DisassemblyDocument::rowsChanged, this, &DisassemblyView::on_rows_changed);
 
-        // The listing's own menu entry. It carries no shortcut: the byte view's
-        // Ctrl+G stays the window's only one and the dialog routes it by focus.
         goto_action_ = new QAction(tr("Go To..."), this);
         connect(goto_action_, &QAction::triggered, this, &DisassemblyView::gotoRequested);
     }
@@ -160,10 +150,9 @@ namespace slopkit::ui::components
     {
         if (position.y() < kMargin + header_height_)
         {
-            return {}; // The header band holds no row.
+            return {};
         }
 
-        // Mirror paintEvent's column geometry.
         const int address_left = kMargin;
         const int bytes_left   = address_left + address_width_ + kColumnGap;
         const int text_left    = bytes_left + bytes_width_ + kColumnGap;
@@ -186,13 +175,11 @@ namespace slopkit::ui::components
             }
 
             const DisassemblyDocument::Row row = document_.row(index);
-            // The address column: the full text only when it shortened.
             if (position.x() >= address_left && position.x() < address_left + address_width_)
             {
                 const QString full = document_.full_address_text(row.address);
                 return full != document_.address_text(row.address) ? full : QString {};
             }
-            // The instruction column: the run printed under the cursor.
             if (position.x() >= text_left && position.x() < text_left + text_width)
             {
                 const QFontMetrics metrics(mono_font());
@@ -212,7 +199,7 @@ namespace slopkit::ui::components
             }
             return {};
         }
-        return {}; // Below every painted row.
+        return {};
     }
 
     std::size_t DisassemblyView::bytes_per_line() const noexcept
@@ -231,8 +218,6 @@ namespace slopkit::ui::components
         line_height_   = std::max(1, metrics.height() + 4);
         header_height_ = line_height_;
 
-        // The bytes column width and the row fit both follow from the decoded
-        // rows, so decode the cursor's neighbourhood first.
         ensure_cursor_decoded();
         update_columns();
         update_visible_rows();
@@ -243,10 +228,6 @@ namespace slopkit::ui::components
         const QFontMetrics metrics(mono_font());
         const int          glyph = std::max(1, metrics.horizontalAdvance(QLatin1Char('0')));
 
-        // The address column follows the widest address on screen, but never
-        // narrower than the 16-digit absolute form so it does not jitter. A
-        // dragged width replaces the automatic one and is clamped so that the
-        // bytes column keeps one token and the instruction column its glyphs.
         QString       address_sample = QStringLiteral("0x0000000000000000");
         const QString top_text       = document_.address_text(first_address_);
         if (top_text.size() > address_sample.size())
@@ -266,10 +247,6 @@ namespace slopkit::ui::components
             address_width_ = metrics.horizontalAdvance(address_sample) + kCellPadding;
         }
 
-        // The bytes column wants the widest instruction's raw bytes, but gives
-        // up its width first: it shrinks down to one byte token and wraps, and
-        // the instruction column keeps a guaranteed glyph budget. A dragged
-        // width replaces the natural one and is clamped to the same bounds.
         const int natural_bytes =
             metrics.horizontalAdvance(QString(static_cast<qsizetype>(document_.bytes_width()), QLatin1Char('0')))
             + kCellPadding;
@@ -277,8 +254,6 @@ namespace slopkit::ui::components
         const int bytes_max = std::max(min_bytes, room - kMinInstructionChars * glyph);
         bytes_width_ = std::clamp(bytes_width_user_ > 0 ? bytes_width_user_ : natural_bytes, min_bytes, bytes_max);
 
-        // `n` byte tokens need `3n - 1` characters; take the largest count whose
-        // rendered width still fits the column, and never fewer than one.
         const int         content_width = std::max(0, bytes_width_ - kCellPadding);
         const std::size_t max_tokens    = std::max<std::size_t>(1, (document_.bytes_width() + 1) / 3);
         bytes_per_line_                 = 1;
@@ -297,10 +272,6 @@ namespace slopkit::ui::components
     {
         const int available = std::max(0, viewport()->height() - kMargin - header_height_);
 
-        // Sum full post-wrap row heights from the top row; the first row always
-        // counts even when it is taller than the viewport. Rows past the decoded
-        // tail are counted as one line each so the decode budget grows with the
-        // viewport instead of with the last decode pass.
         int         used = 0;
         std::size_t rows = 0;
         for (std::size_t index = first_row_;; ++index)
@@ -336,8 +307,6 @@ namespace slopkit::ui::components
     {
         ensure_cursor_decoded();
 
-        // A step up lands on the previous window's last decoded row once its
-        // payload is in; the sweep is bounded to one window.
         if (seat_last_row_)
         {
             seat_last_row_ = false;
@@ -363,14 +332,12 @@ namespace slopkit::ui::components
         {
             return;
         }
-        QToolTip::hideText(); // The row under the cursor is about to move.
+        QToolTip::hideText();
 
         const long long last   = static_cast<long long>(document_.row_count()) - 1;
         long long       target = static_cast<long long>(first_row_) + delta;
         if (target < 0)
         {
-            // Before the first decoded row: cross to the previous window when
-            // already at its start, else clamp inside this one.
             if (first_row_ == 0)
             {
                 step_window(-1);
@@ -380,13 +347,10 @@ namespace slopkit::ui::components
         }
         if (target > last)
         {
-            // Decode ahead before clamping, so a page step can grow the rows.
             document_.ensure_rows(static_cast<std::size_t>(target) + visible_rows_ + DisassemblyDocument::kDecodeSlack);
             const long long grown = static_cast<long long>(document_.row_count()) - 1;
             if (target > grown)
             {
-                // Past the last decoded row of an exhausted window: continue on
-                // the next page rather than dead-ending.
                 if (document_.window_exhausted())
                 {
                     step_window(1);
@@ -406,7 +370,7 @@ namespace slopkit::ui::components
         {
             if (base < step)
             {
-                return; // Bottom of the window range.
+                return;
             }
             seat_last_row_ = true;
             first_address_ = base - step;
@@ -418,7 +382,7 @@ namespace slopkit::ui::components
 
         scroller_.recenter();
         document_.set_view(first_address_, visible_rows_);
-        viewport()->update(); // Keep the previous rows painted until the payload lands.
+        viewport()->update();
     }
 
     void DisassemblyView::scroll_to_row(std::size_t index)
@@ -497,7 +461,7 @@ namespace slopkit::ui::components
     {
         if (position.y() < kMargin + header_height_)
         {
-            return first_row_; // The header, or above the first row.
+            return first_row_;
         }
 
         int y = kMargin + header_height_;
@@ -516,7 +480,7 @@ namespace slopkit::ui::components
             }
             y += row_height;
         }
-        return first_row_; // Empty space below the rows: the cursor row.
+        return first_row_;
     }
 
     void DisassemblyView::select_row_at(const QPoint& position)
@@ -602,9 +566,6 @@ namespace slopkit::ui::components
 
         menu.addAction(goto_action_);
 
-        // A row whose instruction references an address can be followed: to the
-        // listing's own cursor, or to the byte view. The address is captured by
-        // value - the span only lives until the window moves.
         if (const auto references = document_.row_addresses(row); !references.empty())
         {
             const std::uint64_t target = references.front().address;
@@ -624,8 +585,6 @@ namespace slopkit::ui::components
                     });
         }
 
-        // Always present so Back is discoverable, disabled while the history is
-        // empty.
         QAction* back_action = menu.addAction(tr("Back"));
         back_action->setEnabled(can_go_back());
         connect(back_action,
@@ -636,8 +595,6 @@ namespace slopkit::ui::components
                     back();
                 });
 
-        // Rewriting live code and putting it back: one click each, the log and
-        // the warning-coloured rows are the feedback.
         menu.addSeparator();
         if (const CodePatch* replaced = document_.patch_at(row); replaced != nullptr)
         {
@@ -797,9 +754,6 @@ namespace slopkit::ui::components
             const std::size_t lines            = std::max<std::size_t>(1, document_.line_count(index, bytes_per_line_));
             const int         row_height       = static_cast<int>(lines) * line_height_;
 
-            // The selected instruction carries a subtle band, so the target of
-            // `Toggle Breakpoint` is obvious; the address, not a pixel,
-            // remembers it across scrolls.
             if (selected_address_.has_value() && *selected_address_ == row.address)
             {
                 painter.fillRect(QRect(0, y, viewport()->width(), row_height), theme.surface_hover);
@@ -833,9 +787,6 @@ namespace slopkit::ui::components
                     x += painter.fontMetrics().horizontalAdvance(run.text);
                 }
             }
-            // The run walk leaves the pen on its last colour; the annotation and
-            // the bytes column are not syntax-highlighted, so restore the row's
-            // own colour before drawing them.
             painter.setPen(base);
             if (const QString marker = document_.row_annotation(index); !marker.isEmpty())
             {
@@ -845,7 +796,6 @@ namespace slopkit::ui::components
                                  marker);
             }
 
-            // The bytes wrap down their own column, one token group per line.
             for (std::size_t line = 0; line < lines; ++line)
             {
                 const int line_y = y + static_cast<int>(line) * line_height_;
@@ -922,9 +872,6 @@ namespace slopkit::ui::components
                     return;
                 }
             }
-            // A left or right press targets the row underneath; a right press
-            // selects it so the menu and the toggle agree even before the menu
-            // opens.
             select_row_at(position);
             event->accept();
             return;
@@ -956,8 +903,6 @@ namespace slopkit::ui::components
             }
         }
 
-        // Reveal the untruncated address a shortened run or address hides;
-        // hide the tooltip everywhere else, so it cannot outlive the row.
         if (const QString full = hover_full_text(position); !full.isEmpty())
         {
             QToolTip::showText(event->globalPosition().toPoint(), full, viewport());
@@ -1006,12 +951,10 @@ namespace slopkit::ui::components
     void DisassemblyView::contextMenuEvent(QContextMenuEvent* event)
     {
         const QPoint position = viewport()->mapFromGlobal(event->globalPos());
-        // The menu acts on the row it targets, so selecting it first keeps the
-        // menu and the control bar's toggle in agreement.
         select_row_at(position);
         QMenu menu(this);
         populate_menu(menu, row_at_position(position));
         menu.exec(event->globalPos());
     }
 
-} // namespace slopkit::ui::components
+}

@@ -12,12 +12,8 @@ namespace slopkit::sandbox
 {
     namespace
     {
-        // The process-wide store. Namespace scope gives it static storage
-        // duration in the main image, so every field keeps a stable `.data`
-        // address a first scan can hit.
         Values g_values;
 
-        // The ASCII marker and the trailing magic word the heap buffer carries.
         constexpr std::string_view kHeapMarker = "SLOPKIT-SANDBOX-MARKER";
         constexpr std::uint64_t    kHeapMagic  = 0x51F2C0DE1BADBEEFULL;
 
@@ -56,8 +52,6 @@ namespace slopkit::sandbox
             return std::string(banner.begin(), end);
         }
 
-        // One `name address=... size=N value=...` line per field. The
-        // labelled shape keeps the headless output easy to parse.
         template<typename T>
         void print_field(std::ostream& out, std::string_view name, const T& field, std::string value)
         {
@@ -67,7 +61,7 @@ namespace slopkit::sandbox
                                sizeof(T),
                                value);
         }
-    } // namespace
+    }
 
     Values& values()
     {
@@ -76,8 +70,6 @@ namespace slopkit::sandbox
 
     std::span<std::byte> heap_marker()
     {
-        // Function-local static: the vector owns heap storage, and the buffer
-        // exists for the life of the process.
         static std::vector<std::byte> buffer = make_heap_marker();
         return buffer;
     }
@@ -119,4 +111,4 @@ namespace slopkit::sandbox
                            format_bytes(marker));
     }
 
-} // namespace slopkit::sandbox
+}

@@ -19,9 +19,6 @@ namespace
     using slopkit::script::members_of;
     using slopkit::script::parameter_index;
 
-    // Runs the engine's own `_G` and the members of the tables it binds through
-    // a chunk, so the catalogue is checked against the live state rather than a
-    // copy of itself.
     struct EngineNames
     {
         std::set<std::string> globals;
@@ -115,21 +112,17 @@ end
         return names;
     }
 
-    // sol2 records the libraries it opened and its own trampoline and protected
-    // handlers as private keys in `_G` ("base", "sol.☢☢", "sol.🔩"); a script
-    // never sees or uses them, so the guard ignores them.
     bool is_sol_internal(std::string_view name)
     {
         return name == "base" || name.starts_with("sol.");
     }
-} // namespace
+}
 
 TEST_CASE("the API catalogue matches the globals a live engine binds", "[script]")
 {
     ScriptFixture     fixture;
     const EngineNames names = engine_names(fixture);
 
-    // What the engine binds is its `_G` minus the Lua standard library it opens.
     std::set<std::string> engine_globals;
     const auto            standard = to_set(lua_standard_globals());
     std::ranges::set_difference(names.globals, standard, std::inserter(engine_globals, engine_globals.end()));
@@ -142,8 +135,6 @@ TEST_CASE("the API catalogue matches the globals a live engine binds", "[script]
     std::set<std::string> catalogued;
     std::ranges::set_difference(catalogue_globals(), standard, std::inserter(catalogued, catalogued.end()));
 
-    // The two sets are equal: no engine global is missing from the catalogue and
-    // no catalogue global names something the engine does not bind.
     CHECK(engine_globals == catalogued);
     for (const std::string& name : engine_globals)
     {
@@ -151,16 +142,12 @@ TEST_CASE("the API catalogue matches the globals a live engine binds", "[script]
         CHECK(find(name) != nullptr);
     }
 
-    // Every standard-library name is a real global, so the popup never offers a
-    // name the engine cannot resolve.
     for (const std::string_view name : lua_standard_globals())
     {
         INFO("lua standard global the engine does not bind: " << name);
         CHECK(names.globals.contains(std::string {name}));
     }
 
-    // The table members: `mem` and `hook` come from the catalogue, `string`,
-    // `table` and `math` from the curated library list.
     std::set<std::string> engine_members = names.members;
     for (const std::string_view member : lua_library_members())
     {
@@ -180,8 +167,6 @@ TEST_CASE("every API entry is complete and unique", "[script]")
     {
         INFO("entry: " << entry.name);
         CHECK_FALSE(entry.name.empty());
-        // The name opens its own signature, so the popup always shows the name
-        // it completes.
         CHECK(entry.signature.starts_with(entry.name));
         CHECK_FALSE(entry.summary.empty());
         CHECK(names.insert(std::string {entry.name}).second);
@@ -201,7 +186,6 @@ TEST_CASE("every API entry is complete and unique", "[script]")
 
 TEST_CASE("catalogue matching filters by receiver and prefix", "[script]")
 {
-    // An empty receiver lists the globals; a receiver lists its members.
     const std::vector<const ApiEntry*> globals = matches({}, {});
     for (const ApiEntry* entry : globals)
     {
@@ -217,7 +201,6 @@ TEST_CASE("catalogue matching filters by receiver and prefix", "[script]")
     }
     CHECK(read_names == std::vector<std::string> {"mem.read", "mem.read_bytes", "mem.read_string"});
 
-    // Case-insensitive, and an empty prefix lists the whole table.
     CHECK(matches("mem", "RE").size() == reads.size());
     CHECK(matches("mem", {}).size() == 6);
     CHECK(matches({}, "aobscan").size() == 1);
@@ -228,7 +211,7 @@ TEST_CASE("parameter_index emphasises a parameter inside the signature", "[scrip
 {
     CHECK(parameter_index("mem.read(address, token)", 0) == 0);
     CHECK(parameter_index("mem.read(address, token)", 1) == 1);
-    CHECK(parameter_index("mem.read(address, token)", 5) == 1); // clamped to the last
+    CHECK(parameter_index("mem.read(address, token)", 5) == 1);
     CHECK(parameter_index("read_u8(address)", 0) == 0);
     CHECK(parameter_index("print()", 0) == 0);
     CHECK(parameter_index("mem", 0) == 0);

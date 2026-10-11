@@ -6,12 +6,10 @@
 
 #include <QApplication>
 
-// Defined in test_main.cpp; the single QApplication every widget suite shares.
 QApplication& slopkit_test_application();
 
 namespace slopkit::test
 {
-
     QApplication& application()
     {
         return slopkit_test_application();
@@ -87,7 +85,6 @@ namespace slopkit::test
             }
             return result;
         }
-        // A window-only fake reads an unmapped address as an empty buffer.
         return std::vector<std::byte> {};
     }
 
@@ -112,7 +109,6 @@ namespace slopkit::test
             }
             return data.size();
         }
-        // A window-only fake is read-only.
         return std::size_t {};
     }
 
@@ -250,8 +246,6 @@ namespace slopkit::test
         std::uint64_t address = 0;
         if (!memory->flat.empty() || memory->base != 0)
         {
-            // Carve the block out of the flat window so a script can read and
-            // write it; keep every block page-aligned.
             const std::size_t offset = (memory->flat.size() + page - 1) / page * page;
             memory->flat.resize(offset + rounded, std::byte {0});
             address = memory->base + offset;
@@ -347,4 +341,4 @@ namespace slopkit::test
         return target;
     }
 
-} // namespace slopkit::test
+}

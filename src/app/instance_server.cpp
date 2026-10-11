@@ -21,8 +21,6 @@ namespace slopkit::app
 {
     namespace
     {
-        // Matches the client's cap in instance.cpp: a request longer than this is
-        // refused without an acknowledgement.
         constexpr std::size_t kMaxRequestBytes = 4096;
 
         void set_non_blocking(int fd)
@@ -33,7 +31,7 @@ namespace slopkit::app
                 static_cast<void>(::fcntl(fd, F_SETFL, flags | O_NONBLOCK));
             }
         }
-    } // namespace
+    }
 
     InstanceServer::InstanceServer(QObject* parent) : InstanceServer(instance_socket_name(), parent) {}
 
@@ -111,7 +109,7 @@ namespace slopkit::app
                 {
                     continue;
                 }
-                return; // EAGAIN when drained, or a real error
+                return;
             }
 
             auto connection      = std::make_unique<Connection>();
@@ -146,7 +144,7 @@ namespace slopkit::app
             {
                 if (connection.buffer.size() + static_cast<std::size_t>(count) > kMaxRequestBytes)
                 {
-                    close_connection(fd); // no ack: the client falls back
+                    close_connection(fd);
                     return;
                 }
                 connection.buffer.append(buffer, static_cast<std::size_t>(count));
@@ -158,16 +156,16 @@ namespace slopkit::app
             }
             if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
             {
-                break; // fully drained for now
+                break;
             }
-            close_connection(fd); // peer closed mid-line or a real error
+            close_connection(fd);
             return;
         }
 
         const auto newline = connection.buffer.find('\n');
         if (newline == std::string::npos)
         {
-            return; // wait for the rest of the line
+            return;
         }
 
         const std::string request = connection.buffer.substr(0, newline);
@@ -203,4 +201,4 @@ namespace slopkit::app
         ::close(connection->fd);
     }
 
-} // namespace slopkit::app
+}

@@ -30,10 +30,8 @@
 
 namespace slopkit::app
 {
-
     namespace
     {
-        // One mebibyte, after which the file sink keeps a single rotated backup.
         constexpr std::size_t kLogFileLimit = 1024 * 1024;
 
         std::filesystem::path self_executable_path()
@@ -57,9 +55,6 @@ namespace slopkit::app
             }
         }
 
-        // Infers the value type from the literal: a real when it has a fractional
-        // part or an exponent, a wide integer for long hex literals, otherwise the
-        // narrowest integer that fits.
         scan::ValueType infer_value_type(std::string_view text)
         {
             std::string_view body = text;
@@ -84,7 +79,7 @@ namespace slopkit::app
             }
             return scan::ValueType::int64;
         }
-    } // namespace
+    }
 
     std::filesystem::path executable_directory()
     {
@@ -97,7 +92,7 @@ namespace slopkit::app
         return plugin::PluginHost::default_search_directories(executable_directory());
     }
 
-    int print_version(std::ostream& out, std::ostream& /*err*/)
+    int print_version(std::ostream& out, std::ostream&)
     {
         log::info(log::category::app, "command print-version: start");
         out << "slopkit " << version() << '\n';
@@ -301,11 +296,10 @@ namespace slopkit::app
             const auto arg = args[index];
             if (arg == "--log-level")
             {
-                ++index; // Consumed by the pre-pass above.
+                ++index;
             }
             else if (arg.starts_with("--log-level="))
             {
-                // Consumed by the pre-pass above.
             }
             else if (arg == "--version" || arg == "-v")
             {
@@ -393,4 +387,4 @@ namespace slopkit::app
         return app.run(argc, argv, table_path);
     }
 
-} // namespace slopkit::app
+}

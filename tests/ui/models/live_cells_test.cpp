@@ -34,7 +34,7 @@ namespace
     }
 
     using Run = std::pair<std::size_t, std::size_t>;
-} // namespace
+}
 
 TEST_CASE("live cells request only the readable rows", "[ui][models]")
 {
@@ -79,7 +79,6 @@ TEST_CASE("live cells coalesce changed rows into runs", "[ui][models]")
         return true;
     };
 
-    // First pass: every row gains a reading, so one run covers them all.
     cells.apply(
         std::vector<slopkit::ui::LiveReading> {
             readable(0, bytes({1})), readable(1, bytes({2})), readable(2, bytes({3})), readable(3, bytes({4}))},
@@ -88,7 +87,6 @@ TEST_CASE("live cells coalesce changed rows into runs", "[ui][models]")
     REQUIRE(runs.size() == 1);
     CHECK(runs[0] == Run {0, 3});
 
-    // Unchanged readings report nothing.
     runs.clear();
     (void)cells.request(4,
                         [](std::size_t row)
@@ -102,7 +100,6 @@ TEST_CASE("live cells coalesce changed rows into runs", "[ui][models]")
         emit_run);
     CHECK(runs.empty());
 
-    // A break between two changed rows yields two runs.
     runs.clear();
     (void)cells.request(4,
                         [](std::size_t row)
@@ -146,7 +143,6 @@ TEST_CASE("live cells drop a reading whose row moved on", "[ui][models]")
     CHECK(*first == bytes({5}));
     CHECK_FALSE(cells.at(0)->changed);
 
-    // The row recycled itself: the reading is dropped and the cell survives.
     identities[0] = 999;
     runs          = 0;
     (void)cells.request(2,
@@ -186,7 +182,6 @@ TEST_CASE("live cells leave the tail of a short batch alone", "[ui][models]")
     CHECK(cells.at(1)->has_reading);
     CHECK_FALSE(cells.at(2)->has_reading);
 
-    // A mis-ordered id is dropped: the row keeps its previous cell.
     (void)cells.request(3,
                         [](std::size_t row)
                         {
@@ -197,8 +192,6 @@ TEST_CASE("live cells leave the tail of a short batch alone", "[ui][models]")
                                                        readable(0, bytes({3}))},
                 valid,
                 [](std::size_t, std::size_t) {});
-    // Mis-ordered ids are dropped, so row 0 keeps its earlier reading and row 2
-    // keeps none.
     REQUIRE(cells.at(0)->bytes.has_value());
     CHECK(*cells.at(0)->bytes == bytes({1}));
     CHECK(cells.at(1)->has_reading);

@@ -94,7 +94,7 @@ namespace
         }
         return nullptr;
     }
-} // namespace
+}
 
 TEST_CASE("the add address dialog resets its form every time it is shown", "[ui]")
 {
@@ -116,7 +116,6 @@ TEST_CASE("the add address dialog resets its form every time it is shown", "[ui]
     REQUIRE(type != nullptr);
     REQUIRE(hex != nullptr);
 
-    // A freshly opened dialog shows the defaults.
     dialog.show();
     QApplication::processEvents();
     CHECK(description->text() == QStringLiteral("New address"));
@@ -256,7 +255,6 @@ TEST_CASE("a pointer-chain expression resolves through the worker before the ent
     address->setText(QStringLiteral("app+0+8"));
     add->click();
 
-    // The entry is not added until the resolve completes.
     CHECK_FALSE(add->isEnabled());
     CHECK(table.size() == 0);
 
@@ -318,7 +316,6 @@ TEST_CASE("a pointer chain with no target is still added unresolved", "[ui]")
     address->setText(QStringLiteral("[120000+10]"));
     add->click();
 
-    // The add waits for the worker resolve, then lands unresolved (no session).
     CHECK_FALSE(add->isEnabled());
     CHECK(table.size() == 0);
 
@@ -375,7 +372,6 @@ TEST_CASE("the add address dialog previews the resolved address and value", "[ui
     FakeAccess                     access;
     slopkit::process::AccessWorker worker {access};
     attach_session(worker);
-    // Little-endian, as a real target stores an int32 of 42.
     (*access.memory)[0x100010] = {std::byte {42}, std::byte {0}, std::byte {0}, std::byte {0}};
 
     AddAddressDialog dialog {table, worker};
@@ -391,7 +387,6 @@ TEST_CASE("the add address dialog previews the resolved address and value", "[ui
     dialog.show();
     QApplication::processEvents();
 
-    // The debounce resolves the deref-free text, then the worker reads the value.
     address->setText(QStringLiteral("APP+0x10"));
     REQUIRE(pump_ui(worker,
                     [&]
@@ -400,7 +395,6 @@ TEST_CASE("the add address dialog previews the resolved address and value", "[ui
                     }));
     CHECK(preview->text().contains(QStringLiteral("app+0x10")));
 
-    // The hex toggle re-formats the same bytes, with no new read.
     hex->setChecked(true);
     CHECK(preview->text().contains(QStringLiteral("0000002A")));
 }
@@ -431,7 +425,6 @@ TEST_CASE("the add address dialog previews an unresolved expression", "[ui]")
                         return preview->text().contains(QStringLiteral("unknown module or literal"));
                     }));
 
-    // Add still produces a row while the expression is unresolved.
     add->click();
     CHECK_FALSE(dialog.isVisible());
     REQUIRE(table.size() == 1);
@@ -464,13 +457,11 @@ TEST_CASE("the add address dialog clears and re-resolves the preview", "[ui]")
                         return preview->text().contains(QStringLiteral("app+0x10"));
                     }));
 
-    // Reopening clears the preview.
     dialog.hide();
     dialog.show();
     QApplication::processEvents();
     CHECK(preview->text().isEmpty());
 
-    // A new module map re-resolves the current text against the new base.
     address->setText(QStringLiteral("game+0x10"));
     dialog.set_modules({module_image("game", 0x200000, 0x1000)});
     REQUIRE(pump_ui(worker,

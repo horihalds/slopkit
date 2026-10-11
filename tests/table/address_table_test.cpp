@@ -31,8 +31,6 @@ namespace
     using slopkit::table::read_archive;
     using slopkit::table::write_archive;
 
-    // The base address the fixture entries use; no target is required since the
-    // model only encodes and caches.
     constexpr std::uint64_t kBase = 0x1000;
 
     AddressEntry make_entry(std::uint64_t address, ValueType type, std::initializer_list<int> bytes)
@@ -47,7 +45,6 @@ namespace
         return entry;
     }
 
-    // The selected set as a plain vector, so Catch2 can compare it with `==`.
     std::vector<std::size_t> selected_rows_of(const AddressTable& table)
     {
         const std::span<const std::size_t> rows = table.selected_rows();
@@ -93,7 +90,6 @@ namespace
         return names;
     }
 
-    // Restores the process-wide log level on scope exit.
     class LevelGuard
     {
     public:
@@ -128,7 +124,7 @@ namespace
     private:
         slopkit::log::SinkId id_;
     };
-} // namespace
+}
 
 TEST_CASE("address entries are added, selected and removed", "[table]")
 {
@@ -142,7 +138,6 @@ TEST_CASE("address entries are added, selected and removed", "[table]")
     REQUIRE(table.size() == 2);
     CHECK(table.selected() == 1);
 
-    // Every entry gets a non-zero, unique id assigned by the table.
     CHECK(table.entries()[0].id != 0);
     CHECK(table.entries()[1].id != 0);
     CHECK(table.entries()[0].id != table.entries()[1].id);
@@ -156,7 +151,7 @@ TEST_CASE("address entries are added, selected and removed", "[table]")
     CHECK(table.empty());
     CHECK(table.selected() == -1);
 
-    table.remove(5); // out of range is a no-op
+    table.remove(5);
     CHECK(table.empty());
 }
 
@@ -197,7 +192,6 @@ TEST_CASE("apply_write updates only the matching entry", "[table]")
     const std::uint64_t id = table.entries()[0].id;
     REQUIRE(id != 0);
 
-    // An unknown id, e.g. a write for a removed entry, is ignored.
     table.apply_write(id + 12345, std::vector<std::byte> {std::byte {0x01}});
     CHECK(table.entries()[0].bytes.empty());
 
@@ -223,10 +217,8 @@ TEST_CASE("freeze_items returns only the active entries and honours the interval
     CHECK(first[0].address == kBase);
     CHECK(first[0].bytes.size() == 4);
 
-    // Inside the interval nothing is returned.
     CHECK(table.freeze_items(0.05, 0.1).empty());
 
-    // Once the interval elapsed the active entry is returned again.
     CHECK(table.freeze_items(0.2, 0.1).size() == 1);
 }
 
@@ -261,7 +253,6 @@ TEST_CASE("an address table round-trips through the archive", "[table]")
     CHECK(loaded.entries()[0].expression == "1234");
     CHECK(loaded.entries()[0].address == 0x1234);
     CHECK(loaded.entries()[0].bytes.size() == 4);
-    // The frozen flag and the cached bytes are session-only.
     CHECK_FALSE(loaded.entries()[0].active);
     CHECK(loaded.entries()[0].bytes == std::vector<std::byte>(4, std::byte {0}));
 
@@ -272,7 +263,6 @@ TEST_CASE("an address table round-trips through the archive", "[table]")
     CHECK(loaded.entries()[1].address == 0x7FFD1234);
     CHECK(loaded.entries()[1].bytes.size() == 8);
 
-    // Ids are not persisted; the loader regenerates non-zero, unique ids.
     CHECK(loaded.entries()[0].id != 0);
     CHECK(loaded.entries()[1].id != 0);
     CHECK(loaded.entries()[0].id != loaded.entries()[1].id);
@@ -350,9 +340,6 @@ TEST_CASE("duplicate descriptions get numbered member names", "[table]")
     std::filesystem::remove(path);
 
     REQUIRE(loaded.size() == 2);
-    // The description is the member stem, so the collision-numbered second
-    // member reloads as "unnamed2" rather than the empty description it began
-    // with; another save is stable.
     CHECK(loaded.entries()[0].description == "unnamed");
     CHECK(loaded.entries()[1].description == "unnamed2");
 }
@@ -400,8 +387,6 @@ TEST_CASE("an expression with quotes and spaces round-trips", "[table]")
 
     REQUIRE(loaded.size() == 1);
     CHECK(loaded.entries()[0].expression == "my \"module\"+0x10");
-    // A module base cannot be resolved without a target, so the address stays 0
-    // for the panel's resolve pass.
     CHECK(loaded.entries()[0].address == 0);
 }
 
@@ -654,12 +639,10 @@ TEST_CASE("address entries can be moved with stable ids", "[table]")
     CHECK(table.entries()[0].description == "second");
     CHECK(table.entries()[1].description == "third");
     CHECK(table.entries()[2].description == "first");
-    // The move keeps the identity and carries the selection with the row.
     CHECK(table.entries()[2].id == ids[0]);
     CHECK(table.entries()[0].id == ids[1]);
     CHECK(table.selected() == 2);
 
-    // An equal, out-of-range from or out-of-range to is a no-op.
     table.move(1, 1);
     table.move(5, 0);
     table.move(0, 9);
@@ -667,7 +650,6 @@ TEST_CASE("address entries can be moved with stable ids", "[table]")
     CHECK(table.entries()[1].description == "third");
     CHECK(table.entries()[2].description == "first");
 
-    // A single row cannot be moved anywhere and stays put.
     AddressTable single;
     single.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
     single.move(0, 0);
@@ -702,14 +684,12 @@ TEST_CASE("rows nest under a parent and move as a subtree", "[table]")
     CHECK(table.depth_of(0) == 0);
     CHECK(table.subtree_size(0) == 1);
 
-    // Drop B onto A's middle: B becomes A's last child.
     CHECK(table.move_row(1, 0, true));
     CHECK(descriptions() == std::vector<std::string> {"A", "B", "C", "D"});
     CHECK(table.entries()[1].parent == table.entries()[0].id);
     CHECK(table.depth_of(1) == 1);
     CHECK(table.subtree_size(0) == 2);
 
-    // C dropped onto B nests a level deeper: a three-level chain.
     CHECK(table.move_row(2, 1, true));
     CHECK(table.entries()[2].parent == table.entries()[1].id);
     CHECK(table.depth_of(2) == 2);
@@ -722,16 +702,13 @@ TEST_CASE("rows nest under a parent and move as a subtree", "[table]")
     CHECK(table.is_within_subtree(2, 0));
     CHECK_FALSE(table.is_within_subtree(3, 0));
 
-    // A drop onto a descendant or onto itself, and the gap above itself, are
-    // refused without changing the table.
-    CHECK_FALSE(table.move_row(0, 1, true));  // A onto its child B
-    CHECK_FALSE(table.move_row(0, 2, true));  // A onto its grandchild C
-    CHECK_FALSE(table.move_row(1, 1, true));  // B onto itself
-    CHECK_FALSE(table.move_row(1, 1, false)); // the gap above itself
+    CHECK_FALSE(table.move_row(0, 1, true));
+    CHECK_FALSE(table.move_row(0, 2, true));
+    CHECK_FALSE(table.move_row(1, 1, true));
+    CHECK_FALSE(table.move_row(1, 1, false));
     CHECK(descriptions() == std::vector<std::string> {"A", "B", "C", "D"});
     CHECK(table.depth_of(1) == 1);
 
-    // D dropped into the gap in front of A returns to the top level.
     CHECK(table.move_row(3, 0, false));
     CHECK(descriptions() == std::vector<std::string> {"D", "A", "B", "C"});
     CHECK(table.depth_of(0) == 0);
@@ -739,15 +716,12 @@ TEST_CASE("rows nest under a parent and move as a subtree", "[table]")
     CHECK(table.depth_of(2) == 1);
     CHECK(table.depth_of(3) == 2);
 
-    // A whole subtree moves: A (with B and C) in front of D.
     CHECK(table.move_row(1, 0, false));
     CHECK(descriptions() == std::vector<std::string> {"A", "B", "C", "D"});
     CHECK(table.depth_of(0) == 0);
     CHECK(table.depth_of(3) == 0);
     CHECK(table.subtree_size(0) == 3);
 
-    // Appending past the last row joins the last row's level, and the selection
-    // rides with the moved subtree.
     table.set_selected(0);
     CHECK(table.move_row(0, table.size(), false));
     CHECK(descriptions() == std::vector<std::string> {"D", "A", "B", "C"});
@@ -755,7 +729,6 @@ TEST_CASE("rows nest under a parent and move as a subtree", "[table]")
     CHECK(table.depth_of(1) == 0);
     CHECK(table.selected() == 1);
 
-    // Out of range and empty edges are harmless.
     CHECK_FALSE(table.move_row(9, 0, true));
     CHECK_FALSE(table.move_row(0, 9, true));
     CHECK(AddressTable {}.depth_of(0) == 0);
@@ -775,11 +748,10 @@ TEST_CASE("removing a parent removes its whole subtree", "[table]")
     add("B");
     add("C");
     add("D");
-    REQUIRE(table.move_row(1, 0, true)); // B under A
-    REQUIRE(table.move_row(2, 1, true)); // C under B
+    REQUIRE(table.move_row(1, 0, true));
+    REQUIRE(table.move_row(2, 1, true));
     REQUIRE(table.size() == 4);
 
-    // A selection inside the removed subtree clamps to the freed slot.
     table.set_selected(2);
     table.remove(0);
     REQUIRE(table.size() == 1);
@@ -787,7 +759,6 @@ TEST_CASE("removing a parent removes its whole subtree", "[table]")
     CHECK(table.entries()[0].parent == 0);
     CHECK(table.selected() == 0);
 
-    // A selection past the subtree shifts down by its size.
     AddressTable other;
     auto         entry = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
     entry.description  = "P";
@@ -798,9 +769,9 @@ TEST_CASE("removing a parent removes its whole subtree", "[table]")
     auto tail        = make_entry(kBase, ValueType::int32, {3, 0, 0, 0});
     tail.description = "R";
     other.add(tail);
-    REQUIRE(other.move_row(1, 0, true)); // Q under P
-    other.set_selected(2);               // R
-    other.remove(0);                     // removes P and Q
+    REQUIRE(other.move_row(1, 0, true));
+    other.set_selected(2);
+    other.remove(0);
     REQUIRE(other.size() == 1);
     CHECK(other.entries()[0].description == "R");
     CHECK(other.selected() == 0);
@@ -821,7 +792,6 @@ TEST_CASE("the selected row set is normalised and remapped by the table", "[tabl
     add("D");
     add("E");
 
-    // Sorting, deduping and dropping out-of-range rows.
     table.set_selected_rows(std::vector<std::size_t> {4, 1, 1, 99});
     CHECK(selected_rows_of(table) == std::vector<std::size_t> {1, 4});
     CHECK(table.is_row_selected(1));
@@ -829,23 +799,18 @@ TEST_CASE("the selected row set is normalised and remapped by the table", "[tabl
     CHECK_FALSE(table.is_row_selected(0));
     CHECK_FALSE(table.is_row_selected(99));
 
-    // An empty set is reported empty.
     table.set_selected_rows(std::span<const std::size_t> {});
     CHECK(selected_rows_of(table).empty());
 
-    // A plain remove drops the rows inside the erased subtree and shifts the
-    // rows after it down by its size.
     table.set_selected_rows(std::vector<std::size_t> {1, 3});
     table.remove(0);
     CHECK(selected_rows_of(table) == std::vector<std::size_t> {0, 2});
 
-    // add() moves the cursor to the new row but leaves the set alone.
     table.set_selected_rows(std::vector<std::size_t> {1});
     add("F");
     CHECK(table.selected() == 4);
     CHECK(selected_rows_of(table) == std::vector<std::size_t> {1});
 
-    // clear() and replace() empty the set, like the cursor.
     table.clear();
     CHECK(selected_rows_of(table).empty());
     table.add(make_entry(kBase, ValueType::int32, {1, 0, 0, 0}));
@@ -868,22 +833,19 @@ TEST_CASE("remove_rows erases every selected subtree in one pass", "[table]")
     add("C");
     add("D");
     add("E");
-    REQUIRE(table.move_row(1, 0, true)); // B under A
-    REQUIRE(table.move_row(2, 1, true)); // C under B
+    REQUIRE(table.move_row(1, 0, true));
+    REQUIRE(table.move_row(2, 1, true));
     REQUIRE(table.subtree_size(0) == 3);
 
-    // An unsorted list of two top-level rows erases both subtrees in one pass.
-    const std::vector<std::size_t> rows {3, 0}; // D and the whole A subtree
+    const std::vector<std::size_t> rows {3, 0};
     table.set_selected_rows(rows);
     table.remove_rows(rows);
 
     REQUIRE(table.size() == 1);
     CHECK(table.entries()[0].description == "E");
     CHECK(selected_rows_of(table).empty());
-    CHECK(table.selected() == 0); // the cursor landed on the first freed slot
+    CHECK(table.selected() == 0);
 
-    // A child listed next to its parent is covered by the parent's block: one
-    // erase, not two.
     AddressTable nested;
     auto         parent = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
     parent.description  = "P";
@@ -894,13 +856,12 @@ TEST_CASE("remove_rows erases every selected subtree in one pass", "[table]")
     auto tail        = make_entry(kBase + 8, ValueType::int32, {3, 0, 0, 0});
     tail.description = "R";
     nested.add(tail);
-    REQUIRE(nested.move_row(1, 0, true)); // Q under P
+    REQUIRE(nested.move_row(1, 0, true));
 
     nested.remove_rows(std::vector<std::size_t> {0, 1});
     REQUIRE(nested.size() == 1);
     CHECK(nested.entries()[0].description == "R");
 
-    // An out-of-range only list and an empty list are no-ops.
     AddressTable untouched;
     untouched.remove_rows(std::vector<std::size_t> {5});
     untouched.remove_rows(std::span<const std::size_t> {});
@@ -922,14 +883,12 @@ TEST_CASE("move_row carries the selected rows with the moved block", "[table]")
     add("D");
     add("E");
 
-    // A row ahead of the block lands behind it; the set is re-sorted.
     table.set_selected_rows(std::vector<std::size_t> {0, 4});
     REQUIRE(table.move_row(0, 4, false));
     CHECK(table.entries()[0].description == "B");
     CHECK(table.entries()[3].description == "A");
     CHECK(selected_rows_of(table) == std::vector<std::size_t> {3, 4});
 
-    // A nest move remaps the set with the same arithmetic.
     AddressTable nested;
     const auto   add_nested = [&nested](const char* description)
     {
@@ -943,7 +902,7 @@ TEST_CASE("move_row carries the selected rows with the moved block", "[table]")
     add_nested("S");
 
     nested.set_selected_rows(std::vector<std::size_t> {0, 2});
-    REQUIRE(nested.move_row(3, 0, true)); // S under P
+    REQUIRE(nested.move_row(3, 0, true));
     CHECK(nested.entries()[0].description == "P");
     CHECK(nested.entries()[1].description == "S");
     CHECK(selected_rows_of(nested) == std::vector<std::size_t> {0, 3});
@@ -998,12 +957,12 @@ TEST_CASE("merge maps incoming parents into the target table", "[table]")
 
         AddressTable incoming;
         auto         in_parent = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
-        in_parent.description  = "parent"; // a duplicate of the existing row
+        in_parent.description  = "parent";
         incoming.add(in_parent);
         auto in_child        = make_entry(kBase + 4, ValueType::int32, {2, 0, 0, 0});
         in_child.description = "child";
         incoming.add(in_child);
-        REQUIRE(incoming.move_row(1, 0, true)); // the child nests under the incoming parent
+        REQUIRE(incoming.move_row(1, 0, true));
 
         const auto summary = table.merge(incoming.entries());
         CHECK(summary.added == 1);
@@ -1011,7 +970,6 @@ TEST_CASE("merge maps incoming parents into the target table", "[table]")
         REQUIRE(table.size() == 2);
         CHECK(table.entries()[0].id == existing_id);
         CHECK(table.entries()[1].description == "child");
-        // The skipped duplicate parent maps the child onto the existing entry.
         CHECK(table.entries()[1].parent == existing_id);
         CHECK(table.depth_of(1) == 1);
     }
@@ -1021,7 +979,7 @@ TEST_CASE("merge maps incoming parents into the target table", "[table]")
         AddressTable table;
         auto         orphan = make_entry(kBase, ValueType::int32, {1, 0, 0, 0});
         orphan.description  = "orphan";
-        orphan.parent       = 4242; // dangles
+        orphan.parent       = 4242;
         const auto summary  = table.merge(std::span<const AddressEntry>(&orphan, 1));
         CHECK(summary.added == 1);
         REQUIRE(table.size() == 1);
@@ -1043,9 +1001,8 @@ TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")
         table.set_selected(0);
         const std::uint64_t existing_id = table.entries()[0].id;
 
-        auto duplicate  = existing; // same address, type and description
-        duplicate.bytes = {
-            std::byte {9}, std::byte {9}, std::byte {9}, std::byte {9}}; // different bytes count as present
+        auto duplicate  = existing;
+        duplicate.bytes = {std::byte {9}, std::byte {9}, std::byte {9}, std::byte {9}};
 
         auto new_address        = make_entry(kBase + 4, ValueType::int32, {2, 0, 0, 0});
         new_address.description = "mana";
@@ -1063,13 +1020,13 @@ TEST_CASE("merge appends with fresh ids and skips exact duplicates", "[table]")
         CHECK(summary.skipped == 1);
         REQUIRE(table.size() == 4);
         CHECK(table.entries()[0].id == existing_id);
-        CHECK(table.entries()[0].bytes == existing.bytes); // the existing row wins
+        CHECK(table.entries()[0].bytes == existing.bytes);
         CHECK(table.entries()[0].active);
         CHECK(table.entries()[1].description == "mana");
         CHECK(table.entries()[2].type == ValueType::float64);
         CHECK(table.entries()[3].description == "stamina");
         CHECK(table.entries()[1].id != existing_id);
-        CHECK(table.selected() == 0); // selection untouched
+        CHECK(table.selected() == 0);
         CHECK(table.settings().target_process == "current");
     }
 
@@ -1189,7 +1146,6 @@ TEST_CASE("a script entry is stored as a lua member holding only the source", "[
               "version.txt", "entries/health.txt", "entries/greet.lua", "entries/armor.txt", "index.txt"});
     CHECK(member_text(path, "index.txt")
           == std::optional<std::string> {"entries/health.txt\nentries/greet.lua\nentries/armor.txt\n"});
-    // The body is the source and nothing else: no header and no added newline.
     CHECK(member_text(path, "entries/greet.lua") == std::optional<std::string> {source});
     CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
 
@@ -1206,7 +1162,7 @@ TEST_CASE("a mixed table round-trips its scripts verbatim in row order", "[table
 
     const std::string source = "local\ttab = {1, 2}\nprint(\"quoted\", 'single')\nreturn tab\n";
     CHECK(table.add_script("helper", source) == 1);
-    CHECK(table.add_script("", "") == 2); // an empty description and an empty body
+    CHECK(table.add_script("", "") == 2);
 
     const auto path = scratch_file("mixed.skt");
     std::filesystem::remove(path);
@@ -1225,7 +1181,6 @@ TEST_CASE("a mixed table round-trips its scripts verbatim in row order", "[table
     CHECK(loaded.entries()[2].description == "unnamed");
     CHECK(loaded.entries()[2].script.empty());
 
-    // A drag-reorder round-trips in the new order.
     loaded.move(2, 0);
     REQUIRE(slopkit::table::save(path, loaded).has_value());
 
@@ -1254,16 +1209,14 @@ TEST_CASE("a nested table round-trips its hierarchy", "[table]")
     value_child.expression  = "2000";
     table.add(value_child);
 
-    REQUIRE(table.move_row(1, 0, true)); // the script nests under the value parent
-    REQUIRE(table.move_row(2, 1, true)); // the value child nests under the script
+    REQUIRE(table.move_row(1, 0, true));
+    REQUIRE(table.move_row(2, 1, true));
 
     const auto path = scratch_file("nested.skt");
     std::filesystem::remove(path);
     REQUIRE(slopkit::table::save(path, table).has_value());
 
     CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
-    // A child names its parent on its index line, even when the member name has
-    // a space, and a script member carries a suffix just like a value member.
     CHECK(member_text(path, "index.txt")
           == std::optional<std::string> {"entries/parent.txt\n"
                                          "entries/script-child.lua parent=\"entries/parent.txt\"\n"
@@ -1325,7 +1278,6 @@ TEST_CASE("a legacy type=all member loads as a 4-byte scan", "[table]")
     REQUIRE(slopkit::table::load(path, table).has_value());
     std::filesystem::remove(path);
 
-    // The removed "All" entry was a 4-byte integer scan.
     REQUIRE(table.size() == 1);
     CHECK(table.entries()[0].type == ValueType::int32);
     CHECK(table.entries()[0].bytes.size() == 4);
@@ -1341,28 +1293,23 @@ TEST_CASE("script rows are edited through the table, not the value path", "[tabl
     CHECK(table.entries()[0].kind == EntryKind::script);
     CHECK(table.entries()[0].description == "helper");
     CHECK(table.entries()[0].script == "return 1");
-    CHECK(table.selected() == 0); // add_script selects the new row
+    CHECK(table.selected() == 0);
 
-    // A script row has no value text and cannot be encoded.
     CHECK(table.display_value(0).empty());
     const auto encoded = table.encode_value(0, "1");
     REQUIRE_FALSE(encoded.has_value());
     CHECK(encoded.error() == AccessError::invalid_argument);
 
-    // The source and the description can be replaced.
     CHECK(table.set_script(0, "return 2"));
     CHECK(table.entries()[0].script == "return 2");
     CHECK(table.set_description(0, "renamed"));
     CHECK(table.entries()[0].description == "renamed");
 
-    // A value row refuses a script edit; an out-of-range row refuses both.
     table.add(make_entry(0x1000, ValueType::int32, {0, 0, 0, 0}));
     CHECK_FALSE(table.set_script(1, "return 3"));
     CHECK_FALSE(table.set_script(9, "return 3"));
     CHECK_FALSE(table.set_description(9, "x"));
 
-    // Even with the Active flag on and bytes cached, a script row is never a
-    // freeze item.
     table.entries()[0].active = true;
     table.entries()[0].bytes  = {std::byte {0x42}};
     CHECK(table.freeze_items(0.0, 0.1).empty());
@@ -1384,7 +1331,7 @@ TEST_CASE("merge treats scripts by description and source text", "[table]")
     AddressEntry renamed = same;
     renamed.description  = "other";
 
-    AddressEntry value; // same description, but a value entry is a different thing
+    AddressEntry value;
     value.description = "helper";
 
     const std::vector<AddressEntry> incoming {same, rewritten, renamed, value};

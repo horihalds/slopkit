@@ -9,7 +9,6 @@
 
 namespace slopkit::platform
 {
-
     namespace
     {
         constexpr std::size_t kHeaderReadSize = 4096;
@@ -49,8 +48,6 @@ namespace slopkit::platform
             return value;
         }
 
-        // A file's first page, read once and shared by the entry-point and
-        // PE-kind readers.
         struct HeaderBytes
         {
             std::array<std::byte, kHeaderReadSize> data {};
@@ -99,8 +96,6 @@ namespace slopkit::platform
             }
             const bool big_endian = encoding == kBigEndian;
 
-            // ET_DYN entries are link-time addresses that need the load bias;
-            // ET_EXEC entries are already absolute.
             ImageEntry entry;
             entry.relative = read_u16(bytes, kTypeOffset, big_endian) == kEtDyn;
 
@@ -150,14 +145,13 @@ namespace slopkit::platform
                 return std::nullopt;
             }
 
-            // A PE entry is an RVA from the module base, so it is always relative.
             const auto optional_header = lfanew + kSignatureSize + kCoffHeaderSize;
             ImageEntry entry;
             entry.address  = read_u32(bytes, optional_header + kEntryRvaOffset, false);
             entry.relative = true;
             return entry;
         }
-    } // namespace
+    }
 
     std::optional<ImageEntry> parse_image_entry(std::span<const std::byte> bytes)
     {
@@ -267,4 +261,4 @@ namespace slopkit::platform
         return parse_pe_machine(std::span<const std::byte>(header->data.data(), header->size));
     }
 
-} // namespace slopkit::platform
+}

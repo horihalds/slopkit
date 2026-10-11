@@ -6,7 +6,6 @@
 
 namespace slopkit::ui
 {
-
     QString table_file_path(const QString& typed)
     {
         if (typed.isEmpty())
@@ -34,8 +33,6 @@ namespace slopkit::ui
         const QString name =
             QString::fromUtf8(target_name.data(), static_cast<qsizetype>(target_name.size())).trimmed();
 
-        // A process name can carry path separators or control characters; none of
-        // them may reach the file system, so each is replaced by an underscore.
         QString sanitised;
         sanitised.reserve(name.size());
         for (const QChar character : name)
@@ -76,4 +73,4 @@ namespace slopkit::ui
         return QDir().mkpath(directory);
     }
 
-} // namespace slopkit::ui
+}

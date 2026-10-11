@@ -20,7 +20,6 @@ namespace slopkit::ui::widgets
 {
     namespace
     {
-        // Canonical left-to-right order the standard buttons are laid out in.
         constexpr std::array kButtonOrder {
             MessageBoxButton::yes,
             MessageBoxButton::no,
@@ -100,12 +99,10 @@ namespace slopkit::ui::widgets
             }
             std::unreachable();
         }
-    } // namespace
+    }
 
     MessageBox::MessageBox(QWidget* parent) : QDialog(parent)
     {
-        // Modal to the owner window so it keeps input focus; the compositor
-        // alone decides where the box is placed.
         setWindowModality(Qt::WindowModal);
 
         auto* layout = new QVBoxLayout(this);
@@ -141,11 +138,6 @@ namespace slopkit::ui::widgets
 
     int MessageBox::exec()
     {
-        // Qt's platform plugins append the application display name to a window
-        // whose title does not already end with it, which would turn the box's
-        // title into "Delete Entry - slopkit". The box shows its own title only,
-        // so hide the display name while the modal loop runs. Title formatting
-        // happens when a window is created, so no other window is affected.
         const QString display_name = QGuiApplication::applicationDisplayName();
         QGuiApplication::setApplicationDisplayName(QString());
         const int code = QDialog::exec();
@@ -157,7 +149,6 @@ namespace slopkit::ui::widgets
     {
         icon_ = icon;
         update_icon();
-        // The main text follows the kind's status colour.
         text_label_->set_status(status_for(icon_), text_label_->text());
         update_minimum_width();
     }
@@ -241,7 +232,6 @@ namespace slopkit::ui::widgets
             delete item;
         }
 
-        // The leading stretch keeps the button row right-aligned.
         button_row_->addStretch(1);
         for (const MessageBoxButton which : kButtonOrder)
         {
@@ -281,12 +271,6 @@ namespace slopkit::ui::widgets
 
     void MessageBox::update_minimum_width()
     {
-        // Like QMessageBox, keep the box at least as wide as its natural layout
-        // so it never opens as a sliver; an explicit minimum smaller than the
-        // natural width is what a window stack may otherwise size the box to.
-        // The window title can be wider still, so cover that too. Both values
-        // are logical and come from the layouts and font metrics, so Qt handles
-        // scaling.
         int minimum = sizeHint().width();
         if (!windowTitle().isEmpty())
         {
@@ -365,4 +349,4 @@ namespace slopkit::ui::widgets
         (void)message_box(parent, MessageBoxIcon::error, title, text, MessageBoxButton::ok);
     }
 
-} // namespace slopkit::ui::widgets
+}

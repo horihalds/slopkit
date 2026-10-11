@@ -8,7 +8,6 @@
 
 namespace slopkit::ui
 {
-
     ScriptUpdates::ScriptUpdates(process::AccessWorker& worker) : worker_(worker) {}
 
     void ScriptUpdates::set_failure_handler(FailureHandler handler)
@@ -20,11 +19,10 @@ namespace slopkit::ui
     {
         if (pending_.has_value())
         {
-            return false; // One pass in flight; a slow hook cannot queue up.
+            return false;
         }
         if (worker_.active_scripts() == 0)
         {
-            // Idle: a target with no ticked script adds no job and no traffic.
             if (!logged_idle_)
             {
                 log::debug(log::category::ui, "script updates idle: no script is ticked");
@@ -37,7 +35,7 @@ namespace slopkit::ui
         const auto now = std::chrono::steady_clock::now();
         if (now - last_tick_ < interval)
         {
-            return false; // A burst of forced polls cannot run hooks early.
+            return false;
         }
 
         const process::JobId job_id = worker_.next_job_id();
@@ -63,12 +61,10 @@ namespace slopkit::ui
     {
         if (pending_ != job_id)
         {
-            return; // Stale or superseded: the pass has moved on.
+            return;
         }
         pending_.reset();
 
-        // The worker already ran each failed script's deactivate: the handler
-        // only clears the row and reports the reason.
         for (const process::ScriptUpdateFailure& failure : result.failed)
         {
             if (on_failure_)
@@ -78,4 +74,4 @@ namespace slopkit::ui
         }
     }
 
-} // namespace slopkit::ui
+}

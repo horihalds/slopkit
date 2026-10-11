@@ -7,20 +7,18 @@
 
 #include "ui/components/window_centerer.hpp"
 
-// Defined in test_main.cpp; the single QApplication every widget suite shares.
 QApplication& slopkit_test_application();
 
 namespace
 {
     using slopkit::ui::WindowCenterer;
 
-    // Where a window of `window`'s size lands when it is centred on `parent`.
     QPoint centred_position(const QWidget& parent, const QWidget& window)
     {
         const QSize own = window.size();
         return parent.frameGeometry().center() - QPoint(own.width() / 2, own.height() / 2);
     }
-} // namespace
+}
 
 TEST_CASE("a centerer puts a child dialog at the centre of its parent", "[window_centerer]")
 {

@@ -13,10 +13,6 @@
 
 namespace slopkit::ui::models
 {
-
-    // One register's rendered value. `read` is false until the debugger supplies
-    // a real value, which the pane paints as a muted em dash; `pending` marks a
-    // cell whose write has been submitted but not yet re-read.
     struct RegisterValue
     {
         std::string name;
@@ -25,10 +21,6 @@ namespace slopkit::ui::models
         bool        pending {};
     };
 
-    // The register table of the Debugger pane: a fixed x86-64 name list whose
-    // values are supplied by the debug session. While a stop is live the value
-    // cells are editable and a commit is handed to the controller; the model
-    // never touches the target.
     class RegisterModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -41,24 +33,16 @@ namespace slopkit::ui::models
             column_count,
         };
 
-        // Called with a register name and its parsed value; false refuses the
-        // edit, so the cell keeps its old text.
         using CommitHandler = std::function<bool(const std::string& name, std::uint64_t value)>;
 
         explicit RegisterModel(QObject* parent = nullptr);
 
-        // Seeds the values of the registers named in `values`; a name that is
-        // not in the fixed list is ignored. An empty span restores the
-        // placeholders. Clears every pending mark.
         void set_values(std::span<const RegisterValue> values);
 
         void               set_commit_handler(CommitHandler handler);
-        // Value cells are editable only while the session is stopped.
         void               set_editable(bool editable);
         [[nodiscard]] bool editable() const noexcept;
 
-        // Parses "2000" / "0x2000" (hex) / "#8192" (decimal). Nothing when the
-        // text is not a number.
         [[nodiscard]] static std::optional<std::uint64_t> parse_value(std::string_view text);
 
         [[nodiscard]] int           rowCount(const QModelIndex& parent = QModelIndex()) const override;
@@ -74,4 +58,4 @@ namespace slopkit::ui::models
         bool                       editable_ {false};
     };
 
-} // namespace slopkit::ui::models
+}

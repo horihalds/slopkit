@@ -65,8 +65,6 @@ namespace slopkit::ui::widgets
                 {
                     validate();
                 });
-        // Accepting from the field makes Enter work independently of the
-        // platform's default-button handling.
         connect(edit_, &QLineEdit::returnPressed, this, &InputBox::accept);
 
         validate();
@@ -75,12 +73,6 @@ namespace slopkit::ui::widgets
 
     int InputBox::exec()
     {
-        // Qt's platform plugins append the application display name to a window
-        // whose title does not already end with it, which would turn the box's
-        // title into "Go To Address - slopkit". The box shows its own title
-        // only, so hide the display name while the modal loop runs. Title
-        // formatting happens when a window is created, so no other window is
-        // affected.
         const QString display_name = QGuiApplication::applicationDisplayName();
         QGuiApplication::setApplicationDisplayName(QString());
         const int code = QDialog::exec();
@@ -108,7 +100,7 @@ namespace slopkit::ui::widgets
         validate();
         if (accept_button_ != nullptr && !accept_button_->isEnabled())
         {
-            return; // keep the dialog open while the text is invalid
+            return;
         }
         QDialog::accept();
     }
@@ -144,8 +136,6 @@ namespace slopkit::ui::widgets
 
     void InputBox::update_minimum_width()
     {
-        // Like MessageBox, keep the box at least as wide as its natural layout
-        // so it never opens as a sliver, and cover the window title as well.
         int minimum = sizeHint().width();
         if (!windowTitle().isEmpty())
         {
@@ -166,4 +156,4 @@ namespace slopkit::ui::widgets
         return box.text();
     }
 
-} // namespace slopkit::ui::widgets
+}

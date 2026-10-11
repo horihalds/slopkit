@@ -14,25 +14,13 @@
 
 namespace slopkit::script
 {
-
-    // `RunResult::output` is bounded so a script that prints in a loop cannot
-    // flood the log: at most this many lines, each truncated to at most this
-    // many bytes (with a trailing ellipsis when it was cut).
     inline constexpr std::size_t kMaxOutputLines = 1000;
     inline constexpr std::size_t kMaxOutputLine  = 4096;
 
-    // The lifecycle hooks an address row's Active checkbox drives: ticking runs
-    // `activate`, unticking runs `deactivate`. While the box stays ticked the
-    // live cadence calls `update` once per interval -- but only when the script's
-    // own chunk defines it.
     inline constexpr std::string_view kActivateHook   = "activate";
     inline constexpr std::string_view kDeactivateHook = "deactivate";
     inline constexpr std::string_view kUpdateHook     = "update";
 
-    // The outcome of one chunk: whether it ran to completion, the message of the
-    // first error when it did not, the script's captured `print` lines in order
-    // and the rendered scalar it returned (empty when the chunk returned
-    // nothing or a table/function).
     struct RunResult
     {
         bool                     ok {false};
@@ -41,11 +29,6 @@ namespace slopkit::script
         std::string              returned;
     };
 
-    // The outcome of calling a script's `activate`/`deactivate` hook: `ok` is
-    // the verdict the checkbox follows, `error` the chunk or hook failure text,
-    // `message` the reason the hook itself returned when it refused, `output`
-    // the chunk's captured `print` lines, and `interval_ms` what the run last
-    // passed to `update_interval` (unset when it declared none).
     struct LifecycleResult
     {
         bool                         ok {false};
@@ -55,8 +38,6 @@ namespace slopkit::script
         std::optional<std::uint64_t> interval_ms;
     };
 
-    // One mapped region of the target: where it starts, how big it is, whether
-    // it can be read and which module owns it (empty for an anonymous mapping).
     struct MemoryRegion
     {
         std::uint64_t base {};
@@ -65,58 +46,29 @@ namespace slopkit::script
         std::string   module;
     };
 
-    // The memory seam a script may touch. The owner (the access worker) fills
-    // these from its attached session; the engine never sees a `Session` or
-    // `ProcessAccess`, so it is testable against an in-memory buffer.
     struct MemoryApi
     {
         std::function<std::size_t()>                                                                   pointer_size;
         std::function<std::expected<std::vector<std::byte>, std::string>(std::uint64_t, std::size_t)>  read;
         std::function<std::expected<void, std::string>(std::uint64_t, std::span<const std::byte>)>     write;
-        // Every mapped region the target exposes. Absent when the seam has no
-        // region metadata at all (then `aobscan` reports "no target is
-        // attached").
         std::function<std::expected<std::vector<MemoryRegion>, std::string>()>                         regions;
-        // Maps new memory in the target, readable, writable and executable;
-        // `near` is a best-effort hint (0 = anywhere). Absent when the plugin
-        // behind the session cannot allocate, which the engine reports as the
-        // run's error.
         std::function<std::expected<std::uint64_t, std::string>(std::size_t size, std::uint64_t near)> allocate;
-        // Unmaps a mapping `allocate` returned in this session.
         std::function<std::expected<void, std::string>(std::uint64_t address)>                         deallocate;
-        // True when [address, address + size) is mapped and readable in the
-        // target; absent when no target is attached, which the engine reports
-        // as the run's error.
         std::function<std::expected<bool, std::string>(std::uint64_t address, std::size_t size)>       validate;
-        // The target's images (name + load base) `expression` resolves module
-        // names against, built exactly like the resolve job builds its module
-        // snapshot.
         std::function<std::expected<std::vector<expr::ModuleRef>, std::string>()>                      modules;
     };
 
-    // The symbol seam a script's `rsymbol`/`ssymbol`/`usymbol` write through. The
-    // owner (the access worker) fills these from the shared `SymbolTable`; the
-    // engine never sees the table itself, so it is testable on its own.
     struct SymbolApi
     {
-        // Registers `name` or overwrites its value; a non-empty error text
-        // becomes a Lua error.
         std::function<std::expected<void, std::string>(std::string_view name, std::uint64_t value)> set;
-        // Removes `name`; an unknown name is a no-op.
         std::function<std::expected<void, std::string>(std::string_view name)>                      remove;
-        // The value `name` currently has, matched case-insensitively; empty when
-        // the shared table does not know it. Read-only: the engine never
-        // publishes through this closure, it only consults it for labels-first
-        // resolution.
         std::function<std::optional<std::uint64_t>(std::string_view name)>                          lookup;
     };
 
-    // Guards a runaway chunk: at most this many VM instructions, and at most
-    // this many wall-clock seconds, before the run is aborted as an error.
     struct EngineConfig
     {
         std::size_t instruction_budget {20'000'000};
         double      timeout_seconds {5.0};
     };
 
-} // namespace slopkit::script
+}

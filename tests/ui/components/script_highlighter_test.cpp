@@ -12,8 +12,6 @@ namespace
 {
     using slopkit::ui::components::ScriptHighlighter;
 
-    // The foreground colour the highlighter gave the block text at `from` with
-    // `length`, or an invalid colour when no format covers exactly that run.
     [[nodiscard]] QColor colour_at(const QTextBlock& block, int from, int length)
     {
         for (const QTextLayout::FormatRange& range : block.layout()->formats())
@@ -25,7 +23,7 @@ namespace
         }
         return QColor {};
     }
-} // namespace
+}
 
 TEST_CASE("the Lua highlighter colours keywords, numbers, strings and comments", "[ui]")
 {
@@ -40,10 +38,10 @@ TEST_CASE("the Lua highlighter colours keywords, numbers, strings and comments",
     const QTextBlock          block = document.firstBlock();
     const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
 
-    CHECK(colour_at(block, 0, 5) == theme.syntax_keyword);  // local
-    CHECK(colour_at(block, 6, 1) == QColor {});             // x stays plain
-    CHECK(colour_at(block, 10, 2) == theme.syntax_number);  // 42
-    CHECK(colour_at(block, 13, 7) == theme.syntax_comment); // -- note
+    CHECK(colour_at(block, 0, 5) == theme.syntax_keyword); // local
+    CHECK(colour_at(block, 6, 1) == QColor {});
+    CHECK(colour_at(block, 10, 2) == theme.syntax_number);
+    CHECK(colour_at(block, 13, 7) == theme.syntax_comment);
 }
 
 TEST_CASE("the Lua highlighter colours the script API globals", "[ui]")
@@ -59,8 +57,8 @@ TEST_CASE("the Lua highlighter colours the script API globals", "[ui]")
     const QTextBlock&         block = document.firstBlock();
     const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
 
-    CHECK(colour_at(block, 0, 3) == theme.syntax_module); // mem
-    CHECK(colour_at(block, 9, 4) == theme.syntax_number); // 0x10
+    CHECK(colour_at(block, 0, 3) == theme.syntax_module);
+    CHECK(colour_at(block, 9, 4) == theme.syntax_number);
 }
 
 TEST_CASE("the Lua highlighter colours the API names it used to miss", "[ui]")
@@ -75,9 +73,9 @@ TEST_CASE("the Lua highlighter colours the API names it used to miss", "[ui]")
 
     const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
 
-    CHECK(colour_at(document.findBlockByNumber(0), 0, 4) == theme.syntax_module); // hook
-    CHECK(colour_at(document.findBlockByNumber(1), 0, 7) == theme.syntax_module); // aobscan
-    CHECK(colour_at(document.findBlockByNumber(2), 0, 8) == theme.syntax_module); // assemble
+    CHECK(colour_at(document.findBlockByNumber(0), 0, 4) == theme.syntax_module);
+    CHECK(colour_at(document.findBlockByNumber(1), 0, 7) == theme.syntax_module);
+    CHECK(colour_at(document.findBlockByNumber(2), 0, 8) == theme.syntax_module);
 }
 
 TEST_CASE("the Lua highlighter carries long constructs across blocks", "[ui]")
@@ -97,7 +95,7 @@ TEST_CASE("the Lua highlighter carries long constructs across blocks", "[ui]")
         CHECK(colour_at(document.findBlockByNumber(0), 0, 6) == theme.syntax_comment);
         CHECK(colour_at(document.findBlockByNumber(1), 0, 4) == theme.syntax_comment);
         CHECK(colour_at(document.findBlockByNumber(2), 0, 5) == theme.syntax_keyword);
-        CHECK(document.findBlockByNumber(2).userState() == 0); // no state left behind
+        CHECK(document.findBlockByNumber(2).userState() == 0);
     }
 
     SECTION("a long string spanning two blocks")

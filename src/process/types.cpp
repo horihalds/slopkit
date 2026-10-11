@@ -5,7 +5,6 @@
 
 namespace slopkit::process
 {
-
     namespace
     {
         std::string_view basename(std::string_view path) noexcept
@@ -31,7 +30,7 @@ namespace slopkit::process
             }
             return true;
         }
-    } // namespace
+    }
 
     const ModuleInfo* main_module(std::span<const ModuleInfo> modules) noexcept
     {
@@ -184,4 +183,4 @@ namespace slopkit::process
         return result;
     }
 
-} // namespace slopkit::process
+}

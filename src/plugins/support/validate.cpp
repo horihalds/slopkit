@@ -26,4 +26,4 @@ namespace slopkit::plugins::support
         return true;
     }
 
-} // namespace slopkit::plugins::support
+}

@@ -175,7 +175,6 @@ TEST_CASE("script engine aborts a runaway chunk", "[script]")
     CHECK_FALSE(result.ok);
     CHECK(result.error.find("instruction budget") != std::string::npos);
 
-    // The abort leaves the state usable.
     const RunResult again = fixture.engine.run("return 1");
     CHECK(again.ok);
     CHECK(again.returned == "1");
@@ -216,7 +215,7 @@ TEST_CASE("script engine bounds the captured output", "[script]")
 
         REQUIRE(result.ok);
         REQUIRE(result.output.size() == 1);
-        CHECK(result.output[0].size() == slopkit::script::kMaxOutputLine + 3); // the ellipsis
+        CHECK(result.output[0].size() == slopkit::script::kMaxOutputLine + 3);
         CHECK(result.output[0].find("x") == 0);
     }
 
@@ -249,7 +248,7 @@ TEST_CASE("script engine edge cases at the seam", "[script]")
         const RunResult result = fixture.engine.run("return mem.read(4097, 'u32')");
 
         REQUIRE(result.ok);
-        CHECK(result.returned == "262914"); // 0x00040302
+        CHECK(result.returned == "262914");
     }
 
     SECTION("reading past the end fails")
@@ -262,8 +261,6 @@ TEST_CASE("script engine edge cases at the seam", "[script]")
 
     SECTION("a string read that runs off the mapped end fails")
     {
-        // The fixture is NUL-free, so the read keeps looking for a terminator
-        // until it walks past the last mapped byte.
         std::fill(fixture.fake.bytes.begin(), fixture.fake.bytes.end(), std::byte {'A'});
 
         const RunResult result = fixture.engine.run("mem.read_string(4096, 512)");

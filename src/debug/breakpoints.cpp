@@ -5,7 +5,6 @@
 
 namespace slopkit::debug
 {
-
     std::size_t BreakpointTable::normalize_size(Kind kind, std::size_t size) noexcept
     {
         if (kind == Kind::software || kind == Kind::hardware_execute)
@@ -17,8 +16,6 @@ namespace slopkit::debug
 
     bool BreakpointTable::valid_size(Kind kind, std::size_t size) noexcept
     {
-        // A software trap and a hardware execute breakpoint are always one byte
-        // and their size is normalised, so any requested size is accepted.
         if (kind == Kind::software || kind == Kind::hardware_execute)
         {
             return true;
@@ -183,4 +180,4 @@ namespace slopkit::debug
         return &*found;
     }
 
-} // namespace slopkit::debug
+}

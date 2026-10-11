@@ -16,13 +16,10 @@
 #include "ui/components/widgets.hpp"
 #include "ui/theme.hpp"
 
-// Defined in test_main.cpp; the single QApplication every widget suite shares.
 QApplication& slopkit_test_application();
 
 namespace
 {
-    // A QApplication may only exist once per process, so every case uses the one
-    // instance the whole test binary shares.
     void ensure_application()
     {
         static_cast<void>(slopkit_test_application());
@@ -34,8 +31,6 @@ namespace
     using slopkit::ui::widgets::MessageBoxIcon;
     using slopkit::ui::widgets::MessageBoxResult;
 
-    // Runs `action` on the next visible message box from inside a nested event
-    // loop; used to drive a modal box a test cannot reach directly.
     void on_box(const std::function<void(MessageBox&)>& action)
     {
         QTimer::singleShot(0,
@@ -53,8 +48,6 @@ namespace
                            });
     }
 
-    // Runs `setup` on a box, then lets `inspect` drive the shown box from inside
-    // its nested event loop, and returns the recorded result.
     MessageBoxResult run_box(const std::function<void(MessageBox&)>& setup,
                              const std::function<void(MessageBox&)>& inspect)
     {
@@ -65,7 +58,6 @@ namespace
         return box.result();
     }
 
-    // Clicks the button with `label`, or dismisses the box when it is missing.
     void click(MessageBox& box, const QString& label)
     {
         for (QPushButton* button : box.findChildren<QPushButton*>())
@@ -79,7 +71,6 @@ namespace
         box.reject();
     }
 
-    // What a single-OK notice helper showed, captured while it was modal.
     struct NoticeCapture
     {
         int     buttons {0};
@@ -111,7 +102,6 @@ namespace
         return capture;
     }
 
-    // The glyph pixmap a kind shows, or a null pixmap when it shows none.
     QPixmap glyph(MessageBoxIcon icon)
     {
         MessageBox box;
@@ -278,7 +268,6 @@ namespace
         CHECK_FALSE(glyph(MessageBoxIcon::error).isNull());
         CHECK_FALSE(glyph(MessageBoxIcon::success).isNull());
 
-        // No dedicated question asset exists, so it falls back to the info glyph.
         CHECK(glyph(MessageBoxIcon::question).toImage() == glyph(MessageBoxIcon::information).toImage());
         CHECK(glyph(MessageBoxIcon::warning).toImage() != glyph(MessageBoxIcon::error).toImage());
     }
@@ -415,8 +404,6 @@ namespace
         on_box(
             [&title_without_suffix](MessageBox& shown)
             {
-                // The platform appends the display name to a title unless it is
-                // left empty, so the modal run hides it.
                 title_without_suffix = QGuiApplication::applicationDisplayName().isEmpty();
                 shown.reject();
             });
@@ -472,4 +459,4 @@ namespace
         box.close();
     }
 
-} // namespace
+}

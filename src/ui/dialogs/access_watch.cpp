@@ -28,17 +28,15 @@ namespace slopkit::ui::dialogs
 {
     namespace
     {
-        // One row of the recorded-accesses table.
         struct HitRow
         {
-            std::uint64_t instruction {}; // the RIP the stop reported (one past the access)
-            std::uint64_t recovered {};   // the instruction's own address, once decoded
+            std::uint64_t instruction {};
+            std::uint64_t recovered {};
             QString       text;
             std::uint32_t tid {};
             std::uint64_t count {};
         };
 
-        // One row of the instruction-accesses table.
         struct AccessRow
         {
             std::uint64_t address {};
@@ -48,16 +46,9 @@ namespace slopkit::ui::dialogs
             bool          resolved {};
         };
 
-        // The bytes to read ending at a hit's RIP: enough for the longest x86-64
-        // instruction, without over-reading.
         constexpr std::size_t kReadWindow     = 32;
-        // New rows decoded per update, so a hit storm never queues an unbounded
-        // read.
         constexpr std::size_t kMaxRowsPerRead = 32;
 
-        // The hit's RIP is one past the accessing instruction, so the bytes at
-        // RIP are read backwards and the longest decode that ends exactly at RIP
-        // wins; anything else leaves the text unknown.
         [[nodiscard]] std::optional<disasm::Instruction>
         recover_instruction(const std::vector<std::byte>& bytes, std::uint64_t base, std::uint64_t rip)
         {
@@ -80,7 +71,7 @@ namespace slopkit::ui::dialogs
             }
             return best;
         }
-    } // namespace
+    }
 
     AccessWatchDialog::AccessWatchDialog(debug::Controller&       controller,
                                          process::AccessWorker&   worker,
@@ -94,8 +85,6 @@ namespace slopkit::ui::dialogs
         build_layout();
 
         connect(&controller_, &debug::Controller::watchChanged, this, &AccessWatchDialog::refresh);
-        // The gate's own lines (attaching, attached, cancelled, failed) land in
-        // the window's status area, and a give-up drops the pending watch.
         connect(&gate_,
                 &DebugSessionGate::progress,
                 this,
@@ -119,14 +108,10 @@ namespace slopkit::ui::dialogs
         layout->setContentsMargins(6, 6, 6, 6);
         layout->setSpacing(6);
 
-        // Both tables render their addresses through the same formatter the
-        // window's header and hint strings use.
         const ui::AddressText address_text = [this](std::uint64_t address)
         {
             return display_address(address);
         };
-        // The untruncated address the table hovers reveal when a module name
-        // was shortened to fit its column.
         const ui::AddressText full_address_text = [this](std::uint64_t address)
         {
             return ui::format_cell_address_full(controller_.address_mode(), controller_.modules(), address);
@@ -135,7 +120,6 @@ namespace slopkit::ui::dialogs
         header_ = new QLabel(this);
         header_->setObjectName(QStringLiteral("access_watch_header"));
         header_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        // The header quotes the watch address, so it lines up with the tables.
         header_->setFont(mono_font());
         layout->addWidget(header_);
 
@@ -143,7 +127,6 @@ namespace slopkit::ui::dialogs
         status_->setObjectName(QStringLiteral("access_watch_status"));
         layout->addWidget(status_);
 
-        // The recorded accesses: one row per instruction, with its hit count.
         layout->addWidget(widgets::section_header(tr("Recorded accesses"), this));
         hits_model_     = new models::WatchHitsModel(this, address_text, full_address_text);
         recorded_table_ = new QTableView(this);
@@ -171,8 +154,6 @@ namespace slopkit::ui::dialogs
         recorded_buttons->addWidget(close_);
         layout->addLayout(recorded_buttons);
 
-        // The resolved operands of one listing row, each of which can become the
-        // next watch.
         layout->addWidget(widgets::section_header(tr("Instruction accesses"), this));
         instruction_model_ = new models::InstructionAccessModel(this, address_text, full_address_text);
         instruction_table_ = new QTableView(this);
@@ -198,7 +179,6 @@ namespace slopkit::ui::dialogs
 
         hint_ = new widgets::StatusLabel(this);
         hint_->setObjectName(QStringLiteral("access_watch_hint"));
-        // The hint quotes the resolved address, so it is mono like the header.
         hint_->setFont(mono_font());
         layout->addWidget(hint_);
 
@@ -551,4 +531,4 @@ namespace slopkit::ui::dialogs
         instruction_table_->selectRow(row);
     }
 
-} // namespace slopkit::ui::dialogs
+}

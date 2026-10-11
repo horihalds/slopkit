@@ -18,7 +18,6 @@
 
 namespace slopkit::platform
 {
-
     namespace
     {
         std::string_view flavor_name(WineFlavor flavor)
@@ -34,7 +33,7 @@ namespace slopkit::platform
             }
             return "none";
         }
-    } // namespace
+    }
 
     bool is_wine_mapped_path(std::string_view path)
     {
@@ -54,7 +53,6 @@ namespace slopkit::platform
         {
             return true;
         }
-        // Windows drive-letter path such as `Z:\game\game.exe`.
         return path.find(":\\") != std::string_view::npos;
     }
 
@@ -198,8 +196,6 @@ namespace slopkit::platform
         const auto environ = read_environ(pid);
         const auto cmdline = read_cmdline_parts(pid);
 
-        // Environment and command line are the cheapest signals; only fall back
-        // to mapping the process when they say nothing.
         auto result = classify_wine_process(environ, cmdline, {});
         if (!result.claimed())
         {
@@ -217,4 +213,4 @@ namespace slopkit::platform
         return result;
     }
 
-} // namespace slopkit::platform
+}

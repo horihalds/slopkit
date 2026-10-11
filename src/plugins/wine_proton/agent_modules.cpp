@@ -33,7 +33,7 @@ namespace slopkit::plugins::wine_proton
                 out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
             }
         }
-    } // namespace
+    }
 
     void decode_utf16(std::span<const char16_t> text, std::string& out)
     {
@@ -43,7 +43,6 @@ namespace slopkit::plugins::wine_proton
             char32_t       code = unit;
             if (unit >= 0xD800 && unit <= 0xDBFF)
             {
-                // A high surrogate is only valid when a low surrogate follows.
                 if (index + 1 < text.size() && text[index + 1] >= 0xDC00 && text[index + 1] <= 0xDFFF)
                 {
                     code = 0x10000 + ((static_cast<char32_t>(unit) - 0xD800) << 10)
@@ -57,7 +56,6 @@ namespace slopkit::plugins::wine_proton
             }
             else if (unit >= 0xDC00 && unit <= 0xDFFF)
             {
-                // A low surrogate without a preceding high one.
                 code = 0xFFFD;
             }
             append_utf8(code, out);
@@ -79,9 +77,6 @@ namespace slopkit::plugins::wine_proton
             module.is_main = image.main;
             module.name    = image.name;
 
-            // The procfs entry containing the image base supplies the on-disk
-            // identity; a loader entry with no counterpart keeps an empty path
-            // and offset 0.
             const auto overlay = std::ranges::find_if(maps,
                                                       [&](const platform::MappedRegion& map)
                                                       {
@@ -98,4 +93,4 @@ namespace slopkit::plugins::wine_proton
         std::ranges::sort(merged, {}, &process::ModuleInfo::base);
         return merged;
     }
-} // namespace slopkit::plugins::wine_proton
+}

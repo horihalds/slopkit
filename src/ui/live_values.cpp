@@ -9,7 +9,6 @@
 
 namespace slopkit::ui
 {
-
     LiveValues::LiveValues(process::AccessWorker&   worker,
                            process::AttachedTarget& target,
                            SettingsController&      settings,
@@ -72,8 +71,6 @@ namespace slopkit::ui
 
     void LiveValues::poll()
     {
-        // The cadence, enable flag and interval are re-read every poll, so a
-        // settings change applies without a restart and without a timer restart.
         refresh_from_settings();
 
         if (!enabled_)
@@ -152,8 +149,6 @@ namespace slopkit::ui
             }
         }
 
-        // The tickers follow the read pass on the same interval; each applies
-        // its own in-flight and spacing rules, so a busy one is simply not ready.
         const std::chrono::milliseconds interval {interval_ms_};
         for (LiveTicker* ticker : tickers_)
         {
@@ -173,7 +168,7 @@ namespace slopkit::ui
     {
         if (pending_ != job_id)
         {
-            return; // Stale or superseded: the request set has moved on.
+            return;
         }
         pending_.reset();
 
@@ -209,4 +204,4 @@ namespace slopkit::ui
         pending_ids_.clear();
     }
 
-} // namespace slopkit::ui
+}

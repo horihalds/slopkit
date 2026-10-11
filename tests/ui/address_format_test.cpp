@@ -14,7 +14,6 @@ TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
         std::vector<slopkit::process::ModuleInfo> modules;
         modules.push_back(module_image("low", 0x2000, 0x1000));
         modules.push_back(module_image("high", 0x5000, 0x100));
-        // Not file-backed: dropped from the map.
         slopkit::process::ModuleInfo anonymous;
         anonymous.base = 0x3000;
         anonymous.size = 0x1000;
@@ -28,12 +27,11 @@ TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
         REQUIRE(spans.containing(0x1000) != nullptr);
         CHECK(spans.containing(0x1000)->name == "first");
         CHECK(spans.containing(0x17FF)->name == "first");
-        CHECK(spans.containing(0x1800) == nullptr); // Half-open: base + size is outside.
+        CHECK(spans.containing(0x1800) == nullptr);
         CHECK(spans.containing(0x2FFF)->name == "low");
-        CHECK(spans.containing(0x3000) == nullptr); // The anonymous mapping never labels an address.
+        CHECK(spans.containing(0x3000) == nullptr);
         CHECK(spans.containing(0x0FFF) == nullptr);
 
-        // The name lookup is case-insensitive.
         REQUIRE(spans.find_by_name("LOW") != nullptr);
         CHECK(spans.find_by_name("High")->base == 0x5000);
         CHECK(spans.find_by_name("missing") == nullptr);
@@ -50,7 +48,6 @@ TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
         std::vector<slopkit::process::ModuleInfo> modules;
         modules.push_back(module_image("low", 0x2000, 0x1000));
         modules.push_back(module_image("lib", 0x8000, 0x100));
-        // The flagged main image is not the lowest-based one.
         slopkit::process::ModuleInfo game = module_image("game", 0x5000, 0x1000);
         game.is_main                      = true;
         modules.push_back(game);
@@ -65,7 +62,6 @@ TEST_CASE("the module spans keep file-backed images sorted by base", "[ui]")
         CHECK_FALSE(spans.containing(0x2000)->is_main);
         CHECK_FALSE(spans.containing(0x8000)->is_main);
 
-        // Without a flagged image the lowest-based image becomes the main one.
         const std::vector<slopkit::process::ModuleInfo> unflagged {module_image("high", 0x5000, 0x100),
                                                                    module_image("low", 0x2000, 0x1000)};
         spans.set_modules(unflagged);
@@ -96,17 +92,12 @@ TEST_CASE("long module names are shortened before the extension", "[ui]")
 {
     using slopkit::ui::elide_module_name;
 
-    // The acceptance example: first 6 and last 5 of the stem, extension kept.
     CHECK(elide_module_name("DyingLightGame_TheBeast_x64_rwdi.exe") == QStringLiteral("DyingL..._rwdi.exe"));
-    // At the 16-character budget exactly the name is unchanged; 17 is shortened.
     CHECK(elide_module_name("SixteenCharsHere.dll") == QStringLiteral("SixteenCharsHere.dll"));
     CHECK(elide_module_name("SeventeenCharsHerr.dll") == QStringLiteral("Sevent...sHerr.dll"));
-    // No dot at all: the whole name is the stem.
     CHECK(elide_module_name("a_very_long_module_name_without_dot") == QStringLiteral("a_very...t_dot"));
-    // A leading dot is part of the name, not an extension.
     CHECK(elide_module_name(".hidden") == QStringLiteral(".hidden"));
     CHECK(elide_module_name(".a_very_long_hidden_file") == QStringLiteral(".a_ver..._file"));
-    // A short name keeps its extension unchanged.
     CHECK(elide_module_name("libc.so.6") == QStringLiteral("libc.so.6"));
     CHECK(elide_module_name("") == QString());
 }
@@ -118,7 +109,6 @@ TEST_CASE("module-relative addresses render as name+HEX", "[ui]")
     CHECK(slopkit::ui::format_module_relative(span, 0x1000) == QStringLiteral("app+0x0"));
     CHECK(slopkit::ui::format_module_relative(span, 0x1040) == QStringLiteral("app+0x40"));
     CHECK(slopkit::ui::format_module_relative(span, 0x1A2B) == QStringLiteral("app+0xA2B"));
-    // An explicit 0x prefix and no leading zeros.
     CHECK(slopkit::ui::format_module_relative(span, 0x1040).contains(QStringLiteral("0x")));
 }
 
@@ -127,7 +117,6 @@ TEST_CASE("absolute addresses render as 0xHEX", "[ui]")
     CHECK(slopkit::ui::format_absolute(0) == QStringLiteral("0x0"));
     CHECK(slopkit::ui::format_absolute(0x1040) == QStringLiteral("0x1040"));
     CHECK(slopkit::ui::format_absolute(0x5000000) == QStringLiteral("0x5000000"));
-    // Upper-case hex, 0x prefixed, no leading zeros.
     CHECK(slopkit::ui::format_absolute(0xabcdef) == QStringLiteral("0xABCDEF"));
 }
 
@@ -136,9 +125,7 @@ TEST_CASE("padded hex zero-fills to the requested width", "[ui]")
     CHECK(slopkit::ui::format_padded_hex(0) == QStringLiteral("0x0000000000000000"));
     CHECK(slopkit::ui::format_padded_hex(0x41) == QStringLiteral("0x0000000000000041"));
     CHECK(slopkit::ui::format_padded_hex(0xFFFFFFFFFFFFFFFF) == QStringLiteral("0xFFFFFFFFFFFFFFFF"));
-    // A value wider than the asked-for width keeps all of its digits.
     CHECK(slopkit::ui::format_padded_hex(0x12345, 2) == QStringLiteral("0x12345"));
-    // The Access Watch operand's 2-digit byte and displacement widths.
     CHECK(slopkit::ui::format_padded_hex(0x41, 2) == QStringLiteral("0x41"));
     CHECK(slopkit::ui::format_padded_hex(0x9, 2) == QStringLiteral("0x09"));
 }
@@ -149,19 +136,16 @@ TEST_CASE("the pane and cell address helpers pick their fallback", "[ui]")
     slopkit::ui::ModuleSpans                        spans;
     spans.set_modules(modules);
 
-    // Inside a span both forms are module-relative.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x1040)
           == QStringLiteral("app+0x40"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x1040)
           == QStringLiteral("app+0x40"));
 
-    // Outside every span the pane keeps the fixed width, the cell stays compact.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
           == QStringLiteral("0x0000000005000000"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::module_relative, spans, 0x5000000)
           == QStringLiteral("0x5000000"));
 
-    // Absolute mode never goes module-relative.
     CHECK(slopkit::ui::format_pane_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
           == QStringLiteral("0x0000000000001040"));
     CHECK(slopkit::ui::format_cell_address(slopkit::ui::AddressMode::absolute, spans, 0x1040)
@@ -178,10 +162,8 @@ TEST_CASE("module-relative text falls back in absolute mode and outside spans", 
     REQUIRE(relative.has_value());
     CHECK(*relative == QStringLiteral("app+0x40"));
 
-    // Outside every span there is no module-relative text, whatever the mode.
     CHECK_FALSE(
         slopkit::ui::module_relative_text(slopkit::ui::AddressMode::module_relative, spans, 0x5000000).has_value());
-    // The absolute mode never produces module-relative text.
     CHECK_FALSE(slopkit::ui::module_relative_text(slopkit::ui::AddressMode::absolute, spans, 0x1040).has_value());
 
     slopkit::ui::ModuleSpans empty;
@@ -198,11 +180,9 @@ TEST_CASE("a shortened module label still has an untruncated spelling", "[ui]")
 
     const slopkit::ui::ModuleSpan* span = spans.containing(0x1000 + 0x1A2B);
     REQUIRE(span != nullptr);
-    // The stored name is untouched, only the label is shortened.
     CHECK(span->name == long_name);
     CHECK(span->label() == "DyingL..._rwdi.exe");
 
-    // Every rendered form shorts the name; the full forms keep it.
     CHECK(slopkit::ui::format_module_relative(*span, 0x1000 + 0x1A2B) == QStringLiteral("DyingL..._rwdi.exe+0x1A2B"));
     CHECK(slopkit::ui::format_module_relative_full(*span, 0x1000 + 0x1A2B)
           == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x1A2B"));
@@ -237,34 +217,25 @@ TEST_CASE("address text parses both absolute and module-relative forms", "[ui]")
     slopkit::ui::ModuleSpans                        spans;
     spans.set_modules(modules);
 
-    // Absolute forms still go through scan::parse_address: bare digits are hex,
-    // `0x…` is hex and `#…` is decimal.
     CHECK(slopkit::ui::parse_address_text("0x1040", spans) == std::optional<std::uint64_t> {0x1040});
     CHECK(slopkit::ui::parse_address_text("1040", spans) == std::optional<std::uint64_t> {0x1040});
     CHECK(slopkit::ui::parse_address_text("#1040", spans) == std::optional<std::uint64_t> {1040});
-    // The zero-padded text the panes prefill round-trips as hex.
     CHECK(slopkit::ui::parse_address_text("0000000000001040", spans) == std::optional<std::uint64_t> {0x1040});
 
-    // module+RVA: case-insensitive name, optional 0x on the RVA.
     CHECK(slopkit::ui::parse_address_text("LOW+40", spans) == std::optional<std::uint64_t> {0x1040});
     CHECK(slopkit::ui::parse_address_text("low+0x40", spans) == std::optional<std::uint64_t> {0x1040});
     CHECK(slopkit::ui::parse_address_text("low+0", spans) == std::optional<std::uint64_t> {0x1000});
 
-    // A bare module name resolves to its base, case-insensitively.
     CHECK(slopkit::ui::parse_address_text("low", spans) == std::optional<std::uint64_t> {0x1000});
     CHECK(slopkit::ui::parse_address_text("LOW", spans) == std::optional<std::uint64_t> {0x1000});
 
-    // An unknown module or an unparsable RVA yields nothing.
     CHECK_FALSE(slopkit::ui::parse_address_text("missing+40", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("missing", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("low+bogus", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("not an address", spans).has_value());
 
-    // A bracketed pointer chain is never resolved offline: the worker has to
-    // dereference it, so `[low+40]` is not read as `base + 40`.
     CHECK_FALSE(slopkit::ui::parse_address_text("[low+40]", spans).has_value());
     CHECK_FALSE(slopkit::ui::parse_address_text("[low]+40", spans).has_value());
-    // A bracket-free module+offset still resolves inline.
     CHECK(slopkit::ui::parse_address_text("low+40", spans) == std::optional<std::uint64_t> {0x1040});
 }
 
@@ -275,21 +246,16 @@ TEST_CASE("address text resolves symbol names", "[ui]")
     spans.set_modules(modules);
     const std::vector<slopkit::expr::SymbolRef> symbols {
         {      "hp", 0x1337},
-        {     "low", 0x9999}, // collides with the module name
+        {     "low", 0x9999},
         {"deadbeef", 0xABCD},
     };
 
-    // A bare symbol name resolves to its value, case-insensitively.
     CHECK(slopkit::ui::parse_address_text("hp", spans, symbols) == std::optional<std::uint64_t> {0x1337});
     CHECK(slopkit::ui::parse_address_text("HP", spans, symbols) == std::optional<std::uint64_t> {0x1337});
-    // A symbol base plus an offset.
     CHECK(slopkit::ui::parse_address_text("hp+10", spans, symbols) == std::optional<std::uint64_t> {0x1347});
-    // A loaded module still wins over a colliding symbol.
     CHECK(slopkit::ui::parse_address_text("low", spans, symbols) == std::optional<std::uint64_t> {0x1000});
-    // A symbol wins over the bare-hex reading of the same text.
     CHECK(slopkit::ui::parse_address_text("deadbeef", spans, symbols) == std::optional<std::uint64_t> {0xABCD});
 
-    // An empty snapshot behaves exactly as before.
     CHECK(slopkit::ui::parse_address_text("deadbeef", spans) == std::optional<std::uint64_t> {0xDEADBEEF});
     CHECK_FALSE(slopkit::ui::parse_address_text("hp", spans).has_value());
 }

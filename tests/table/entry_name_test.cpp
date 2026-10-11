@@ -12,7 +12,7 @@ namespace
     using slopkit::table::EntryKind;
     using slopkit::table::kind_for_member;
     using slopkit::table::member_stem;
-} // namespace
+}
 
 TEST_CASE("an entry member name is derived from its description", "[table]")
 {
@@ -20,13 +20,11 @@ TEST_CASE("an entry member name is derived from its description", "[table]")
     CHECK(entry_member_name("health", none) == "health.txt");
     CHECK(entry_member_name("player health", none) == "player health.txt");
 
-    // Nothing usable falls back to "unnamed".
     CHECK(entry_member_name("", none) == "unnamed.txt");
     CHECK(entry_member_name("   ", none) == "unnamed.txt");
     CHECK(entry_member_name(".", none) == "unnamed.txt");
     CHECK(entry_member_name("..", none) == "unnamed.txt");
 
-    // Trailing dots and whitespace are dropped.
     CHECK(entry_member_name("health.", none) == "health.txt");
     CHECK(entry_member_name("health..  ", none) == "health.txt");
 }
@@ -51,7 +49,6 @@ TEST_CASE("a name collision gets the smallest free number", "[table]")
     taken.push_back("unnamed2.txt");
     CHECK(entry_member_name("", taken) == "unnamed3.txt");
 
-    // The first free number wins, not just the next one.
     taken.clear();
     taken.push_back("health.txt");
     taken.push_back("health3.txt");
@@ -73,8 +70,6 @@ TEST_CASE("a script entry member name uses the lua extension", "[table]")
     CHECK(entry_member_name("greet", none, ".lua") == "greet.lua");
     CHECK(entry_member_name("", none, ".lua") == "unnamed.lua");
 
-    // The numbering is per extension, so a value entry and a script entry may
-    // share a stem.
     std::vector<std::string> taken;
     CHECK(entry_member_name("health", taken, ".txt") == "health.txt");
     taken.push_back("health.txt");

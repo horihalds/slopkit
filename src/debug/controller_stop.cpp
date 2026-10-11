@@ -8,11 +8,9 @@
 
 namespace slopkit::debug
 {
-
     std::size_t Controller::drain(std::size_t max_jobs)
     {
         const std::size_t drained = worker_.drain(max_jobs);
-        // A hit burst flushes once per drain, never once per hit.
         if (watch_dirty_)
         {
             watch_dirty_ = false;
@@ -46,27 +44,18 @@ namespace slopkit::debug
 
     void Controller::apply_stop(StopEvent stop)
     {
-        // A stop we asked for only to install or remove a debug register: apply
-        // the queued ops and keep the session running without ever reporting a
-        // stop. The Stop Debugging request stays first, so it still wins.
         if (!stop_requested_ && (maintenance_stop_ || !pending_slot_ops_.empty()))
         {
             apply_pending_slot_ops();
             return;
         }
 
-        // A stop we asked for only to read the registers once: read them and
-        // resume, without ever reporting a stop or touching the listing.
         if (!stop_requested_ && capture_pending_)
         {
             capture_registers_now();
             return;
         }
 
-        // A stop that ends a pending step-out is the transient trap at the
-        // caller's return address being hit; any other stop cancels the step-out
-        // and is reported as usual. Maintenance and capture stops return above,
-        // so an internal round-trip never drops a pending step-out.
         if (!stop_requested_ && step_out_id_.has_value())
         {
             const Breakpoint* pending = breakpoints_.software_at(stop.trap_address);
@@ -78,8 +67,6 @@ namespace slopkit::debug
             }
         }
 
-        // A watch hit: record it and keep collecting, so the process is never
-        // left paused for the user. `record` always consumes the stop.
         if (!stop_requested_ && stop.reason == StopReason::breakpoint && stop.breakpoint_slot.has_value()
             && watch_.state() == WatchState::watching)
         {
@@ -121,8 +108,6 @@ namespace slopkit::debug
             {
                 if (step_out_id_.has_value() && entry->id == *step_out_id_)
                 {
-                    // The step-out's own trap: erase the transient entry and
-                    // report an ordinary stop, counting no hit for it.
                     finish_step_out();
                 }
                 else
@@ -131,10 +116,6 @@ namespace slopkit::debug
                     emit breakpointsChanged();
                 }
 
-                // An int3 leaves RIP one past the trap; rewind it so the
-                // register view and the listing show the trapped instruction,
-                // and so a following step reads the trap address immediately
-                // instead of waiting for the re-read.
                 last_stop_.address = stop.trap_address;
                 for (RegisterValue& value : registers_)
                 {
@@ -177,8 +158,6 @@ namespace slopkit::debug
 
     void Controller::capture_registers(std::function<void()> on_captured)
     {
-        // A stopped session already holds the register file, and no session at
-        // all has nothing to read: hand the caller back right away.
         if (state_ != State::running)
         {
             if (on_captured)
@@ -194,8 +173,6 @@ namespace slopkit::debug
 
     void Controller::capture_registers_now()
     {
-        // The state flip is internal only: it is undone by the resume below and
-        // never reaches the UI, so the panes keep showing "Running...".
         state_         = State::stopped;
         const JobId id = worker_.next_job_id();
         worker_.submit_registers(id,
@@ -222,8 +199,6 @@ namespace slopkit::debug
             }
         }
 
-        // The callback runs before the resume, so it sees the registers of the
-        // stop; the target is put back running whether or not the read worked.
         std::function<void()> callback = std::move(capture_);
         capture_                       = nullptr;
         capture_pending_               = false;
@@ -231,7 +206,6 @@ namespace slopkit::debug
         {
             callback();
         }
-        // Back to running without a signal: the UI never saw the internal stop.
         state_ = State::running;
         submit_resume(active_tid());
     }
@@ -280,8 +254,6 @@ namespace slopkit::debug
             return;
         }
 
-        // The queue is drained: drop the entries whose disarm landed, then resume
-        // if this was a maintenance round-trip.
         if (!pending_removals_.empty())
         {
             for (const std::uint64_t id : pending_removals_)
@@ -299,4 +271,4 @@ namespace slopkit::debug
         }
     }
 
-} // namespace slopkit::debug
+}

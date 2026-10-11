@@ -15,8 +15,6 @@
 
 namespace slopkit::plugin
 {
-
-    // RAII wrapper over a dlopen handle. Non-copyable, movable.
     class DynamicLibrary
     {
     public:
@@ -45,22 +43,17 @@ namespace slopkit::plugin
 
     class Plugin;
 
-    // Host-side log context handed to a plugin as host_services::user_data so
-    // host_log can attribute a record to it. Owned by the Plugin.
     struct PluginLogContext
     {
-        std::string           plugin_id; // empty until the descriptor is read
+        std::string           plugin_id;
         std::filesystem::path path;
     };
 
     namespace detail
     {
-        // The one factory for host services: fills abi_version, struct_size,
-        // alloc/dealloc/log and points user_data at `context`.
         slopkit_host_services make_host_services(PluginLogContext* context);
-    } // namespace detail
+    }
 
-    // RAII attachment to a target held by a plugin.
     class PluginSession
     {
     public:
@@ -84,37 +77,21 @@ namespace slopkit::plugin
         std::expected<std::vector<process::ThreadInfo>, process::AccessError> threads();
         std::expected<std::vector<process::RegionInfo>, process::AccessError> regions();
 
-        // True when the plugin implements the ABI 1.5 suspend operations.
         [[nodiscard]] bool                        supports_suspend() const noexcept;
-        // Stops / resumes every thread of the session's target.
         std::expected<void, process::AccessError> suspend_target();
         std::expected<void, process::AccessError> resume_target();
 
-        // True when the plugin implements the ABI 1.6 allocation operations.
         [[nodiscard]] bool                                 supports_allocation() const noexcept;
-        // Maps `size` bytes (page-rounded) of read/write/execute memory in the
-        // target, as close to `near_address` as it can (0 = anywhere): the hint
-        // itself, else free space below it, else above it, else anywhere. Returns
-        // the mapping base.
         std::expected<std::uint64_t, process::AccessError> allocate_memory(std::size_t   size,
                                                                            std::uint64_t near_address);
-        // Unmaps a mapping an earlier allocate_memory of this session returned.
         std::expected<void, process::AccessError>          free_memory(std::uint64_t address);
 
-        // True when the plugin implements the ABI 1.7 validation operation.
         [[nodiscard]] bool                        supports_validation() const noexcept;
-        // True when [address, address + size) is mapped and readable in the
-        // target. An unmapped or unreadable range is false, never an error.
         std::expected<bool, process::AccessError> validate_memory(std::uint64_t address, std::size_t size);
 
-        // True when the plugin implements the ABI 1.4 debug operations.
         [[nodiscard]] bool                         supports_debug() const noexcept;
-        // Raw ABI view, for the debug backend that maps the debug_* operations
-        // onto host types. Null when the session is invalid.
         [[nodiscard]] const slopkit_plugin_vtable* vtable() const noexcept;
         [[nodiscard]] void*                        handle() const noexcept;
-        // Releases a buffer a debug_* operation returned through the plugin
-        // allocator.
         void                                       dealloc(void* memory) noexcept;
 
     private:
@@ -124,8 +101,6 @@ namespace slopkit::plugin
         void*         handle_ {nullptr};
     };
 
-    // A loaded plugin: descriptor plus typed calls that translate slopkit_result
-    // into std::expected and manage buffers through the host allocator.
     class Plugin
     {
     public:
@@ -166,4 +141,4 @@ namespace slopkit::plugin
         process::AccessMethod        access_methods_ {process::AccessMethod::none};
     };
 
-} // namespace slopkit::plugin
+}

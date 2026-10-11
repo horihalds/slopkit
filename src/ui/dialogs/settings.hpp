@@ -22,14 +22,10 @@ class QStackedWidget;
 namespace slopkit::ui::widgets
 {
     class StatusLabel;
-} // namespace slopkit::ui::widgets
+}
 
 namespace slopkit::ui::dialogs
 {
-
-    // The Settings dialog: a category list on the left and the selected category
-    // on the right. It is a view over the shared SettingsController, which owns
-    // persistence and publishes the changes.
     class SettingsDialog : public QDialog
     {
         Q_OBJECT
@@ -40,24 +36,18 @@ namespace slopkit::ui::dialogs
                        SettingsController& settings,
                        QWidget*            parent = nullptr);
 
-        // Selects the About category; used by Help > About slopkit.
         void select_about();
 
-        // Keeps the Appearance selector in step with the active theme.
         void set_dark_theme(bool dark);
 
-        // Keeps the Addresses selector in step without re-emitting.
         void set_address_mode(ui::AddressMode mode);
 
-        // Keeps the Tables switch in step without re-emitting.
         void set_auto_load_last_table(bool enabled);
 
-        // Keeps the live-update switch and interval in step without re-emitting.
         void set_live_update_enabled(bool enabled);
         void set_live_update_interval_ms(int interval_ms);
 
     signals:
-        // The new fast-scan alignment default, forwarded to the scanner panel.
         void alignmentChanged(quint64 alignment);
 
     protected:
@@ -97,4 +87,4 @@ namespace slopkit::ui::dialogs
         widgets::StatusLabel* status_ {};
     };
 
-} // namespace slopkit::ui::dialogs
+}

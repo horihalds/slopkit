@@ -91,8 +91,6 @@ namespace slopkit::disasm
             return found == register_table().end() ? std::nullopt : std::optional<ZydisRegister>(found->second);
         }
 
-        // One number the way an instruction prints it: `0x…` hex; a bare hex
-        // number and `#…` decimal are also accepted; optionally signed.
         [[nodiscard]] std::optional<std::uint64_t> parse_number(std::string_view text)
         {
             text = trim(text);
@@ -124,7 +122,6 @@ namespace slopkit::disasm
             return negative ? static_cast<std::uint64_t>(0) - *value : *value;
         }
 
-        // The memory operand sizes the listing prints (`qword ptr`, `xmmword`).
         [[nodiscard]] std::optional<unsigned char> size_keyword(std::string_view text)
         {
             const std::string name = lower(trim(text));
@@ -180,10 +177,9 @@ namespace slopkit::disasm
             ZydisRegister    index {};
             unsigned char    scale {};
             std::int64_t     displacement {};
-            unsigned char    size {}; // memory access size, 0 when the text does not say
+            unsigned char    size {};
         };
 
-        // The `[...]` expression: `RBP-0x04`, `RAX+RCX*4+0x10`, `0x22FE`.
         [[nodiscard]] std::expected<Operand, std::string> parse_memory(std::string_view expression)
         {
             Operand operand;
@@ -251,8 +247,6 @@ namespace slopkit::disasm
                 operand.displacement += static_cast<std::int64_t>(signed_value);
             }
 
-            // The encoder wants no scale at all when there is no index, and at
-            // least one when there is.
             operand.scale = operand.index == ZYDIS_REGISTER_NONE ? 0 : std::max<unsigned char>(operand.scale, 1);
             return operand;
         }
@@ -285,7 +279,6 @@ namespace slopkit::disasm
                 return std::unexpected(std::format("unrecognised operand '{}'", text));
             }
 
-            // An optional size keyword (`byte ptr`, `qword`) precedes the bracket.
             std::string_view prefix = trim(text.substr(0, bracket));
             unsigned char    size   = 0;
             if (!prefix.empty())
@@ -329,8 +322,6 @@ namespace slopkit::disasm
             return mode == MachineMode::legacy_32 ? ZYDIS_MACHINE_MODE_LEGACY_32 : ZYDIS_MACHINE_MODE_LONG_64;
         }
 
-        // The bytes a register operand names, for sizing a memory operand whose
-        // text does not say how wide it is.
         [[nodiscard]] unsigned char register_bytes(ZydisRegister reg, MachineMode mode)
         {
             if (reg == ZYDIS_REGISTER_NONE)
@@ -353,7 +344,7 @@ namespace slopkit::disasm
             }
             return status;
         }
-    } // namespace
+    }
 
     std::expected<std::vector<std::byte>, std::string> assemble(std::string_view text, const AssembleContext& context)
     {
@@ -427,8 +418,6 @@ namespace slopkit::disasm
                 unsigned char size = operand.size;
                 if (size == 0)
                 {
-                    // A sibling register fixes the width; otherwise fall back to
-                    // the size of the operand the edited instruction held.
                     for (const Operand& sibling : operands)
                     {
                         if (sibling.type == ZYDIS_OPERAND_TYPE_REGISTER)
@@ -450,8 +439,6 @@ namespace slopkit::disasm
             }
         }
 
-        // The listing prints a rip-relative operand as an absolute address; give
-        // that operand the register the instruction held so it stays relative.
         std::size_t memory_position = 0;
         for (std::size_t i = 0; i < operands.size(); ++i)
         {
@@ -470,10 +457,6 @@ namespace slopkit::disasm
         std::vector<std::byte> bytes;
         ZyanStatus             status = encode(request, context.address, bytes);
 
-        // A base-less absolute operand can also be written relative to the
-        // instruction pointer (`lea` has no absolute form at all); encode that
-        // way too and keep whichever is shorter, so an edit never grows an
-        // instruction it could fit.
         for (std::size_t i = 0; i < operands.size(); ++i)
         {
             if (operands[i].type != ZYDIS_OPERAND_TYPE_MEMORY || operands[i].base != ZYDIS_REGISTER_NONE
@@ -496,9 +479,6 @@ namespace slopkit::disasm
             }
         }
 
-        // A `jmp`, `call` or `j<cc>` with a single immediate target encodes to a
-        // rel8/rel32 displacement, so its target has to stay within ±2 GB. Every
-        // other instruction fails for a reason that is not reach.
         const bool relative_branch = (name == "call" || (!name.empty() && name.front() == 'j')) && operands.size() == 1
                                   && operands[0].type == ZYDIS_OPERAND_TYPE_IMMEDIATE;
 
@@ -560,4 +540,4 @@ namespace slopkit::disasm
         return bytes;
     }
 
-} // namespace slopkit::disasm
+}

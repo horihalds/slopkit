@@ -40,7 +40,7 @@ namespace
         }
         return engine.snapshot();
     }
-} // namespace
+}
 
 TEST_CASE("the scan engine finds a sentinel in the current process through the plugin", "[scan][integration]")
 {

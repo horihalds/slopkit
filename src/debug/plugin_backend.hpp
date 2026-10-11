@@ -15,10 +15,6 @@ namespace slopkit::plugin
 
 namespace slopkit::debug
 {
-
-    // DebugBackend over plugin::PluginHost: opens its own plugin session, calls
-    // the ABI 1.4 debug operations and maps them onto the host types. A plugin
-    // that leaves the debug pointers null reports `unsupported`.
     class PluginBackend final : public DebugBackend
     {
     public:
@@ -54,4 +50,4 @@ namespace slopkit::debug
         std::optional<plugin::PluginSession> session_;
     };
 
-} // namespace slopkit::debug
+}

@@ -8,7 +8,6 @@
 
 namespace
 {
-    // Proves the model renders through the formatter it was handed.
     QString format(std::uint64_t address)
     {
         return QStringLiteral("@") + QString::number(address, 16);
@@ -18,7 +17,7 @@ namespace
     {
         return slopkit::ui::ResolvedAccess {address, QStringLiteral("[RBX+10]"), width, writes, resolved};
     }
-} // namespace
+}
 
 TEST_CASE("instruction accesses render through the injected formatter", "[ui][models]")
 {
@@ -35,8 +34,6 @@ TEST_CASE("instruction accesses render through the injected formatter", "[ui][mo
     CHECK(model.data(model.index(0, slopkit::ui::models::InstructionAccessModel::access), Qt::DisplayRole).toString()
           == QStringLiteral("read"));
 
-    // An operand the register context could not resolve shows "?" and explains
-    // itself, while its width still counts.
     CHECK(model.data(model.index(1, slopkit::ui::models::InstructionAccessModel::address), Qt::DisplayRole).toString()
           == QStringLiteral("?"));
     CHECK(model.data(model.index(1, slopkit::ui::models::InstructionAccessModel::access), Qt::DisplayRole).toString()
@@ -65,7 +62,6 @@ TEST_CASE("instruction accesses render in the embedded mono font", "[ui][models]
     CHECK(model.data(model.index(0, InstructionAccessModel::operand), Qt::FontRole).value<QFont>().family() == family);
     CHECK(model.data(model.index(0, InstructionAccessModel::width), Qt::FontRole).value<QFont>().family() == family);
 
-    // The access word column keeps the UI font.
     CHECK_FALSE(model.data(model.index(0, InstructionAccessModel::access), Qt::FontRole).isValid());
 }
 
@@ -91,8 +87,6 @@ TEST_CASE("instruction accesses answer the full-text role with the untruncated a
     CHECK(model.data(address, slopkit::ui::widgets::kFullTextRole).toString()
           == QStringLiteral("a-long-module-name.exe+1040"));
 
-    // A resolved-only role: an unresolved row keeps its explanatory tooltip and
-    // offers no full text to reveal.
     model.set({access(0, 8, true, false)});
     CHECK_FALSE(model.data(address, slopkit::ui::widgets::kFullTextRole).isValid());
     CHECK_FALSE(model.data(address, Qt::ToolTipRole).toString().isEmpty());

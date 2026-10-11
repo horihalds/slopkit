@@ -6,8 +6,6 @@ TEST_CASE("the found list keeps one result line", "[ui]")
 {
     application();
 
-    // A fresh panel already shows the pre-scan line, and it only ever has the one
-    // label, so nothing can appear or disappear and shift the table.
     slopkit::scan::ScanEngine           idle_engine;
     slopkit::table::AddressTable        idle_table;
     slopkit::ui::panels::FoundListPanel idle_panel {idle_engine, idle_table};
@@ -52,7 +50,6 @@ TEST_CASE("the found list stays empty until the scan finishes", "[ui]")
 {
     application();
 
-    // 300 matches at 4-byte spacing.
     auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4, std::byte {0});
     for (std::size_t i = 0; i < 300; ++i)
     {
@@ -60,7 +57,6 @@ TEST_CASE("the found list stays empty until the scan finishes", "[ui]")
         std::memcpy(bytes->data() + i * 4, &value, sizeof(value));
     }
 
-    // Hold the scan's read so its running state stays observable.
     auto                        release = std::make_shared<std::atomic<bool>>(false);
     slopkit::scan::MemorySource source;
     source.read = [bytes,
@@ -104,13 +100,11 @@ TEST_CASE("the found list stays empty until the scan finishes", "[ui]")
     auto* header = panel.findChild<QLabel*>();
     REQUIRE(header != nullptr);
 
-    // While the scan runs the list is empty and the header reports progress.
     panel.refresh();
     CHECK(model->rowCount() == 0);
     CHECK(header->text().startsWith(QStringLiteral("Scanning... ")));
     CHECK(view->selectionModel()->selectedRows().isEmpty());
 
-    // Releasing the read lets the scan finish; the rows appear with it.
     release->store(true);
     for (int i = 0; i < 5000 && engine.is_running(); ++i)
     {
@@ -127,7 +121,6 @@ TEST_CASE("the found list keeps the rows when a refinement is cancelled", "[ui]"
 {
     application();
 
-    // 300 matches at 4-byte spacing.
     auto bytes = std::make_shared<std::vector<std::byte>>(300 * 4, std::byte {0});
     for (std::size_t i = 0; i < 300; ++i)
     {
@@ -135,7 +128,6 @@ TEST_CASE("the found list keeps the rows when a refinement is cancelled", "[ui]"
         std::memcpy(bytes->data() + i * 4, &value, sizeof(value));
     }
 
-    // Hold the refinement's read so the cancel lands while it runs.
     auto                        block   = std::make_shared<std::atomic<bool>>(false);
     auto                        release = std::make_shared<std::atomic<bool>>(false);
     slopkit::scan::MemorySource source;
@@ -191,7 +183,6 @@ TEST_CASE("the found list keeps the rows when a refinement is cancelled", "[ui]"
     REQUIRE(model->rowCount() == slopkit::scan::kDisplayPage);
     REQUIRE(header->text() == QStringLiteral("Showing 256 of 300 results"));
 
-    // Refine while its read is held, then cancel before it finishes.
     block->store(true);
     slopkit::scan::ScanConfig refinement;
     refinement.type       = slopkit::scan::ScanType::unchanged;
@@ -211,7 +202,6 @@ TEST_CASE("the found list keeps the rows when a refinement is cancelled", "[ui]"
     }
     REQUIRE_FALSE(engine.is_running());
 
-    // The previous result set is back on screen.
     panel.refresh();
     CHECK(model->rowCount() == slopkit::scan::kDisplayPage);
     CHECK(header->text() == QStringLiteral("Showing 256 of 300 results"));
@@ -225,7 +215,6 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     slopkit::table::AddressTable        table;
     slopkit::ui::panels::FoundListPanel panel {engine, table};
 
-    // An empty model still builds the row menu, so a stale row cannot break it.
     QMenu menu;
     panel.populate_row_menu(menu, 0);
     CHECK(menu.toolTipsVisible());
@@ -252,7 +241,6 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
                              QStringLiteral("Address (absolute)"),
                              QStringLiteral("Address + value")});
 
-    // Without a target the watch entries stay visible but explain themselves.
     QAction* watch_writes   = nullptr;
     QAction* watch_accesses = nullptr;
     for (QAction* action : menu.actions())
@@ -272,8 +260,6 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     CHECK_FALSE(watch_accesses->isEnabled());
     CHECK(watch_writes->toolTip() == QStringLiteral("Attach to a target first."));
 
-    // The value change needs a target too and explains itself the same way; the
-    // browse entry works without one, since it only reads the address.
     QAction* change = nullptr;
     QAction* browse = nullptr;
     for (QAction* action : menu.actions())
@@ -293,14 +279,11 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     CHECK(change->toolTip() == QStringLiteral("Attach to a target first."));
     CHECK(browse->isEnabled());
 
-    // The row-menu entries render the keys the panel's own actions answer, as
-    // widget-local hints that never claim them.
     CHECK(change->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")));
     CHECK(change->shortcutContext() == Qt::WidgetShortcut);
     CHECK(browse->shortcut() == QKeySequence(QStringLiteral("Ctrl+D")));
     CHECK(browse->shortcutContext() == Qt::WidgetShortcut);
 
-    // Both commands answer their shortcut on the panel's own table.
     auto* view = panel.findChild<QTableView*>();
     REQUIRE(view != nullptr);
     QAction* shortcut_edit   = nullptr;
@@ -323,7 +306,6 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     CHECK(shortcut_edit->shortcutContext() == Qt::WidgetWithChildrenShortcut);
     CHECK(shortcut_browse->shortcutContext() == Qt::WidgetWithChildrenShortcut);
 
-    // Triggering the entries with no hit behind them is a no-op, not a crash.
     menu.actions().front()->trigger();
     copy->actions().front()->trigger();
     browse->trigger();
@@ -333,7 +315,6 @@ TEST_CASE("the found list changes the value of the whole selection", "[ui]")
 {
     application();
 
-    // Three matches at 4-byte spacing, all int32 and decimal, as one scan sees.
     std::vector<std::byte> bytes(12, std::byte {0});
     for (std::size_t i = 0; i < 3; ++i)
     {
@@ -361,7 +342,6 @@ TEST_CASE("the found list changes the value of the whole selection", "[ui]")
     REQUIRE(view->model() != nullptr);
     REQUIRE(view->model()->rowCount() == 3);
 
-    // The clicked row is part of a two-row selection, so both are written.
     QItemSelectionModel* selection = view->selectionModel();
     REQUIRE(selection != nullptr);
     selection->select(view->model()->index(0, 0), QItemSelectionModel::Select | QItemSelectionModel::Rows);
@@ -393,7 +373,6 @@ TEST_CASE("the found list changes the value of the whole selection", "[ui]")
     REQUIRE(change != nullptr);
     REQUIRE(change->isEnabled());
 
-    // Answer the modal box as it opens and accept, as the row click would.
     QTimer::singleShot(0,
                        []
                        {
@@ -411,7 +390,6 @@ TEST_CASE("the found list changes the value of the whole selection", "[ui]")
                        });
     change->trigger();
 
-    // One request carries both selected addresses and the encoded int32 bytes.
     REQUIRE(requests == 1);
     REQUIRE(addresses.size() == 2);
     CHECK(addresses[0] != addresses[1]);
@@ -477,8 +455,6 @@ TEST_CASE("the found list row menu arms an access watch on a hit", "[ui]")
     CHECK(watch_writes->isEnabled());
     CHECK(watch_accesses->isEnabled());
 
-    // Write fires the writes kind, accesses the read/write one; both carry the
-    // hit's address and the scan's value width.
     watch_writes->trigger();
     REQUIRE(requests == 1);
     CHECK(requested_address == 0x1000);
@@ -494,7 +470,6 @@ TEST_CASE("the found list shows the static-first top of the whole result set", "
 {
     application();
 
-    // 300 matches at 4-byte spacing; the first page holds no static hit.
     std::vector<std::byte> bytes(300 * 4, std::byte {0});
     for (std::size_t i = 0; i < 300; ++i)
     {
@@ -514,7 +489,7 @@ TEST_CASE("the found list shows the static-first top of the whole result set", "
     REQUIRE(engine.snapshot().hit_count == 300);
 
     slopkit::process::ModuleInfo image;
-    image.base = 0x1400; // Covers the hits from index 256 upwards.
+    image.base = 0x1400;
     image.size = 0x100;
     image.kind = slopkit::process::ModuleKind::elf;
     image.name = "app";
@@ -530,8 +505,6 @@ TEST_CASE("the found list shows the static-first top of the whole result set", "
     auto* model = dynamic_cast<slopkit::ui::models::FoundResultsModel*>(view->model());
     REQUIRE(model != nullptr);
 
-    // The late static hit leads the one-page window, and the line reports the
-    // rows on screen against every match of the scan.
     CHECK(model->rowCount() == slopkit::scan::kDisplayPage);
     REQUIRE(model->hit_at(0) != nullptr);
     CHECK(model->hit_at(0)->address == 0x1400);
@@ -541,7 +514,6 @@ TEST_CASE("the found list shows the static-first top of the whole result set", "
     REQUIRE(header != nullptr);
     CHECK(header->text() == QStringLiteral("Showing 256 of 300 results"));
 
-    // Double-clicking adds exactly the hit the row shows.
     const std::uint64_t first = model->hit_at(0)->address;
     REQUIRE(QMetaObject::invokeMethod(
         view,
@@ -556,7 +528,6 @@ TEST_CASE("the found list tooltips an elided cell", "[ui]")
 {
     application();
 
-    // One int32 hit whose hex rendering is wider than a collapsed column.
     std::vector<std::byte> bytes(4, std::byte {0});
     const std::uint32_t    value = 0x12345678;
     std::memcpy(bytes.data(), &value, sizeof(value));
@@ -600,7 +571,6 @@ TEST_CASE("the found list tooltips an elided cell", "[ui]")
     CHECK_FALSE(QToolTip::isVisible());
     CHECK(QToolTip::text().isEmpty());
 
-    // A column narrower than the value reveals the whole text on hover.
     view->setColumnWidth(slopkit::ui::models::FoundResultsModel::value, 1);
     QCoreApplication::processEvents();
     const QPoint clipped_pos = view->visualRect(cell).center();
@@ -621,7 +591,6 @@ TEST_CASE("the results list Value column follows live memory for the shown rows"
 
     attach_app_session(worker);
 
-    // More hits than the display page, so only the shown window may be read.
     constexpr std::uint64_t     kBase  = 0x1000;
     constexpr std::size_t       kTotal = 300;
     slopkit::scan::ScanSnapshot snapshot;
@@ -650,7 +619,6 @@ TEST_CASE("the results list Value column follows live memory for the shown rows"
         return model.data(model.index(row, slopkit::ui::models::FoundResultsModel::value), Qt::DisplayRole).toString();
     };
 
-    // Only the displayed page is requested, and it is the lowest addresses.
     REQUIRE(model.rowCount() == static_cast<int>(slopkit::scan::kDisplayPage));
     const std::vector<slopkit::ui::LiveRequest> requests = surface.next_live_request();
     REQUIRE(requests.size() == slopkit::scan::kDisplayPage);
@@ -661,7 +629,6 @@ TEST_CASE("the results list Value column follows live memory for the shown rows"
         CHECK(request.address <= last_shown);
     }
 
-    // The scan values show until the first reading lands.
     CHECK(value_text(0) == QStringLiteral("1"));
 
     (*access.memory)[kBase]      = {std::byte {7}, std::byte {0}, std::byte {0}, std::byte {0}};
@@ -674,12 +641,10 @@ TEST_CASE("the results list Value column follows live memory for the shown rows"
                     }));
     CHECK(value_text(static_cast<int>(slopkit::scan::kDisplayPage) - 1) == QStringLiteral("8"));
 
-    // The row order is the scan's, unchanged by the live readings.
     CHECK(model.data(model.index(0, slopkit::ui::models::FoundResultsModel::address), Qt::DisplayRole)
               .toString()
               .startsWith(QStringLiteral("0x1000")));
 
-    // A changed reading is flagged with the theme's warning colour.
     (*access.memory)[kBase][0] = std::byte {9};
     live.request_now();
     REQUIRE(pump_ui(worker,

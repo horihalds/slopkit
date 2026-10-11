@@ -27,12 +27,8 @@
 
 namespace slopkit::ui::dialogs
 {
-
     namespace
     {
-        // The hook skeleton a new script starts from; the address list runs
-        // these globals from the row's Active checkbox, and the live cadence
-        // calls `update` while it stays ticked.
         constexpr std::string_view kScriptSkeleton = R"(-- Runs when this row's Active checkbox is ticked.
 -- Return true once the target is ready, or false with an optional message to
 -- refuse, e.g. return false, "why": a refused tick leaves the checkbox off.
@@ -52,8 +48,6 @@ end
 -- end
 )";
 
-        // The 1-based line a Lua compiler message points at, or 0 when it names
-        // none. A chunk error reads `script:<line>: <message>`.
         [[nodiscard]] int error_line_from_message(std::string_view message)
         {
             for (std::size_t i = 0; i + 1 < message.size(); ++i)
@@ -77,7 +71,6 @@ end
             return 0;
         }
 
-        // A log line is one line, so a compiler message is flattened.
         [[nodiscard]] std::string single_line(std::string text)
         {
             for (char& ch : text)
@@ -89,7 +82,7 @@ end
             }
             return text;
         }
-    } // namespace
+    }
 
     AddScriptDialog::AddScriptDialog(table::AddressTable& table, QWidget* parent) : QDialog(parent), table_(table)
     {
@@ -129,7 +122,6 @@ end
         connect(commit_button_, &QPushButton::clicked, this, &AddScriptDialog::commit);
         connect(verify_button_, &QPushButton::clicked, this, &AddScriptDialog::verify);
         connect(close_button, &QPushButton::clicked, this, &QDialog::close);
-        // Editing the source makes a previous verdict stale.
         connect(script_edit_,
                 &QPlainTextEdit::textChanged,
                 this,
@@ -168,8 +160,6 @@ end
 
     void AddScriptDialog::reset_for_add(const QString& description, const QString& source)
     {
-        // The parameterless form seeds the skeleton and the default description;
-        // this one overwrites both with the caller's own text.
         reset_for_add();
         description_edit_->setText(description);
         script_edit_->setPlainText(source);
@@ -207,8 +197,6 @@ end
             return;
         }
 
-        // The compiler's own message is the feedback; the line it names (if any)
-        // is marked and the caret is moved to it.
         status_->set_status(widgets::StatusKind::error, to_qstring(result.error()));
 
         const int line = error_line_from_message(result.error());
@@ -228,8 +216,6 @@ end
 
     void AddScriptDialog::commit()
     {
-        // An empty description would still sanitise to a member name, but a row
-        // the user cannot tell apart is refused instead.
         if (description_edit_->text().trimmed().isEmpty())
         {
             log::warning(log::category::ui, "script rejected: empty description");
@@ -252,8 +238,7 @@ end
             log::info(log::category::ui, std::format("script added at index {} ({} byte(s))", added, script.size()));
         }
 
-        // A confirmed add or edit closes the dialog; the row is the feedback.
         accept();
     }
 
-} // namespace slopkit::ui::dialogs
+}

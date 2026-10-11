@@ -14,9 +14,8 @@ namespace slopkit::ui::components
 {
     namespace
     {
-        // The nest band's opacity: readable over the row without hiding its text.
         constexpr int kNestBandAlpha = 0x60;
-    } // namespace
+    }
 
     AddressTableView::AddressTableView(QWidget* parent) : QTableView(parent) {}
 
@@ -47,7 +46,6 @@ namespace slopkit::ui::components
         {
             return resolve_drop(visualRect(index), index.row(), position);
         }
-        // Below the last row: append at the last row's level.
         return {.row = model() != nullptr ? model()->rowCount() : 0, .nest = false};
     }
 
@@ -67,8 +65,6 @@ namespace slopkit::ui::components
 
     void AddressTableView::dragMoveEvent(QDragMoveEvent* event)
     {
-        // Let the toolkit set up its own insertion indicator, then refine the
-        // target: an edge band inserts in front of the row, the middle nests.
         QTableView::dragMoveEvent(event);
 
         const DropTarget target = drop_target_at(event->position().toPoint());
@@ -86,8 +82,6 @@ namespace slopkit::ui::components
         drag_row_  = target.row;
         drag_nest_ = target.nest;
         has_drag_  = true;
-        // A nest paints its own band below; an edge insert keeps the toolkit's
-        // own insertion line.
         setDropIndicatorShown(!target.nest);
         event->acceptProposedAction();
         viewport()->update();
@@ -114,8 +108,6 @@ namespace slopkit::ui::components
         bool dropped = false;
         if (model() != nullptr)
         {
-            // The model's own drop path reads the mime payload and resolves the
-            // move, so a drop made here and one made by the toolkit agree.
             if (target.nest)
             {
                 const QModelIndex parent = model()->index(target.row, 0);
@@ -159,4 +151,4 @@ namespace slopkit::ui::components
         painter.fillRect(QRect(0, cell.top(), viewport()->width(), cell.height()), band);
     }
 
-} // namespace slopkit::ui::components
+}

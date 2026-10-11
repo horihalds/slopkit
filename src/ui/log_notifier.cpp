@@ -4,7 +4,6 @@
 
 namespace slopkit::ui
 {
-
     LogNotifier::LogNotifier(QObject* parent) : QObject(parent)
     {
         sink_id_ = log::Logger::instance().add_sink(
@@ -15,9 +14,6 @@ namespace slopkit::ui
                     pending_.push_back(record);
                 }
 
-                // At most one queued event is in flight; the flag is cleared when
-                // that event runs, so a record posted during the drain queues
-                // another wake-up.
                 if (wake_queued_.exchange(true, std::memory_order_acq_rel))
                 {
                     return;
@@ -46,4 +42,4 @@ namespace slopkit::ui
         return records;
     }
 
-} // namespace slopkit::ui
+}

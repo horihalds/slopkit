@@ -24,7 +24,7 @@ namespace
         entry.type       = type;
         return entry;
     }
-} // namespace
+}
 
 TEST_CASE("the region merge takes boundaries from the agent and paths from procfs", "[wine_proton][agent]")
 {
@@ -44,8 +44,6 @@ TEST_CASE("the region merge takes boundaries from the agent and paths from procf
     const auto merged = merge_regions(entries, {overlay});
     REQUIRE(merged.size() == 2);
 
-    // The overlapping procfs line supplies the file identity; the agent supplies
-    // the boundaries and the protection.
     CHECK(merged[0].start == 0x1000);
     CHECK(merged[0].end == 0x2000);
     CHECK(merged[0].path == "/usr/lib/wine/x86_64-windows/ntdll.dll");
@@ -56,8 +54,6 @@ TEST_CASE("the region merge takes boundaries from the agent and paths from procf
     CHECK_FALSE(merged[0].writable);
     CHECK_FALSE(merged[0].executable);
 
-    // A range with no procfs counterpart keeps an empty path and offset 0, and
-    // takes `shared` from its mapping type.
     CHECK(merged[1].path.empty());
     CHECK(merged[1].offset == 0);
     CHECK_FALSE(merged[1].shared);
@@ -82,7 +78,6 @@ TEST_CASE("the region merge sorts by start, drops free ranges and keeps mapped a
     CHECK(merged[0].start == 0x1000);
     CHECK(merged[1].start == 0x9000);
 
-    // PAGE_NOACCESS is not readable, and an agent-only mapped range is shared.
     CHECK_FALSE(merged[0].readable);
     CHECK(merged[1].shared);
 }

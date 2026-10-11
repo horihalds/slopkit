@@ -20,7 +20,6 @@ TEST_CASE("the main window shell is built", "[ui]")
     slopkit::ui::SettingsController  settings {scratch_settings_file("shell.ini")};
     slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
-    // The menu bar holds exactly File, View and Help; the Edit menu is gone.
     const QList<QAction*> menus = window.menuBar()->actions();
     REQUIRE(menus.size() == 3);
     CHECK(menus[0]->text() == QStringLiteral("File"));
@@ -35,11 +34,8 @@ TEST_CASE("the main window shell is built", "[ui]")
                              QStringLiteral("Add Script…"),
                              QStringLiteral("Quit")});
 
-    // The toolbar is gone; the file commands live only in the menus now.
     CHECK(window.findChild<QToolBar*>(QStringLiteral("main_toolbar")) == nullptr);
 
-    // The View menu holds the log, settings and the two companion windows; Help
-    // offers the practice target ahead of About.
     CHECK(action_texts(menus[1]->menu()->actions())
           == QList<QString> {QStringLiteral("Log"),
                              QStringLiteral("Settings"),
@@ -48,8 +44,6 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(action_texts(menus[2]->menu()->actions())
           == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
 
-    // No Edit menu survives, and Undo Scan, Add Address Manually and Table
-    // Settings are gone as menu actions anywhere in the window.
     for (QAction* menu : window.menuBar()->actions())
     {
         CHECK(menu->text() != QStringLiteral("Edit"));
@@ -61,7 +55,6 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(action->text() != QStringLiteral("Table Settings"));
     }
 
-    // Ctrl+T / Ctrl+O / Ctrl+S / Ctrl+Shift+S are bound to the file commands.
     const QList<QAction*> file_actions = menus[0]->menu()->actions();
     REQUIRE(file_actions.size() == 7);
     CHECK(file_actions[0]->shortcut() == QKeySequence(QStringLiteral("Ctrl+T")));
@@ -69,16 +62,12 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(file_actions[2]->shortcut() == QKeySequence(QKeySequence::Save));
     CHECK(file_actions[3]->shortcut() == QKeySequence(QKeySequence::SaveAs));
 
-    // The five table and target commands carry their action glyphs; every
-    // other menu entry stays text-only.
     for (const int index : {0, 1, 2, 3, 4})
     {
         CHECK_FALSE(file_actions[index]->icon().isNull());
         CHECK(file_actions[index]->icon().availableSizes().contains(QSize(16, 16)));
     }
-    // Save and Save As share the same diskette glyph.
     CHECK(file_actions[2]->icon().pixmap(16).toImage() == file_actions[3]->icon().pixmap(16).toImage());
-    // The separator, Quit and every View/Help entry remain icon-less.
     CHECK(file_actions[5]->isSeparator());
     CHECK(file_actions[6]->icon().isNull());
     for (QAction* action : menus[1]->menu()->actions())
@@ -90,8 +79,6 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(action->icon().isNull());
     }
 
-    // View > Log opens the non-modal log window; live records reach its view
-    // and the text filter hides what does not match.
     slopkit::log::Logger::instance().clear_history();
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
@@ -114,11 +101,9 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(log_view->toPlainText().isEmpty());
     log_search->clear();
 
-    // Triggering the entry again raises the same window, not a second one.
     log_action->trigger();
     CHECK(window.findChildren<slopkit::ui::dialogs::LogDialog*>().size() == 1);
 
-    // View > Breakpoints opens the non-modal breakpoints window, once.
     QAction* breakpoints_action = menus[1]->menu()->actions().at(2);
     CHECK(breakpoints_action->text() == QStringLiteral("Breakpoints"));
     breakpoints_action->trigger();
@@ -128,7 +113,6 @@ TEST_CASE("the main window shell is built", "[ui]")
     breakpoints_action->trigger();
     CHECK(window.findChildren<slopkit::ui::dialogs::BreakpointsDialog*>().size() == 1);
 
-    // View > Access Watch opens the non-modal watch window, once.
     QAction* access_watch_action = menus[1]->menu()->actions().at(3);
     CHECK(access_watch_action->text() == QStringLiteral("Access Watch"));
     access_watch_action->trigger();
@@ -140,9 +124,6 @@ TEST_CASE("the main window shell is built", "[ui]")
 
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
-    // The status bar carries the detached-process label in its left slot and the
-    // address list's status line in its permanent right slot; no progress bar
-    // lives there any more.
     auto* process_label = window.statusBar()->findChild<QLabel*>(QStringLiteral("process_label"));
     REQUIRE(process_label != nullptr);
     CHECK(process_label->text() == QStringLiteral("No Process Selected"));
@@ -151,15 +132,12 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(address_status != nullptr);
     CHECK(window.statusBar()->findChild<QProgressBar*>() == nullptr);
 
-    // The central widget is a column: the single full-width progress bar sits
-    // above the split zones.
     auto* column = window.centralWidget();
     REQUIRE(column != nullptr);
     auto* progress = column->findChild<QProgressBar*>();
     REQUIRE(progress != nullptr);
     CHECK(progress->value() == 0);
 
-    // Two split zones inside the middle zone, the address list below them.
     QSplitter* vertical = nullptr;
     for (auto* splitter : column->findChildren<QSplitter*>())
     {
@@ -176,10 +154,8 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(middle->orientation() == Qt::Horizontal);
     CHECK(middle->count() == 2);
 
-    // The window opens at the compact default size.
     CHECK(window.size() == QSize(748, 768));
 
-    // The middle zone holds the live found list and the scanner controls.
     auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
     REQUIRE(found_list != nullptr);
     auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
@@ -195,15 +171,12 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(has_hex_checkbox);
     CHECK(scanner->findChild<QToolButton*>() == nullptr);
 
-    // The decorative "advanced" checkboxes are gone, along with the whole
-    // "Extra options" section and its placeholder options.
     CHECK(checkbox_labelled(*scanner, QStringLiteral("Lua formula")) == nullptr);
     CHECK(checkbox_labelled(*scanner, QStringLiteral("Enable Speedhack")) == nullptr);
     CHECK(checkbox_labelled(*scanner, QStringLiteral("Not")) == nullptr);
     CHECK(checkbox_labelled(*scanner, QStringLiteral("Unrandomizer")) == nullptr);
     CHECK_FALSE(panel_has_title(scanner, QStringLiteral("Extra options")));
 
-    // The surviving options live inside the Memory Scan Options panel.
     auto* writable_check = checkbox_labelled(*scanner, QStringLiteral("Writable"));
     REQUIRE(writable_check != nullptr);
     auto* options_panel = ancestor_panel(writable_check);
@@ -214,7 +187,6 @@ TEST_CASE("the main window shell is built", "[ui]")
     REQUIRE(found_header != nullptr);
     CHECK(found_header->text() == QStringLiteral("Showing 0 of 0 results"));
 
-    // The address list lost its decorative footer buttons.
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
     for (auto* button : address_list->findChildren<QPushButton*>())
@@ -223,14 +195,11 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(button->text() != QStringLiteral("Table Extras"));
     }
 
-    // The removed idle hint is nowhere in the window, in any state.
     for (auto* label : window.findChildren<QLabel*>())
     {
         CHECK(label->text() != QStringLiteral("Select a process to enable scanning."));
     }
 
-    // Show the window so the layouts are realised, then check that the hits
-    // table's bottom edge is level with the Memory Scan Options panel's.
     window.show();
     QCoreApplication::processEvents();
 
@@ -240,8 +209,6 @@ TEST_CASE("the main window shell is built", "[ui]")
     const auto options_bottom = options_panel->mapTo(&window, QPoint(0, options_panel->height()));
     CHECK(hits_bottom.y() == options_bottom.y());
 
-    // Growing the window hands every extra pixel to the address list: the scan
-    // zone keeps its height and the two edges stay level.
     const int scan_zone_before = middle->height();
     const int address_before   = address_list->height();
     window.resize(window.width(), window.height() + 200);
@@ -256,7 +223,6 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(button_labelled(window, QStringLiteral("Add Address Manually")) == nullptr);
     CHECK(button_labelled(window, QStringLiteral("Table Settings")) == nullptr);
 
-    // A live theme switch re-installs the application palette.
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
     QCoreApplication::processEvents();
     CHECK(QGuiApplication::palette().color(QPalette::Window) == slopkit::ui::light_theme().background);
@@ -281,7 +247,6 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
 
-    // The two type combos are found by the value they show on a fresh window.
     auto combo_showing = [](QWidget& root, const QString& text) -> QComboBox*
     {
         for (auto* combo : root.findChildren<QComboBox*>())
@@ -325,19 +290,14 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
         REQUIRE(widget != nullptr);
     }
 
-    // Tab walks the whole sequence in order, so every control is in the chain
-    // and nothing has dropped out of it.
     for (std::size_t index = 0; index + 1 < order.size(); ++index)
     {
         check_tab_order(window, order[index], order[index + 1]);
     }
 
-    // The hidden-by-default controls keep their slots: Qt skips a hidden widget
-    // while tabbing but leaves it in the chain.
     CHECK(cancel->isHidden());
     CHECK(upper_value->isHidden());
 
-    // The first focusable control of the window's chain is the First Scan button.
     QWidget* head = nullptr;
     for (QWidget* widget = window.nextInFocusChain(); widget != &window; widget = widget->nextInFocusChain())
     {
@@ -418,7 +378,6 @@ TEST_CASE("the debug control bar's Breakpoints button opens the window", "[ui]")
     auto* controls = viewer->findChild<slopkit::ui::panels::DebugControls*>();
     REQUIRE(controls != nullptr);
 
-    // The bar's button reaches the same window the View menu opens.
     controls->breakpoints_button()->click();
     auto* dialog = window.findChild<slopkit::ui::dialogs::BreakpointsDialog*>();
     REQUIRE(dialog != nullptr);
@@ -481,8 +440,6 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         QCoreApplication::processEvents();
         window.move(25, 35);
         QCoreApplication::processEvents();
-        // The offscreen platform may clamp an over-wide request, so the size to
-        // restore is whatever the window actually holds when it is hidden.
         saved_size     = window.size();
         saved_position = window.pos();
         CHECK(saved_size != QSize(748, 768));
@@ -500,8 +457,6 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         slopkit::ui::SettingsController  settings {path};
         slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
-        // A real restart shows the window again, which is when the restored
-        // frame lands on the screen.
         window.show();
         QCoreApplication::processEvents();
 
@@ -630,7 +585,6 @@ TEST_CASE("File > Add Script opens the dialog and appends a script row", "[ui]")
     REQUIRE(editor != nullptr);
     REQUIRE(commit != nullptr);
 
-    // An empty description is refused, so the dialog stays up and adds nothing.
     description->clear();
     commit->click();
     CHECK(dialog->isVisible());
@@ -640,7 +594,6 @@ TEST_CASE("File > Add Script opens the dialog and appends a script row", "[ui]")
     commit->click();
     QCoreApplication::processEvents();
 
-    // A confirmed dialog closes and the new row is the feedback.
     CHECK_FALSE(dialog->isVisible());
 
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
@@ -669,8 +622,6 @@ TEST_CASE("the Hook Instruction relay opens the address list's Add Script window
     auto* viewer = window.memory_viewer();
     REQUIRE(viewer != nullptr);
 
-    // The viewer hands its generated script to the window, exactly as the
-    // Hook Instruction command does.
     const QString description = QStringLiteral("Hook app+1A2B40");
     const QString source      = QStringLiteral("function activate()\n    return true\nend\n");
     REQUIRE(QMetaObject::invokeMethod(
@@ -685,7 +636,6 @@ TEST_CASE("the Hook Instruction relay opens the address list's Add Script window
     CHECK(description_edit->text() == description);
     CHECK(script_edit->toPlainText() == source);
 
-    // The relay prefills the window only; no row exists until Add.
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
     auto* view = address_list->findChild<QTableView*>();

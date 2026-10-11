@@ -5,7 +5,6 @@
 
 namespace slopkit::scan
 {
-
     MemorySource make_session_source(process::Session& session)
     {
         MemorySource source;
@@ -79,4 +78,4 @@ namespace slopkit::scan
         return source;
     }
 
-} // namespace slopkit::scan
+}

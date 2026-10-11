@@ -9,7 +9,6 @@
 
 namespace slopkit::debug
 {
-
     Controller::Controller(DebugBackend& backend, script::SymbolTable& symbols, QObject* parent)
         : QObject(parent), backend_(backend), symbols_(symbols), worker_(backend)
     {
@@ -159,9 +158,6 @@ namespace slopkit::debug
         last_stop_.reason = StopReason::interrupt;
         notify(MessageKind::success, QStringLiteral("Debug session open for pid %1.").arg(pid_));
         slopkit::log::info(slopkit::log::category::debug, std::format("debug session started for pid {}", pid_));
-        // The synthetic stop only gives active_tid()/interrupt() a thread to
-        // name; the session itself begins running, so no refresh() and no
-        // stopped() signal is emitted and the panes never flash.
         begin_run(leader_);
     }
 
@@ -173,8 +169,6 @@ namespace slopkit::debug
         }
         if (state_ == State::starting)
         {
-            // The attach is still in flight; it ends the session as soon as it
-            // completes.
             stop_requested_ = true;
             return;
         }
@@ -248,9 +242,6 @@ namespace slopkit::debug
         state_ = State::running;
         emit stateChanged();
         submit_resume(tid);
-        // A capture whose stop was consumed by a maintenance round-trip would
-        // otherwise never get its registers read, so the stop is asked for
-        // again now that the session runs.
         if (capture_pending_)
         {
             interrupt();
@@ -324,12 +315,7 @@ namespace slopkit::debug
             return;
         }
         const JobId id = worker_.next_job_id();
-        worker_.submit_interrupt(id,
-                                 tid,
-                                 [](JobResult&&)
-                                 {
-                                     // The in-flight continue reports the stop.
-                                 });
+        worker_.submit_interrupt(id, tid, [](JobResult&&) {});
     }
 
     void Controller::notify(MessageKind kind, QString text)
@@ -380,4 +366,4 @@ namespace slopkit::debug
         return QStringLiteral("the operation failed");
     }
 
-} // namespace slopkit::debug
+}

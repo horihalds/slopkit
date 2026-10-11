@@ -15,8 +15,6 @@ namespace
 {
     using slopkit::log::Level;
 
-    // Resets the process-wide logger before a case and restores the default
-    // minimum level afterwards, so no state leaks between cases.
     struct LoggerState
     {
         LoggerState()
@@ -31,7 +29,6 @@ namespace
         }
     };
 
-    // Removes the registered sink even when a failing assertion unwinds the case.
     struct SinkGuard
     {
         slopkit::log::SinkId id {};
@@ -47,7 +44,7 @@ namespace
         std::ifstream file(path, std::ios::binary);
         return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
     }
-} // namespace
+}
 
 TEST_CASE("The logger drops records below the minimum level", "[log]")
 {

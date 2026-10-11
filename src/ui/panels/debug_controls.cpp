@@ -9,7 +9,6 @@
 
 namespace slopkit::ui::panels
 {
-
     DebugControls::DebugControls(debug::Controller& controller, const process::AttachedTarget& target, QWidget* parent)
         : QWidget(parent), controller_(controller), target_(target)
     {
@@ -27,8 +26,6 @@ namespace slopkit::ui::panels
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(4);
 
-        // The one dynamic session toggle leads the row: `Start Debugging` while
-        // idle, `Stop Debugging` while a session is open.
         start_stop_button_        = new widgets::PrimaryButton(tr("Start Debugging"), this);
         toggle_breakpoint_button_ = widgets::secondary_button(tr("Toggle Breakpoint"), this);
         resume_button_            = widgets::secondary_button(tr("Resume"), this);
@@ -67,8 +64,6 @@ namespace slopkit::ui::panels
         connect(step_out_button_, &QPushButton::clicked, &controller_, &debug::Controller::step_out);
         connect(breakpoints_button_, &QPushButton::clicked, this, &DebugControls::breakpointsRequested);
 
-        // The controls stay reachable with the keyboard; the dialog appends the
-        // register and call-stack tables after these.
         widgets::chain_tab_order({start_stop_button_,
                                   toggle_breakpoint_button_,
                                   resume_button_,
@@ -186,4 +181,4 @@ namespace slopkit::ui::panels
         return breakpoints_button_;
     }
 
-} // namespace slopkit::ui::panels
+}

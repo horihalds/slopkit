@@ -18,10 +18,6 @@
 
 namespace slopkit::ui
 {
-
-    // Owns the plugin host, the access worker and the main window, and runs the
-    // Qt event loop. Worker completions arrive as a queued wake-up and are
-    // applied on the UI thread.
     class App
     {
     public:
@@ -30,11 +26,6 @@ namespace slopkit::ui
         App(const App&)            = delete;
         App& operator=(const App&) = delete;
 
-        // Builds the QApplication, applies the application identity, discovers
-        // the plugins, shows the main window and runs the event loop. Returns
-        // the process exit code. Must be called at most once per process. A
-        // non-empty `initial_table_path` opens that table instead of the
-        // remembered auto-load one.
         int run(int argc, char** argv, const QString& initial_table_path = QString());
 
     private:
@@ -66,4 +57,4 @@ namespace slopkit::ui
         std::unique_ptr<app::InstanceServer> server_;
     };
 
-} // namespace slopkit::ui
+}

@@ -27,9 +27,9 @@ dealloc("buf")
     CHECK(result.output[3] == "7");
 
     REQUIRE(fixture.fake.allocate_requests.size() == 1);
-    CHECK(fixture.fake.allocate_requests.front().first == 0);   // no hint
-    CHECK(fixture.fake.allocate_requests.front().second == 64); // the size as asked
-    CHECK(fixture.fake.allocations.empty());                    // freed again
+    CHECK(fixture.fake.allocate_requests.front().first == 0);
+    CHECK(fixture.fake.allocate_requests.front().second == 64);
+    CHECK(fixture.fake.allocations.empty());
 }
 
 TEST_CASE("alloc passes a near hint through", "[script]")

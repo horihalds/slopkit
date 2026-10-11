@@ -11,9 +11,6 @@ class QSocketNotifier;
 
 namespace slopkit::app
 {
-    // Owns the per-user abstract-socket listener and turns each hand-off into a
-    // tableRequested() signal on the UI thread. A false is_listening() means the
-    // name is already taken: another instance is listening.
     class InstanceServer : public QObject
     {
         Q_OBJECT
@@ -47,4 +44,4 @@ namespace slopkit::app
         std::map<int, std::unique_ptr<Connection>> connections_;
     };
 
-} // namespace slopkit::app
+}

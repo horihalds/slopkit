@@ -16,14 +16,13 @@
 
 namespace slopkit::ui::panels
 {
-
     namespace
     {
         void apply_fixed_font(QTableView* table)
         {
             table->setFont(mono_font());
         }
-    } // namespace
+    }
 
     DebuggerPanel::DebuggerPanel(debug::Controller& controller, QWidget* parent)
         : QWidget(parent), controller_(controller)
@@ -97,8 +96,6 @@ namespace slopkit::ui::panels
         apply_fixed_font(call_stack_table_);
         layout->addWidget(call_stack_table_, 2);
 
-        // The pane's tables keep the keyboard reachable in order; the dialog
-        // links the control bar's last button to the register table.
         widgets::chain_tab_order({register_table_, call_stack_table_});
     }
 
@@ -154,4 +151,4 @@ namespace slopkit::ui::panels
         return call_stack_table_;
     }
 
-} // namespace slopkit::ui::panels
+}

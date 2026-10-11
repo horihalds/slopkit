@@ -20,7 +20,6 @@
 
 namespace slopkit::debug
 {
-
     using JobId = std::uint64_t;
 
     struct AttachResult
@@ -53,17 +52,10 @@ namespace slopkit::debug
 
     using JobResult = std::variant<AttachResult, VoidResult, StopResult, RegistersResult, BacktraceResult>;
 
-    // Runs on the UI thread inside Worker::drain().
     using JobCallback = std::move_only_function<void(JobResult&&)>;
 
-    // Invoked on the worker thread after a completion is queued; the UI turns it
-    // into a wake-up post. It must not touch a widget.
     using CompletionHook = std::move_only_function<void()>;
 
-    // Owns every backend call. Every ptrace operation runs on the one job thread
-    // that owns the ptrace relationship, because a tracee may only be ptraced by
-    // the thread that attached it. `interrupt` therefore runs out-of-band on a
-    // helper thread and stops the target with a signal instead of a ptrace call.
     class Worker
     {
     public:
@@ -96,7 +88,6 @@ namespace slopkit::debug
                                         JobCallback   on_done);
         bool submit_backtrace(JobId id, std::uint32_t tid, JobCallback on_done);
 
-        // Invokes pending callbacks on the calling thread. Bounded.
         std::size_t drain(std::size_t max_jobs = 32);
 
         void set_completion_hook(CompletionHook hook);
@@ -152,20 +143,15 @@ namespace slopkit::debug
         std::condition_variable    cv_;
         std::deque<Request>        requests_;
         std::deque<Completion>     completions_;
-        CompletionHook             completion_hook_;  // guarded by mutex_
-        bool                       stopping_ {false}; // guarded by mutex_
-        // True while a ptrace job runs on the job thread; the destructor uses it
-        // to decide whether a stop signal must be sent before joining.
+        CompletionHook             completion_hook_;
+        bool                       stopping_ {false};
         std::atomic<bool>          ptrace_busy_ {false};
-        // True while the out-of-band interrupt helper runs.
         std::atomic<bool>          interrupt_active_ {false};
         std::atomic<std::uint32_t> current_tid_ {0};
         std::atomic<JobId>         next_id_ {1};
 
-        // Declared last: the threads started by the constructor touch the members
-        // above before they can process a job.
         std::jthread worker_;
         std::jthread run_thread_;
     };
 
-} // namespace slopkit::debug
+}

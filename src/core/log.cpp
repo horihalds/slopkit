@@ -69,7 +69,7 @@ namespace slopkit::log
                 report_sink_failure("slopkit: the log file could not be rotated; continuing with stderr only\n");
             }
         }
-    } // namespace
+    }
 
     std::string_view level_name(Level level) noexcept
     {
@@ -295,4 +295,4 @@ namespace slopkit::log
         return base / "slopkit" / "slopkit.log";
     }
 
-} // namespace slopkit::log
+}

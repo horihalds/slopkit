@@ -21,7 +21,7 @@ namespace slopkit::ui::dialogs
         {
             return path.isEmpty() ? TableConflictDialog::tr("(never saved)") : QDir::toNativeSeparators(path);
         }
-    } // namespace
+    }
 
     TableConflictDialog::TableConflictDialog(const TableConflictInfo& info, QWidget* parent) : QDialog(parent)
     {
@@ -92,8 +92,6 @@ namespace slopkit::ui::dialogs
 
     int TableConflictDialog::exec()
     {
-        // Qt appends the application display name to a window whose title does
-        // not already end with it; the prompt shows its own title only.
         const QString display_name = QGuiApplication::applicationDisplayName();
         QGuiApplication::setApplicationDisplayName(QString());
         const int code = QDialog::exec();
@@ -122,4 +120,4 @@ namespace slopkit::ui::dialogs
         return dialog.choice();
     }
 
-} // namespace slopkit::ui::dialogs
+}

@@ -12,15 +12,11 @@
 
 namespace slopkit::ui
 {
-
     namespace
     {
-        // Cached by register_embedded_fonts(); empty until then.
         QString g_ui_family;
         QString g_mono_family;
 
-        // Registers one embedded face and returns its family name, or an empty
-        // string on failure.
         QString register_face(const unsigned char* data, std::size_t size)
         {
             const QByteArray bytes(reinterpret_cast<const char*>(data), static_cast<qsizetype>(size));
@@ -40,7 +36,7 @@ namespace slopkit::ui
             font.setPixelSize(kBaseFontSize);
             return font;
         }
-    } // namespace
+    }
 
     bool register_embedded_fonts()
     {
@@ -67,4 +63,4 @@ namespace slopkit::ui
         return make_font(g_mono_family, QStringLiteral("Noto Sans Mono"));
     }
 
-} // namespace slopkit::ui
+}

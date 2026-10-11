@@ -26,7 +26,7 @@ namespace
         info.claimants = std::move(claimants);
         return info;
     }
-} // namespace
+}
 
 TEST_CASE("the process model filters by name, executable, pid and plugin", "[ui]")
 {
@@ -45,29 +45,24 @@ TEST_CASE("the process model filters by name, executable, pid and plugin", "[ui]
     CHECK(model.process_at(-1) == nullptr);
     CHECK(model.process_at(model.rowCount()) == nullptr);
 
-    // Name search, case-insensitive.
     model.set_search(QStringLiteral("muMbLe"));
     CHECK(model.rowCount() == 1);
     REQUIRE(model.process_at(0) != nullptr);
     CHECK(model.process_at(0)->pid == 100);
 
-    // Executable path search.
     model.set_search(QStringLiteral("/games/"));
     CHECK(model.rowCount() == 1);
     REQUIRE(model.process_at(0) != nullptr);
     CHECK(model.process_at(0)->pid == 200);
 
-    // PID search.
     model.set_search(QStringLiteral("300"));
     CHECK(model.rowCount() == 1);
     REQUIRE(model.process_at(0) != nullptr);
     CHECK(model.process_at(0)->pid == 300);
 
-    // A search that matches nothing empties the model.
     model.set_search(QStringLiteral("nothing-matches"));
     CHECK(model.rowCount() == 0);
 
-    // The plugin filter keeps only the processes that plugin claims.
     model.set_search({});
     model.set_plugin_filter(QStringLiteral("wine-proton"));
     CHECK(model.rowCount() == 1);
@@ -97,7 +92,6 @@ TEST_CASE("the process model sorts by name and by pid", "[ui]")
     REQUIRE(model.process_at(0) != nullptr);
     CHECK(model.process_at(0)->pid == 300);
 
-    // The data() accessor follows the sort order.
     const QModelIndex first = model.index(0, slopkit::ui::models::ProcessListModel::name);
     CHECK(model.data(first, Qt::DisplayRole).toString() == QStringLiteral("zsh"));
 }

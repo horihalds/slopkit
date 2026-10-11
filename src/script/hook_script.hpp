@@ -11,67 +11,54 @@
 
 namespace slopkit::script
 {
-    // One decoded listing row handed to the generator: everything the hook rules
-    // need about it, and nothing about the live target.
     struct HookRow
     {
         std::uint64_t                          address {};
-        std::span<const std::byte>             bytes;         // the encoding, from the cache
-        std::span<const disasm::EncodingBytes> pattern_bytes; // register, offset, address and wide-immediate ranges
-        std::span<const disasm::AddressRef>    addresses;     // the printed address slices
-        std::span<const disasm::MemoryRef>     memory;        // the memory operands its text prints
-        std::string                            text;          // as the listing prints it, addresses absolute
-        bool                                   valid {};      // false for a `.byte` row
+        std::span<const std::byte>             bytes;
+        std::span<const disasm::EncodingBytes> pattern_bytes;
+        std::span<const disasm::AddressRef>    addresses;
+        std::span<const disasm::MemoryRef>     memory;
+        std::string                            text;
+        bool                                   valid {};
     };
 
-    // The neighbourhood a hook may be generated from: the decoded listing rows
-    // around `selected` and the module it lives in, when any.
     struct HookCandidate
     {
-        std::span<const HookRow> rows;            // decoded listing rows, ascending
-        std::size_t              selected {};     // index of the hooked row in `rows`
-        disasm::MachineMode      mode {};         // the CPU mode the listing decoded for
-        std::string              module_name;     // empty outside every module
-        std::string              module_rva_text; // the RVA, upper-case hex without 0x; empty outside every module
-        std::string              description;     // "game.exe+0x1A2B40", or the absolute address outside a module
+        std::span<const HookRow> rows;
+        std::size_t              selected {};
+        disasm::MachineMode      mode {};
+        std::string              module_name;
+        std::string              module_rva_text;
+        std::string              description;
     };
 
-    // One instruction of the window a hook overwrites.
     struct HookInstruction
     {
-        std::uint64_t             address {}; // where it sat when it was read
+        std::uint64_t             address {};
         std::vector<std::byte>    bytes;
-        std::string               text;         // as the listing prints it
-        std::vector<std::string>  rewritten;    // operand-rewritten text, or the same text
-        std::vector<std::int64_t> address_args; // site-relative value per `%X`, in placeholder order
+        std::string               text;
+        std::vector<std::string>  rewritten;
+        std::vector<std::int64_t> address_args;
     };
 
-    // Everything a hook script for one row is generated from.
     struct HookTarget
     {
-        std::uint64_t                address {};  // the hooked instruction
-        std::string                  description; // "game.exe+0x1A2B40", or the absolute address outside a module
-        std::string                  module_name; // empty outside every module
+        std::uint64_t                address {};
+        std::string                  description;
+        std::string                  module_name;
         std::string                  module_rva_text;
-        std::vector<std::byte>       original;          // the window's bytes, ascending
-        std::vector<HookInstruction> covered;           // the window's instructions, in order
-        std::string                  pattern;           // "48 89 E5 48 8B ?? ?? ..."
-        std::size_t                  pattern_offset {}; // the window's offset inside the match
+        std::vector<std::byte>       original;
+        std::vector<HookInstruction> covered;
+        std::string                  pattern;
+        std::size_t                  pattern_offset {};
         std::size_t                  instruction_length {};
-        std::vector<std::string>     trampoline_lines; // the replaced instructions, operand-rewritten
+        std::vector<std::string>     trampoline_lines;
     };
 
-    // Turns a listing neighbourhood into a hook target, or leaves it empty and
-    // sets `reason`: the selected row is not a decoded instruction, the window
-    // runs past the rows the listing has decoded, or the replaced instructions
-    // do not re-encode.
     [[nodiscard]] std::optional<HookTarget> build_hook(const HookCandidate& candidate, std::string& reason);
 
-    // The whole prefilled Lua source for `target`; the caller never edits it.
     [[nodiscard]] std::string render(const HookTarget& target);
 
-    // "??": a byte that is wildcarded, "48": a literal. The wildcard offsets are
-    // relative to `bytes`.
     [[nodiscard]] std::string pattern_text(std::span<const std::byte>             bytes,
                                            std::span<const disasm::EncodingBytes> wildcards);
-} // namespace slopkit::script
+}

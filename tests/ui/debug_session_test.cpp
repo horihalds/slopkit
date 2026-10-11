@@ -38,7 +38,7 @@ namespace
         }
         return done();
     }
-} // namespace
+}
 
 TEST_CASE("the debug session gate reuses a live session without prompting", "[ui][debug_session]")
 {
@@ -72,9 +72,9 @@ TEST_CASE("the debug session gate reuses a live session without prompting", "[ui
                       {
                           ++ready;
                       });
-    CHECK(ready == 1); // the live session hands control back synchronously
+    CHECK(ready == 1);
     CHECK(prompt_calls == 0);
-    CHECK(backend.count("attach") == 1); // only the start that was already there
+    CHECK(backend.count("attach") == 1);
     CHECK(gate.session_live());
 }
 
@@ -119,7 +119,7 @@ TEST_CASE("the debug session gate attaches after consent and waits for running",
                       });
 
     CHECK(prompt_calls == 1);
-    CHECK(ready == 0); // not before the session runs
+    CHECK(ready == 0);
     CHECK(controller.state() == Controller::State::starting);
     REQUIRE_FALSE(progress.empty());
     CHECK(progress.front().contains(QStringLiteral("Attaching the debugger")));
@@ -191,7 +191,7 @@ TEST_CASE("the debug session gate refuses when no target is attached", "[ui][deb
     slopkit::tests::FakeDebugBackend backend;
     Controller                       controller {backend};
 
-    AttachedTarget                detached; // invalid
+    AttachedTarget                detached;
     QWidget                       owner;
     slopkit::ui::DebugSessionGate gate {controller, detached, owner};
 
@@ -303,7 +303,6 @@ TEST_CASE("the debug session gate dispatches queued work in arrival order", "[ui
                           order.push_back(2);
                       });
 
-    // The second command rides the attach the first one already started.
     CHECK(prompt_calls == 1);
     CHECK(controller.state() == Controller::State::starting);
 

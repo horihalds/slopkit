@@ -48,8 +48,6 @@ TEST_CASE("an access watch stops growing rows at the cap but keeps counting", "[
     CHECK(watch.hits().size() == AccessWatch::kMaxHits);
     CHECK_FALSE(watch.truncated());
 
-    // The 1025th distinct instruction only flips the truncation flag; its hit is
-    // still counted in the total.
     watch.record(1, 0x9000);
     CHECK(watch.hits().size() == AccessWatch::kMaxHits);
     CHECK(watch.truncated());

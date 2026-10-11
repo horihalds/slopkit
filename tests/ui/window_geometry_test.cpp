@@ -34,8 +34,6 @@ namespace
         return count;
     }
 
-    // Writes a geometry blob under `key` into the scratch INI with the raw
-    // QSettings API, so the seed does not go through SettingsController.
     QByteArray seed_window_geometry(const QString& path, const char* key)
     {
         QWidget seed;
@@ -48,15 +46,12 @@ namespace
         return blob;
     }
 
-    // Where a window of `window`'s size lands when centred on `parent`'s frame.
     QPoint centred_on(const QWidget& parent, const QWidget& window)
     {
         const QSize own = window.size();
         return parent.frameGeometry().center() - QPoint(own.width() / 2, own.height() / 2);
     }
 
-    // Triggers a table-area command through the address list's own menu, the
-    // route the removed scanner buttons used to carry.
     void trigger_table_command(slopkit::ui::MainWindow& window, const QString& text)
     {
         auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
@@ -74,7 +69,7 @@ namespace
         REQUIRE(action != nullptr);
         action->trigger();
     }
-} // namespace
+}
 
 TEST_CASE("a keeper restores a pre-seeded geometry", "[window_geometry]")
 {
@@ -198,8 +193,6 @@ TEST_CASE("the Log dialog reopens at its remembered size", "[window_geometry]")
         QCoreApplication::processEvents();
         log_dialog->move(30, 40);
         QCoreApplication::processEvents();
-        // The offscreen platform may clamp an over-wide request, so the size to
-        // restore is whatever the dialog actually holds when it is hidden.
         saved_size     = log_dialog->size();
         saved_position = log_dialog->pos();
         CHECK(saved_size != QSize(760, 520));
@@ -247,8 +240,6 @@ TEST_CASE("the Process List spawns centred and is never remembered", "[window_ge
     REQUIRE(picker != nullptr);
     QCoreApplication::processEvents();
 
-    // The picker opens centred on the main window's frame, not at the seeded
-    // position, and keeps its locked 600x440 size.
     CHECK(picker->pos() == centred_on(window, *picker));
     QWidget probe;
     REQUIRE(probe.restoreGeometry(seeded));
@@ -261,8 +252,6 @@ TEST_CASE("the Process List spawns centred and is never remembered", "[window_ge
     picker->hide();
     QCoreApplication::processEvents();
 
-    // No keeper writes a fresh frame: the seeded value is untouched and the
-    // settings store holds no geometry for the picker.
     CHECK(settings.values().window_geometry.empty());
     const std::string text = read_file(path);
     CHECK(count_occurrences(text, "process_list_geometry=") == 1);
@@ -285,11 +274,8 @@ TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not re
     slopkit::process::AttachedTarget target;
     slopkit::ui::SettingsController  settings {path};
     slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
-    // The offscreen screen is 800x800; size the main window so every centred
-    // dialog lands fully on-screen and the platform leaves the position alone.
     window.resize(780, 780);
 
-    // Add Address, through the address list's table menu.
     trigger_table_command(window, QStringLiteral("Add Address Manually…"));
     auto* add_dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
     REQUIRE(add_dialog != nullptr);
@@ -299,7 +285,6 @@ TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not re
     add_dialog->hide();
     QCoreApplication::processEvents();
 
-    // Table Settings, through the address list's table menu.
     trigger_table_command(window, QStringLiteral("Table Settings…"));
     auto* table_dialog = window.findChild<slopkit::ui::dialogs::TableSettingsDialog*>();
     REQUIRE(table_dialog != nullptr);
@@ -309,7 +294,6 @@ TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not re
     table_dialog->hide();
     QCoreApplication::processEvents();
 
-    // Settings, through the View menu.
     QAction* settings_action = nullptr;
     for (QAction* action : window.menuBar()->actions().at(1)->menu()->actions())
     {
@@ -328,12 +312,10 @@ TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not re
     settings_dialog->hide();
     QCoreApplication::processEvents();
 
-    // None of the seeded frames was applied or rewritten.
     CHECK(settings.values().window_geometry.empty());
     const std::string text = read_file(path);
     CHECK(count_occurrences(text, "add_address_geometry=") == 1);
     CHECK(count_occurrences(text, "table_settings_geometry=") == 1);
-    // Anchored so `settings_geometry=` is not matched inside `table_settings_geometry=`.
     CHECK(count_occurrences(text, "\nsettings_geometry=") == 1);
     QSettings reader {path, QSettings::IniFormat};
     CHECK(reader.value(QStringLiteral("windows/add_address_geometry")).toByteArray() == seeded_add);
@@ -372,6 +354,5 @@ TEST_CASE("input and message boxes are never remembered", "[window_geometry]")
     conflict.hide();
     QCoreApplication::processEvents();
 
-    // The transient prompts never touch the settings store: no geometry entry.
     CHECK(settings.values().window_geometry.empty());
 }

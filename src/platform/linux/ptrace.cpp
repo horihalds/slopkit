@@ -25,32 +25,24 @@
 
 namespace slopkit::platform
 {
-
     namespace
     {
         // The kernel's PTRACE_EVENT_STOP, PTRACE_GET_SYSCALL_INFO and the
         // PTRACE_O_* options. Defined locally so the layer does not depend on
         // which header exposes them.
         constexpr int              kPtraceEventStop      = 128;
-        // PTRACE_GET_SYSCALL_INFO, whose request type is the header's own enum.
         constexpr __ptrace_request kPtraceGetSyscallInfo = static_cast<__ptrace_request>(0x420e);
         constexpr unsigned long    kPtraceOExitKill      = 0x00100000UL;
         // PTRACE_O_TRACESYSGOOD: report a syscall stop as SIGTRAP|0x80, so it
         // cannot be confused with an int3 or a single step. The kernel also
         // answers PTRACE_GET_SYSCALL_INFO at such a stop.
         constexpr unsigned long    kPtraceOTraceSysGood  = 0x00000001UL;
-        // The signal PTRACE_O_TRACESYSGOOD marks syscall stops with, and the
-        // PTRACE_GET_SYSCALL_INFO ops that classify one as entry or exit.
         constexpr int              kSyscallTrap          = SIGTRAP | 0x80;
         constexpr std::uint8_t     kSyscallInfoNone      = 0;
         constexpr std::uint8_t     kSyscallInfoEntry     = 1;
         constexpr std::uint8_t     kSyscallInfoExit      = 2;
         constexpr long             kWordSize             = static_cast<long>(sizeof(std::uint64_t));
 
-        // The header of the kernel's `struct ptrace_syscall_info`, which is all
-        // this layer reads: `op` says whether the stop is a syscall entry or
-        // exit. The entry's arguments and the exit's result stay unread, the
-        // register file carries what the callers need.
         struct SyscallInfo
         {
             std::uint8_t  op {};
@@ -106,8 +98,6 @@ namespace slopkit::platform
             return true;
         }
 
-        // Reads the raw 64-bit register file; a compat task's shorter layout is
-        // reported as unsupported rather than misread.
         std::expected<user_regs_struct, process::AccessError> read_raw_registers(process::ProcessId tid)
         {
             user_regs_struct raw {};
@@ -139,16 +129,10 @@ namespace slopkit::platform
                 || set("rsi", raw.rsi) || set("rdi", raw.rdi) || set("rbp", raw.rbp) || set("rsp", raw.rsp)
                 || set("r8", raw.r8) || set("r9", raw.r9) || set("r10", raw.r10) || set("r11", raw.r11)
                 || set("r12", raw.r12) || set("r13", raw.r13) || set("r14", raw.r14) || set("r15", raw.r15)
-                || set("rip", raw.rip) || set("rflags", raw.eflags)
-                || set("eflags", raw.eflags)
-                // The number the kernel will actually execute: at a syscall
-                // entry stop RAX holds -ENOSYS and ORIG_RAX the number, so a
-                // caller that must disarm a planted call writes this one.
+                || set("rip", raw.rip) || set("rflags", raw.eflags) || set("eflags", raw.eflags)
                 || set("orig_rax", raw.orig_rax);
         }
 
-        // True at a syscall's entry stop, false at its exit stop, unset when
-        // the kernel does not answer PTRACE_GET_SYSCALL_INFO.
         std::optional<bool> syscall_stop_entry(process::ProcessId tid)
         {
             SyscallInfo info;
@@ -193,17 +177,12 @@ namespace slopkit::platform
             const int signal = WSTOPSIG(status);
             stop.signal      = signal;
 
-            // PTRACE_INTERRUPT, a delivered SIGSTOP and the debugger's own stop
-            // signal all arrive as a group-stop.
             if ((status >> 8) == (signal | (kPtraceEventStop << 8)) || signal == SIGSTOP || signal == SIGTSTP)
             {
                 stop.reason = StopReason::interrupt;
                 return stop;
             }
 
-            // A syscall stop, which PTRACE_O_TRACESYSGOOD marks so it cannot be
-            // taken for a trap. Only the tracer's own syscall resume produces
-            // one.
             if (signal == kSyscallTrap)
             {
                 stop.reason        = StopReason::syscall;
@@ -215,8 +194,6 @@ namespace slopkit::platform
                 return stop;
             }
 
-            // Any other signal is a delivery stop, not a death: the thread is
-            // stopped so the signal can be handled before it continues.
             if (signal != SIGTRAP)
             {
                 stop.reason = StopReason::signal_stop;
@@ -294,7 +271,7 @@ namespace slopkit::platform
         {
             return static_cast<long>(offsetof(struct user, u_debugreg) + slot * sizeof(long));
         }
-    } // namespace
+    }
 
     std::expected<void, process::AccessError> seize(process::ProcessId tid, bool exit_kill)
     {
@@ -356,14 +333,14 @@ namespace slopkit::platform
                 const pid_t result = ::waitpid(static_cast<pid_t>(tid), &status, __WALL | WNOHANG);
                 if (result == 0)
                 {
-                    any_reachable = true; // still running
+                    any_reachable = true;
                     continue;
                 }
                 if (result < 0)
                 {
                     if (errno == ECHILD)
                     {
-                        continue; // already reported or not a tracee
+                        continue;
                     }
                     return fail(errno);
                 }
@@ -529,8 +506,6 @@ namespace slopkit::platform
         user_regs_struct registers {};
         std::memcpy(&registers, raw.data(), sizeof(registers));
 
-        // One wholesale write, so a field the per-name setter does not name
-        // (orig_rax, cs, ss) is restored with the rest.
         iovec iov {&registers, sizeof(registers)};
         if (::ptrace(PTRACE_SETREGSET, static_cast<pid_t>(tid), reinterpret_cast<void*>(NT_PRSTATUS), &iov) == -1)
         {
@@ -668,8 +643,7 @@ namespace slopkit::platform
                 return cleared;
             }
         }
-        // DR7 enables the slots; zero disables every one. DR6 is read-only.
         return set_debug_register(tid, 7, 0);
     }
 
-} // namespace slopkit::platform
+}

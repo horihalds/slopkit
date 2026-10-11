@@ -13,8 +13,6 @@ namespace slopkit::ui::components::script_context
             return character.isLetterOrNumber() || character == QLatin1Char('_');
         }
 
-        // Matches a long-bracket opener `[=*[` at `index`; returns the offset
-        // just past the second bracket and reports the `=` count, or -1.
         [[nodiscard]] int long_bracket_open(const QString& text, int index, int* level)
         {
             if (index >= text.size() || text.at(index) != QLatin1Char('['))
@@ -36,7 +34,6 @@ namespace slopkit::ui::components::script_context
             return -1;
         }
 
-        // The offset just past the matching `]=*]`, or -1 when none follows.
         [[nodiscard]] int long_bracket_close(const QString& text, int from, int level)
         {
             const QString close = QStringLiteral("]") + QString(level, QLatin1Char('=')) + QStringLiteral("]");
@@ -44,7 +41,6 @@ namespace slopkit::ui::components::script_context
             return at < 0 ? -1 : at + close.size();
         }
 
-        // The offset just past a short string starting at the quote `index`.
         [[nodiscard]] int short_string_end(const QString& text, int index)
         {
             const QChar quote = text.at(index);
@@ -66,8 +62,6 @@ namespace slopkit::ui::components::script_context
             return text.size();
         }
 
-        // Marks every character that lies outside a comment or a string, so
-        // bracket matching and hint suppression can ignore the ones inside them.
         [[nodiscard]] std::vector<bool> code_mask(const QString& text)
         {
             std::vector<bool> mask(static_cast<std::size_t>(text.size()), true);
@@ -163,7 +157,7 @@ namespace slopkit::ui::components::script_context
             }
             return false;
         }
-    } // namespace
+    }
 
     bool is_code_at(const QString& text, int position)
     {
@@ -208,7 +202,6 @@ namespace slopkit::ui::components::script_context
             identifier.name = text.mid(begin, end - begin);
         }
 
-        // A dot just before the word starts a dotted receiver ("mem.read").
         int receiver_end = begin;
         if (receiver_end > 0 && text.at(receiver_end - 1) == QLatin1Char('.'))
         {
@@ -231,7 +224,7 @@ namespace slopkit::ui::components::script_context
         }
         if (identifier.name.isEmpty() && position > 0 && !mask[static_cast<std::size_t>(position - 1)])
         {
-            return std::nullopt; // the dot itself sits inside a comment or string
+            return std::nullopt;
         }
         return identifier;
     }
@@ -273,7 +266,6 @@ namespace slopkit::ui::components::script_context
             return std::nullopt;
         }
 
-        // The callee name, allowing whitespace between it and the parenthesis.
         int name_end = open_paren;
         while (name_end > 0 && text.at(name_end - 1).isSpace())
         {
@@ -334,9 +326,6 @@ namespace slopkit::ui::components::script_context
 
     std::vector<DocumentName> document_names(const QString& text)
     {
-        // `local function f(...)` / `function f(...)` / `function a.b(...)` /
-        // `local name`, in that precedence so `local function` is not read as a
-        // variable named `function`.
         static const QRegularExpression pattern {QStringLiteral(
             R"((?:local\s+function\s+(\w+)\s*\(([^)]*)\))|(?:function\s+(\w+(?:[.:]\w+)*)\s*\(([^)]*)\))|(?:local\s+(\w+)))")};
 
@@ -450,4 +439,4 @@ namespace slopkit::ui::components::script_context
 
         return -1;
     }
-} // namespace slopkit::ui::components::script_context
+}

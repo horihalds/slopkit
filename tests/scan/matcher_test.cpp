@@ -11,8 +11,6 @@ TEST_CASE("the compiled matcher agrees with the generic comparison", "[scan]")
     std::uniform_int_distribution<int> pick(0, 5);
     const std::array<int, 6>           alphabet {0x00, 0x01, 0x0F, 0x7F, 0xFF, 0x15};
 
-    // The pre-matcher reference: the offsets the engine kept before, using the
-    // fully generic comparison for every candidate.
     const auto reference =
         [](std::span<const std::byte> bytes, const ScanConfig& config, std::size_t window, std::size_t alignment)
     {
@@ -34,7 +32,6 @@ TEST_CASE("the compiled matcher agrees with the generic comparison", "[scan]")
         return offsets;
     };
 
-    // Exactly what ScanEngine::run_first does with the matcher.
     const auto collected =
         [](std::span<const std::byte> bytes, const Matcher& matcher, std::size_t window, std::size_t alignment)
     {
@@ -220,8 +217,6 @@ TEST_CASE("the matcher handles uniform and floating-point needles", "[scan]")
         float_config.value_type = ValueType::float32;
         float_config.value      = ScanValue {3.14};
 
-        // The needle is narrowed to float, so the stored 3.14f matches and a
-        // neighbour that differs in the last bits does not.
         CHECK(Matcher::build(float_config).match(std::span<const std::byte>(bytes).subspan(0, 4)));
 
         const float neighbour = 3.14001f;
@@ -241,7 +236,7 @@ TEST_CASE("the matcher handles uniform and floating-point needles", "[scan]")
     SECTION("-0.0 equals 0.0 and NaN never matches")
     {
         std::vector<std::byte> bytes(16);
-        bytes[0] = std::byte {0x00}; // 0.0 as a zero-filled double.
+        bytes[0] = std::byte {0x00};
 
         const std::span<const std::byte> span(bytes);
 

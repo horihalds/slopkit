@@ -9,11 +9,8 @@
 
 namespace slopkit::ui::widgets
 {
-
     namespace
     {
-        // One translation context for the row-menu text, shared by the panels
-        // and the listing.
         constexpr const char* kContext = "row_menu";
 
         QString watch_text(WatchCommand command)
@@ -45,7 +42,7 @@ namespace slopkit::ui::widgets
             }
             std::unreachable();
         }
-    } // namespace
+    }
 
     void show_explanations(QMenu& menu)
     {
@@ -95,4 +92,4 @@ namespace slopkit::ui::widgets
         }
     }
 
-} // namespace slopkit::ui::widgets
+}

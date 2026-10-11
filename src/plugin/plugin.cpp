@@ -13,7 +13,6 @@
 
 namespace slopkit::plugin
 {
-
     namespace
     {
         std::string last_error()
@@ -34,18 +33,18 @@ namespace slopkit::plugin
                 return process::ModuleKind::anonymous;
             }
         }
-    } // namespace
+    }
 
     namespace detail
     {
         namespace
         {
-            void* host_alloc(std::size_t size, void* /*user_data*/)
+            void* host_alloc(std::size_t size, void*)
             {
                 return std::malloc(size);
             }
 
-            void host_dealloc(void* memory, void* /*user_data*/)
+            void host_dealloc(void* memory, void*)
             {
                 std::free(memory);
             }
@@ -66,8 +65,6 @@ namespace slopkit::plugin
                 }
             }
 
-            // Attributes a plugin's message to the plugin that emitted it, falling
-            // back to the library file name before the descriptor is read.
             void host_log(int32_t level, const char* message, void* user_data)
             {
                 const auto* context    = static_cast<const PluginLogContext*>(user_data);
@@ -84,7 +81,7 @@ namespace slopkit::plugin
                                             attributor.empty() ? std::string {detail}
                                                                : std::format("{}: {}", attributor, detail));
             }
-        } // namespace
+        }
 
         slopkit_host_services make_host_services(PluginLogContext* context)
         {
@@ -97,9 +94,7 @@ namespace slopkit::plugin
             services.log         = host_log;
             return services;
         }
-    } // namespace detail
-
-    // --- DynamicLibrary -----------------------------------------------------
+    }
 
     DynamicLibrary::DynamicLibrary(DynamicLibrary&&) noexcept            = default;
     DynamicLibrary& DynamicLibrary::operator=(DynamicLibrary&&) noexcept = default;
@@ -115,7 +110,7 @@ namespace slopkit::plugin
 
     std::expected<DynamicLibrary, std::string> DynamicLibrary::open(const std::filesystem::path& path)
     {
-        ::dlerror(); // Clear any pending error.
+        ::dlerror();
         void* handle = ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (handle == nullptr)
         {
@@ -142,8 +137,6 @@ namespace slopkit::plugin
     {
         return path_;
     }
-
-    // --- Plugin -------------------------------------------------------------
 
     Plugin::Plugin(DynamicLibrary library) : library_(std::move(library))
     {
@@ -372,8 +365,6 @@ namespace slopkit::plugin
         return PluginSession(this, handle);
     }
 
-    // --- PluginSession ------------------------------------------------------
-
     PluginSession::PluginSession(const Plugin* plugin, void* handle) noexcept : plugin_(plugin), handle_(handle) {}
 
     PluginSession::PluginSession(PluginSession&& other) noexcept : plugin_(other.plugin_), handle_(other.handle_)
@@ -410,7 +401,6 @@ namespace slopkit::plugin
             }
             catch (...)
             {
-                // Plugins must not throw across the ABI; ignore if they do.
             }
         }
         plugin_ = nullptr;
@@ -845,4 +835,4 @@ namespace slopkit::plugin
         return valid != 0;
     }
 
-} // namespace slopkit::plugin
+}

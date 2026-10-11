@@ -1,30 +1,5 @@
 #pragma once
 
-/*
- * The wire contract between the Linux side of the wine-proton plugin and the
- * resident agent DLL it injects into the game.
- *
- * The transport is a file the Linux side creates and mmaps and the DLL opens
- * through Wine's Z: drive with CreateFileMapping/MapViewOfFile. One region
- * holds a fixed header followed by a ring of independent request slots, so
- * several host threads can have one request in flight at a time without
- * corrupting each other:
- *
- *   +-----------+-----------+-----------+-----+
- *   | header    | slot 0    | slot 1    | ... |
- *   | counters  | st req rp | st req rp |     |
- *   +-----------+-----------+-----------+-----+
- *
- * Each slot's state word is the synchronisation for that slot: the host fills
- * the request, then publishes SLOPKIT_AGENT_SLOT_REQUEST; the agent answers and
- * publishes SLOPKIT_AGENT_SLOT_RESPONSE; the host copies the response out and
- * returns the state to SLOPKIT_AGENT_SLOT_IDLE. Every field is a fixed-width
- * little-endian integer at a fixed offset, which both compilers assert below.
- *
- * This header is plain C so the mingw-w64 agent and injector and the Linux C++
- * host can share it verbatim. It must stay dependency-free beyond <stdint.h>.
- */
-
 #include <stddef.h>
 #include <stdint.h>
 

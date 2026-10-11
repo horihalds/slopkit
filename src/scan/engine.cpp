@@ -14,24 +14,14 @@
 
 namespace slopkit::scan
 {
-
     namespace
     {
-        // Region spans are read in bounded chunks so progress advances and
-        // cancellation is noticed promptly.
         constexpr std::size_t kChunkBytes = 1u << 22;
 
-        // A first scan is partitioned into ~32 MB shards that workers pull in
-        // parallel; shards are independent, so this is only about load balance.
         constexpr std::size_t kShardBytes = 1u << 25;
 
-        // When a whole chunk read fails there is no readable prefix to resume
-        // after, so the cursor probes forward one page at a time to find where
-        // reading resumes. This keeps a wholly unreadable region at one read per
-        // page instead of one read per candidate (alignment can be 1).
         constexpr std::uint64_t kProbeBytes = 4096;
 
-        // How often the worker publishes progress, to limit lock churn.
         constexpr std::size_t kPublishEveryCandidate = 1024;
 
         double elapsed_ms(const std::chrono::steady_clock::time_point& started)
@@ -39,14 +29,12 @@ namespace slopkit::scan
             return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         }
 
-        // Renders a comparison value the way the table shows it.
         std::string render_value(ValueType type, const ScanValue& value, bool hex)
         {
             const std::vector<std::byte> bytes = encode_value(type, value);
             return format_value(type, bytes, hex);
         }
 
-        // A compact, single-line rendering of the scan configuration.
         std::string describe_config(const ScanConfig& config)
         {
             std::string text = std::format("{} value_type={} value={}",
@@ -93,7 +81,6 @@ namespace slopkit::scan
             std::uint64_t end {};
         };
 
-        // Applies the region filter to a region list and aligns the results.
         std::vector<Span> build_spans(const std::vector<process::RegionInfo>& regions, const RegionFilter& filter)
         {
             const std::uint64_t alignment      = filter.alignment == 0 ? 1 : filter.alignment;
@@ -151,10 +138,6 @@ namespace slopkit::scan
             return total;
         }
 
-        // The first scan is split into shards that workers pull dynamically. A
-        // shard boundary is aligned so the candidate grid is exactly the one the
-        // sequential scan would have walked; `limit` is the end of the containing
-        // span, beyond which a read may not go.
         struct Shard
         {
             std::uint64_t begin {};
@@ -193,10 +176,6 @@ namespace slopkit::scan
             std::size_t          unreadable_chunks {};
         };
 
-        // Walks one shard in chunks, reading one extra window across the chunk
-        // and shard boundaries so windows that straddle them are not skipped.
-        // Candidates only start inside the chunk, so `scanned` accounting is
-        // unchanged.
         ScannedShard scan_shard_range(const Shard&              shard,
                                       const Matcher&            matcher,
                                       const MemorySource&       source,
@@ -310,18 +289,9 @@ namespace slopkit::scan
                 std::uint64_t next = cursor + chunk;
                 if (bytes.size() < read_size)
                 {
-                    // The read stopped early. Resume at the first candidate on the
-                    // grid whose window is not fully inside the bytes we already
-                    // have, so a window straddling a hole is re-checked and nothing
-                    // past the hole is skipped; never advance by less than the
-                    // alignment, so the cursor always progresses.
                     std::uint64_t covered = cursor + bytes.size();
                     if (bytes.empty())
                     {
-                        // Nothing was read: probe forward a page at a time to find
-                        // where reading resumes, capped at this chunk. A wholly
-                        // unreadable chunk therefore costs one read per page, not
-                        // one per candidate.
                         const std::uint64_t chunk_end = cursor + chunk;
                         std::uint64_t       probe     = cursor;
                         while (probe < chunk_end)
@@ -389,10 +359,6 @@ namespace slopkit::scan
             return result;
         }
 
-        // A refinement reads the candidates in bounded, address-sorted runs, so
-        // a dense result set costs one target read per run instead of one per
-        // candidate. The run's read window is [begin, end) and it covers the
-        // hits in [first, last].
         struct NextBatch
         {
             std::uint64_t begin {};
@@ -403,8 +369,6 @@ namespace slopkit::scan
 
         constexpr std::size_t kNextBatchBytes = 4 * 1024;
 
-        // Groups address-sorted hits into runs whose read window stays within
-        // kNextBatchBytes; a single candidate wider than that forms its own run.
         std::vector<NextBatch> build_batches(const std::vector<ScanHit>& hits, std::size_t width)
         {
             std::vector<NextBatch> batches;
@@ -433,7 +397,6 @@ namespace slopkit::scan
             return batches;
         }
 
-        // The read-only state each refinement worker shares.
         struct NextContext
         {
             const ScanConfig*           config {};
@@ -446,8 +409,6 @@ namespace slopkit::scan
             std::atomic<std::size_t>*   unreadable {};
         };
 
-        // Compares one candidate read out of the batch buffer and records it,
-        // updating the shared counters exactly like the old per-candidate loop.
         void record_next_hit(const NextContext&         ctx,
                              const ScanHit&             hit,
                              std::span<const std::byte> window,
@@ -470,11 +431,6 @@ namespace slopkit::scan
             out.push_back(ScanHit {hit.address, std::vector<std::byte>(window.begin(), window.end()), hit.value});
         }
 
-        // Refines hits[first..last] with one read of their whole window. A short
-        // or failed read still matches the candidates fully inside the readable
-        // prefix and retries the rest in halves, so one unmapped address cannot
-        // discard its neighbours; a lone candidate that stays unreadable is
-        // counted and dropped, exactly like the old per-candidate path.
         void refine_range(const NextContext&      ctx,
                           std::size_t             first,
                           std::size_t             last,
@@ -547,7 +503,6 @@ namespace slopkit::scan
             }
             if (first == last)
             {
-                // The only candidate could not be read in full.
                 ctx.scanned->fetch_add(1, std::memory_order_relaxed);
                 ctx.unreadable->fetch_add(1, std::memory_order_relaxed);
                 return;
@@ -557,7 +512,6 @@ namespace slopkit::scan
             const std::size_t remaining       = last - remaining_first + 1;
             if (remaining == 1)
             {
-                // Only the tail is left; retry it on its own.
                 refine_range(ctx, remaining_first, remaining_first, buffer, out);
                 return;
             }
@@ -566,7 +520,7 @@ namespace slopkit::scan
             refine_range(ctx, mid + 1, last, buffer, out);
         }
 
-    } // namespace
+    }
 
     ScanEngine::ScanEngine() = default;
 
@@ -631,7 +585,6 @@ namespace slopkit::scan
             config_         = config;
             snapshot_.state = ScanState::running;
             snapshot_.message.clear();
-            // A refinement must not expose the previous set as a running page.
             snapshot_.hits.clear();
             snapshot_.result_hits.reset();
         }
@@ -851,7 +804,6 @@ namespace slopkit::scan
 
         const auto work = [&]
         {
-            // Reused per worker so a chunk read does not allocate every time.
             std::vector<std::byte> buffer;
             for (;;)
             {
@@ -977,8 +929,6 @@ namespace slopkit::scan
 
         if (total == 0 || width == 0)
         {
-            // Nothing to refine; a zero width is the old loop's "read_size == 0"
-            // case, where every candidate is dropped.
             finish_success(std::make_shared<std::vector<ScanHit>>(), false);
             log::info(
                 log::category::scan,
@@ -1089,4 +1039,4 @@ namespace slopkit::scan
                 "next scan finished: {} of {} candidate(s) kept in {:.1f} ms", count, total, elapsed_ms(started)));
     }
 
-} // namespace slopkit::scan
+}

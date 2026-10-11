@@ -31,9 +31,8 @@ namespace slopkit::ui
     {
         if (watched == &window_ && (event->type() == QEvent::Hide || event->type() == QEvent::Close))
         {
-            // Idempotent, so a close followed by a hide writes the same blob twice.
             settings_.set_window_geometry(id_, window_.saveGeometry());
         }
         return QObject::eventFilter(watched, event);
     }
-} // namespace slopkit::ui
+}

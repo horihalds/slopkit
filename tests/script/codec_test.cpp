@@ -21,7 +21,7 @@ namespace
         }
         return bytes;
     }
-} // namespace
+}
 
 TEST_CASE("script codec maps every token to its width", "[script]")
 {

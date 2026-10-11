@@ -3,8 +3,6 @@
 
 #include <QApplication>
 
-// A QApplication may only exist once per process, and Catch2 runs every case in
-// this single process, so all widget tests share this one instance.
 QApplication& slopkit_test_application()
 {
     static int          argc      = 1;

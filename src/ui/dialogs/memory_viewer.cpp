@@ -46,7 +46,7 @@ namespace slopkit::ui::dialogs
                 return widgets::StatusKind::info;
             }
         }
-    } // namespace
+    }
 
     MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
@@ -68,8 +68,6 @@ namespace slopkit::ui::dialogs
 
         build_layout();
 
-        // Every stop moves the listing to the stopping instruction and asks for a
-        // fresh pass, so the bytes around RIP are current.
         connect(&debug_, &debug::Controller::stopped, this, &MemoryViewerDialog::follow_stop);
 
         set_address(0);
@@ -77,8 +75,6 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::build_layout()
     {
-        // Disassembly over debugger stats, above the byte view, with the
-        // debugger read-out on a status line at the bottom.
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(6, 6, 6, 6);
 
@@ -90,24 +86,15 @@ namespace slopkit::ui::dialogs
         split_->setChildrenCollapsible(false);
         code_split_->setChildrenCollapsible(false);
 
-        // The control bar and the listing share the left column of the code
-        // split, so the bar acts on the listing and its width is that column's
-        // width instead of reaching across the registers pane.
         auto* code_pane        = new QWidget(this);
         auto* code_pane_layout = new QVBoxLayout(code_pane);
         code_pane_layout->setContentsMargins(0, 0, 0, 0);
         code_pane_layout->setSpacing(6);
         controls_ = new panels::DebugControls(debug_, target_, code_pane);
-        // The bar sits inside the listing column, so it must not raise that
-        // column's minimum width and skew the 70/30 code split: it takes the
-        // column's width and its row shares it.
         controls_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         code_pane_layout->addWidget(controls_);
         code_pane_layout->addWidget(build_code_pane(), 1);
 
-        // The viewer's own menu bar sits above the split: File, View and Tools
-        // carry the viewer's commands, Debug mirrors the one-line control bar
-        // below it.
         menu_ = new panels::ViewerMenu(debug_, target_, *view_, this);
         layout->setMenuBar(menu_);
 
@@ -116,13 +103,9 @@ namespace slopkit::ui::dialogs
         code_split_->setStretchFactor(0, 70);
         code_split_->setStretchFactor(1, 30);
 
-        // The control bar comes first in the tab order, then the pane's tables.
         widgets::chain_tab_order(
             {controls_->breakpoints_button(), debugger_->register_table(), debugger_->call_stack_table()});
 
-        // The toggle acts on the selected listing row: the controller resolves
-        // the row's own rendered address text, so the two never disagree. The
-        // menu bar's toggle reads the same pair.
         connect(
             controls_, &panels::DebugControls::toggleBreakpointRequested, this, &MemoryViewerDialog::toggle_breakpoint);
         connect(disassembly_,
@@ -136,14 +119,10 @@ namespace slopkit::ui::dialogs
                     refresh_menu_command_state();
                 });
 
-        // The menu bar's debug side drives the same controller calls as the bar,
-        // and Breakpoints... is relayed into the bar's own request so
-        // MainWindow's single wiring covers both surfaces.
         connect(menu_, &panels::ViewerMenu::toggleBreakpointRequested, this, &MemoryViewerDialog::toggle_breakpoint);
         connect(
             menu_, &panels::ViewerMenu::breakpointsRequested, controls_, &panels::DebugControls::breakpointsRequested);
 
-        // View/Tools act on the dialog's own selection, focus and panes.
         connect(menu_, &panels::ViewerMenu::closeRequested, this, &MemoryViewerDialog::close);
         connect(menu_, &panels::ViewerMenu::backRequested, this, &MemoryViewerDialog::back_focused_pane);
         connect(menu_, &panels::ViewerMenu::followRequested, this, &MemoryViewerDialog::follow_selected_instruction);
@@ -201,21 +180,16 @@ namespace slopkit::ui::dialogs
                         hook_instruction(*row);
                     }
                 });
-        // Back depends on the focused pane's history, which changes without a
-        // selection change, so refresh just before the menus open.
         connect(menu_->view_menu(), &QMenu::aboutToShow, this, &MemoryViewerDialog::refresh_menu_command_state);
         connect(menu_->tools_menu(), &QMenu::aboutToShow, this, &MemoryViewerDialog::refresh_menu_command_state);
 
         split_->addWidget(code_split_);
         split_->addWidget(view_);
-        split_->setStretchFactor(0, 70); // upper zone
-        split_->setStretchFactor(1, 30); // hex byte view
+        split_->setStretchFactor(0, 70);
+        split_->setStretchFactor(1, 30);
 
         layout->addWidget(split_, 1);
 
-        // The debugger read-out: the controller's state and its messages land on
-        // one status line spanning the window below the split. It prints
-        // addresses, so it is a mono line like the tables.
         status_ = new widgets::StatusLabel(this);
         status_->setObjectName(QStringLiteral("viewer_status"));
         status_->setFont(mono_font());
@@ -237,8 +211,6 @@ namespace slopkit::ui::dialogs
                 });
         status_->set_status(widgets::StatusKind::info, debug_.state_text());
 
-        // "Go To..." in the byte view's menu (or Ctrl+G) asks for an address here;
-        // the focused pane decides which cursor it moves.
         connect(view_,
                 &components::MemoryView::gotoRequested,
                 this,
@@ -246,7 +218,6 @@ namespace slopkit::ui::dialogs
                 {
                     prompt_go_to();
                 });
-        // A navigation the pane performed on its own (Follow / Back) re-reads it.
         connect(view_, &components::MemoryView::navigated, this, &MemoryViewerDialog::request_page);
     }
 
@@ -256,7 +227,6 @@ namespace slopkit::ui::dialogs
         disassembly_ = new components::DisassemblyView(disassembly_document_, panel);
         panel->body()->addWidget(disassembly_);
 
-        // The listing's own menu entry always targets the listing.
         connect(disassembly_,
                 &components::DisassemblyView::gotoRequested,
                 this,
@@ -265,8 +235,6 @@ namespace slopkit::ui::dialogs
                     prompt_go_to(GoToTarget::disassembly);
                 });
         connect(disassembly_, &components::DisassemblyView::navigated, this, &MemoryViewerDialog::request_page);
-        // "Follow in Memory View" inspects the referenced address in the byte
-        // view; the listing's own cursor stays put.
         connect(disassembly_,
                 &components::DisassemblyView::followInMemoryViewRequested,
                 this,
@@ -278,9 +246,6 @@ namespace slopkit::ui::dialogs
                 &components::DisassemblyView::instructionAccessesRequested,
                 this,
                 &MemoryViewerDialog::instruction_accesses);
-        // Rewriting the attached target's code: the document applies the write
-        // through the access worker and the byte pane catches up on a fresh pass
-        // once it is submitted. The same handlers back the menu bar's Tools menu.
         connect(
             disassembly_, &components::DisassemblyView::nopRequested, this, &MemoryViewerDialog::nop_instruction_row);
         connect(disassembly_,
@@ -312,8 +277,6 @@ namespace slopkit::ui::dialogs
         }
     }
 
-    // Editing assembles the text first (the box validates every keystroke) and
-    // refuses anything longer than the instruction it replaces.
     void MemoryViewerDialog::prompt_edit_instruction(std::size_t row)
     {
         const auto source = disassembly_document_.edit_source(row);
@@ -424,8 +387,6 @@ namespace slopkit::ui::dialogs
 
     QWidget* MemoryViewerDialog::build_stats_pane()
     {
-        // No panel title: the pane only holds the register table and the call
-        // stack, and those two carry their own section headers.
         auto* panel = new widgets::Panel(QString(), this);
         debugger_   = new panels::DebuggerPanel(debug_, panel);
         panel->body()->addWidget(debugger_);
@@ -441,12 +402,10 @@ namespace slopkit::ui::dialogs
         const int total = split_->height();
         if (total <= 0)
         {
-            return; // Retry on a later show/geometry update.
+            return;
         }
         ratios_applied_ = true;
 
-        // 70 : 30 reads as "70 of 100 units above, 30 below"; the stretch
-        // factors keep the ratio on every later resize.
         const int upper = std::max(1, total * 70 / 100);
         split_->setSizes({upper, total - upper});
     }
@@ -454,8 +413,6 @@ namespace slopkit::ui::dialogs
     void MemoryViewerDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);
-        // The coordinator only submits a pane's window while it is visible, so
-        // showing the dialog is enough to bring every pane up to date.
         document_.set_visible(true);
         disassembly_document_.set_visible(true);
         apply_ratios();
@@ -464,7 +421,6 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::set_address(std::uint64_t address)
     {
-        // A new open-at address starts a clean navigation session.
         view_->clear_history();
         disassembly_->clear_history();
         view_->set_first_byte(address);
@@ -503,8 +459,6 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        // Only the dialog names the entry; the address list's Add Script window
-        // stays the one place a row is created.
         emit hookScriptRequested(tr("Hook %1").arg(QString::fromStdString(analysis.target->description)),
                                  QString::fromStdString(script::render(*analysis.target)));
     }
@@ -518,12 +472,9 @@ namespace slopkit::ui::dialogs
     {
         if (debug_.state() == debug::Controller::State::stopped)
         {
-            // The register file of the last stop is already cached; read nothing.
             finish_instruction_accesses(row);
             return;
         }
-        // One invisible stop: the target is put back running before the operands
-        // are painted, and nothing about the session changes.
         debug_.capture_registers(
             [this, row]
             {
@@ -578,7 +529,6 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::apply_pane_address(std::uint64_t address, GoToTarget target)
     {
-        // A pointer-chain jump is an explicit navigation, so it is undoable.
         if (target == GoToTarget::disassembly)
         {
             disassembly_->navigate_to(address);
@@ -616,7 +566,7 @@ namespace slopkit::ui::dialogs
         const auto expression = expr::parse(accepted->toStdString());
         if (!expression)
         {
-            return; // the live validator already reported it
+            return;
         }
         if (expression->pointer_levels() == 0)
         {
@@ -646,8 +596,6 @@ namespace slopkit::ui::dialogs
         {
             return {};
         }
-        // A symbol resolves like a module name, so the prompt accepts it too;
-        // both panes share the one table.
         if (ui::symbol_value(document_.symbols().snapshot(), expression->base).has_value())
         {
             return {};
@@ -675,7 +623,7 @@ namespace slopkit::ui::dialogs
             {
                 if (resolve_job_ != id)
                 {
-                    return; // superseded by a later prompt
+                    return;
                 }
                 resolve_job_.reset();
 
@@ -751,8 +699,6 @@ namespace slopkit::ui::dialogs
             return;
         }
         disassembly_->navigate_to(stop.address);
-        // A hit leaves the stopped instruction selected, so the bar's toggle
-        // has a target straight away.
         disassembly_->set_selected_address(stop.address);
         emit liveRefreshRequested();
     }
@@ -766,8 +712,6 @@ namespace slopkit::ui::dialogs
         }
         if (const auto added = debug_.add_breakpoint(expression.toStdString(), debug::Kind::software, 1); !added)
         {
-            // The controller reports success through its signal but stays silent
-            // on a refusal, so surface the reason on the status line here.
             report_error(QString::fromStdString(added.error()));
         }
     }
@@ -784,7 +728,6 @@ namespace slopkit::ui::dialogs
 
     std::vector<ui::LiveRequest> MemoryViewerDialog::next_live_request()
     {
-        // A changed target, or a detach, makes every remembered patch stale.
         patches_.note_target(target_.valid() ? target_.pid : 0);
         std::vector<ui::LiveRequest>       requests = document_.next_live_request();
         const std::vector<ui::LiveRequest> code     = disassembly_document_.next_live_request();
@@ -798,9 +741,8 @@ namespace slopkit::ui::dialogs
         {
             return;
         }
-        // The ids identify their owner, so one merged span serves both panes.
         document_.apply_live_readings(readings);
         disassembly_document_.apply_live_readings(readings);
     }
 
-} // namespace slopkit::ui::dialogs
+}

@@ -32,7 +32,7 @@ namespace slopkit::platform
             }
             return {};
         }
-    } // namespace
+    }
 
     std::expected<void, MemoryError> suspend_process(process::ProcessId pid)
     {
@@ -44,4 +44,4 @@ namespace slopkit::platform
         return signal_process(pid, SIGCONT);
     }
 
-} // namespace slopkit::platform
+}

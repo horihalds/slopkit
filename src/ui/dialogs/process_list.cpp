@@ -32,7 +32,6 @@
 
 namespace slopkit::ui::dialogs
 {
-
     ProcessListDialog::ProcessListDialog(process::AccessWorker&   worker,
                                          process::AttachedTarget& target,
                                          QWidget*                 parent)
@@ -63,7 +62,7 @@ namespace slopkit::ui::dialogs
                 {
                     if (isVisible())
                     {
-                        refresh(); // No-ops while a list job is already pending.
+                        refresh();
                     }
                 });
         auto_refresh_timer_->start();
@@ -91,7 +90,7 @@ namespace slopkit::ui::dialogs
         view_tabs_ = new QTabBar(this);
         view_tabs_->addTab(tr("Applications"));
         view_tabs_->addTab(tr("Processes"));
-        view_tabs_->setCurrentIndex(1); // The Processes view is the default.
+        view_tabs_->setCurrentIndex(1);
         layout->addWidget(view_tabs_);
 
         auto* body  = new QHBoxLayout();
@@ -175,8 +174,6 @@ namespace slopkit::ui::dialogs
 
         detail_panel->body()->addWidget(detail_body_);
 
-        // The single failure line sits below the details, so a list failure is
-        // still visible when nothing is selected.
         message_label_ = new widgets::StatusLabel(detail_panel);
         message_label_->setVisible(false);
         detail_panel->body()->addWidget(message_label_);
@@ -191,7 +188,7 @@ namespace slopkit::ui::dialogs
                 {
                     restoring_ = true;
                     model_->set_search(text);
-                    selected_pid_ = 0; // A fresh filter always selects the top result.
+                    selected_pid_ = 0;
                     after_model_change();
                 });
 
@@ -266,7 +263,7 @@ namespace slopkit::ui::dialogs
                 this,
                 [this](const QModelIndex& index)
                 {
-                    table_view_->setCurrentIndex(index); // Enter on the table: honour the activated row.
+                    table_view_->setCurrentIndex(index);
                     attach_selected();
                 });
     }
@@ -275,7 +272,7 @@ namespace slopkit::ui::dialogs
     {
         QDialog::showEvent(event);
         log::debug(log::category::ui, "opening Process List dialog");
-        selected_pid_ = 0; // Re-open with the top result preselected.
+        selected_pid_ = 0;
         restoring_    = true;
         table_view_->selectionModel()->clearCurrentIndex();
         restoring_ = false;
@@ -339,7 +336,7 @@ namespace slopkit::ui::dialogs
     {
         if (list_pending_.has_value())
         {
-            return; // A list job is already in flight.
+            return;
         }
 
         log::debug(log::category::ui, "refreshing the process list");
@@ -352,7 +349,7 @@ namespace slopkit::ui::dialogs
             {
                 if (list_pending_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 list_pending_.reset();
 
@@ -409,7 +406,6 @@ namespace slopkit::ui::dialogs
         plugin_combo_->setVisible(!plugin_ids_.empty());
         plugin_combo_->updateGeometry();
 
-        // Keep the model's filter in step with the combo.
         model_->set_plugin_filter(plugin_combo_->currentData().toString());
     }
 
@@ -467,7 +463,7 @@ namespace slopkit::ui::dialogs
         int row = model_->row_for_pid(selected_pid_);
         if (row < 0 && model_->rowCount() > 0)
         {
-            row = 0; // Top result of the current filtered/sorted view.
+            row = 0;
         }
         if (row < 0)
         {
@@ -483,12 +479,10 @@ namespace slopkit::ui::dialogs
         const int rows = model_->rowCount();
         if (rows <= 0)
         {
-            return; // Nothing to step through; Enter is a no-op here too.
+            return;
         }
         const int current = table_view_->currentIndex().row();
         const int next    = current < 0 ? (delta > 0 ? 0 : rows - 1) : ((current + delta) % rows + rows) % rows;
-        // setCurrentIndex scrolls the row into view and currentRowChanged runs the
-        // probe, the details and the button state.
         table_view_->setCurrentIndex(model_->index(next, models::ProcessListModel::pid));
     }
 
@@ -507,13 +501,12 @@ namespace slopkit::ui::dialogs
         }
         if (probe_pending_.has_value() && probe_pending_pid_ == static_cast<int>(info->pid))
         {
-            return; // Already inspecting this process.
+            return;
         }
 
         const process::ProcessId pid    = info->pid;
         const std::string        plugin = chosen_plugin(*info);
 
-        // Clear the cached detail and show the placeholder until it lands.
         detail_pid_value_    = static_cast<int>(pid);
         detail_methods_      = process::AccessMethod::none;
         detail_module_count_ = 0;
@@ -536,12 +529,11 @@ namespace slopkit::ui::dialogs
             {
                 if (probe_pending_ != job_id)
                 {
-                    return; // Superseded by a newer probe.
+                    return;
                 }
                 probe_pending_.reset();
                 probe_pending_pid_ = -1;
 
-                // Drop a result whose selection changed while it was in flight.
                 const auto* current = selected();
                 if (detail_pid_value_ != static_cast<int>(pid) || current == nullptr || current->pid != pid)
                 {
@@ -591,7 +583,7 @@ namespace slopkit::ui::dialogs
         const auto* info = selected();
         if (info == nullptr)
         {
-            return; // Nothing to attach; the Details hint covers the empty selection.
+            return;
         }
         if (attach_pending_.has_value())
         {
@@ -617,7 +609,7 @@ namespace slopkit::ui::dialogs
             {
                 if (attach_pending_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 attach_pending_.reset();
 
@@ -644,7 +636,7 @@ namespace slopkit::ui::dialogs
                 log::info(log::category::ui, std::format("attached to pid {} via {}", pid, attached.info->plugin_id));
                 update_buttons();
                 emit targetChanged();
-                close(); // The picker has done its job once we are attached.
+                close();
             });
         if (!submitted)
         {
@@ -782,4 +774,4 @@ namespace slopkit::ui::dialogs
         }
     }
 
-} // namespace slopkit::ui::dialogs
+}

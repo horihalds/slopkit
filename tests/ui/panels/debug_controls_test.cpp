@@ -26,7 +26,7 @@ namespace
         target.session_live = true;
         return target;
     }
-} // namespace
+}
 
 TEST_CASE("the debug control bar gates the controls on the session state", "[ui][panels][debugger]")
 {
@@ -37,8 +37,6 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     const slopkit::process::AttachedTarget target = attached_target();
     DebugControls                          bar(controller, target);
 
-    // Idle with an attached target: the toggle reads Start and is live, while
-    // the run controls wait for a session.
     CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
     CHECK(bar.start_stop_button()->isEnabled());
     CHECK_FALSE(bar.resume_button()->isEnabled());
@@ -47,7 +45,6 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     CHECK_FALSE(bar.step_over_button()->isEnabled());
     CHECK(bar.breakpoints_button()->isEnabled());
 
-    // The Breakpoints button only asks the window to open the dialog.
     int requests = 0;
     QObject::connect(&bar,
                      &DebugControls::breakpointsRequested,
@@ -59,8 +56,6 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     bar.breakpoints_button()->click();
     CHECK(requests == 1);
 
-    // One click starts the session, attaching and leaving the target running:
-    // the toggle flips to Stop and the run controls to the running set.
     backend.block_continue = true;
     bar.start_stop_button()->click();
     REQUIRE(pump_until(controller,
@@ -76,7 +71,6 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     CHECK_FALSE(bar.step_over_button()->isEnabled());
     CHECK(bar.break_button()->isEnabled());
 
-    // Break stops the target deliberately and re-enables the step controls.
     controller.interrupt();
     REQUIRE(pump_until(controller,
                        [&]
@@ -89,7 +83,6 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     CHECK_FALSE(bar.break_button()->isEnabled());
     CHECK(bar.start_stop_button()->text() == QStringLiteral("Stop Debugging"));
 
-    // Resume blocks in the fake until Break releases it; the bar follows.
     backend.continue_released = false;
     controller.resume();
     CHECK_FALSE(bar.resume_button()->isEnabled());
@@ -104,8 +97,6 @@ TEST_CASE("the debug control bar gates the controls on the session state", "[ui]
     CHECK(bar.resume_button()->isEnabled());
     CHECK_FALSE(bar.break_button()->isEnabled());
 
-    // The next click on the toggle stops the session and returns the bar to
-    // idle.
     bar.start_stop_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
@@ -125,8 +116,6 @@ TEST_CASE("the debug control bar's disabled toggle attaches nothing", "[ui][pane
     const slopkit::process::AttachedTarget detached;
     DebugControls                          bar(controller, detached);
 
-    // No target: the toggle reads Start and is disabled, so clicking it attaches
-    // nothing.
     CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
     CHECK_FALSE(bar.start_stop_button()->isEnabled());
     bar.start_stop_button()->click();
@@ -140,20 +129,16 @@ TEST_CASE("the debug control bar re-gates the toggle when the attached target ch
     FakeDebugBackend backend;
     Controller       controller(backend);
 
-    // Built before any attach: the toggle reads Start and is disabled.
     slopkit::process::AttachedTarget target;
     DebugControls                    bar(controller, target);
     CHECK_FALSE(bar.start_stop_button()->isEnabled());
 
-    // Attaching later makes the target valid, but no controller signal announces
-    // it; the explicit refresh is what lights the toggle up.
     target.pid          = 4242;
     target.plugin_id    = "linux-proc";
     target.session_live = true;
     bar.refresh_target_state();
     CHECK(bar.start_stop_button()->isEnabled());
 
-    // Detaching again disables it.
     target.clear();
     bar.refresh_target_state();
     CHECK_FALSE(bar.start_stop_button()->isEnabled());
@@ -174,7 +159,6 @@ TEST_CASE("the debug control bar makes Step Out a live run control", "[ui][panel
     const slopkit::process::AttachedTarget target = attached_target();
     DebugControls                          bar(controller, target);
 
-    // Idle: disabled, with the same explanation as Step Into / Step Over.
     CHECK_FALSE(bar.step_out_button()->isEnabled());
 
     controller.start(target.pid, target.plugin_id);
@@ -195,8 +179,6 @@ TEST_CASE("the debug control bar makes Step Out a live run control", "[ui][panel
     CHECK(bar.step_out_button()->isEnabled());
     CHECK(bar.step_out_button()->toolTip().isEmpty());
 
-    // Clicking it reaches the controller: a transient breakpoint is inserted at
-    // the caller's return address.
     bar.step_out_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
@@ -225,12 +207,10 @@ TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a sele
     const slopkit::process::AttachedTarget target = attached_target();
     DebugControls                          bar(controller, target);
 
-    // No session: the toggle is off even with an instruction selected.
     bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
     CHECK_FALSE(bar.toggle_breakpoint_button()->isEnabled());
     CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Start the debugger to set breakpoints."));
 
-    // A session but no selection: still off, and the tooltip asks for one.
     controller.start(target.pid, target.plugin_id);
     REQUIRE(pump_until(controller,
                        [&]
@@ -241,8 +221,6 @@ TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a sele
     CHECK_FALSE(bar.toggle_breakpoint_button()->isEnabled());
     CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Select an instruction in the listing first."));
 
-    // Session plus a selected instruction: live, and the tooltip names the
-    // address and the action.
     bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
     CHECK(bar.toggle_breakpoint_button()->isEnabled());
     CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Set a breakpoint at 0x0000000000002000."));
@@ -261,15 +239,12 @@ TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a sele
     CHECK(requested_address == 0x2000);
     CHECK(requested_text == QStringLiteral("0000000000002000"));
 
-    // With an entry at that address the tooltip offers removal.
     const auto added = controller.table().add(
         QStringLiteral("0000000000002000").toStdString(), 0x2000, slopkit::debug::Kind::software, 1);
     REQUIRE(added.has_value());
     bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
     CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Remove the breakpoint at 0x0000000000002000."));
 
-    // Ending the session disables the toggle even while the instruction stays
-    // selected.
     controller.stop();
     REQUIRE(pump_until(controller,
                        [&]

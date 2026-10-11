@@ -30,9 +30,6 @@ namespace
 
     using namespace std::chrono_literals;
 
-    // One exchange on a slot claimed from the pool. The production callers go
-    // through AgentClient, which wraps this the same way; the tests keep their
-    // bodies about the protocol.
     std::expected<slopkit_agent_record, std::string> transact(AgentTransport&             transport,
                                                               const slopkit_agent_record& record,
                                                               std::chrono::milliseconds   timeout,
@@ -47,10 +44,6 @@ namespace
         return slot->transact(record, timeout, request_payload, response_payload);
     }
 
-    // The mock stands in for the injected DLL: it maps the same region file the
-    // transport created and serves the protocol by hand. It runs one worker per
-    // slot, exactly like the real agent, so the tests exercise real parallel
-    // service rather than a stand-in that answers one slot at a time.
     class MockAgent
     {
     public:
@@ -58,9 +51,6 @@ namespace
         {
             Serve,
             Silent,
-            // Serves normally, but abandons the very first request it sees;
-            // used to drive a host timeout while the rest of the pool keeps
-            // working.
             SilentFirst,
             ProtocolMismatch,
         };
@@ -127,8 +117,6 @@ namespace
             }
         }
 
-        // The last request the mock picked up off the wire, so a test can assert
-        // the exact encoding the transport produced.
         [[nodiscard]] const slopkit_agent_record& last_request() const
         {
             return last_request_;
@@ -139,8 +127,6 @@ namespace
             return served_.load();
         }
 
-        // The most slots the mock ever had mid-answer at once; greater than one
-        // proves the host had several requests in flight simultaneously.
         [[nodiscard]] int peak_in_flight() const
         {
             return peak_in_flight_.load();
@@ -151,8 +137,6 @@ namespace
             return in_flight_.load();
         }
 
-        // The simulated target memory READ/WRITE move bytes through; tests
-        // seed and inspect it directly.
         [[nodiscard]] std::vector<std::byte>& target_memory()
         {
             return target_memory_;
@@ -163,8 +147,6 @@ namespace
             return 0x10000000ull;
         }
 
-        // The region list ENUM walks; the default holds three adjacent committed
-        // regions a test can rely on.
         [[nodiscard]] std::vector<slopkit_agent_region_entry> default_regions() const
         {
             std::vector<slopkit_agent_region_entry> regions(3);
@@ -237,7 +219,7 @@ namespace
                 if (!owned(request.address))
                 {
                     response.status      = SLOPKIT_AGENT_STATUS_NOT_OWNED;
-                    response.win32_error = 0x1E7; // ERROR_INVALID_ADDRESS
+                    response.win32_error = 0x1E7;
                     break;
                 }
                 std::erase(owned_, request.address);
@@ -379,16 +361,12 @@ namespace
                     continue;
                 }
 
-                // Mark this slot in flight before the hold, so two slots held
-                // at once stay observable for the whole hold window.
                 const int now      = in_flight_.fetch_add(1) + 1;
                 int       observed = peak_in_flight_.load();
                 while (now > observed && !peak_in_flight_.compare_exchange_weak(observed, now))
                 {
                 }
 
-                // Widen the window in which several slots are mid-answer, so a
-                // concurrency test can observe the host's real parallelism.
                 if (hold_ > 0ms)
                 {
                     std::this_thread::sleep_for(hold_);
@@ -400,8 +378,6 @@ namespace
                     response = answer(request, region_->slots[index].payload);
                 }
 
-                // The stopped flag is published before the response, so a host
-                // that observes the answer also observes the flag.
                 const bool stopping = request.op == SLOPKIT_AGENT_OP_SHUTDOWN;
                 if (stopping)
                 {
@@ -437,8 +413,6 @@ namespace
         std::uint32_t                                      ignored_request_id_ {0};
     };
 
-    // A fresh per-test directory under the project's tmp/; the transport removes
-    // it when it is destroyed, so nothing is left behind.
     std::filesystem::path scratch_directory(std::string_view name)
     {
         const auto      directory = std::filesystem::path(SLOPKIT_TMP_DIR) / std::string(name);
@@ -453,7 +427,7 @@ namespace
         record.op = op;
         return record;
     }
-} // namespace
+}
 
 TEST_CASE("the agent transport handshakes and echoes the request id", "[wine-proton][agent]")
 {
@@ -476,8 +450,6 @@ TEST_CASE("the agent transport handshakes and echoes the request id", "[wine-pro
     CHECK(hello->slot_count == SLOPKIT_AGENT_SLOT_COUNT);
     CHECK(hello->worker_count == SLOPKIT_AGENT_MAX_WORKERS);
 
-    // The response is consumed and the slot returns to idle, so the next
-    // exchange starts cleanly with the next request id.
     CHECK(transport->load_slot_state(0) == SLOPKIT_AGENT_SLOT_IDLE);
     const auto again = transact(*transport, request(SLOPKIT_AGENT_OP_HELLO), 2s);
     REQUIRE(again.has_value());
@@ -489,7 +461,6 @@ TEST_CASE("the slot pool is sized by the advertised capacity", "[wine-proton][ag
     auto transport = AgentTransport::create(scratch_directory("agent-transport-capacity"));
     REQUIRE(transport.has_value());
 
-    // Before the handshake the pool degrades to a single slot.
     CHECK(transport->slot_count() == 1u);
     CHECK(transport->available_slots() == 1u);
 
@@ -502,7 +473,6 @@ TEST_CASE("the slot pool is sized by the advertised capacity", "[wine-proton][ag
     CHECK(transport->available_slots() == SLOPKIT_AGENT_SLOT_COUNT);
     CHECK_FALSE(transport->exhausted());
 
-    // An agent that reports no capacity keeps the one-slot degradation.
     auto quiet = AgentTransport::create(scratch_directory("agent-transport-capacity-zero"));
     REQUIRE(quiet.has_value());
     quiet->advertise_capacity(0);
@@ -650,7 +620,6 @@ TEST_CASE("the agent transport carries a payload in both directions", "[wine-pro
             CHECK(buffer[index] == agent.target_memory()[0x10 + index]);
         }
 
-        // A read that runs past the mock's memory comes back short.
         record.address = MockAgent::target_base() + agent.target_memory().size() - 0x10;
         record.size    = 0x100;
         std::vector<std::byte> short_buffer(0x100);
@@ -702,8 +671,6 @@ TEST_CASE("several host threads transact on their own slots at once", "[wine-pro
     REQUIRE(transport.has_value());
     transport->advertise_capacity(SLOPKIT_AGENT_SLOT_COUNT);
 
-    // The hold keeps each answer in flight long enough for both host threads to
-    // be observed mid-exchange, so the mock's peak proves real parallelism.
     MockAgent agent(transport->directory(), MockAgent::Behaviour::Serve, 60ms);
 
     constexpr std::size_t                        kReaders = 2;
@@ -735,7 +702,6 @@ TEST_CASE("several host threads transact on their own slots at once", "[wine-pro
         reader.join();
     }
 
-    // Each thread's answer belongs to its own request and carries its own bytes.
     CHECK(answered_ids[0] != 0u);
     CHECK(answered_ids[1] != 0u);
     CHECK(answered_ids[0] != answered_ids[1]);
@@ -743,8 +709,6 @@ TEST_CASE("several host threads transact on their own slots at once", "[wine-pro
     CHECK(results[1]
           == std::vector<std::byte>(agent.target_memory().begin() + 0x40, agent.target_memory().begin() + 0x60));
 
-    // Both slots were mid-exchange at the same time, not queued one behind the
-    // other.
     CHECK(agent.peak_in_flight() > 1);
     CHECK(transport->available_slots() == SLOPKIT_AGENT_SLOT_COUNT);
 }
@@ -754,8 +718,6 @@ TEST_CASE("a timed-out exchange retires its slot", "[wine-proton][agent]")
     auto transport = AgentTransport::create(scratch_directory("agent-transport-retire"));
     REQUIRE(transport.has_value());
 
-    // A mapped but silent agent: nothing answers, which is also what a dead or
-    // wedged one looks like.
     MockAgent agent(transport->directory(), MockAgent::Behaviour::Silent);
 
     auto slot = transport->acquire(1s);
@@ -766,8 +728,6 @@ TEST_CASE("a timed-out exchange retires its slot", "[wine-proton][agent]")
     REQUIRE_FALSE(timed_out.has_value());
     CHECK(timed_out.error().find("did not answer") != std::string::npos);
 
-    // The slot is out of the pool for good: a late answer written into it can
-    // never be read as the next request's, and it is never handed out again.
     CHECK(transport->retired_slots() == 1u);
     CHECK(transport->exhausted());
     CHECK(transport->load_slot_state(index) == SLOPKIT_AGENT_SLOT_REQUEST);
@@ -782,8 +742,6 @@ TEST_CASE("a retired slot does not take the surviving pool with it", "[wine-prot
     REQUIRE(transport.has_value());
     transport->advertise_capacity(SLOPKIT_AGENT_SLOT_COUNT);
 
-    // The mock abandons only the first request it sees, so one slot times out
-    // while the rest of the pool still serves.
     MockAgent agent(transport->directory(), MockAgent::Behaviour::SilentFirst);
 
     const auto timed_out = transact(*transport, request(SLOPKIT_AGENT_OP_HELLO), 200ms);

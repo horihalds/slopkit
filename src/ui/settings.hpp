@@ -12,7 +12,6 @@
 
 namespace slopkit::ui
 {
-    // One rememberable top-level window; each keeps its own saved geometry.
     enum class WindowId
     {
         main,
@@ -22,40 +21,26 @@ namespace slopkit::ui
         memory_viewer
     };
 
-    // The persisted application settings: the appearance, the address display
-    // mode and the table/file-dialog memory, with the defaults applied when the
-    // file is missing.
     struct Settings
     {
         bool                           dark_theme {true};
         AddressMode                    address_mode {AddressMode::module_relative};
-        // Whether the last table is loaded again at the next start.
         bool                           auto_load_last_table {false};
-        // The table slopkit last loaded or saved.
         QString                        last_table_path;
-        // The directory the file dialogs last used.
         QString                        last_directory;
-        // Whether the Value columns follow the attached target's live memory.
         bool                           live_update_enabled {true};
-        // The live refresh cadence in milliseconds, clamped to [50, 5000].
         int                            live_update_interval_ms {250};
-        // The saved window geometries (QWidget::saveGeometry), one per WindowId;
-        // a missing entry means that window has never been hidden.
         std::map<WindowId, QByteArray> window_geometry;
 
         bool operator==(const Settings&) const = default;
     };
 
-    // Owns the settings store: loads the values once, writes every change and
-    // publishes typed signals, so no other component reads the file directly.
     class SettingsController : public QObject
     {
         Q_OBJECT
 
     public:
-        // Uses the per-user INI file under the XDG config directory.
         explicit SettingsController(QObject* parent = nullptr);
-        // Uses `file_path`; tests point this at a scratch file.
         explicit SettingsController(const QString& file_path, QObject* parent = nullptr);
 
         [[nodiscard]] const Settings& values() const noexcept;
@@ -87,4 +72,4 @@ namespace slopkit::ui
         Settings                   values_;
     };
 
-} // namespace slopkit::ui
+}

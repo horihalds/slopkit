@@ -13,7 +13,7 @@ namespace
     using slopkit::expr::SymbolRef;
     using slopkit::script::SymbolApi;
     using slopkit::script::SymbolTable;
-} // namespace
+}
 
 TEST_CASE("symbol table registers, overwrites and removes", "[script]")
 {
@@ -138,7 +138,7 @@ TEST_CASE("symbol table api wraps set and remove", "[script]")
 
     REQUIRE(api.remove("hp").has_value());
     CHECK_FALSE(table.lookup("hp").has_value());
-    REQUIRE(api.remove("hp").has_value()); // an unknown name still succeeds
+    REQUIRE(api.remove("hp").has_value());
 }
 
 TEST_CASE("symbol table stays consistent under concurrent writes and snapshots", "[script]")

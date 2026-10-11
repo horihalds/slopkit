@@ -11,8 +11,6 @@ namespace slopkit::ui
 {
     namespace
     {
-        // The register file holds the 64-bit names; an address-size override can
-        // name a 32-bit register, which shares the 64-bit value.
         constexpr std::array<std::pair<std::string_view, std::string_view>, 17> kRegisterAliases = {
             {
              {"EAX", "RAX"},
@@ -66,8 +64,6 @@ namespace slopkit::ui
             return std::nullopt;
         }
 
-        // The operand exactly as Zydis prints it: a rip-relative or absolute
-        // operand shows its 16-digit address, a register operand its sum.
         [[nodiscard]] QString operand_text(const disasm::MemoryRef& ref, std::uint64_t address)
         {
             if (ref.rip_relative || (ref.base.empty() && ref.index.empty()))
@@ -103,7 +99,7 @@ namespace slopkit::ui
             text += QLatin1Char(']');
             return text;
         }
-    } // namespace
+    }
 
     std::vector<ResolvedAccess> resolve_accesses(std::span<const disasm::MemoryRef>    operands,
                                                  std::uint64_t                         instruction_address,
@@ -183,4 +179,4 @@ namespace slopkit::ui
         }
     }
 
-} // namespace slopkit::ui
+}

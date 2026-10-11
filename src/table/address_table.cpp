@@ -12,7 +12,6 @@
 
 namespace slopkit::table
 {
-
     void AddressTable::add(AddressEntry entry)
     {
         entry.id = next_id_++;
@@ -83,9 +82,6 @@ namespace slopkit::table
         std::ranges::sort(sorted);
         sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
 
-        // Resolve the listed rows to their top-level blocks: a row inside an
-        // earlier block is already covered by it and is skipped, so a child is
-        // never removed twice.
         std::vector<std::pair<std::size_t, std::size_t>> blocks;
         std::size_t                                      row_count = 0;
         for (const std::size_t row : sorted)
@@ -123,7 +119,6 @@ namespace slopkit::table
             return;
         }
 
-        // Erase from the back so the earlier positions stay valid.
         for (auto block = blocks.rbegin(); block != blocks.rend(); ++block)
         {
             entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(block->first),
@@ -132,8 +127,6 @@ namespace slopkit::table
 
         const auto new_size = static_cast<int>(entries_.size());
 
-        // The row `index` in the new vector: nullopt when it lay inside a block,
-        // otherwise its position.
         const auto map_row = [blocks](std::size_t index) -> std::optional<std::size_t>
         {
             std::size_t erased = 0;
@@ -160,8 +153,6 @@ namespace slopkit::table
             }
             else
             {
-                // The cursor was inside a block: it lands on that block's freed
-                // slot, clamped to the last row.
                 const std::size_t cursor        = static_cast<std::size_t>(selected_);
                 std::size_t       erased_before = 0;
                 std::size_t       slot          = 0;
@@ -219,9 +210,6 @@ namespace slopkit::table
         {
             return;
         }
-        // `to` is the moved row's final index, so a downward move inserts in
-        // front of the row that follows it; an upward move in front of `to`
-        // itself. Both adopt the landing row's level, so a subtree moves whole.
         move_row(from, from < to ? to + 1 : to, false);
     }
 
@@ -311,8 +299,6 @@ namespace slopkit::table
         {
             return false;
         }
-        // A drop onto the moved row, one of its descendants or an edge inside
-        // its own subtree would break the tree; refuse it.
         if (target < entries_.size() && is_within_subtree(target, from))
         {
             return false;
@@ -321,8 +307,6 @@ namespace slopkit::table
         const std::size_t   count      = subtree_size(from);
         const std::uint64_t old_parent = entries_[from].parent;
 
-        // Where the block lands: an element position in the original vector and
-        // the parent id the moved root adopts there.
         std::size_t   before     = 0;
         std::uint64_t new_parent = 0;
         if (nest)
@@ -332,7 +316,6 @@ namespace slopkit::table
         }
         else if (target == entries_.size())
         {
-            // Past the last row: the new row joins the last row's level.
             before     = entries_.size();
             new_parent = entries_.back().parent;
         }
@@ -342,7 +325,6 @@ namespace slopkit::table
             new_parent = entries_[target].parent;
         }
 
-        // The extraction shifts every position after `from` down by `count`.
         const std::size_t insertion = from < before ? before - count : before;
         if (insertion == from && new_parent == old_parent)
         {
@@ -359,9 +341,6 @@ namespace slopkit::table
                         std::make_move_iterator(block.end()));
         entries_[insertion].parent = new_parent;
 
-        // The selection rides on the moved block; every row the block jumped
-        // over shifts the other way. The mapping is the same one the cursor
-        // always got, applied to the cursor and to every selected row.
         if (selected_ >= 0)
         {
             selected_ = static_cast<int>(moved_row(static_cast<std::size_t>(selected_), from, count, insertion));
@@ -370,8 +349,6 @@ namespace slopkit::table
         {
             row = moved_row(row, from, count, insertion);
         }
-        // A move is a bijection, so the rows stay unique, but their order can
-        // break (a row ahead of the block may land behind it).
         std::ranges::sort(selected_rows_);
 
         log::info(log::category::table,
@@ -397,11 +374,8 @@ namespace slopkit::table
                 && candidate.description == entry.description;
         };
 
-        // incoming id -> the id it became here, so an incoming child is
-        // re-pointed at its merged copy, or at the existing entry a skipped
-        // duplicate resolved to. An unknown (or unset) parent becomes top level.
         std::unordered_map<std::uint64_t, std::uint64_t>   id_map;
-        std::vector<std::pair<std::size_t, std::uint64_t>> pending; // (row, incoming parent id)
+        std::vector<std::pair<std::size_t, std::uint64_t>> pending;
 
         for (const auto& entry : incoming)
         {
@@ -586,4 +560,4 @@ namespace slopkit::table
         return settings_;
     }
 
-} // namespace slopkit::table
+}

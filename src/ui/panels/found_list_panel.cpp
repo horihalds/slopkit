@@ -29,13 +29,8 @@
 
 namespace slopkit::ui::panels
 {
-
     namespace
     {
-        // Compares the two snapshots' display data. A finished scan shares its
-        // whole result set with the engine, so its handle doubles as the change
-        // signal; anything else (an idle or failed snapshot) is compared through
-        // its display page.
         bool same_snapshot(const scan::ScanSnapshot& lhs, const scan::ScanSnapshot& rhs)
         {
             if (lhs.state != rhs.state || lhs.progress != rhs.progress || lhs.hit_count != rhs.hit_count
@@ -70,7 +65,7 @@ namespace slopkit::ui::panels
         {
             return lhs.value_type == rhs.value_type && lhs.hex == rhs.hex;
         }
-    } // namespace
+    }
 
     FoundListPanel::FoundListPanel(scan::ScanEngine& engine, table::AddressTable& table, QWidget* parent)
         : QWidget(parent), engine_(engine), table_(table)
@@ -86,9 +81,6 @@ namespace slopkit::ui::panels
         table_view_ = new QTableView(this);
         table_view_->setModel(model_);
         table_view_->setSelectionBehavior(QAbstractItemView::SelectRows);
-        // The `Change value…` command runs on the whole selection, so several
-        // hits of one scan — which share its value type and Hex setting — can be
-        // written at once.
         table_view_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         table_view_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table_view_->setAlternatingRowColors(true);
@@ -97,9 +89,6 @@ namespace slopkit::ui::panels
         table_view_->sortByColumn(models::FoundResultsModel::address, Qt::AscendingOrder);
         table_view_->verticalHeader()->setVisible(false);
         table_view_->horizontalHeader()->setStretchLastSection(true);
-        // The table takes the whole scan zone so its bottom edge stays level
-        // with the Memory Scan Options panel's; no spacer may sit between it
-        // and the entry row below.
         layout->addWidget(table_view_, 1);
 
         connect(table_view_,
@@ -110,9 +99,6 @@ namespace slopkit::ui::panels
                     add_to_table(index.row());
                 });
 
-        // The two row commands carry their shortcuts too; the value change acts
-        // on the whole selection and both are scoped to this panel's table, so
-        // Ctrl+E and Ctrl+D stay free on every other surface.
         edit_value_action_ = new QAction(tr("Change value…"), this);
         edit_value_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+E")));
         edit_value_action_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
@@ -191,7 +177,6 @@ namespace slopkit::ui::panels
 
         if (running)
         {
-            // A running scan shows no rows; they appear with the finished set.
             if (!has_last_ || last_snapshot_.state != scan::ScanState::running)
             {
                 table_view_->clearSelection();
@@ -245,9 +230,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // The command runs on the whole selection when the clicked row is part
-        // of it; every hit of a scan shares its value type and Hex setting, so
-        // one typed value fits them all.
         std::vector<std::uint64_t> addresses;
         const QItemSelectionModel* selection = table_view_->selectionModel();
         if (selection != nullptr && selection->isRowSelected(row, QModelIndex()))
@@ -288,7 +270,7 @@ namespace slopkit::ui::panels
         const auto parsed = scan::parse_value(config.value_type, typed->toStdString(), config.hex);
         if (!parsed.has_value())
         {
-            return; // the live validator already reported it
+            return;
         }
         emit changeValuesRequested(std::move(addresses), scan::encode_value(config.value_type, *parsed));
     }
@@ -332,8 +314,6 @@ namespace slopkit::ui::panels
                     add_to_table(row);
                 });
 
-        // A value change writes to the target, so the entry needs one attached;
-        // it stays visible and explains itself otherwise.
         if (target_attached_)
         {
             QAction* edit = widgets::described_action(
@@ -387,8 +367,6 @@ namespace slopkit::ui::panels
                     copy_row(row, models::CopyFormat::address_and_value);
                 });
 
-        // Arming a watch needs a target; the entries stay visible and explain
-        // themselves otherwise.
         const std::size_t width = scan::value_size(engine_.config().value_type);
         widgets::add_watch_commands(menu,
                                     target_attached_ && model_->hit_at(row) != nullptr,
@@ -423,9 +401,6 @@ namespace slopkit::ui::panels
             return;
         }
 
-        // A right-click outside the selection moves it to the clicked hit, so
-        // the menu's `Change value…` matches the row under the cursor; a
-        // right-click inside the selection leaves it alone and acts on all of it.
         if (QItemSelectionModel* selection = table_view_->selectionModel();
             selection != nullptr && !selection->isRowSelected(index.row(), QModelIndex()))
         {
@@ -439,4 +414,4 @@ namespace slopkit::ui::panels
         menu.exec(table_view_->viewport()->mapToGlobal(position));
     }
 
-} // namespace slopkit::ui::panels
+}

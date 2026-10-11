@@ -19,8 +19,6 @@ namespace
 {
     using slopkit::process::AccessMethod;
 
-    // Shared with the forked child: it runs this in a loop so the parent always
-    // has a stable code address to put breakpoints on.
     volatile std::uint32_t g_tick = 0;
 
     __attribute__((noinline)) void debug_target()
@@ -84,7 +82,7 @@ namespace
         }
         return std::nullopt;
     }
-} // namespace
+}
 
 TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][debug]")
 {
@@ -131,10 +129,8 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     const auto original = (*before)[0];
     CHECK(original != std::byte {0xCC});
 
-    // Attaching twice is idempotent.
     REQUIRE(vtable->debug_attach(handle, &leader).code == SLOPKIT_OK);
 
-    // The 18 registers are readable and writable while stopped.
     slopkit_register_value* registers      = nullptr;
     std::size_t             register_count = 0;
     REQUIRE(vtable->debug_get_registers(handle, leader, &registers, &register_count).code == SLOPKIT_OK);
@@ -151,7 +147,6 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
 
     CHECK(vtable->debug_set_register(handle, leader, "NOT_A_REGISTER", 1).code == SLOPKIT_ERR_INVALID_ARGUMENT);
 
-    // Arm a software breakpoint and run into it.
     REQUIRE(vtable->debug_set_software_breakpoint(handle, 0, target, 1).code == SLOPKIT_OK);
     const auto armed = read_target(target);
     REQUIRE(armed.has_value());
@@ -164,7 +159,6 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     CHECK(stop.address == target + 1);
     CHECK(stop.breakpoint_slot == -1);
 
-    // Step over the trap: the original byte runs, the trap is re-inserted.
     slopkit_stop_info stepped {};
     REQUIRE(vtable->debug_continue(handle, target, 1, &stepped).code == SLOPKIT_OK);
     CHECK(stepped.reason == SLOPKIT_STOP_SINGLE_STEP);
@@ -173,7 +167,6 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     REQUIRE(rearmed.has_value());
     CHECK((*rearmed)[0] == std::byte {0xCC});
 
-    // One more plain single step advances one instruction from a valid RIP.
     slopkit_stop_info single {};
     REQUIRE(vtable->debug_step(handle, stepped.tid, &single).code == SLOPKIT_OK);
     CHECK(single.reason == SLOPKIT_STOP_SINGLE_STEP);
@@ -186,13 +179,11 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     REQUIRE(frame_count >= 1);
     CHECK(frames[0].pc == single.address);
 
-    // Running on hits the re-armed breakpoint again.
     slopkit_stop_info again {};
     REQUIRE(vtable->debug_continue(handle, 0, 0, &again).code == SLOPKIT_OK);
     CHECK(again.reason == SLOPKIT_STOP_BREAKPOINT);
     CHECK(again.trap_address == target);
 
-    // Leave the trap cleanly, then take it away.
     slopkit_stop_info cleared {};
     REQUIRE(vtable->debug_continue(handle, target, 1, &cleared).code == SLOPKIT_OK);
     CHECK(cleared.reason == SLOPKIT_STOP_SINGLE_STEP);
@@ -201,7 +192,6 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     REQUIRE(restored.has_value());
     CHECK((*restored)[0] == original);
 
-    // A hardware execute breakpoint fires and names its DR slot.
     REQUIRE(vtable->debug_set_hardware_breakpoint(handle, 0, SLOPKIT_BP_HW_EXECUTE, target, 1, 1).code == SLOPKIT_OK);
     slopkit_stop_info hardware {};
     REQUIRE(vtable->debug_continue(handle, 0, 0, &hardware).code == SLOPKIT_OK);
@@ -209,14 +199,13 @@ TEST_CASE("wine-proton debugs a spawned target through the ABI", "[wine_proton][
     CHECK(hardware.breakpoint_slot == 0);
     CHECK(hardware.trap_address == target);
 
-    // Slot 4 does not exist.
     CHECK(vtable->debug_set_hardware_breakpoint(handle, 4, SLOPKIT_BP_HW_EXECUTE, target, 1, 1).code
           == SLOPKIT_ERR_INVALID_ARGUMENT);
     REQUIRE(vtable->debug_set_hardware_breakpoint(handle, 0, SLOPKIT_BP_HW_EXECUTE, target, 1, 0).code == SLOPKIT_OK);
 
     // Detaching resumes the target and drops the tracer.
     REQUIRE(vtable->debug_detach(handle).code == SLOPKIT_OK);
-    CHECK(vtable->debug_detach(handle).code == SLOPKIT_OK); // idempotent
+    CHECK(vtable->debug_detach(handle).code == SLOPKIT_OK);
 
     CHECK(::kill(static_cast<pid_t>(child.pid()), 0) == 0);
     const auto status = slopkit::platform::read_status(child.pid());

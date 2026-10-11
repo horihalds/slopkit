@@ -24,13 +24,11 @@ namespace slopkit::table
             return message;
         }
 
-        // The last error recorded on `archive`, prefixed with `what` so a caller
-        // sees which member or step failed.
         std::string archive_error_text(zip_t* archive, std::string_view what)
         {
             return std::format("{}: {}", what, zip_error_strerror(zip_get_error(archive)));
         }
-    } // namespace
+    }
 
     std::expected<void, std::string> write_archive(const std::filesystem::path&   path,
                                                    std::span<const ArchiveMember> members)
@@ -167,4 +165,4 @@ namespace slopkit::table
             && signature[1] == 'K' && signature[2] == '\x03' && signature[3] == '\x04';
     }
 
-} // namespace slopkit::table
+}

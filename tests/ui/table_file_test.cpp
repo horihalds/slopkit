@@ -46,7 +46,7 @@ TEST_CASE("the default table directory is a slopkit folder below an absolute loc
     CHECK_FALSE(directory.isEmpty());
     CHECK(QDir::isAbsolutePath(directory));
     CHECK(directory.endsWith(QStringLiteral("/slopkit")));
-    CHECK(default_table_directory() == directory); // stable across calls
+    CHECK(default_table_directory() == directory);
 }
 
 TEST_CASE("ensuring a table directory creates the missing parents and is idempotent", "[ui]")
@@ -60,9 +60,8 @@ TEST_CASE("ensuring a table directory creates the missing parents and is idempot
     const QString directory = QString::fromStdString(base.string());
     CHECK(ensure_table_directory(directory));
     CHECK(std::filesystem::is_directory(base));
-    CHECK(ensure_table_directory(directory)); // a second call stays true
+    CHECK(ensure_table_directory(directory));
 
-    // A path whose parent is a regular file cannot be created.
     const auto    blocker = base / "blocker";
     std::ofstream file(blocker);
     file << "x";

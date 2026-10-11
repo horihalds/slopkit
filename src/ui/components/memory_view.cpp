@@ -29,7 +29,6 @@
 
 namespace slopkit::ui::components
 {
-
     namespace
     {
         constexpr int kMargin          = 4;
@@ -38,8 +37,6 @@ namespace slopkit::ui::components
         constexpr int kTextGap         = 10;
         constexpr int kTextPadding     = 8;
 
-        // A worst-case cell text for the current format, so the auto-fitted
-        // cells stay wide enough for every value the format can produce.
         QString cell_sample(ValueFormat format)
         {
             switch (format.type)
@@ -61,7 +58,7 @@ namespace slopkit::ui::components
             }
             return QStringLiteral("00");
         }
-    } // namespace
+    }
 
     MemoryView::MemoryView(MemoryViewDocument& document, QWidget* parent)
         : QAbstractScrollArea(parent), document_(document), scroller_(*this,
@@ -126,7 +123,7 @@ namespace slopkit::ui::components
 
     void MemoryView::relayout()
     {
-        close_editor(); // A format or encoding change invalidates an open cell.
+        close_editor();
         recompute_layout();
         viewport()->update();
     }
@@ -167,14 +164,13 @@ namespace slopkit::ui::components
     {
         if (row_height_ <= 0 || position.y() < kMargin + header_height_)
         {
-            return {}; // The header band holds no row.
+            return {};
         }
         const int row = (position.y() - kMargin - header_height_) / row_height_;
         if (row < 0 || static_cast<std::size_t>(row) >= visible_rows_)
         {
-            return {}; // Below every painted row.
+            return {};
         }
-        // Only the address column shortens; the cells are values, not addresses.
         if (position.x() < kMargin || position.x() >= kMargin + address_width_)
         {
             return {};
@@ -190,7 +186,6 @@ namespace slopkit::ui::components
         const std::size_t offset       = column * format_bytes;
         const std::size_t span         = bytes_per_row_ >= format_bytes ? bytes_per_row_ - format_bytes : 0;
 
-        // Room for the largest offset on the row, but at least two digits.
         std::size_t digits = 1;
         for (std::size_t value = span; value >= 16; value /= 16)
         {
@@ -212,8 +207,6 @@ namespace slopkit::ui::components
                                   static_cast<std::size_t>(std::max(0, viewport()->height() - header_height_))
                                       / static_cast<std::size_t>(row_height_));
 
-        // The address column follows the widest address on screen, but never
-        // narrower than the 16-digit absolute form so it does not jitter.
         QString       address_sample = QStringLiteral("0x0000000000000000");
         const QString top_text       = document_.address_text(first_byte_);
         if (top_text.size() > address_sample.size())
@@ -250,8 +243,6 @@ namespace slopkit::ui::components
         const std::size_t new_bytes_per_row = std::max<std::size_t>(1, cells * format_bytes);
         if (!layout_ready_ || new_bytes_per_row != bytes_per_row_)
         {
-            // Keep the top address where it is and lay the new row grid out
-            // from it, so a re-fit never moves the view.
             bytes_per_row_ = new_bytes_per_row;
         }
         layout_ready_ = true;
@@ -275,10 +266,9 @@ namespace slopkit::ui::components
         else
         {
             const std::uint64_t step = static_cast<std::uint64_t>(delta) * bytes_per_row_;
-            // Saturate at the top of the user address space so the add cannot wrap.
             first_byte_ = scan::kMaxUserAddress - first_byte_ < step ? scan::kMaxUserAddress : first_byte_ + step;
         }
-        QToolTip::hideText(); // The row under the cursor is about to move.
+        QToolTip::hideText();
         close_editor();
         document_.set_view(first_byte_, bytes_per_row_, visible_rows_);
         viewport()->update();
@@ -286,7 +276,6 @@ namespace slopkit::ui::components
 
     void MemoryView::set_first_byte(std::uint64_t address)
     {
-        // The top address is kept exactly as requested, clamped to the ceiling.
         first_byte_ = std::min(address, scan::kMaxUserAddress);
         QToolTip::hideText();
         close_editor();
@@ -438,7 +427,6 @@ namespace slopkit::ui::components
         const std::size_t cells      = bytes_per_row_ / size;
         const int         cells_left = kMargin + address_width_ + kGapAfterAddress;
 
-        // The column header: the hex offset of each value within the row.
         painter.setPen(theme.text_muted);
         for (std::size_t column = 0; column < cells; ++column)
         {
@@ -557,7 +545,6 @@ namespace slopkit::ui::components
                 editing_                            = true;
                 edit_address_                       = hit->address;
                 const MemoryViewDocument::Cell cell = document_.cell(hit->address);
-                // An unreadable cell opens empty rather than pre-filled with `?`.
                 editor_->setText(cell.readable ? cell.text : QString());
                 editor_->setGeometry(hit->rect);
                 editor_->show();
@@ -581,8 +568,6 @@ namespace slopkit::ui::components
     {
         menu.addAction(goto_action_);
 
-        // Always present so the capability is discoverable, disabled while the
-        // history is empty.
         QAction* back_action = menu.addAction(tr("Back"));
         back_action->setEnabled(can_go_back());
         connect(back_action,
@@ -595,7 +580,6 @@ namespace slopkit::ui::components
 
         menu.addSeparator();
 
-        // One exclusive group spans every value format, so exactly one is checked.
         auto* format_group = new QActionGroup(&menu);
         format_group->setExclusive(true);
 
@@ -636,7 +620,6 @@ namespace slopkit::ui::components
                    QString::fromLatin1(scan::kValueTypeNames[static_cast<std::size_t>(scan::ValueType::float64)]),
                    ValueFormat {.type = scan::ValueType::float64, .hex = false});
 
-        // Text encoding: the side column's decode unit.
         auto* encoding_group = new QActionGroup(&menu);
         encoding_group->setExclusive(true);
         QMenu*     encoding_menu = menu.addMenu(tr("Text encoding"));
@@ -697,7 +680,6 @@ namespace slopkit::ui::components
             emit bytesEdited();
             return;
         }
-        // A rejected value keeps the editor open; the reason is in the status line.
         editor_->selectAll();
     }
 
@@ -715,4 +697,4 @@ namespace slopkit::ui::components
         }
     }
 
-} // namespace slopkit::ui::components
+}

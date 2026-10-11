@@ -23,15 +23,14 @@ namespace
         using AddressTableView::dragMoveEvent;
         using AddressTableView::dropEvent;
     };
-} // namespace
+}
 
 TEST_CASE("the address view resolves a drag into an insert or a nest", "[ui]")
 {
     using slopkit::ui::components::AddressTableView;
 
-    const QRect row {0, 100, 200, 40}; // top y = 100, height 40
+    const QRect row {0, 100, 200, 40};
 
-    // The top edge inserts in front of the row; the bottom edge after it.
     const auto top = AddressTableView::resolve_drop(row, 3, QPoint(50, 101));
     CHECK(top.row == 3);
     CHECK_FALSE(top.nest);
@@ -40,19 +39,15 @@ TEST_CASE("the address view resolves a drag into an insert or a nest", "[ui]")
     CHECK(bottom.row == 4);
     CHECK_FALSE(bottom.nest);
 
-    // The middle nests under the row.
     const auto middle = AddressTableView::resolve_drop(row, 3, QPoint(50, 120));
     CHECK(middle.row == 3);
     CHECK(middle.nest);
 
-    // The band edge is exactly a quarter: at 10px it is still the middle, just
-    // under it is the top edge.
     CHECK(AddressTableView::resolve_drop(row, 3, QPoint(50, 110)).nest);
     const auto just_outside = AddressTableView::resolve_drop(row, 3, QPoint(50, 109));
     CHECK_FALSE(just_outside.nest);
     CHECK(just_outside.row == 3);
 
-    // A degenerate row is harmless.
     const auto empty = AddressTableView::resolve_drop(QRect(0, 0, 10, 0), 1, QPoint(0, 0));
     CHECK(empty.row == 1);
     CHECK_FALSE(empty.nest);
@@ -91,7 +86,6 @@ TEST_CASE("the address view forwards a drop through the model", "[ui]")
     view.show();
     QApplication::processEvents();
 
-    // A drop on the middle of the first row nests the second row under it.
     const QRect first = view.visualRect(model.index(0, 0));
     REQUIRE_FALSE(first.isEmpty());
     REQUIRE(view.indexAt(first.center()).row() == 0);

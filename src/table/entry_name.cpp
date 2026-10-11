@@ -45,7 +45,7 @@ namespace slopkit::table
             const auto last = value.find_last_not_of(" \t\r\n");
             return value.substr(first, last - first + 1);
         }
-    } // namespace
+    }
 
     std::string
     entry_member_name(std::string_view description, std::span<const std::string> taken, std::string_view extension)
@@ -129,4 +129,4 @@ namespace slopkit::table
         return std::string(member_name);
     }
 
-} // namespace slopkit::table
+}

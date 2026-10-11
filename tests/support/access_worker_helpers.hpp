@@ -51,17 +51,13 @@ namespace
     using slopkit::process::WriteResult;
     using slopkit::test::FakeBackend;
 
-    // The fake's flat window base.
     constexpr std::uint64_t kBase = 0x1000;
 
-    // A ProcessAccess whose listing and attach block on a gate when gated, so a
-    // test can hold a job in flight and prove that submission did not block.
     class GatedAccess final : public slopkit::process::ProcessAccess
     {
     public:
         explicit GatedAccess(bool gated) : gated_(gated) {}
 
-        // True when any job has entered a fake call.
         void wait_until_entered()
         {
             std::unique_lock lock(mutex_);
@@ -84,14 +80,8 @@ namespace
             return backend_;
         }
 
-        // Applied to each backend attach() creates, so a test can model a target
-        // whose metadata is readable but whose memory cannot be.
         std::optional<AccessError> read_error;
-        // Applied to each backend attach() creates, so a test can model a target
-        // whose plugin can (or cannot) suspend.
         bool                       can_suspend {false};
-        // Applied to each backend attach() creates, so a test can model a target
-        // whose plugin can (or cannot) allocate.
         bool                       can_allocate {false};
 
         std::expected<std::vector<slopkit::process::ProcessInfo>, AccessError> list_processes() override
@@ -150,7 +140,6 @@ namespace
         FakeBackend*            backend_ {nullptr};
     };
 
-    // Drains the worker until `done` reports true or the timeout elapses.
     template<typename Predicate>
     bool pump(AccessWorker& worker, Predicate done)
     {
@@ -167,7 +156,6 @@ namespace
         return done();
     }
 
-    // Restores the process-wide log level on scope exit.
     class LevelGuard
     {
     public:
@@ -202,4 +190,4 @@ namespace
     private:
         slopkit::log::SinkId id_;
     };
-} // namespace
+}

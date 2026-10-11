@@ -19,8 +19,6 @@ namespace slopkit::plugins::support
     {
         if (suspended)
         {
-            // The last resort: a session that stopped the target must never
-            // leave it frozen when the session is destroyed.
             static_cast<void>(platform::resume_process(pid));
         }
     }
@@ -44,7 +42,7 @@ namespace slopkit::plugins::support
             thread_local std::deque<std::string> value;
             return value;
         }
-    } // namespace
+    }
 
     void register_session(Session* session)
     {
@@ -80,4 +78,4 @@ namespace slopkit::plugins::support
         return string_arena().back().c_str();
     }
 
-} // namespace slopkit::plugins::support
+}

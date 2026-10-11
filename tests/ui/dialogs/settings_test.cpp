@@ -8,7 +8,6 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     SECTION("offers the address display choice")
     {
-
         slopkit::plugin::PluginHost          host;
         slopkit::scan::ScanEngine            engine;
         slopkit::ui::SettingsController      controller {scratch_settings_file("settings_dialog.ini")};
@@ -47,16 +46,13 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
         CHECK(absolute->isChecked());
         CHECK(controller.values().address_mode == slopkit::ui::AddressMode::absolute);
 
-        // Re-selecting the same value is a no-op: no signal and no radio change.
         controller.set_address_mode(slopkit::ui::AddressMode::absolute);
         CHECK(changes == 1);
 
-        // A real programmatic change keeps the radios in step.
         controller.set_address_mode(slopkit::ui::AddressMode::module_relative);
         CHECK(module_relative->isChecked());
         CHECK(changes == 2);
 
-        // Help > About still reaches the About page after the extra category.
         settings.select_about();
         REQUIRE(categories->currentItem() != nullptr);
         CHECK(categories->currentRow() == categories->count() - 1);
@@ -65,7 +61,6 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     SECTION("the Tables setting toggles the auto-load switch")
     {
-
         slopkit::plugin::PluginHost          host;
         slopkit::scan::ScanEngine            engine;
         slopkit::ui::SettingsController      controller {scratch_settings_file("tables_dialog.ini")};
@@ -101,11 +96,9 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
         CHECK(last);
         CHECK(controller.values().auto_load_last_table);
 
-        // Re-selecting the same value is a no-op.
         controller.set_auto_load_last_table(true);
         CHECK(changes == 1);
 
-        // A real programmatic change ticks the box without re-emitting.
         controller.set_auto_load_last_table(false);
         CHECK_FALSE(box->isChecked());
         CHECK(changes == 2);
@@ -113,7 +106,6 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     SECTION("the Live update setting drives the interval control")
     {
-
         slopkit::plugin::PluginHost          host;
         slopkit::scan::ScanEngine            engine;
         slopkit::ui::SettingsController      controller {scratch_settings_file("live_dialog.ini")};
@@ -146,18 +138,15 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
                              ++interval_changes;
                          });
 
-        // Switching off disables the interval and persists the choice.
         check->click();
         CHECK(live_changes == 1);
         CHECK_FALSE(controller.values().live_update_enabled);
         CHECK_FALSE(interval->isEnabled());
 
-        // A new interval persists immediately.
         interval->setValue(1000);
         CHECK(interval_changes == 1);
         CHECK(controller.values().live_update_interval_ms == 1000);
 
-        // A real programmatic change keeps the page in step.
         controller.set_live_update_enabled(true);
         CHECK(check->isChecked());
         CHECK(interval->isEnabled());
@@ -167,7 +156,6 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
 
     SECTION("the Addresses setting switches the viewer live")
     {
-
         FakeAccess access;
 
         slopkit::process::ModuleInfo image;
@@ -211,7 +199,6 @@ TEST_CASE("the settings dialog offers the address display choice", "[ui]")
         REQUIRE(absolute != nullptr);
         CHECK(module_relative->isChecked());
 
-        // Clicking the setting re-renders the viewer immediately, with no reload.
         absolute->click();
         CHECK(document->display_text(0x1040) == QStringLiteral("0x1040"));
 

@@ -83,9 +83,6 @@ TEST_CASE("themed widgets follow a theme switch", "[ui]")
     slopkit::ui::widgets::PrimaryButton button(QStringLiteral("Scan"));
     CHECK(button.palette().color(QPalette::Button) == slopkit::ui::dark_theme().accent);
 
-    // A theme switch changes the application palette, which Qt propagates to
-    // every widget as a palette-change event; deliver it here so the check does
-    // not depend on the event loop's timing.
     slopkit::ui::apply_theme(slopkit::ui::light_theme());
     QEvent palette_change(QEvent::PaletteChange);
     QCoreApplication::sendEvent(&status, &palette_change);

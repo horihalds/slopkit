@@ -9,7 +9,6 @@
 
 namespace
 {
-    // Proves the model renders through the formatter it was handed.
     QString format(std::uint64_t address)
     {
         return QStringLiteral("#") + QString::number(address, 16);
@@ -21,7 +20,7 @@ namespace
         watch.start(address, slopkit::debug::Kind::hardware_write, 4, 1);
         return watch;
     }
-} // namespace
+}
 
 TEST_CASE("watch hits coalesce one row per instruction", "[ui][models]")
 {
@@ -54,7 +53,6 @@ TEST_CASE("watch hits coalesce one row per instruction", "[ui][models]")
     CHECK(model.count_at(0) == 3);
     CHECK(model.instruction_at(1) == 0x2020);
 
-    // A new watch replaces every row.
     watch.start(0xDEF, slopkit::debug::Kind::hardware_read_write, 4, 2);
     watch.record(1, 0x3030);
     model.sync(watch);
@@ -92,7 +90,6 @@ TEST_CASE("watch hits fill in the decoded text on demand", "[ui][models]")
     model.sync(watch);
 
     REQUIRE(model.rowCount() == 1);
-    // Before the decoder answers, the row shows a placeholder and no tooltip.
     CHECK(model.text_at(0) == QStringLiteral("??"));
     CHECK(model.data(model.index(0, slopkit::ui::models::WatchHitsModel::text), Qt::DisplayRole).toString()
           == QStringLiteral("??"));
@@ -101,7 +98,6 @@ TEST_CASE("watch hits fill in the decoded text on demand", "[ui][models]")
               .isEmpty());
     CHECK(model.needs_text(0));
 
-    // The recovered address becomes the tooltip; the text fills the row.
     model.set_text(0, 0x1008, QStringLiteral("mov eax, [rbx]"));
     CHECK_FALSE(model.needs_text(0));
     CHECK(model.text_at(0) == QStringLiteral("mov eax, [rbx]"));
@@ -109,7 +105,6 @@ TEST_CASE("watch hits fill in the decoded text on demand", "[ui][models]")
     CHECK(model.data(model.index(0, slopkit::ui::models::WatchHitsModel::instruction), Qt::ToolTipRole).toString()
           == QStringLiteral("#1008"));
 
-    // Out-of-range rows stay quiet.
     CHECK(model.text_at(9).isEmpty());
     CHECK(model.instruction_at(9) == 0);
     CHECK(model.count_at(9) == 0);
@@ -140,7 +135,6 @@ TEST_CASE("watch hits answer the full-text role with the untruncated address", "
     CHECK(model.data(instruction, slopkit::ui::widgets::kFullTextRole).toString()
           == QStringLiteral("a-long-module-name.exe+1010"));
 
-    // Without a full formatter the display text is answered, so nothing changes.
     slopkit::ui::models::WatchHitsModel plain(nullptr, format);
     plain.sync(watch);
     CHECK(

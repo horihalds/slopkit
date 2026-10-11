@@ -56,7 +56,6 @@ TEST_CASE("real values format to the shortest round-trip text", "[scan]")
 
         CHECK(slopkit::scan::format_value(ValueType::float32, bytes, false) == "3.14");
 
-        // format_value -> parse_value -> encode_value reproduces the same bytes.
         const auto parsed = slopkit::scan::parse_value(ValueType::float32, "3.14", false);
         REQUIRE(parsed.has_value());
         CHECK(slopkit::scan::encode_value(ValueType::float32, *parsed) == bytes);

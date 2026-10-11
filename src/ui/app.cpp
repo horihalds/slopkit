@@ -19,11 +19,8 @@
 
 namespace slopkit::ui
 {
-
     int App::run(int argc, char** argv, const QString& initial_table_path)
     {
-        // A second launch with a table path belongs to the running instance; it
-        // must not build any GUI, not even a QApplication.
         if (!initial_table_path.isEmpty() && app::hand_off_open_request(initial_table_path.toStdString()))
         {
             log::info(log::category::app, "handed the open request to the running instance");
@@ -91,8 +88,6 @@ namespace slopkit::ui
                              });
         }
 
-        // The workers notify from their own threads; the queued wake-up drains
-        // the completions here, on the UI thread.
         access_worker_.set_completion_hook(
             [this]
             {
@@ -125,4 +120,4 @@ namespace slopkit::ui
         return exit_code;
     }
 
-} // namespace slopkit::ui
+}

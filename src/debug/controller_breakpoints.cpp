@@ -4,7 +4,6 @@
 
 namespace slopkit::debug
 {
-
     std::span<const Breakpoint> Controller::breakpoints() const noexcept
     {
         return breakpoints_.entries();
@@ -59,8 +58,6 @@ namespace slopkit::debug
         }
         if (state_ == State::running)
         {
-            // The entry must outlive the queued disarm, so it is erased once the
-            // maintenance round-trip drains instead of here.
             entry->enabled = false;
             if (entry->armed)
             {
@@ -212,8 +209,6 @@ namespace slopkit::debug
         {
             notify(MessageKind::warning, QStringLiteral("%1: %2").arg(action).arg(failure_text(*armed->error)));
         }
-        // Only the current watch's slot feeds the watch; a stale completion for a
-        // replaced or removed entry is ignored.
         if (entry != nullptr && entry->hidden && watch_.breakpoint_id() == id)
         {
             watch_.mark_armed(entry->armed);
@@ -221,12 +216,10 @@ namespace slopkit::debug
         }
         emit breakpointsChanged();
 
-        // A maintenance round-trip chains the next queued op, and resumes only
-        // once the whole queue is applied.
         if (maintenance_stop_)
         {
             apply_pending_slot_ops();
         }
     }
 
-} // namespace slopkit::debug
+}

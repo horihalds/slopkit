@@ -32,8 +32,6 @@ int main(int argc, char** argv)
         }
     }
 
-    // Same platform choice as slopkit, so the two windows never disagree and
-    // the sandbox follows slopkit back onto XWayland.
     slopkit::ui::prefer_platform_with_remembered_positions();
 
     QApplication application(argc, argv);
@@ -42,8 +40,6 @@ int main(int argc, char** argv)
     // No `.desktop` entry ships for the sandbox, so setDesktopFileName() is
     // deliberately left unset.
 
-    // A single, predictable style makes the palette-only theming behave the same
-    // on every desktop.
     application.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 
     if (!slopkit::ui::register_embedded_fonts())
@@ -51,8 +47,6 @@ int main(int argc, char** argv)
         slopkit::log::warning(slopkit::log::category::ui, "the embedded fonts could not be loaded");
     }
 
-    // Read the persisted theme once so the sandbox matches whatever the user
-    // chose in slopkit, without a second settings store of its own.
     const slopkit::ui::SettingsController settings;
     slopkit::ui::apply_theme(settings.values().dark_theme ? slopkit::ui::dark_theme() : slopkit::ui::light_theme());
 

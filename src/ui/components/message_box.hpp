@@ -12,8 +12,6 @@ namespace slopkit::ui::widgets
 {
     class StatusLabel;
 
-    // The presentation kind of a MessageBox; it picks the themed glyph and the
-    // status colour of the main text.
     enum class MessageBoxIcon
     {
         none,
@@ -24,8 +22,6 @@ namespace slopkit::ui::widgets
         success,
     };
 
-    // A standard button a MessageBox can offer. The values are powers of two so
-    // the set is a proper QFlags bitmask.
     enum class MessageBoxButton
     {
         ok     = 0x1,
@@ -36,8 +32,6 @@ namespace slopkit::ui::widgets
     };
     Q_DECLARE_FLAGS(MessageBoxButtons, MessageBoxButton)
 
-    // The button the user activated; `none` means the box was dismissed through
-    // Esc, the window close button or reject().
     enum class MessageBoxResult
     {
         none,
@@ -48,11 +42,6 @@ namespace slopkit::ui::widgets
         close,
     };
 
-    // A themed, modal message box: an optional kind glyph beside a word-wrapped
-    // main text and an optional muted informative line, over a right-aligned row
-    // of standard buttons. Nothing about its position is hard-coded; the
-    // compositor places it and the layouts size it, guarded by a sensible
-    // minimum width so it never opens as a sliver.
     class MessageBox : public QDialog
     {
         Q_OBJECT
@@ -60,8 +49,6 @@ namespace slopkit::ui::widgets
     public:
         explicit MessageBox(QWidget* parent = nullptr);
 
-        // Runs the box modally. The platform's window-title decoration is given
-        // the title on its own; the application display name is not appended.
         int exec() override;
 
         void set_icon(MessageBoxIcon icon);
@@ -98,7 +85,6 @@ namespace slopkit::ui::widgets
         MessageBoxResult  result_ {MessageBoxResult::none};
     };
 
-    // Runs a configurable message box and returns its result.
     [[nodiscard]] MessageBoxResult message_box(QWidget*          parent,
                                                MessageBoxIcon    icon,
                                                const QString&    title,
@@ -106,23 +92,20 @@ namespace slopkit::ui::widgets
                                                MessageBoxButtons buttons,
                                                MessageBoxButton  default_button = MessageBoxButton::ok);
 
-    // Yes/No confirmation; only Yes confirms, dismissal reports false.
     [[nodiscard]] bool confirm(QWidget*         parent,
                                const QString&   title,
                                const QString&   text,
                                MessageBoxButton default_button = MessageBoxButton::no);
 
-    // OK/Cancel confirmation; only OK confirms, dismissal reports false.
     [[nodiscard]] bool ok_cancel(QWidget*         parent,
                                  const QString&   title,
                                  const QString&   text,
                                  MessageBoxButton default_button = MessageBoxButton::ok);
 
-    // Single-OK notices.
     void information(QWidget* parent, const QString& title, const QString& text);
     void warning(QWidget* parent, const QString& title, const QString& text);
     void error(QWidget* parent, const QString& title, const QString& text);
 
-} // namespace slopkit::ui::widgets
+}
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(slopkit::ui::widgets::MessageBoxButtons)

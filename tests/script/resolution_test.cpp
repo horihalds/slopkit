@@ -23,8 +23,8 @@ print(symbol("missing"))
     REQUIRE(result.ok);
     REQUIRE(result.output.size() == 6);
     CHECK(result.output[0] == "4096");
-    CHECK(result.output[1] == "4096"); // the label answers first
-    CHECK(result.output[2] == "0");    // a label never sees the shared table
+    CHECK(result.output[1] == "4096");
+    CHECK(result.output[2] == "0");
     CHECK(result.output[3] == "8192");
     CHECK(result.output[4] == "0");
     CHECK(result.output[5] == "0");
@@ -83,16 +83,15 @@ print(expression("1234"))
 
     REQUIRE(result.ok);
     REQUIRE(result.output.size() == 4);
-    CHECK(result.output[0] == "4096");  // the script's own label
-    CHECK(result.output[1] == "8192");  // the process-wide symbol
-    CHECK(result.output[2] == "20480"); // the module
-    CHECK(result.output[3] == "4660");  // a bare literal
+    CHECK(result.output[0] == "4096");
+    CHECK(result.output[1] == "8192");
+    CHECK(result.output[2] == "20480");
+    CHECK(result.output[3] == "4660");
 }
 
 TEST_CASE("expression follows an offset chain and dereferences", "[script]")
 {
     ScriptFixture fixture(0x200);
-    // 0x1000 -> 0x1010 and 0x1010 -> 0x1020.
     fixture.fake.put(0x00, {0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
     fixture.fake.put(0x10, {0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
 
@@ -106,16 +105,15 @@ print(expression("p+0+0+0"))
 
     REQUIRE(result.ok);
     REQUIRE(result.output.size() == 4);
-    CHECK(result.output[0] == "4096"); // no dereference
-    CHECK(result.output[1] == "4112"); // base + 16
-    CHECK(result.output[2] == "4112"); // one dereference
-    CHECK(result.output[3] == "4128"); // two dereferences
+    CHECK(result.output[0] == "4096");
+    CHECK(result.output[1] == "4112");
+    CHECK(result.output[2] == "4112");
+    CHECK(result.output[3] == "4128");
 }
 
 TEST_CASE("expression spells a bracket pointer chain and validates its levels", "[script]")
 {
     ScriptFixture fixture(0x200);
-    // 0x1000 -> 0x1010 and 0x1010 -> 0x1020.
     fixture.fake.put(0x00, {0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
     fixture.fake.put(0x10, {0x20, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
 
@@ -130,9 +128,9 @@ print(expression("[[p]+0x10]+0x20"))
 
         REQUIRE(result.ok);
         REQUIRE(result.output.size() == 3);
-        CHECK(result.output[0] == "4128"); // deref the base then add
-        CHECK(result.output[1] == "4160"); // one dereference
-        CHECK(result.output[2] == "32");   // two dereferences: 0x1000->0x1010, +0x10->0x1020->0, +0x20
+        CHECK(result.output[0] == "4128");
+        CHECK(result.output[1] == "4160");
+        CHECK(result.output[2] == "32");
     }
 
     SECTION("a failing level reports its level and address, not the read error")

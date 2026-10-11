@@ -17,19 +17,15 @@
 #include "app/instance.hpp"
 #include "app/instance_server.hpp"
 
-// Defined in test_main.cpp; the single QApplication every widget suite shares.
 QApplication& slopkit_test_application();
 
 namespace
 {
-    // A QApplication may only exist once per process, so every case uses the one
-    // instance the whole test binary shares.
     void ensure_application()
     {
         static_cast<void>(slopkit_test_application());
     }
 
-    // A private abstract-socket name per test, so cases never reach each other.
     std::string private_name(std::string_view suffix)
     {
         std::string name(1, '\0');
@@ -37,7 +33,6 @@ namespace
         return name;
     }
 
-    // Pumps Qt events until `done` holds or the timeout elapses.
     template<typename Predicate>
     bool pump_until(Predicate done, std::chrono::milliseconds timeout = std::chrono::milliseconds {2000})
     {
@@ -131,7 +126,6 @@ namespace
         const std::string long_path(5000, 'x');
         CHECK_FALSE(slopkit::app::hand_off_open_request(long_path, name));
 
-        // Let any stray activation run, then confirm nothing was delivered.
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
         CHECK(got == 0);
     }
@@ -144,4 +138,4 @@ namespace
         CHECK(name.find(std::to_string(static_cast<unsigned long>(::getuid()))) != std::string::npos);
     }
 
-} // namespace
+}

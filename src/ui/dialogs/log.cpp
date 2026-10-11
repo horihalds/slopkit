@@ -24,7 +24,6 @@
 
 namespace slopkit::ui::dialogs
 {
-
     namespace
     {
         QString record_text(const log::Record& record)
@@ -44,7 +43,7 @@ namespace slopkit::ui::dialogs
             return to_qstring(log::level_name(record.level)) + QLatin1Char(' ') + to_qstring(record.category)
                  + QLatin1Char(' ') + to_qstring(record.message);
         }
-    } // namespace
+    }
 
     LogDialog::LogDialog(QWidget* parent) : QDialog(parent)
     {
@@ -120,9 +119,6 @@ namespace slopkit::ui::dialogs
 
         records_ = log::Logger::instance().history();
 
-        // Merge records delivered before the snapshot without duplicating the ones
-        // already in the history; anything newer than the last history entry is
-        // appended.
         const auto newest = records_.empty() ? std::chrono::system_clock::time_point {} : records_.back().time;
         for (auto& record : notifier_.take())
         {
@@ -145,8 +141,6 @@ namespace slopkit::ui::dialogs
 
     void LogDialog::render()
     {
-        // Combo rows map to the minimum level: All/Debug show everything, then
-        // Info, Warning and Error narrow it.
         const int     minimum_rank = level_filter_->currentIndex() <= 0 ? 0 : level_filter_->currentIndex() - 1;
         const QString needle       = text_filter_->text();
 
@@ -175,8 +169,6 @@ namespace slopkit::ui::dialogs
     void LogDialog::clear()
     {
         records_.clear();
-        // Drain whatever the notifier buffered before the clear; the records are
-        // dropped on purpose, so the nodiscard result is explicitly discarded.
         (void)notifier_.take();
         log::Logger::instance().clear_history();
         render();
@@ -226,4 +218,4 @@ namespace slopkit::ui::dialogs
         status_->set_status(shown == 0 ? widgets::StatusKind::warning : widgets::StatusKind::info, message);
     }
 
-} // namespace slopkit::ui::dialogs
+}

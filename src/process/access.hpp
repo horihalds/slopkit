@@ -12,9 +12,6 @@
 
 namespace slopkit::process
 {
-
-    // Backend that owns a concrete attachment to a target. Implemented on top of
-    // the plugin layer; the UI only ever sees Session.
     class SessionBackend
     {
     public:
@@ -29,10 +26,6 @@ namespace slopkit::process
         virtual std::expected<std::size_t, AccessError>            write(std::uint64_t              address,
                                                                          std::span<const std::byte> data)        = 0;
 
-        // Reads into a caller-owned buffer. The default implementation goes
-        // through read() and copies, so simple backends and test fakes need not
-        // override it; a real backend overrides it to read straight into
-        // `buffer` and avoid the per-read allocation.
         virtual std::expected<std::size_t, AccessError> read_into(std::uint64_t address, std::span<std::byte> buffer)
         {
             auto data = read(address, buffer.size());
@@ -49,9 +42,6 @@ namespace slopkit::process
         virtual std::expected<std::vector<ThreadInfo>, AccessError> threads() = 0;
         virtual std::expected<std::vector<RegionInfo>, AccessError> regions() = 0;
 
-        // Suspend/resume capability. Defaulted so an existing backend or a test
-        // fake that cannot stop a target keeps compiling; only a backend that
-        // actually implements the plugin ABI 1.5 operations overrides them.
         [[nodiscard]] virtual bool supports_suspend() const noexcept
         {
             return false;
@@ -67,28 +57,21 @@ namespace slopkit::process
             return std::unexpected(AccessError::unsupported);
         }
 
-        // Allocation capability. Defaulted so a backend or a test fake without
-        // the plugin ABI 1.6 operations keeps compiling; only a backend that
-        // actually implements them overrides them.
         [[nodiscard]] virtual bool supports_allocation() const noexcept
         {
             return false;
         }
 
-        virtual std::expected<std::uint64_t, AccessError> allocate(std::size_t /*size*/, std::uint64_t /*near_address*/)
+        virtual std::expected<std::uint64_t, AccessError> allocate(std::size_t, std::uint64_t)
         {
             return std::unexpected(AccessError::unsupported);
         }
 
-        virtual std::expected<void, AccessError> free(std::uint64_t /*address*/)
+        virtual std::expected<void, AccessError> free(std::uint64_t)
         {
             return std::unexpected(AccessError::unsupported);
         }
 
-        // True when [address, address + size) is mapped and readable in the
-        // target. The default implementation probes with read(), so a backend
-        // (or plugin) that cannot answer directly needs no override, and an
-        // address that cannot be read is simply invalid rather than an error.
         virtual std::expected<bool, AccessError> validate(std::uint64_t address, std::size_t size)
         {
             const auto data = read(address, size);
@@ -96,8 +79,6 @@ namespace slopkit::process
         }
     };
 
-    // Move-only handle to an attached process. All operations return
-    // std::expected so failures can be surfaced instead of throwing.
     class Session
     {
     public:
@@ -127,7 +108,6 @@ namespace slopkit::process
             return backend_ ? backend_->advertised_methods() : AccessMethod::none;
         }
 
-        // Access primitive actually used for the most recent read/write.
         [[nodiscard]] AccessMethod last_method() const noexcept
         {
             return backend_ ? backend_->last_method() : AccessMethod::none;
@@ -233,7 +213,6 @@ namespace slopkit::process
             return backend_->free(address);
         }
 
-        // True when [address, address + size) is mapped and readable.
         std::expected<bool, AccessError> validate(std::uint64_t address, std::size_t size)
         {
             if (!backend_)
@@ -252,9 +231,6 @@ namespace slopkit::process
         std::unique_ptr<SessionBackend> backend_;
     };
 
-    // The seam the UI depends on. The embedded implementation lives in
-    // plugin_access; an out-of-process transport can replace it without any UI
-    // change because nothing above this interface knows about dlopen or plugins.
     class ProcessAccess
     {
     public:
@@ -264,4 +240,4 @@ namespace slopkit::process
         virtual std::expected<Session, AccessError> attach(ProcessId pid, std::string_view plugin_id) = 0;
     };
 
-} // namespace slopkit::process
+}

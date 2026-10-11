@@ -38,8 +38,6 @@ Exec=widget-editor --new
         return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
     }
 
-    // Decodes the shared-mime-info octal escapes (e.g. `\003` -> 0x03) a magic
-    // value uses, so it can be compared with a file's raw bytes.
     std::string unescape_magic(std::string_view raw)
     {
         std::string result;
@@ -63,7 +61,7 @@ Exec=widget-editor --new
         }
         return result;
     }
-} // namespace
+}
 
 TEST_CASE("desktop entry parses the main group", "[desktop_entry]")
 {

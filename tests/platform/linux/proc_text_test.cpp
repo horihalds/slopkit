@@ -17,7 +17,7 @@ namespace
         std::filesystem::create_directories(directory, error);
         return directory / name;
     }
-} // namespace
+}
 
 TEST_CASE("trim removes leading and trailing whitespace", "[platform]")
 {

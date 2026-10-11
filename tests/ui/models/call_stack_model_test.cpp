@@ -29,7 +29,6 @@ TEST_CASE("call stack model renders frames in the current mode", "[ui][models][c
     CHECK(model.data(model.index(0, CallStackModel::frame), Qt::DisplayRole).toString() == QStringLiteral("0"));
     CHECK(model.data(model.index(1, CallStackModel::frame), Qt::DisplayRole).toString() == QStringLiteral("1"));
 
-    // With no module spans, the address column falls back to the absolute text.
     CHECK(model.data(model.index(0, CallStackModel::address), Qt::DisplayRole)
           == model.data(model.index(0, CallStackModel::absolute), Qt::DisplayRole));
     CHECK(model.data(model.index(1, CallStackModel::absolute), Qt::DisplayRole)
@@ -59,7 +58,6 @@ TEST_CASE("call stack model answers the full-text role with the untruncated addr
     CHECK(model.data(address, Qt::DisplayRole).toString() == QStringLiteral("DyingL..._rwdi.exe+0x10"));
     CHECK(model.data(address, slopkit::ui::widgets::kFullTextRole).toString()
           == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x10"));
-    // Only the address column carries the full text.
     CHECK(model.data(model.index(0, CallStackModel::frame), slopkit::ui::widgets::kFullTextRole).toString().isEmpty());
 }
 

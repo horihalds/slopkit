@@ -7,7 +7,6 @@
 
 namespace slopkit::process
 {
-
     std::string AttachedTarget::label() const
     {
         if (!valid())
@@ -36,4 +35,4 @@ namespace slopkit::process
         session_live = false;
     }
 
-} // namespace slopkit::process
+}

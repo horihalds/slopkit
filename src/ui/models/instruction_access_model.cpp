@@ -8,7 +8,6 @@
 
 namespace slopkit::ui::models
 {
-
     InstructionAccessModel::InstructionAccessModel(QObject* parent, AddressText format, AddressText full_format)
         : QAbstractTableModel(parent), format_(std::move(format)), full_format_(std::move(full_format))
     {
@@ -82,12 +81,9 @@ namespace slopkit::ui::models
         }
         if (role == widgets::kFullTextRole && index.column() == address && row.resolved)
         {
-            // Fall back to the display formatter when no fuller one was given.
             const AddressText& full = full_format_ ? full_format_ : format_;
             return full(row.address);
         }
-        // Address, operand and width are machine data; the access word column
-        // keeps the UI font.
         if (role == Qt::FontRole)
         {
             if (index.column() == access)
@@ -137,4 +133,4 @@ namespace slopkit::ui::models
         }
     }
 
-} // namespace slopkit::ui::models
+}

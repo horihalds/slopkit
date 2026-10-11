@@ -9,24 +9,18 @@
 
 namespace slopkit::plugins::support
 {
-    // Why one memory operation failed: the ABI error code the entry returns plus
-    // the human reason a plugin can supply (the ABI's MemoryError carries no
-    // text, and an agent failure is worth naming).
     struct AccessFault
     {
         std::int32_t code {0};
         std::string  message;
     };
 
-    // A completed memory transfer: how many bytes moved and the access-method
-    // bit the ABI reports for it (`SLOPKIT_ACCESS_*`).
     struct MemoryResult
     {
         std::size_t   bytes {0};
         std::uint32_t method {0};
     };
 
-    // The ABI error code for a MemAccess failure.
     inline std::int32_t status_for(platform::MemoryError error)
     {
         switch (error)
@@ -45,7 +39,6 @@ namespace slopkit::plugins::support
         return SLOPKIT_ERR_INTERNAL;
     }
 
-    // The wording the shared entries report for a MemAccess failure.
     inline const char* message_for(platform::MemoryError error)
     {
         switch (error)
@@ -64,7 +57,6 @@ namespace slopkit::plugins::support
         return "unknown memory error";
     }
 
-    // The access-method bit a MemAccess primitive reports.
     inline std::uint32_t method_flag(platform::MemoryPrimitive primitive)
     {
         switch (primitive)
@@ -79,4 +71,4 @@ namespace slopkit::plugins::support
         return 0;
     }
 
-} // namespace slopkit::plugins::support
+}

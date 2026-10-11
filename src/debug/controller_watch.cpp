@@ -7,7 +7,6 @@
 
 namespace slopkit::debug
 {
-
     const AccessWatch& Controller::watch() const noexcept
     {
         return watch_;
@@ -20,7 +19,6 @@ namespace slopkit::debug
             return std::unexpected(std::string {"Attach to a target first."});
         }
 
-        // One watch at a time: a new one replaces the running one, rows included.
         if (watch_.state() == WatchState::watching)
         {
             slopkit::log::info(slopkit::log::category::debug,
@@ -28,7 +26,6 @@ namespace slopkit::debug
             stop_watch();
         }
 
-        // A data breakpoint can only watch 1, 2, 4 or 8 bytes.
         const std::size_t bytes = size == 1 || size == 2 || size == 4 || size == 8 ? size : 4;
         auto              id    = breakpoints_.add(std::format("0x{:X}", address), address, kind, bytes);
         if (!id)
@@ -100,4 +97,4 @@ namespace slopkit::debug
         emit watchChanged();
     }
 
-} // namespace slopkit::debug
+}

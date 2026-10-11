@@ -12,15 +12,12 @@
 
 namespace slopkit::plugin
 {
-
-    // A library that was found but rejected during discovery.
     struct PluginDiagnostic
     {
         std::filesystem::path path;
         std::string           message;
     };
 
-    // Discovers and owns the loaded plugins.
     class PluginHost
     {
     public:
@@ -31,9 +28,6 @@ namespace slopkit::plugin
         PluginHost(PluginHost&&)                 = delete;
         PluginHost& operator=(PluginHost&&)      = delete;
 
-        // `${executable_dir}/plugins`, the installed plugin directory
-        // (`${executable_dir}/../<libdir>/slopkit/plugins`), then every entry of
-        // the colon-separated SLOPKIT_PLUGIN_PATH environment variable.
         static std::vector<std::filesystem::path>
         default_search_directories(const std::filesystem::path& executable_dir);
         static std::vector<std::filesystem::path> split_search_path(std::string_view value);
@@ -45,9 +39,6 @@ namespace slopkit::plugin
         [[nodiscard]] Plugin*                                  find(std::string_view id) noexcept;
         [[nodiscard]] const Plugin*                            find(std::string_view id) const noexcept;
 
-        // Merged listing over every plugin, sorted by pid. Each entry records all
-        // of its claimants and defaults to the most specific one (lowest
-        // precedence).
         [[nodiscard]] std::vector<process::ProcessInfo> list_processes();
 
     private:
@@ -55,4 +46,4 @@ namespace slopkit::plugin
         std::vector<PluginDiagnostic>        diagnostics_;
     };
 
-} // namespace slopkit::plugin
+}

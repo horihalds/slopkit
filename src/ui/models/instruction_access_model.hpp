@@ -12,11 +12,6 @@
 
 namespace slopkit::ui::models
 {
-
-    // The resolved operands of the instruction the user picked in the listing:
-    // its address, operand text, width and access kind. Moved out of the Access
-    // Watch dialog so it can be built and tested without a session; the address
-    // text arrives through the injected formatter.
     class InstructionAccessModel : public QAbstractTableModel
     {
     public:
@@ -29,9 +24,6 @@ namespace slopkit::ui::models
             column_count,
         };
 
-        // `full_format` supplies the untruncated text for the hover; when it is
-        // empty the display formatter is used, so a caller that only has one
-        // formatter keeps working.
         InstructionAccessModel(QObject* parent, AddressText format, AddressText full_format = {});
 
         void set(std::vector<ui::ResolvedAccess> accesses);
@@ -62,4 +54,4 @@ namespace slopkit::ui::models
         std::vector<Row> rows_;
     };
 
-} // namespace slopkit::ui::models
+}

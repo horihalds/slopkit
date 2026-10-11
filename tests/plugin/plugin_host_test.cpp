@@ -26,8 +26,6 @@ namespace
         ::unsetenv(name);
     }
 
-    // Restores the process-wide log level on scope exit so a test that pins it
-    // cannot leak the setting into the next case.
     class LevelGuard
     {
     public:
@@ -62,7 +60,7 @@ namespace
     private:
         slopkit::log::SinkId id_;
     };
-} // namespace
+}
 
 TEST_CASE("PluginHost diagnoses broken plugin libraries", "[plugin]")
 {

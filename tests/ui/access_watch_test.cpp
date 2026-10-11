@@ -12,7 +12,7 @@ namespace
     using slopkit::debug::RegisterValue;
     using slopkit::disasm::MemoryRef;
     using slopkit::ui::resolve_accesses;
-} // namespace
+}
 
 TEST_CASE("a base, index and displacement operand resolves against the registers", "[ui]")
 {

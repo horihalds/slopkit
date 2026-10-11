@@ -237,7 +237,6 @@ TEST_CASE("controller arms a hardware breakpoint in a DR slot", "[debug][control
     CHECK(std::get<2>(backend.hardware_calls().front()) == 0x2000);
     CHECK(std::get<3>(backend.hardware_calls().front()) == 4);
 
-    // Removing it disarms the slot.
     backend.clear_hardware_calls();
     controller.remove_breakpoint(*id);
     REQUIRE(pump_until(controller,
@@ -299,7 +298,6 @@ TEST_CASE("controller gates register writes on the stopped state", "[debug][cont
                          warnings += kind == Controller::MessageKind::warning ? 1 : 0;
                      });
 
-    // Idle: refused, nothing reaches the backend.
     controller.write_register("RAX", 1);
     CHECK(warnings == 1);
     CHECK(backend.count("set_register") == 0);
@@ -349,7 +347,6 @@ TEST_CASE("controller arms breakpoints while the target runs through one invisib
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
 
-    // Both ops ride a single maintenance stop, and the target never looks stopped.
     REQUIRE(pump_until(controller,
                        [&]
                        {
@@ -412,7 +409,7 @@ namespace
         }
         return nullptr;
     }
-} // namespace
+}
 
 TEST_CASE("controller collects access watch hits while the target runs", "[debug][controller]")
 {
@@ -426,7 +423,6 @@ TEST_CASE("controller collects access watch hits while the target runs", "[debug
                            return controller.state() == Controller::State::running;
                        }));
 
-    // The watch arms through the maintenance stop and leaves the target running.
     REQUIRE(controller.watch_address(0x4000, Kind::hardware_write, 4).has_value());
     REQUIRE(pump_until(controller,
                        [&]
@@ -441,8 +437,6 @@ TEST_CASE("controller collects access watch hits while the target runs", "[debug
     CHECK(controller.state() == Controller::State::running);
     const std::uint32_t slot = hidden_entry(controller)->slot;
 
-    // Two stops on the watched slot coalesce into one row with a count, and the
-    // target is resumed after each without ever looking stopped.
     backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
     backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x5005, 0x5005, slot, 0});
 
@@ -466,13 +460,11 @@ TEST_CASE("controller collects access watch hits while the target runs", "[debug
     CHECK(controller.watch().hits().front().tid == 4242);
     CHECK(controller.watch().hits().front().count == 2);
 
-    // Clear empties the rows but keeps collecting.
     controller.clear_watch_hits();
     CHECK(controller.watch().hits().empty());
     CHECK(controller.watch().hit_count() == 0);
     CHECK(controller.watch().state() == slopkit::debug::WatchState::watching);
 
-    // A new watch replaces the running one and drops the rows.
     REQUIRE(controller.watch_address(0x6000, Kind::hardware_read_write, 8).has_value());
     REQUIRE(pump_until(controller,
                        [&]
@@ -485,7 +477,6 @@ TEST_CASE("controller collects access watch hits while the target runs", "[debug
     CHECK(controller.watch().hits().empty());
     CHECK(controller.state() == Controller::State::running);
 
-    // Stop disarms the slot and leaves the target running with the rows kept.
     controller.stop_watch();
     REQUIRE(pump_until(controller,
                        [&]
@@ -507,7 +498,6 @@ TEST_CASE("controller refuses an access watch it cannot arm", "[debug][controlle
                            return controller.state() == Controller::State::stopped;
                        }));
 
-    // All four debug slots taken: the watch cannot be armed.
     for (int index = 0; index < 4; ++index)
     {
         const auto id =
@@ -530,7 +520,6 @@ TEST_CASE("controller refuses an access watch it cannot arm", "[debug][controlle
     CHECK(no_slot.error() == "no hardware slot is free");
     CHECK(controller.watch().state() == slopkit::debug::WatchState::idle);
 
-    // An address a hardware breakpoint already covers is refused too.
     controller.clear_breakpoints();
     REQUIRE(pump_until(controller,
                        [&]
@@ -616,7 +605,6 @@ TEST_CASE("controller captures the registers of a running target invisibly", "[d
     CHECK(rip_visible);
     CHECK(backend.count("interrupt") == 1);
     CHECK(backend.count("registers") == 1);
-    // The target was put back running after the capture.
     CHECK(pump_until(controller,
                      [&]
                      {
@@ -629,7 +617,6 @@ TEST_CASE("controller captures immediately when the target is stopped or absent"
     FakeDebugBackend backend;
     Controller       controller(backend);
 
-    // No session: the callback runs right away, nothing reaches the backend.
     int idle_captured = 0;
     controller.capture_registers(
         [&idle_captured]
@@ -695,7 +682,6 @@ TEST_CASE("controller steps out through a transient hidden breakpoint", "[debug]
     CHECK(backend.last_resume_address() == 0);
     CHECK(backend.last_resume_step_size() == 0);
 
-    // The transient entry owns a slot but stays out of the panes.
     REQUIRE(controller.breakpoints().size() == 1);
     CHECK(controller.breakpoints().front().hidden);
     CHECK(controller.breakpoints().front().address == 0x6000);
@@ -788,7 +774,6 @@ TEST_CASE("controller reuses a user breakpoint at the caller's return address", 
                            return controller.state() == Controller::State::running && backend.count("cont") >= 1;
                        }));
 
-    // No transient entry is added; the user's own trap is the one being run to.
     std::size_t inserts_at_return = 0;
     for (const auto& call : backend.software_calls())
     {
@@ -840,7 +825,6 @@ TEST_CASE("controller refuses to step out without a caller frame", "[debug][cont
     CHECK(backend.software_calls().empty());
     CHECK(controller.breakpoints().empty());
 
-    // A caller frame whose return address is zero is refused the same way.
     backend.set_frames({
         slopkit::debug::Frame {0x1000, 0},
          slopkit::debug::Frame {     0, 0}
@@ -904,12 +888,10 @@ TEST_CASE("controller ignores a step-out without a stop", "[debug][controller]")
     backend.block_continue = true;
     Controller controller(backend);
 
-    // Idle: nothing to run.
     controller.step_out();
     CHECK(controller.state() == Controller::State::idle);
     CHECK(backend.software_calls().empty());
 
-    // Running: a second step-out never arms or continues.
     controller.start(4242, "linux-proc");
     REQUIRE(pump_until(controller,
                        [&]
@@ -1070,7 +1052,6 @@ TEST_CASE("controller cancels a step-out on a user breakpoint in the callee", "[
                                && controller.breakpoints().size() == 1;
                        }));
 
-    // The user's hit is reported and counted; the transient entry is gone.
     CHECK(controller.table().find(*id)->hits == 1);
     CHECK_FALSE(controller.breakpoints().front().hidden);
 }
@@ -1085,7 +1066,6 @@ TEST_CASE("controller drops a pending step-out when the session ends", "[debug][
     });
     Controller controller(backend);
 
-    // Stop Debugging while the step-out is pending.
     controller.start(4242, "linux-proc");
     REQUIRE(pump_until(controller,
                        [&]
@@ -1111,7 +1091,6 @@ TEST_CASE("controller drops a pending step-out when the session ends", "[debug][
                        }));
     CHECK(controller.table().empty());
 
-    // Target exit while the step-out is pending.
     backend.clear_calls();
     controller.start(4242, "linux-proc");
     REQUIRE(pump_until(controller,

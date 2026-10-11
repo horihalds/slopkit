@@ -11,8 +11,6 @@
 
 namespace slopkit::ui::models
 {
-    // PID / Name rows for one tab, search text and plugin filter of the
-    // Process List dialog.
     class ProcessListModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -57,4 +55,4 @@ namespace slopkit::ui::models
         Qt::SortOrder sort_order_ {Qt::AscendingOrder};
     };
 
-} // namespace slopkit::ui::models
+}

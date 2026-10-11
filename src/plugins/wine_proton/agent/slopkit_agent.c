@@ -1,17 +1,3 @@
-/*
- * The resident agent DLL the wine-proton plugin injects into a Wine/Proton
- * target. Its only job is to call Wine's own VirtualAlloc/VirtualFree/
- * VirtualProtect/VirtualQuery from inside the target process, so the mappings
- * it creates are ones Wine's virtual-memory manager knows about (a raw mmap
- * planted by ptrace is invisible to it).
- *
- * The DLL carries no CRTF/C++ runtime: it is C, built with -nostdlib, and
- * talks to kernel32 only. DllMain does one thing — start the service thread —
- * so nothing heavy runs under the loader lock. The service thread maps the
- * shared region sitting next to the DLL, serves requests until SHUTDOWN and
- * then unloads itself.
- */
-
 #define WIN32_LEAN_AND_MEAN
 
 #include <windows.h>

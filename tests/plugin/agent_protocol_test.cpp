@@ -98,8 +98,6 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(SLOPKIT_AGENT_FLAG_STOPPED == 2u);
 }
 
-// A fixed-width little-endian wire format is what lets a PE compiled by mingw
-// and a Linux binary compiled by GCC agree without any serialisation library.
 TEST_CASE("the resident agent protocol encodes fixed-width little-endian fields", "[wine-proton][agent]")
 {
     if (std::endian::native != std::endian::little)
@@ -119,7 +117,6 @@ TEST_CASE("the resident agent protocol encodes fixed-width little-endian fields"
     CHECK(bytes[2] == 0x03);
     CHECK(bytes[3] == 0x04);
 
-    // `size` sits at offset 24 and `protection` at 40, as asserted above.
     CHECK(bytes[24] == 0x88);
     CHECK(bytes[31] == 0x11);
     CHECK(bytes[40] == 0x0D);

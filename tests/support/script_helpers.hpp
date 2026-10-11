@@ -29,30 +29,16 @@ namespace
     using slopkit::script::MemoryRegion;
     using slopkit::script::RunResult;
 
-    // The base address an in-memory fake target answers from.
     inline constexpr std::uint64_t kScriptBase = 0x1000;
 
-    // A MemoryApi over an owned buffer, so the engine can be exercised without a
-    // session. Reads and writes outside the buffer fail with the same kind of
-    // message the worker's `AccessError` text produces.
     struct FakeMemory
     {
         std::vector<std::byte>                             bytes;
         std::size_t                                        pointer_size {8};
-        // The address the buffer answers from; a test that needs a 64-bit site
-        // can raise it.
         std::uint64_t                                      base {kScriptBase};
-        // The module name the default region reports, so a test can exercise the
-        // module filter of `aobscan`.
         std::string                                        module_name {"test.so"};
-        // When non-empty, overrides the default single readable region covering
-        // the whole buffer.
         std::vector<MemoryRegion>                          regions;
-        // When set, listing regions fails with this text.
         std::optional<std::string>                         regions_error;
-        // Allocation seams for `alloc`/`dealloc`: a pool keyed by the address
-        // the engine was handed, plus the module snapshot `expression` resolves
-        // module names against.
         bool                                               can_allocate {true};
         std::optional<std::string>                         allocate_error;
         // When set, `alloc` returns this address (still recorded, so `dealloc`
@@ -62,10 +48,6 @@ namespace
         std::unordered_map<std::uint64_t, std::size_t>     allocations;
         std::vector<std::pair<std::uint64_t, std::size_t>> allocate_requests;
         std::vector<slopkit::expr::ModuleRef>              modules;
-        // Validation seam for `validate`/`expression`: `can_validate` answers
-        // directly (a range outside the buffer is invalid, not an error),
-        // `validate_error` models a refused operation, and `validate_count`
-        // records the calls.
         bool                                               can_validate {true};
         std::optional<std::string>                         validate_error;
         std::size_t                                        validate_count {0};
@@ -202,8 +184,6 @@ namespace
         }
     };
 
-    // An engine over a fake target, ready to run chunks, with the symbol seam
-    // backed by a table the test can assert on.
     struct ScriptFixture
     {
         FakeMemory                   fake;
@@ -215,4 +195,4 @@ namespace
         {
         }
     };
-} // namespace
+}

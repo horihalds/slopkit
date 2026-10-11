@@ -8,7 +8,6 @@
 
 namespace slopkit::scan
 {
-
     Matcher Matcher::build(const ScanConfig& config)
     {
         Matcher matcher;
@@ -259,4 +258,4 @@ namespace slopkit::scan
         return limit;
     }
 
-} // namespace slopkit::scan
+}

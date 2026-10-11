@@ -4,13 +4,10 @@
 
 namespace slopkit::ui
 {
-
     CompletionNotifier::CompletionNotifier(QObject* parent) : QObject(parent) {}
 
     void CompletionNotifier::post() noexcept
     {
-        // At most one queued event is in flight; the flag is cleared when that
-        // event runs, so a completion posted during the drain queues another.
         if (pending_.exchange(true, std::memory_order_acq_rel))
         {
             return;
@@ -26,4 +23,4 @@ namespace slopkit::ui
             Qt::QueuedConnection);
     }
 
-} // namespace slopkit::ui
+}

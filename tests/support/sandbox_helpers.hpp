@@ -88,8 +88,6 @@ namespace
         return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&field));
     }
 
-    // Kills and reaps a practice target a test launched, so a failing assertion
-    // never leaves the sandbox running (or a zombie behind).
     struct LaunchedTarget
     {
         pid_t pid {-1};
@@ -104,8 +102,6 @@ namespace
         }
     };
 
-    // Runs one exact-value first scan over the region holding `address` and
-    // returns whether the real engine stored that address among its hits.
     [[maybe_unused]] bool scan_finds(slopkit::process::Session& session, ScanConfig config, std::uint64_t address)
     {
         const auto regions = session.regions();
@@ -133,4 +129,4 @@ namespace
                                        return hit.address == address;
                                    });
     }
-} // namespace
+}

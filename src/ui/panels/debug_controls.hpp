@@ -13,12 +13,6 @@ class QPushButton;
 
 namespace slopkit::ui::panels
 {
-
-    // The one-line debug control bar above the disassembly listing: every
-    // debugger control in a single row, led by the dynamic Start/Stop toggle.
-    // It owns the session-state gating, so the right-hand pane stays a pure
-    // view of the registers and the call stack. Every action is submitted to the
-    // controller, so the UI thread never touches the target.
     class DebugControls : public QWidget
     {
         Q_OBJECT
@@ -26,14 +20,8 @@ namespace slopkit::ui::panels
     public:
         DebugControls(debug::Controller& controller, const process::AttachedTarget& target, QWidget* parent = nullptr);
 
-        // The instruction `Toggle Breakpoint` acts on: its address plus the text
-        // (module+RVA or absolute) the controller resolves the address from,
-        // following the listing's own rendering so the two never disagree.
         void set_selected_instruction(std::optional<std::uint64_t> address, const QString& expression);
 
-        // Re-applies the session gating after the attached target changed; the
-        // Start/Stop toggle depends on target validity, which no controller
-        // signal announces.
         void refresh_target_state();
 
         [[nodiscard]] QPushButton* toggle_breakpoint_button() const noexcept;
@@ -52,8 +40,6 @@ namespace slopkit::ui::panels
     private:
         void build_layout();
         void apply_state();
-        // Recomputes the toggle button's enablement and tooltip from the session
-        // state and the selected instruction.
         void update_toggle_state();
         void toggle_session();
 
@@ -72,4 +58,4 @@ namespace slopkit::ui::panels
         QString                      selected_expression_;
     };
 
-} // namespace slopkit::ui::panels
+}

@@ -11,11 +11,6 @@
 
 namespace slopkit::ui::models
 {
-
-    // The coalesced accesses of the one hardware watch the controller runs: one
-    // row per instruction, updated in place as its hit count and thread change.
-    // Moved out of the Access Watch dialog so it can be built and tested without
-    // a session; the address text arrives through the injected formatter.
     class WatchHitsModel : public QAbstractTableModel
     {
     public:
@@ -28,9 +23,6 @@ namespace slopkit::ui::models
             column_count,
         };
 
-        // `full_format` supplies the untruncated text for the hover; when it is
-        // empty the display formatter is used, so a caller that only has one
-        // formatter keeps working.
         WatchHitsModel(QObject* parent, AddressText format, AddressText full_format = {});
 
         void sync(const debug::AccessWatch& watch);
@@ -50,8 +42,8 @@ namespace slopkit::ui::models
     private:
         struct Row
         {
-            std::uint64_t instruction {}; // the RIP the stop reported (one past the access)
-            std::uint64_t recovered {};   // the instruction's own address, once decoded
+            std::uint64_t instruction {};
+            std::uint64_t recovered {};
             QString       text;
             std::uint32_t tid {};
             std::uint64_t count {};
@@ -64,4 +56,4 @@ namespace slopkit::ui::models
         std::vector<Row> rows_;
     };
 
-} // namespace slopkit::ui::models
+}

@@ -20,8 +20,6 @@ TEST_CASE("the scanner range is pre-filled with the padded defaults", "[ui]")
         slopkit::process::AccessWorker   worker {access};
         slopkit::process::AttachedTarget target = fake_target();
 
-        // No attach or map job yet: the boxes already hold the whole-address-space
-        // range, independent of the target's memory map.
         slopkit::ui::panels::ScannerPanel panel {worker, target};
 
         auto* start = address_field(panel, "Start address");
@@ -36,8 +34,6 @@ TEST_CASE("the scanner range is pre-filled with the padded defaults", "[ui]")
         CHECK_FALSE(combo->isEnabled());
     }
 
-    // Waits for the memory map, then checks the boxes hold the padded default
-    // range whatever the mapped pages are.
     const auto expects_defaults = [](FakeAccess& access)
     {
         slopkit::process::AccessWorker   worker {access};
@@ -65,7 +61,7 @@ TEST_CASE("the scanner range is pre-filled with the padded defaults", "[ui]")
 
     SECTION("an empty map")
     {
-        FakeAccess access; // No regions reported.
+        FakeAccess access;
         expects_defaults(access);
     }
 
@@ -122,7 +118,6 @@ TEST_CASE("starting a scan hands the whole address space range to the engine", "
     auto* start = address_field(panel, "Start address");
     REQUIRE(start != nullptr);
 
-    // A first scan needs a value to search for; the range is what we assert.
     auto* value = address_field(panel, "Value");
     REQUIRE(value != nullptr);
     value->setText(QStringLiteral("10"));
@@ -138,8 +133,6 @@ TEST_CASE("starting a scan hands the whole address space range to the engine", "
     }
     REQUIRE(scan_button != nullptr);
 
-    // Wait until the map and the session handoff land: a refresh then enables
-    // scanning.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -174,7 +167,6 @@ TEST_CASE("a rejected scan is reported through the log, not a panel line", "[ui]
     auto* value = address_field(panel, "Value");
     REQUIRE(value != nullptr);
 
-    // Capture every record while the panel is exercised.
     std::vector<slopkit::log::Record> records;
     const auto                        sink = slopkit::log::Logger::instance().add_sink(
         [&records](const slopkit::log::Record& record)
@@ -183,7 +175,6 @@ TEST_CASE("a rejected scan is reported through the log, not a panel line", "[ui]
         });
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
-    // A first scan needs a value to search for; the empty box is rejected.
     auto* scan_button = button_labelled(panel, QStringLiteral("First Scan"));
     REQUIRE(scan_button != nullptr);
     REQUIRE(pump_ui(worker,
@@ -208,7 +199,6 @@ TEST_CASE("a rejected scan is reported through the log, not a panel line", "[ui]
     }
     CHECK(saw_reject);
 
-    // The removed idle hint is nowhere in the panel in any state.
     for (auto* label : panel.findChildren<QLabel*>())
     {
         CHECK(label->text() != QStringLiteral("Select a process to enable scanning."));
@@ -274,7 +264,6 @@ TEST_CASE("New Scan clears the results and returns the panel to its pre-scan sta
     CHECK_FALSE(next_button->isEnabled());
     CHECK(panel.progress_percent() == 0);
 
-    // The found list over the same engine is empty again.
     slopkit::table::AddressTable        addresses;
     slopkit::ui::panels::FoundListPanel found_list {panel.engine(), addresses};
     found_list.refresh();
@@ -314,7 +303,6 @@ TEST_CASE("Undo Scan is gated on a refinement being available", "[ui]")
     REQUIRE(undo_button != nullptr);
     REQUIRE(next_button != nullptr);
 
-    // Wait until the handed-over session has arrived and scanning is possible.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -322,7 +310,6 @@ TEST_CASE("Undo Scan is gated on a refinement being available", "[ui]")
                         return scan_button->isEnabled();
                     }));
 
-    // A first scan leaves a result set but no history, so Undo Scan stays off.
     scan_button->click();
     REQUIRE(pump_ui(worker,
                     [&]
@@ -335,7 +322,6 @@ TEST_CASE("Undo Scan is gated on a refinement being available", "[ui]")
     CHECK_FALSE(undo_button->isEnabled());
     REQUIRE(next_button->isEnabled());
 
-    // A refinement records the previous set, which enables Undo Scan.
     next_button->click();
     REQUIRE(pump_ui(worker,
                     [&]
@@ -346,7 +332,6 @@ TEST_CASE("Undo Scan is gated on a refinement being available", "[ui]")
     panel.refresh();
     CHECK(undo_button->isEnabled());
 
-    // Undoing the only refinement exhausts the history and disables the button.
     undo_button->click();
     panel.refresh();
     CHECK_FALSE(panel.engine().can_undo());
@@ -430,7 +415,6 @@ TEST_CASE("Enter in the scanner value box runs the first scan then a next scan",
         QCoreApplication::sendEvent(edit, &enter);
     };
 
-    // Enter starts the very first scan, so the button turns into New Scan.
     press_enter(value);
     REQUIRE(pump_ui(worker,
                     [&]
@@ -550,7 +534,6 @@ TEST_CASE("the scanner value box is skipped when its scan type needs no value", 
     REQUIRE(value != nullptr);
     REQUIRE(start != nullptr);
 
-    // "Unknown initial value" needs no value, so the field is disabled.
     for (auto* combo : panel.findChildren<QComboBox*>())
     {
         if (combo->currentText() == QStringLiteral("Exact Value"))
@@ -620,8 +603,6 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
                         return combo->isEnabled();
                     }));
 
-    // Item 0 is the whole process, then the file-backed modules by base; the
-    // anonymous mapping stays out of the list.
     REQUIRE(combo->count() == 3);
     CHECK(combo->itemText(0) == QStringLiteral("All memory"));
     CHECK(combo->itemText(1) == QStringLiteral("low"));
@@ -635,7 +616,6 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     CHECK(combo->itemData(0, Qt::ToolTipRole).toString() == QStringLiteral("0x0000000000000000-0x00007FFFFFFFFFFF"));
     CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("low"));
 
-    // Selecting a module narrows the range to its base and size.
     combo->setCurrentIndex(1);
     CHECK(start->text() == QStringLiteral("0x0000000000001000"));
     CHECK(stop->text() == QStringLiteral("0x0000000000001800"));
@@ -645,7 +625,6 @@ TEST_CASE("the scan range dropdown lists file-backed modules and narrows the ran
     CHECK(start->text() == QStringLiteral("0x0000000000002000"));
     CHECK(stop->text() == QStringLiteral("0x0000000000002100"));
 
-    // Back to the whole process: the generic hint returns.
     combo->setCurrentIndex(0);
     CHECK(start->text() == QStringLiteral("0x0000000000000000"));
     CHECK(stop->text() == QStringLiteral("0x00007FFFFFFFFFFF"));
@@ -682,7 +661,6 @@ TEST_CASE("the scan range dropdown shortens long module names", "[ui]")
 
     REQUIRE(combo->count() == 2);
     CHECK(combo->itemText(1) == QStringLiteral("DyingL..._rwdi.exe"));
-    // The entry tooltip and the collapsed box reveal the full name.
     CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe"));
 
     combo->setCurrentIndex(1);
@@ -752,8 +730,6 @@ TEST_CASE("the scan range dropdown pins the main image after All memory", "[ui]"
                         return combo->isEnabled();
                     }));
 
-    // Item 0 is the whole process, then the flagged main image, then the
-    // remaining file-backed modules by base; the anonymous mapping stays out.
     REQUIRE(combo->count() == 4);
     CHECK(combo->itemText(0) == QStringLiteral("All memory"));
     CHECK(combo->itemText(1) == QStringLiteral("game"));
@@ -761,7 +737,6 @@ TEST_CASE("the scan range dropdown pins the main image after All memory", "[ui]"
     CHECK(combo->itemText(3) == QStringLiteral("lib"));
     CHECK(combo->itemData(1, Qt::ToolTipRole).toString() == QStringLiteral("game"));
 
-    // Each row still narrows Start/Stop to that image's span.
     combo->setCurrentIndex(1);
     CHECK(start->text() == QStringLiteral("0x0000000000005000"));
     CHECK(stop->text() == QStringLiteral("0x0000000000006000"));
@@ -818,8 +793,6 @@ TEST_CASE("a memory map applied to the scanner panel reaches the found list", "[
     auto* model = dynamic_cast<slopkit::ui::models::FoundResultsModel*>(view->model());
     REQUIRE(model != nullptr);
 
-    // The module image span arrived through the signal: inside is static, the
-    // half-open end and an unrelated address are not.
     CHECK(model->is_static(0x1000));
     CHECK(model->is_static(0x2FFF));
     CHECK_FALSE(model->is_static(0x3000));
@@ -931,8 +904,6 @@ TEST_CASE("detaching resets the scan range and re-attaching repopulates it", "[u
                     }));
     CHECK(start->text() == QStringLiteral("0x0000000000000000"));
 
-    // Detach: the boxes return to the padded defaults and the dropdown resets
-    // to a disabled entry.
     target.clear();
     panel.refresh();
     CHECK(start->text() == QStringLiteral("0x0000000000000000"));
@@ -941,7 +912,6 @@ TEST_CASE("detaching resets the scan range and re-attaching repopulates it", "[u
     REQUIRE(combo->count() == 1);
     CHECK(combo->itemText(0) == QStringLiteral("All memory"));
 
-    // Re-attach: the map is requested again and the defaults are restored.
     target = fake_target();
     panel.refresh();
     REQUIRE(pump_ui(worker,
@@ -977,7 +947,7 @@ TEST_CASE("a stale memory map result does not overwrite the range", "[ui]")
     REQUIRE(combo != nullptr);
 
     attach_app_session(worker);
-    panel.refresh(); // Submits the map job for pid 42 (shows "Loading…").
+    panel.refresh();
 
     // Let the job finish and queue its completion, then change the target
     // before the completion is drained: it must be dropped.
@@ -1039,17 +1009,12 @@ TEST_CASE("the scanner resolves the main module entry point", "[ui]")
         return panel.main_module_address();
     };
 
-    // A known entry point wins over the module base...
     CHECK(address_for(0x1040) == 0x1040);
 
-    // ...and a zero entry falls back to the lowest-base module.
     CHECK(address_for(0) == 0x1000);
 
-    // A flagged image wins even when another file-backed module has a lower
-    // base, and its entry point (not the base) is reported.
     CHECK(address_for(0x1040, true) == 0x2100);
 
-    // Without a memory map there is no address at all.
     FakeAccess                        no_map_access;
     slopkit::process::AccessWorker    no_map_worker {no_map_access};
     slopkit::process::AttachedTarget  invalid_target;
@@ -1098,8 +1063,6 @@ TEST_CASE("a ticked pause suspends before the scan and resumes when it stops", "
 
     scan_button->click();
 
-    // The suspend is in flight: the engine has not started and the scan button
-    // is held disabled by the pending job.
     CHECK_FALSE(panel.engine().is_running());
     CHECK_FALSE(panel.engine().has_results());
     CHECK_FALSE(scan_button->isEnabled());
@@ -1112,7 +1075,6 @@ TEST_CASE("a ticked pause suspends before the scan and resumes when it stops", "
                     }));
     CHECK(panel.engine().has_results());
 
-    // Once the engine stops, the panel resumes the target exactly once.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -1237,7 +1199,6 @@ TEST_CASE("a refused suspend still starts the scan and warns once", "[ui]")
             ++pause_warnings;
         }
     }
-    // The refusal is logged exactly once and the scan still ran unpaused.
     CHECK(pause_warnings == 1);
     CHECK(access.suspend_calls->load() == 1);
     CHECK(access.resume_calls->load() == 0);
@@ -1263,7 +1224,7 @@ TEST_CASE("the pause checkbox is gated on attach, capability and the debugger", 
 
     SECTION("the plugin cannot suspend")
     {
-        FakeAccess access; // can_suspend stays false
+        FakeAccess access;
 
         slopkit::process::AccessWorker   worker {access};
         slopkit::process::AttachedTarget target = fake_target();
@@ -1307,7 +1268,6 @@ TEST_CASE("the pause checkbox is gated on attach, capability and the debugger", 
         CHECK_FALSE(pause->isEnabled());
         CHECK(pause->toolTip().contains(QStringLiteral("debug session")));
 
-        // Leaving the debug session restores the option without a new attach.
         panel.set_debug_session_active(false);
         panel.refresh();
         CHECK(pause->isEnabled());
@@ -1337,7 +1297,6 @@ TEST_CASE("toggling the scanner Hex box converts the typed values", "[ui]")
     REQUIRE(value != nullptr);
     REQUIRE(hex != nullptr);
 
-    // "10" typed as decimal becomes bare hex "A" and reads back as "10".
     value->setText(QStringLiteral("10"));
     hex->setChecked(true);
     CHECK(value->text() == QStringLiteral("A"));
@@ -1372,7 +1331,6 @@ TEST_CASE("toggling the scanner Hex box converts the typed values", "[ui]")
     }
 }
 
-// The scanner's value-type dropdown, located by its first entry.
 static QComboBox* scanner_value_type_combo(QWidget& panel)
 {
     for (auto* combo : panel.findChildren<QComboBox*>())
@@ -1407,7 +1365,6 @@ TEST_CASE("the value type drives the fast-scan alignment", "[ui]")
     REQUIRE(type != nullptr);
     REQUIRE(alignment != nullptr);
 
-    // It starts on 4 Bytes with the matching step, and All is gone.
     CHECK(type->currentText() == QStringLiteral("4 Bytes"));
     CHECK(type->findText(QStringLiteral("All")) == -1);
     CHECK(alignment->text() == QStringLiteral("4"));
@@ -1423,7 +1380,6 @@ TEST_CASE("the value type drives the fast-scan alignment", "[ui]")
     type->setCurrentText(QStringLiteral("8 Bytes"));
     CHECK(alignment->text() == QStringLiteral("8"));
 
-    // A step the user typed explicitly survives a later type change.
     type->setCurrentText(QStringLiteral("4 Bytes"));
     alignment->setText(QStringLiteral("16"));
     type->setCurrentText(QStringLiteral("Byte"));

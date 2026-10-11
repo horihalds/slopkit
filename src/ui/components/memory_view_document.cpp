@@ -17,7 +17,6 @@
 
 namespace slopkit::ui::components
 {
-
     namespace
     {
         bool is_printable(std::byte value)
@@ -26,13 +25,11 @@ namespace slopkit::ui::components
             return character >= 0x20 && character < 0x7F;
         }
 
-        // `value` rounded down to a multiple of `step`; `step` is never zero.
         std::uint64_t align_down(std::uint64_t value, std::uint64_t step) noexcept
         {
             return value - value % step;
         }
 
-        // The requested read may not run past the canonical user-space ceiling.
         std::size_t clamp_size(std::uint64_t address, std::uint64_t size) noexcept
         {
             if (address > scan::kMaxUserAddress)
@@ -42,7 +39,7 @@ namespace slopkit::ui::components
             const std::uint64_t room = scan::kMaxUserAddress - address + 1;
             return static_cast<std::size_t>(std::min(size, room));
         }
-    } // namespace
+    }
 
     MemoryViewDocument::MemoryViewDocument(process::AccessWorker&   worker,
                                            process::AttachedTarget& target,
@@ -64,7 +61,7 @@ namespace slopkit::ui::components
         if (visible_base != last_window_base_)
         {
             last_window_base_ = visible_base;
-            clear_pending(); // The in-flight pass belonged to the previous window.
+            clear_pending();
         }
         prune_blocks(visible_base);
     }
@@ -268,7 +265,7 @@ namespace slopkit::ui::components
     {
         if (readings.empty() || !target_.valid() || target_.pid != requested_pid_)
         {
-            return; // The target moved on while the pass was in flight.
+            return;
         }
 
         bool dirty = false;
@@ -276,7 +273,7 @@ namespace slopkit::ui::components
         {
             if (reading.id >= pending_bases_.size() || !pending_bases_[reading.id].has_value())
             {
-                continue; // Not a block this pass submitted.
+                continue;
             }
 
             const PendingBlock& pending = *pending_bases_[reading.id];
@@ -285,8 +282,6 @@ namespace slopkit::ui::components
 
             if (!reading.readable || reading.bytes.empty())
             {
-                // Give the window the buffer it was submitted with (zero-filled)
-                // so the failed bytes paint `?` instead of nothing at all.
                 const auto size = static_cast<std::size_t>(pending.size);
                 const bool grew = block.bytes.size() < size;
                 if (grew)
@@ -503,7 +498,6 @@ namespace slopkit::ui::components
         }
 
         const std::string input  = text.toStdString();
-        // Parse here as well so a malformed value keeps its detailed message.
         const auto        parsed = scan::parse_value(format_.type, input, format_.hex);
         if (!parsed)
         {
@@ -530,7 +524,7 @@ namespace slopkit::ui::components
             {
                 if (write_pending_ != job_id)
                 {
-                    return; // Superseded or shut down.
+                    return;
                 }
                 write_pending_.reset();
 
@@ -543,8 +537,6 @@ namespace slopkit::ui::components
                     return;
                 }
 
-                // Show what was just written without raising the change
-                // highlight, so the user's own write is not flagged as a move.
                 seed_written(address, cached);
                 log::info(log::category::ui,
                           std::format("memory view wrote {} byte(s) at {:#x}", cached.size(), address));
@@ -559,4 +551,4 @@ namespace slopkit::ui::components
         return true;
     }
 
-} // namespace slopkit::ui::components
+}

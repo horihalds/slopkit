@@ -23,7 +23,7 @@ namespace
         }
         return bytes;
     }
-} // namespace
+}
 
 TEST_CASE("nop_bytes fills one 0x90 per byte", "[ui]")
 {
@@ -51,8 +51,6 @@ TEST_CASE("the code patch table records, looks up and forgets NOP patches", "[ui
     CHECK(table.size() == 1);
     CHECK_FALSE(table.empty());
 
-    // The region covers every byte of the replaced instruction, nothing before
-    // it and nothing past its end.
     REQUIRE(table.covering(0x2001) != nullptr);
     REQUIRE(table.covering(0x2003) != nullptr);
     CHECK(table.covering(0x2001)->begin == 0x2001);
@@ -60,14 +58,12 @@ TEST_CASE("the code patch table records, looks up and forgets NOP patches", "[ui
     CHECK(table.covering(0x2000) == nullptr);
     CHECK(table.covering(0x2004) == nullptr);
 
-    // A second apply at the same begin replaces the record.
     table.apply_nop(0x2001, 1, bytes_of({0x90}), QStringLiteral("NOP"));
     CHECK(table.size() == 1);
     REQUIRE(table.covering(0x2001) != nullptr);
     CHECK(table.covering(0x2001)->length == 1);
     CHECK(table.covering(0x2002) == nullptr);
 
-    // Restore erases; an unknown address reports false.
     CHECK(table.restore(0x2001));
     CHECK(table.empty());
     CHECK_FALSE(table.restore(0x2001));
@@ -80,11 +76,9 @@ TEST_CASE("the code patch table drops every record when the target changes", "[u
     table.apply_nop(0x2001, 1, bytes_of({0x55}), QStringLiteral("PUSH RBP"));
     CHECK(table.size() == 1);
 
-    // The same target keeps the records.
     table.note_target(7);
     CHECK(table.size() == 1);
 
-    // Another process clears them, and so does a detach (pid 0).
     table.note_target(8);
     CHECK(table.empty());
     table.apply_nop(0x2001, 1, bytes_of({0x55}), QStringLiteral("PUSH RBP"));

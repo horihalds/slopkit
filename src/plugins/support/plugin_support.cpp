@@ -26,9 +26,6 @@ namespace slopkit::plugins::support
         const slopkit_host_services* g_host    = nullptr;
         const PluginProfile*         g_profile = nullptr;
 
-        // The shared mappings in memory.hpp; the using-declarations keep them in
-        // the same overload set as the AccessError translator below, which would
-        // otherwise hide them from unqualified lookup.
         using slopkit::plugins::support::message_for;
         using slopkit::plugins::support::method_flag;
         using slopkit::plugins::support::status_for;
@@ -61,9 +58,6 @@ namespace slopkit::plugins::support
             return slopkit_result {code, message};
         }
 
-        // Reports through the host log hook; the host tags the record with this
-        // plugin's id. A message must outlive the call, which a local string
-        // does.
         void log_message(int32_t level, const std::string& text)
         {
             if (g_host != nullptr && g_host->log != nullptr)
@@ -251,9 +245,6 @@ namespace slopkit::plugins::support
 
                 const auto destination = std::span<std::byte>(static_cast<std::byte*>(buffer), size);
 
-                // A plugin with its own transfer path (Wine's agent) serves the
-                // whole read; the shared session memory runs only when it brings
-                // none.
                 if (g_profile->read != nullptr)
                 {
                     const auto result = g_profile->read(*session, address, destination);
@@ -327,9 +318,6 @@ namespace slopkit::plugins::support
 
                 const auto source = std::span<const std::byte>(static_cast<const std::byte*>(buffer), size);
 
-                // A plugin with its own transfer path (Wine's agent) serves the
-                // whole write; the shared session memory runs only when it brings
-                // none.
                 if (g_profile->write != nullptr)
                 {
                     const auto result = g_profile->write(*session, address, source);
@@ -369,8 +357,6 @@ namespace slopkit::plugins::support
             }
         }
 
-        // Fills the ABI module array and interns its strings. The caller has
-        // already reset the arena and checked the output pointers.
         slopkit_result fill_module_array(const std::vector<process::ModuleInfo>& modules,
                                          slopkit_module_info**                   out,
                                          std::size_t*                            out_count)
@@ -421,9 +407,6 @@ namespace slopkit::plugins::support
                 std::vector<process::ModuleInfo> modules;
                 if (g_profile->modules != nullptr)
                 {
-                    // A plugin with its own source (Wine's loader list) replaces
-                    // the shared listing entirely; the shared /proc shaping is
-                    // not applied on top of it.
                     auto result = g_profile->modules(*session);
                     if (!result)
                     {
@@ -568,8 +551,6 @@ namespace slopkit::plugins::support
             }
         }
 
-        // --- debug operations (ABI 1.4) ------------------------------------
-
         void fill_stop(platform::DebugSession& debug, const platform::StopStatus& status, slopkit_stop_info& out)
         {
             out.reason          = SLOPKIT_STOP_INTERRUPT;
@@ -595,14 +576,9 @@ namespace slopkit::plugins::support
                 out.reason = SLOPKIT_STOP_SINGLE_STEP;
                 break;
             case platform::StopReason::syscall:
-                // Only the allocation window's own syscall resume produces a
-                // syscall stop, and it never reports one through this ABI, which
-                // has no reason of its own for it: it reads as a plain trap.
                 out.reason = SLOPKIT_STOP_SINGLE_STEP;
                 break;
             case platform::StopReason::breakpoint:
-                // A hardware hit names its DR slot; otherwise it is a software
-                // int3 only when the byte just before RIP is still 0xCC.
                 if (status.debug_slot)
                 {
                     out.reason       = SLOPKIT_STOP_BREAKPOINT;
@@ -636,20 +612,12 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
-                // The allocation path and the debugger must not race for the
-                // target's thread group. Holding the allocation lock across the
-                // attach makes the check and the seize one step from the
-                // allocator's point of view, and it sees `allocating` before it
-                // can attach.
                 const std::lock_guard lock(session->allocation_mutex);
                 if (session->allocating)
                 {
                     return fail(SLOPKIT_ERR_PERMISSION_DENIED, "an allocation is in flight");
                 }
 
-                // A plugin may name the threads its own in-target machinery runs
-                // on (Wine's resident agent): those are left running so they keep
-                // serving while everything else is seized and stopped.
                 std::vector<process::ProcessId> excluded;
                 if (g_profile->debug_excluded_threads != nullptr)
                 {
@@ -694,10 +662,8 @@ namespace slopkit::plugins::support
             }
         }
 
-        slopkit_result plugin_debug_continue(void*    handle,
-                                             uint64_t resume_address,
-                                             std::size_t /*resume_step_size*/,
-                                             slopkit_stop_info* out_stop) noexcept
+        slopkit_result
+        plugin_debug_continue(void* handle, uint64_t resume_address, std::size_t, slopkit_stop_info* out_stop) noexcept
         {
             try
             {
@@ -1002,8 +968,6 @@ namespace slopkit::plugins::support
             }
         }
 
-        // --- target allocation (ABI 1.6) ------------------------------------
-
         slopkit_result
         plugin_allocate_memory(void* handle, uint64_t size, uint64_t near_address, uint64_t* out_address) noexcept
         {
@@ -1024,9 +988,6 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "the size must be larger than 0");
                 }
 
-                // A plugin that brings its own in-target allocator (Wine's
-                // resident agent) serves the whole call itself; the shared
-                // ptrace allocator runs only for a plugin that brings none.
                 const auto allocated = g_profile->allocate != nullptr
                                          ? g_profile->allocate(*session, size, near_address)
                                          : allocate_memory(*session, size, near_address);
@@ -1071,8 +1032,6 @@ namespace slopkit::plugins::support
             }
         }
 
-        // --- address validation (ABI 1.7) -----------------------------------
-
         slopkit_result
         plugin_validate_memory(void* handle, uint64_t address, uint64_t size, uint32_t* out_valid) noexcept
         {
@@ -1093,9 +1052,6 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "the size must be larger than 0");
                 }
 
-                // A plugin with its own in-target view (Wine's agent) answers
-                // validation from the target itself; the read probe runs only
-                // when it brings none.
                 if (g_profile->range_is_readable != nullptr)
                 {
                     const auto valid = g_profile->range_is_readable(*session, address, size);
@@ -1146,7 +1102,7 @@ namespace slopkit::plugins::support
             plugin_free_memory,
             plugin_validate_memory,
         };
-    } // namespace
+    }
 
     const slopkit_plugin_vtable* install(const slopkit_host_services* host, const PluginProfile* profile) noexcept
     {
@@ -1155,4 +1111,4 @@ namespace slopkit::plugins::support
         return &g_vtable;
     }
 
-} // namespace slopkit::plugins::support
+}

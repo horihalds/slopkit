@@ -23,27 +23,21 @@ TEST_CASE("the log dialog shows live records and filters them", "[ui]")
     auto* status = dialog.findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("log_status"));
     REQUIRE(status != nullptr);
 
-    // A record logged through the logger reaches the view once the queued
-    // wake-up is processed, with its level and category visible.
     slopkit::log::warning(slopkit::log::category::scan, "something happened");
     QCoreApplication::processEvents();
     CHECK(view->toPlainText().contains(QStringLiteral("warning")));
     CHECK(view->toPlainText().contains(QStringLiteral("[scan] something happened")));
 
-    // The level filter hides records below the selected level.
-    combo->setCurrentIndex(4); // Error
+    combo->setCurrentIndex(4);
     CHECK_FALSE(view->toPlainText().contains(QStringLiteral("something happened")));
-    combo->setCurrentIndex(3); // Warning
+    combo->setCurrentIndex(3);
     CHECK(view->toPlainText().contains(QStringLiteral("something happened")));
 
-    // The text filter is a case-insensitive substring over level, category and
-    // message.
     search->setText(QStringLiteral("SCAN"));
     CHECK(view->toPlainText().contains(QStringLiteral("something happened")));
     search->setText(QStringLiteral("nope"));
     CHECK(view->toPlainText().isEmpty());
 
-    // Clear empties the view and the retained history.
     search->clear();
     auto* clear = button_labelled(dialog, QStringLiteral("Clear"));
     REQUIRE(clear != nullptr);
@@ -70,7 +64,6 @@ TEST_CASE("the log dialog seeds itself from the retained history", "[ui]")
     auto*                           view = dialog.findChild<QPlainTextEdit*>();
     REQUIRE(view != nullptr);
 
-    // Nothing is shown until the window is first opened.
     CHECK(view->toPlainText().isEmpty());
 
     // A record queued between construction and the first show must not be
@@ -105,7 +98,7 @@ TEST_CASE("a UI action records under the ui category", "[ui]")
     slopkit::process::AttachedTarget target;
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
-    panel.toggle_active_selected(); // No selection: the UI refuses and warns.
+    panel.toggle_active_selected();
 
     bool saw_ui = false;
     for (const auto& record : records)

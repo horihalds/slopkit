@@ -18,11 +18,6 @@
 
 namespace slopkit::ui::models
 {
-
-    // Active / Description / Address / Type / Value rows over the address table.
-    // It owns no session: value edits are encoded here and executed by the
-    // AccessWorker, with the same pending-job-id guard the immediate-mode panel
-    // used.
     class AddressTableModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -50,9 +45,6 @@ namespace slopkit::ui::models
         [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
         bool                        setData(const QModelIndex& index, const QVariant& value, int role) override;
 
-        // Drag contract: a row can be moved within the list or nested under
-        // another row, and every drop is forwarded to AddressTable::move_row so
-        // ids, fields and the tree stay put.
         [[nodiscard]] Qt::DropActions supportedDropActions() const override;
         [[nodiscard]] QStringList     mimeTypes() const override;
         [[nodiscard]] QMimeData*      mimeData(const QModelIndexList& indexes) const override;
@@ -64,60 +56,31 @@ namespace slopkit::ui::models
         bool                          dropMimeData(
             const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) override;
 
-        // Applies a drop of `source` on or beside the row at `target`. With
-        // `nest`, `source` (with its whole subtree) becomes the last child of
-        // `target`; otherwise it is inserted directly in front of `target` and
-        // adopts that row's level. False for a no-op or a move onto the source's
-        // own subtree, and nothing is reported then.
         bool drop_row(int source, int target, bool nest);
 
-        // The row's nesting depth (0 = top level), for the indent delegate.
         [[nodiscard]] int depth_at(std::size_t row) const;
 
-        // Re-reads the table after a completion or a freeze pass; emits nothing
-        // when the entries are unchanged, so an idle poll never repaints.
         void refresh();
 
-        // Sets the module image spans used to render module-relative addresses.
         void set_modules(std::vector<process::ModuleInfo> modules);
 
-        // Chooses how static addresses are shown in the Address column.
         void set_address_mode(ui::AddressMode mode);
 
-        // The rendered Address column text for `address`.
         [[nodiscard]] QString address_text(std::uint64_t address) const;
 
-        // The addresses of the rows that should be re-read, in row order; the
-        // entry being written and zero-width entries are skipped. The ids echo
-        // the row index, so a reading can be matched back to its row.
         [[nodiscard]] std::vector<LiveRequest> next_live_request();
 
-        // Applies one live pass: a reading whose row has since changed identity
-        // or address is dropped. Emits dataChanged for the value cells whose
-        // text or colour changed.
         void apply_live_readings(std::span<const LiveReading> readings);
 
-        // Repaints one row after the panel changed its entry (the script Active
-        // flag, which the panel owns because it must run the hook first).
         void note_entry_changed(std::size_t row);
 
-        // Writes `text` to every row in `rows` as one batched write job, parsed
-        // once against the rows' shared value format. `rows_share_value_format`
-        // reports the precondition: every row must be a value entry sharing one
-        // type and Hex setting, so one typed value fits them all. False when
-        // nothing is submitted — an empty or mixed selection, a malformed value,
-        // no attached target or a write already in flight.
         bool write_values(std::span<const std::size_t> rows, const QString& text);
 
-        // True when `rows` is non-empty and every row is a value entry sharing
-        // the first row's type and Hex setting.
         [[nodiscard]] bool rows_share_value_format(std::span<const std::size_t> rows) const;
 
     signals:
         void statusChanged(const QString& message, bool is_error);
 
-        // A script row's Active checkbox was clicked; the panel runs the hook
-        // and owns the resulting flag.
         void scriptActiveRequested(std::size_t row, bool wanted);
 
     private:
@@ -139,9 +102,7 @@ namespace slopkit::ui::models
         std::optional<process::JobId> write_pending_;
         std::vector<std::uint64_t>    writing_entries_;
 
-        // The per-row live readings, parallel to the table rows; the in-flight
-        // request identity lives inside it too.
         LiveCells cells_;
     };
 
-} // namespace slopkit::ui::models
+}

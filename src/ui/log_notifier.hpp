@@ -10,10 +10,6 @@
 
 namespace slopkit::ui
 {
-
-    // Copies log records from any thread into a queue and posts one coalesced
-    // queued wake-up; the UI thread drains it through take(). It registers a
-    // logger sink in its constructor and removes it again when destroyed.
     class LogNotifier : public QObject
     {
         Q_OBJECT
@@ -22,7 +18,6 @@ namespace slopkit::ui
         explicit LogNotifier(QObject* parent = nullptr);
         ~LogNotifier() override;
 
-        // Thread-safe; returns and clears the records queued since the last call.
         [[nodiscard]] std::vector<log::Record> take();
 
     signals:
@@ -35,4 +30,4 @@ namespace slopkit::ui
         log::SinkId              sink_id_ {};
     };
 
-} // namespace slopkit::ui
+}

@@ -14,7 +14,6 @@
 
 namespace slopkit::log
 {
-
     enum class Level
     {
         debug,
@@ -29,7 +28,7 @@ namespace slopkit::log
     struct Record
     {
         Level                                 level {Level::info};
-        std::string                           category; // "plugin", "scan", "worker", "ui", ...
+        std::string                           category;
         std::string                           message;
         std::chrono::system_clock::time_point time;
     };
@@ -39,8 +38,6 @@ namespace slopkit::log
     using Sink   = std::function<void(const Record&)>;
     using SinkId = std::uint64_t;
 
-    // The process-wide logger: an ordered level filter, a bounded in-memory
-    // history and a fan-out to every registered sink. All calls are thread-safe.
     class Logger
     {
     public:
@@ -81,6 +78,6 @@ namespace slopkit::log
 
     [[nodiscard]] Sink                  stderr_sink();
     [[nodiscard]] Sink                  rolling_file_sink(std::filesystem::path path, std::size_t max_bytes);
-    [[nodiscard]] std::filesystem::path default_log_path(); // $XDG_STATE_HOME or ~/.local/state
+    [[nodiscard]] std::filesystem::path default_log_path();
 
-} // namespace slopkit::log
+}

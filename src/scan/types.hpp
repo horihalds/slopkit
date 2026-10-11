@@ -8,8 +8,6 @@
 
 namespace slopkit::scan
 {
-
-    // How the bytes at a candidate address are interpreted.
     enum class ValueType
     {
         byte,
@@ -22,7 +20,6 @@ namespace slopkit::scan
         byte_array,
     };
 
-    // How a candidate is compared with the requested value.
     enum class ScanType
     {
         exact_value,
@@ -45,8 +42,6 @@ namespace slopkit::scan
         cancelled,
     };
 
-    // The UI labels, in enum declaration order, so an enum value can index a
-    // combo box's item array directly.
     inline constexpr const char* kValueTypeNames[] = {
         "Byte",
         "2 Bytes",
@@ -70,14 +65,8 @@ namespace slopkit::scan
         "Unknown initial value",
     };
 
-    // Highest canonical user-space address on x86-64. The `All memory` scan
-    // range ends here; the target's mapped regions decide where a scan actually
-    // stops, so this ceiling never turns into reads of unmapped memory.
     inline constexpr std::uint64_t kMaxUserAddress = 0x7FFFFFFFFFFF;
 
-    // The region filter and fast-scan alignment applied to a scan. When none of
-    // the attribute flags is set every readable region is scanned; setting any
-    // of them keeps regions matching at least one checked attribute.
     struct RegionFilter
     {
         bool          writable {true};
@@ -88,8 +77,6 @@ namespace slopkit::scan
         std::uint64_t alignment {1};
     };
 
-    // Width in bytes of a fixed-width value type, or 0 for the dynamically
-    // sized string and byte-array types.
     [[nodiscard]] constexpr std::size_t value_size(ValueType type) noexcept
     {
         switch (type)
@@ -115,29 +102,25 @@ namespace slopkit::scan
     [[nodiscard]] std::string_view describe(ScanType type) noexcept;
     [[nodiscard]] std::string_view describe(ScanState state) noexcept;
 
-    // True for the refinement scan types that re-read existing candidates.
     [[nodiscard]] constexpr bool is_refinement(ScanType type) noexcept
     {
         return type == ScanType::increased || type == ScanType::decreased || type == ScanType::changed
             || type == ScanType::unchanged;
     }
 
-    // True for the scan types that need a comparison value from the user.
     [[nodiscard]] constexpr bool needs_value(ScanType type) noexcept
     {
         return type == ScanType::exact_value || type == ScanType::bigger_than || type == ScanType::smaller_than;
     }
 
-    // True for the numeric value types, i.e. those ordered by value.
     [[nodiscard]] constexpr bool is_numeric(ValueType type) noexcept
     {
         return type != ValueType::string && type != ValueType::byte_array;
     }
 
-    // A private file mapping (shared == false with a path) is copy-on-write.
     [[nodiscard]] constexpr bool is_copy_on_write(const process::RegionInfo& region) noexcept
     {
         return !region.shared && !region.path.empty();
     }
 
-} // namespace slopkit::scan
+}

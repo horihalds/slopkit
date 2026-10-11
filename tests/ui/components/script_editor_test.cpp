@@ -37,7 +37,6 @@ namespace
         }
     }
 
-    // Puts the caret at the end of the text without triggering a key press.
     void move_to_end(ScriptEditor& editor)
     {
         QTextCursor cursor = editor.textCursor();
@@ -50,8 +49,6 @@ namespace
         return editor.findChild<ScriptCompletionPopup*>();
     }
 
-    // The number of extra selections painted with the accent colour, i.e. the
-    // matched-bracket highlights.
     [[nodiscard]] int accent_selections(const ScriptEditor& editor)
     {
         const QColor accent = slopkit::ui::active_theme().accent;
@@ -65,7 +62,7 @@ namespace
         }
         return count;
     }
-} // namespace
+}
 
 TEST_CASE("the script editor grows its gutter with the line count", "[ui]")
 {
@@ -103,10 +100,10 @@ TEST_CASE("the script editor marks and clears an error line", "[ui]")
     editor.set_error_line(0);
     CHECK(editor.error_line() == 0);
 
-    editor.set_error_line(999); // outside the document: ignored
+    editor.set_error_line(999);
     CHECK(editor.error_line() == 0);
 
-    editor.set_error_line(-1); // ignored
+    editor.set_error_line(-1);
     CHECK(editor.error_line() == 0);
 
     editor.set_error_line(2);
@@ -131,7 +128,6 @@ TEST_CASE("the script editor indents with tab stops and keeps indentation", "[ui
     press(editor, Qt::Key_Backtab, Qt::ShiftModifier);
     CHECK(editor.toPlainText() == QStringLiteral("local x"));
 
-    // Typing a line then Return keeps the line's indentation.
     editor.setPlainText(QStringLiteral("    local x"));
     QTextCursor end = editor.textCursor();
     end.movePosition(QTextCursor::End);
@@ -177,21 +173,18 @@ TEST_CASE("the script editor size hint follows the longest line, its minimum doe
     const int frame    = margin * 2 + 2 * editor.frameWidth();
     const int overhead = gutter + frame;
 
-    // A short document opens at the 100-column floor and 18 lines.
     editor.setPlainText(QStringLiteral("return true\n"));
     const QSize short_hint = editor.sizeHint();
     CHECK(short_hint.width() == 100 * column + overhead);
     CHECK(short_hint.height() == 18 * line + frame);
 
-    // A long line widens the hint, up to the 140-column cap and no further.
     editor.setPlainText(QString(300, QLatin1Char('x')));
     const int capped = editor.sizeHint().width();
     CHECK(capped == 140 * column + overhead);
 
     editor.setPlainText(QString(600, QLatin1Char('x')));
-    CHECK(editor.sizeHint().width() == capped); // the cap holds
+    CHECK(editor.sizeHint().width() == capped);
 
-    // The minimum is a fixed 60x12 and never follows the text.
     const QSize minimum = editor.minimumSizeHint();
     CHECK(minimum.width() == 60 * column + overhead);
     CHECK(minimum.height() == 12 * line + frame);
@@ -217,7 +210,7 @@ TEST_CASE("typing opens the completion list and Tab inserts the name", "[ui]")
     press(editor, Qt::Key_Tab);
     CHECK(editor.toPlainText() == QStringLiteral("aobscan()"));
     CHECK_FALSE(completion->is_open());
-    CHECK(editor.textCursor().position() == 8); // between the parentheses
+    CHECK(editor.textCursor().position() == 8);
 }
 
 TEST_CASE("Ctrl+Space opens the whole list and Up/Down move the highlight", "[ui]")
@@ -285,7 +278,7 @@ TEST_CASE("the completion list stays out of comments and strings", "[ui]")
 
     editor.setPlainText(QStringLiteral("x = \"aob\""));
     QTextCursor inside = editor.textCursor();
-    inside.setPosition(8); // just inside the string, before the closing quote
+    inside.setPosition(8);
     editor.setTextCursor(inside);
     type(editor, QStringLiteral("c"));
     CHECK_FALSE(completion->is_open());
@@ -369,14 +362,12 @@ TEST_CASE("an argument hint follows the call the caret is inside", "[ui]")
     ScriptCallTip* tip = editor.findChild<ScriptCallTip*>();
     REQUIRE(tip != nullptr);
 
-    // `mem.read(0x1000, |` - the second parameter.
     editor.setPlainText(QStringLiteral("mem.read(0x1000, "));
     move_to_end(editor);
     REQUIRE(tip->is_visible());
     CHECK(tip->signature() == QStringLiteral("mem.read(address, token)"));
     CHECK(tip->active_parameter() == 1);
 
-    // `mem.read(|` - the first parameter.
     QTextCursor at = editor.textCursor();
     at.setPosition(9);
     editor.setTextCursor(at);
@@ -384,18 +375,15 @@ TEST_CASE("an argument hint follows the call the caret is inside", "[ui]")
     CHECK(tip->signature() == QStringLiteral("mem.read(address, token)"));
     CHECK(tip->active_parameter() == 0);
 
-    // Past the closing parenthesis there is no call to hint about.
     editor.setPlainText(QStringLiteral("mem.read(0x1000)"));
     move_to_end(editor);
     CHECK_FALSE(tip->is_visible());
 
-    // A function the document defines shows its own parameter list.
     editor.setPlainText(QStringLiteral("local function helper(a, b)\nend\nhelper("));
     move_to_end(editor);
     REQUIRE(tip->is_visible());
     CHECK(tip->signature() == QStringLiteral("helper(a, b)"));
 
-    // An unknown call shows nothing.
     editor.setPlainText(QStringLiteral("mystery("));
     move_to_end(editor);
     CHECK_FALSE(tip->is_visible());

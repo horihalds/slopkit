@@ -30,8 +30,6 @@ using slopkit::tests::pump_until;
 
 namespace
 {
-    // Set before the fork and shared with the child, so the test can watch the
-    // target's own counter advance while a session is running.
     volatile std::uint32_t* g_counter = nullptr;
 
     __attribute__((noinline)) void debug_target()
@@ -52,7 +50,6 @@ namespace
         return 0;
     }
 
-    // How many threads the target has right now, straight from procfs.
     std::size_t thread_count(pid_t pid)
     {
         std::error_code                     error;
@@ -139,7 +136,7 @@ namespace
     {
         return std::format("0x{:X}", address);
     }
-} // namespace
+}
 
 TEST_CASE("an access watch arms on a running target", "[debug][practice]")
 {
@@ -178,12 +175,9 @@ TEST_CASE("an access watch arms on a running target", "[debug][practice]")
                            return *g_counter != before;
                        }));
 
-    // The access-watch flow: start watching a live value while the target keeps
-    // running, so the controller has to stop it, arm the slot and run it again.
     const auto started = controller.watch_address(child.counter_address(), Kind::hardware_write, 4);
     REQUIRE(started.has_value());
 
-    // Wait until the arm lands, however it lands: armed, or given up on.
     const bool settled = pump_until(
         controller,
         [&]
@@ -269,7 +263,6 @@ TEST_CASE("an access watch arms on a running threaded target", "[debug][practice
     const auto started = controller.watch_address(child.counter_address(), Kind::hardware_write, 4);
     REQUIRE(started.has_value());
 
-    // Wait until the arm lands, however it lands: armed, or given up on.
     const bool settled = pump_until(
         controller,
         [&]
@@ -317,7 +310,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     PluginBackend backend(host);
     Controller    controller(backend);
 
-    // Records the last refusal so a failed stop is not a mystery.
     QString last_error;
     QObject::connect(&controller,
                      &Controller::message,
@@ -339,7 +331,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
                          stopped_emitted = true;
                      });
 
-    // Start Debugging with no attached target is refused.
     controller.start(0, "linux-proc");
     CHECK(controller.state() == Controller::State::idle);
 
@@ -355,8 +346,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     CHECK(controller.backtrace().empty());
     CHECK_FALSE(stopped_emitted);
 
-    // The target is genuinely running: its own counter advances while the
-    // session is open.
     const std::uint32_t before = *g_counter;
     REQUIRE(pump_until(controller,
                        [&]
@@ -366,11 +355,9 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     CHECK(controller.state() == Controller::State::running);
     CHECK_FALSE(stopped_emitted);
 
-    // A second start while a session is open is refused.
     controller.start(child.pid(), "linux-proc");
     CHECK(controller.state() == Controller::State::running);
 
-    // Break stops the target deliberately.
     controller.interrupt();
     REQUIRE(pump_until(controller,
                        [&]
@@ -379,11 +366,9 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
                                && controller.registers().size() == 18;
                        }));
 
-    // The call stack has at least the stopped frame.
     REQUIRE_FALSE(controller.backtrace().empty());
     CHECK(controller.backtrace().front().pc != 0);
 
-    // A write watchpoint on the animated value stops the target and names its slot.
     const auto watch = controller.add_breakpoint(hex(child.counter_address()), Kind::hardware_write, 4);
     REQUIRE(watch.has_value());
     REQUIRE(pump_until(controller,
@@ -412,7 +397,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     CHECK(controller.last_stop().trap_address == child.counter_address());
     CHECK(controller.table().find(*watch)->hits >= 1);
 
-    // Put the watchpoint away again.
     controller.remove_breakpoint(*watch);
     REQUIRE(pump_until(controller,
                        [&]
@@ -420,7 +404,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
                            return controller.table().empty();
                        }));
 
-    // A software breakpoint on the loop body: resume into it, step over it.
     const auto trap =
         controller.add_breakpoint(hex(reinterpret_cast<std::uintptr_t>(&debug_target)), Kind::software, 1);
     REQUIRE(trap.has_value());
@@ -446,7 +429,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     CHECK(controller.last_stop().address == reinterpret_cast<std::uintptr_t>(&debug_target));
     CHECK(controller.table().find(*trap)->hits == 1);
 
-    // Step Over the trap: the original instruction runs, the trap is re-armed.
     controller.step_over();
     pump_until(controller,
                [&]
@@ -464,7 +446,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     CHECK(controller.table().find(*trap)->armed);
     CHECK(controller.last_stop().reason == StopReason::single_step);
 
-    // Stopping the session detaches and resumes the target.
     controller.stop();
     REQUIRE(pump_until(controller,
                        [&]
@@ -473,7 +454,6 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
                        }));
     CHECK(controller.registers().empty());
 
-    // Stopping an idle session is a no-op.
     controller.stop();
     CHECK(controller.state() == Controller::State::idle);
 

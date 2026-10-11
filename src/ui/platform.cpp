@@ -12,13 +12,10 @@ namespace slopkit::ui
 {
     QString preferred_platform_spec(const QByteArray& configured, const QByteArray& display)
     {
-        // An explicit choice (a user, a shell or the test suite) always wins.
         if (!configured.isEmpty())
         {
             return QString::fromLocal8Bit(configured);
         }
-        // Without an X11 display there is nothing to prefer; leave Qt's default
-        // (native Wayland) in place.
         if (display.isEmpty())
         {
             return QString {};
@@ -39,4 +36,4 @@ namespace slopkit::ui
         const std::string chosen = spec.isEmpty() ? std::string {"Qt's default"} : spec.toStdString();
         log::info(log::category::ui, std::format("GUI platform for this run: {}", chosen));
     }
-} // namespace slopkit::ui
+}

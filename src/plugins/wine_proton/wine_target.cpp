@@ -17,9 +17,6 @@ namespace slopkit::plugins::wine_proton
 {
     namespace
     {
-        // The guest's main image: the PE the target really runs, which is what
-        // Wine's own process list reports. /proc/<pid>/exe is the *host* wine
-        // loader, never the game, so it cannot be used as the image Wine knows.
         struct GuestImage
         {
             std::string   path;
@@ -39,8 +36,6 @@ namespace slopkit::plugins::wine_proton
                 return std::nullopt;
             }
 
-            // The image is read through the target's own root, so a prefix that
-            // is not visible to this process still resolves.
             const std::filesystem::path path(main->path);
             const auto                  root    = std::filesystem::path("/proc") / std::to_string(pid) / "root";
             const auto                  machine = platform::read_pe_machine(root / path.relative_path());
@@ -49,26 +44,19 @@ namespace slopkit::plugins::wine_proton
                 return std::nullopt;
             }
 
-            // The COFF Machine of the guest image decides which agent build
-            // matches the target.
             switch (*machine)
             {
-            case 0x8664: // AMD64
-            case 0xAA64: // ARM64
+            case 0x8664:
+            case 0xAA64:
                 return GuestImage {main->path, 8};
-            case 0x014C: // I386
-            case 0x01C4: // ARMNT
+            case 0x014C:
+            case 0x01C4:
                 return GuestImage {main->path, 4};
             default:
                 return std::nullopt;
             }
         }
 
-        // The binaries to try as the injector's host, most specific first. The
-        // game's own wine is what matters: a Proton prefix must not be touched
-        // by the system wine, so the loader the target runs and a `bin/wine*`
-        // beside the wine libraries it has mapped (the Proton dist layout) come
-        // before the system fallbacks.
         std::vector<std::filesystem::path> wine_candidates(process::ProcessId                pid,
                                                            const std::optional<std::string>& exe)
         {
@@ -90,8 +78,6 @@ namespace slopkit::plugins::wine_proton
                     constexpr std::string_view kPreloader = "-preloader";
                     if (name.ends_with(kPreloader))
                     {
-                        // A preloader is never a program: only its sibling
-                        // loader can host another PE.
                         std::string loader = name;
                         loader.resize(loader.size() - kPreloader.size());
                         add(path.parent_path() / loader);
@@ -142,10 +128,6 @@ namespace slopkit::plugins::wine_proton
             return {};
         }
 
-        // An environment entry that hands off an open file descriptor instead
-        // of a value: Wine sets `WINESERVERSOCKET=<fd>` for every process it
-        // starts, pointing at the already-connected wineserver socket. The
-        // descriptor number only means anything inside the process that owns it.
         bool is_process_local_handoff(const std::string& entry)
         {
             const auto             separator = entry.find('=');
@@ -154,11 +136,6 @@ namespace slopkit::plugins::wine_proton
             return name == "WINESERVERSOCKET";
         }
 
-        // The directories the agent binaries may be staged in, best first: the
-        // per-user runtime directory when the target shares it, the system
-        // temporary directory, then the user's cache. A game launched by Proton
-        // only shares the last two with this tool, because its container
-        // replaces `/run/user/<uid>` with a private directory of its own.
         std::vector<std::filesystem::path> staging_base_candidates()
         {
             std::vector<std::filesystem::path> candidates;
@@ -192,7 +169,7 @@ namespace slopkit::plugins::wine_proton
             }
             return result;
         }
-    } // namespace
+    }
 
     std::string linux_path_to_windows(const std::string& path)
     {
@@ -207,9 +184,6 @@ namespace slopkit::plugins::wine_proton
 
     std::vector<std::string> injector_environment(const std::vector<std::string>& environment)
     {
-        // Without the handoff the injector connects to the prefix's wineserver
-        // itself, which is what makes running it with the target's environment
-        // safe.
         std::vector<std::string> filtered;
         filtered.reserve(environment.size());
         for (const auto& entry : environment)
@@ -251,8 +225,6 @@ namespace slopkit::plugins::wine_proton
             {
                 return directory;
             }
-            // The target's namespace does not have this directory, so nothing
-            // staged here would be loadable: drop it and try the next base.
             rejected.push_back(std::format("{} (the target cannot reach it)", directory.string()));
             std::error_code cleanup;
             std::filesystem::remove_all(directory, cleanup);
@@ -285,8 +257,6 @@ namespace slopkit::plugins::wine_proton
             target.exe_path = *exe;
         }
 
-        // The target's own prefix is what matters; only when procfs handed us
-        // no environment at all does the default prefix stand in.
         const bool has_prefix = std::ranges::any_of(target.environment,
                                                     [](const std::string& entry)
                                                     {
@@ -302,4 +272,4 @@ namespace slopkit::plugins::wine_proton
         return target;
     }
 
-} // namespace slopkit::plugins::wine_proton
+}

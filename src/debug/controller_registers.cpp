@@ -4,7 +4,6 @@
 
 namespace slopkit::debug
 {
-
     std::span<const RegisterValue> Controller::registers() const noexcept
     {
         return registers_;
@@ -61,7 +60,6 @@ namespace slopkit::debug
         }
         registers_ = registers->values;
 
-        // The first read after attach is also what tells the listing where to go.
         if (last_stop_.address == 0)
         {
             last_stop_.address = rip();
@@ -126,4 +124,4 @@ namespace slopkit::debug
         return last_stop_.address;
     }
 
-} // namespace slopkit::debug
+}

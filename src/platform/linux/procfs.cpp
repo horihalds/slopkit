@@ -25,7 +25,6 @@
 
 namespace slopkit::platform
 {
-
     namespace
     {
         std::string_view next_token(std::string_view line, std::size_t& cursor)
@@ -73,7 +72,7 @@ namespace slopkit::platform
                                    });
             return result;
         }
-    } // namespace
+    }
 
     std::vector<process::ProcessId> list_pids()
     {
@@ -264,8 +263,8 @@ namespace slopkit::platform
             }
 
             region.offset = from_hex(next_token(line, cursor));
-            (void)next_token(line, cursor); // device
-            (void)next_token(line, cursor); // inode
+            (void)next_token(line, cursor);
+            (void)next_token(line, cursor);
 
             while (cursor < line.size() && line[cursor] == ' ')
             {
@@ -347,8 +346,6 @@ namespace slopkit::platform
             return std::nullopt;
         }
 
-        // A thread's name (the second field) may contain spaces and parentheses,
-        // so the state is the first field after the last ')'.
         const auto close = raw->rfind(')');
         if (close == std::string::npos)
         {
@@ -370,9 +367,6 @@ namespace slopkit::platform
             return std::nullopt;
         }
 
-        // The first field is the syscall number while the thread is inside a
-        // call and -1 while it is not; "running" and any other word say the
-        // same thing, so both are reported as -1.
         const auto field = first_token(trim(*raw));
         if (field.empty())
         {
@@ -483,8 +477,6 @@ namespace slopkit::platform
 
         for (auto& module : modules)
         {
-            // Only a module whose first mapping starts the file has a readable,
-            // unambiguous image header at its base.
             if (module.kind == process::ModuleKind::anonymous || module.path.empty() || module.offset != 0)
             {
                 continue;
@@ -577,4 +569,4 @@ namespace slopkit::platform
         return true;
     }
 
-} // namespace slopkit::platform
+}

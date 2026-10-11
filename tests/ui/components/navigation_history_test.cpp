@@ -39,8 +39,6 @@ TEST_CASE("navigation history keeps the most recent 64 jumps", "[ui][navigation]
         REQUIRE(history.record(i, i + 1));
     }
 
-    // The oldest ten jumps were dropped, so exactly 64 undos are possible and
-    // they walk back from the newest.
     for (std::uint64_t i = 0; i < NavigationHistory::limit; ++i)
     {
         const auto previous = history.back();

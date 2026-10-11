@@ -27,7 +27,6 @@ TEST_CASE("the memory view document windows the visible block and its neighbours
         fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0x11});
         fixture.pass();
 
-        // A scroll within the visible block does not move the window.
         fixture.document.set_view(kBase + kRowBytes, kRowBytes, kRows);
         CHECK(fixture.document.visible_rows() == kRows);
         CHECK(fixture.document.bytes_per_row() == kRowBytes);
@@ -35,12 +34,9 @@ TEST_CASE("the memory view document windows the visible block and its neighbours
         REQUIRE(requests.size() == 3);
         CHECK(requests[1].address == kBase);
 
-        // Crossing into the next block slides the window but reuses the two
-        // overlapping blocks, so the newly visible bytes are already readable.
         fixture.document.set_view(kBase + kExtent, kRowBytes, kRows);
         CHECK(fixture.document.cell(kBase + kExtent + 5).readable);
         CHECK(fixture.document.cell(kBase + kExtent + 5).text == QStringLiteral("11"));
-        // The block that fell out of the window is gone.
         fixture.document.set_view(kBase - kExtent, kRowBytes, kRows);
         CHECK_FALSE(fixture.document.cell(kBase - kExtent).readable);
     }
@@ -64,25 +60,21 @@ TEST_CASE("the memory view document marks only bytes that differ from the last r
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("11"));
     CHECK_FALSE(fixture.document.cell(kBase).changed); // The first reading is never changed.
 
-    // An idle reading never repaints.
     fixture.pass();
     CHECK(repaints == 1);
 
-    // One byte moves: only that byte is flagged.
     fixture.access.memory->bytes[kBase + 1] = std::byte {0x22};
     fixture.pass();
     CHECK(repaints == 2);
     CHECK_FALSE(fixture.document.cell(kBase).changed);
     CHECK(fixture.document.cell(kBase + 1).changed);
 
-    // Once the value holds still the flag clears again, which repaints once.
     fixture.pass();
     CHECK(repaints == 3);
     CHECK_FALSE(fixture.document.cell(kBase + 1).changed);
     fixture.pass();
     CHECK(repaints == 3);
 
-    // In a wider format a cell is flagged when any byte it covers changed.
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int64, .hex = true});
     fixture.pass();
     fixture.access.memory->bytes[kBase + 3] = std::byte {0x33};
@@ -94,15 +86,13 @@ TEST_CASE("the memory view document drops stale and foreign readings", "[ui]")
 {
     Fixture fixture;
     fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0x11});
-    [[maybe_unused]] const auto submitted = fixture.document.next_live_request(); // Records the submitted bases.
+    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
 
-    // The window moves before the pass lands: the reading is dropped.
     fixture.document.set_view(kBase + kExtent, kRowBytes, kRows);
     fixture.document.apply_live_readings(
         std::vector<slopkit::ui::LiveReading> {reading(1, *fixture.access.memory, kBase, kExtent)});
     CHECK_FALSE(fixture.document.cell(kBase).readable);
 
-    // A reading from another target is dropped as well.
     [[maybe_unused]] const auto second = fixture.document.next_live_request();
     fixture.target.pid                 = 7;
     fixture.document.apply_live_readings(
@@ -110,7 +100,6 @@ TEST_CASE("the memory view document drops stale and foreign readings", "[ui]")
     CHECK_FALSE(fixture.document.cell(kBase + kExtent).readable);
     fixture.target.pid = 42;
 
-    // An unrequested slot is ignored.
     [[maybe_unused]] const auto third = fixture.document.next_live_request();
     fixture.document.apply_live_readings(
         std::vector<slopkit::ui::LiveReading> {reading(7, *fixture.access.memory, kBase + kExtent, kExtent)});
@@ -125,7 +114,7 @@ TEST_CASE("the memory view document renders each value format", "[ui]")
     fixture.access.memory->bytes[kBase + 16] = std::byte {0x00};
     fixture.access.memory->bytes[kBase + 17] = std::byte {0x00};
     fixture.access.memory->bytes[kBase + 18] = std::byte {0x80};
-    fixture.access.memory->bytes[kBase + 19] = std::byte {0x3F}; // 1.0f
+    fixture.access.memory->bytes[kBase + 19] = std::byte {0x3F};
     fixture.pass();
 
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = true});
@@ -145,7 +134,6 @@ TEST_CASE("the memory view document renders each value format", "[ui]")
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::float32, .hex = false});
     CHECK(fixture.document.cell(kBase + 16).text == QStringLiteral("1"));
 
-    // A cell that cannot cover the format's bytes is unreadable.
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
     CHECK_FALSE(fixture.document.cell(kBase + kExtent - 2).readable);
 }
@@ -154,13 +142,13 @@ TEST_CASE("the memory view document decodes the row for each text encoding", "[u
 {
     Fixture fixture;
     fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0});
-    fixture.access.memory->bytes[kBase]      = std::byte {0x48}; // 'H'
-    fixture.access.memory->bytes[kBase + 1]  = std::byte {0x69}; // 'i'
-    fixture.access.memory->bytes[kBase + 2]  = std::byte {0xC3}; // U+00E9 in UTF-8
+    fixture.access.memory->bytes[kBase]      = std::byte {0x48};
+    fixture.access.memory->bytes[kBase + 1]  = std::byte {0x69};
+    fixture.access.memory->bytes[kBase + 2]  = std::byte {0xC3};
     fixture.access.memory->bytes[kBase + 3]  = std::byte {0xA9};
-    fixture.access.memory->bytes[kBase + 16] = std::byte {0x41}; // 'A' as a UTF-16 code unit
+    fixture.access.memory->bytes[kBase + 16] = std::byte {0x41};
     fixture.access.memory->bytes[kBase + 17] = std::byte {0x00};
-    fixture.access.memory->bytes[kBase + 18] = std::byte {0x42}; // 'B'
+    fixture.access.memory->bytes[kBase + 18] = std::byte {0x42};
     fixture.access.memory->bytes[kBase + 19] = std::byte {0x00};
     fixture.pass();
 
@@ -185,8 +173,6 @@ TEST_CASE("the memory view document renders unreadable bytes as placeholders", "
     Fixture fixture;
     fill(*fixture.access.memory, kBase - kExtent, 3 * kExtent, std::byte {0xAB});
 
-    // Nothing has been read for the window yet, so the cell stays blank: "not
-    // read yet" is not the same as "could not be read".
     CHECK(fixture.document.cell(kBase).text.isEmpty());
 
     const auto fail_visible = [&fixture]
@@ -198,23 +184,18 @@ TEST_CASE("the memory view document renders unreadable bytes as placeholders", "
         fixture.document.apply_live_readings(std::vector<slopkit::ui::LiveReading> {failed});
     };
 
-    // A failed read gives the block its submitted buffer and paints `??`.
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = true});
     fail_visible();
     CHECK_FALSE(fixture.document.cell(kBase).readable);
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("??"));
 
-    // A wider hex format shows two `?` per unreadable byte, matching the
-    // readable cell's width so columns stay aligned.
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = true});
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("????????"));
     CHECK(fixture.document.cell(kBase).text.size() == 8);
 
-    // A decimal format collapses to a single `?`.
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::int32, .hex = false});
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("?"));
 
-    // A good pass replaces the placeholders with the value.
     fixture.access.unreadable->clear();
     fixture.document.set_format(ValueFormat {.type = slopkit::scan::ValueType::byte, .hex = true});
     fixture.pass();
@@ -250,12 +231,10 @@ TEST_CASE("the memory view document writes through the access worker", "[ui]")
     CHECK(records.back().message.find("memory view wrote") != std::string::npos);
     CHECK(fixture.access.memory->bytes.at(kBase) == std::byte {0xEF});
 
-    // The next identical reading does not flash the written byte as changed.
     fixture.pass();
     CHECK_FALSE(fixture.document.cell(kBase).changed);
     CHECK(fixture.document.cell(kBase).text == QStringLiteral("EF"));
 
-    // A malformed value is rejected without touching memory, with one record.
     records.clear();
     CHECK_FALSE(fixture.document.write_value(kBase, QStringLiteral("not a number")));
     REQUIRE(records.size() == 1);
@@ -263,7 +242,6 @@ TEST_CASE("the memory view document writes through the access worker", "[ui]")
     CHECK(records.front().message.find("memory view value rejected") != std::string::npos);
     CHECK(fixture.access.memory->bytes.at(kBase) == std::byte {0xEF});
 
-    // Only one write may be in flight.
     CHECK(fixture.document.write_value(kBase, QStringLiteral("0x01")));
     records.clear();
     CHECK_FALSE(fixture.document.write_value(kBase, QStringLiteral("0x02")));
@@ -275,7 +253,6 @@ TEST_CASE("the memory view document writes through the access worker", "[ui]")
                     return fixture.access.memory->bytes.at(kBase) == std::byte {0x01};
                 });
 
-    // A detached target refuses the write with one warning record.
     records.clear();
     fixture.target.session_live = false;
     CHECK_FALSE(fixture.document.write_value(kBase, QStringLiteral("0x03")));
@@ -313,23 +290,18 @@ TEST_CASE("the memory view document renders static rows as module+RVA", "[ui]")
     slopkit::ui::components::MemoryViewDocument document {worker, target};
     document.set_view(0x1000, 16, 24);
 
-    // Without a module map the text keeps the 16-digit padded form.
     CHECK(document.address_text(0x1010) == QStringLiteral("0x0000000000001010"));
 
     document.set_modules({module_image("app", 0x1000, 0x1000)});
     CHECK(document.address_text(0x1000) == QStringLiteral("app+0x0"));
     CHECK(document.address_text(0x1010) == QStringLiteral("app+0x10"));
 
-    // Absolute mode restores the padded text.
     document.set_address_mode(slopkit::ui::AddressMode::absolute);
     CHECK(document.address_text(0x1010) == QStringLiteral("0x0000000000001010"));
 
-    // An address outside every span stays absolute in both modes.
     document.set_address_mode(slopkit::ui::AddressMode::module_relative);
     CHECK(document.address_text(0x5000010) == QStringLiteral("0x0000000005000010"));
 
-    // A long module name is shortened in the pane address, while the full
-    // accessor keeps the untruncated spelling for hovers.
     document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x1000, 0x1000)});
     CHECK(document.address_text(0x1010) == QStringLiteral("DyingL..._rwdi.exe+0x10"));
     CHECK(document.full_address_text(0x1010) == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x10"));

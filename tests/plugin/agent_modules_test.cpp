@@ -38,7 +38,7 @@ namespace
         region.path   = std::move(path);
         return region;
     }
-} // namespace
+}
 
 TEST_CASE("the module merge takes the image from the loader and the path from procfs", "[wine_proton][agent]")
 {
@@ -54,16 +54,12 @@ TEST_CASE("the module merge takes the image from the loader and the path from pr
     const auto merged = merge_modules(images, maps);
     REQUIRE(merged.size() == 2);
 
-    // The list is ascending by base, so kernel32 (0x7B000000) precedes the
-    // 0x140000000 image even though the loader listed the main image first.
     CHECK(merged[0].name == "kernel32.dll");
     CHECK_FALSE(merged[0].is_main);
     CHECK(merged[0].kind == ModuleKind::pe);
-    // The overlapping procfs line supplies the on-disk identity.
     CHECK(merged[0].path == "/usr/lib/wine/x86_64-windows/kernel32.dll");
     CHECK(merged[0].offset == 0x3000);
 
-    // The loader supplies the base, image size, entry point, name and main flag.
     CHECK(merged[1].base == 0x140000000ull);
     CHECK(merged[1].size == 0x1000);
     CHECK(merged[1].entry == 0x140001000ull);
@@ -124,7 +120,7 @@ TEST_CASE("the UTF-16 name decoder handles ASCII, surrogate pairs and truncation
 
     SECTION("a non-BMP surrogate pair becomes one UTF-8 code point")
     {
-        const char16_t text[] = {0xD83D, 0xDE00}; // U+1F600
+        const char16_t text[] = {0xD83D, 0xDE00};
         std::string    out;
         decode_utf16(text, out);
         CHECK(out == "\xF0\x9F\x98\x80");

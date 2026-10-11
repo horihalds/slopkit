@@ -20,7 +20,6 @@
 
 namespace
 {
-    // Whether two live passes request exactly the same blocks.
     bool same_requests(const std::vector<slopkit::ui::LiveRequest>& left,
                        const std::vector<slopkit::ui::LiveRequest>& right)
     {
@@ -56,7 +55,7 @@ namespace
                                                                  });
         REQUIRE(settled);
     }
-} // namespace
+}
 
 TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 {
@@ -68,18 +67,14 @@ TEST_CASE("the found-results entry row drives the viewer", "[ui]")
 
     auto* memory_view = button_labelled(panel, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
-    // The Add Address command now lives in the address list's context menu, not
-    // in the found list.
     CHECK(button_labelled(panel, QStringLiteral("Add Address Manually")) == nullptr);
 
-    // The view button waits for an attached target.
     CHECK_FALSE(memory_view->isEnabled());
 
     panel.resize(600, 400);
     panel.show();
     QCoreApplication::processEvents();
 
-    // The button sits in the row directly below the hits table.
     auto* hits = panel.findChild<QTableView*>();
     REQUIRE(hits != nullptr);
     CHECK(memory_view->y() > hits->y());
@@ -133,13 +128,9 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     auto* memory_view = button_labelled(*found_list, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
 
-    // The Add Address and Table Settings buttons are gone from the whole window;
-    // the two commands now live in the address list's context menu.
     CHECK(button_labelled(window, QStringLiteral("Add Address Manually")) == nullptr);
     CHECK(button_labelled(window, QStringLiteral("Table Settings")) == nullptr);
 
-    // The window enables the view button once the target is attached and the
-    // main module's map has landed.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -158,8 +149,6 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
 
     auto* viewer = window.memory_viewer();
     REQUIRE(viewer != nullptr);
-    // The viewer is a detached top-level window: no parent widget, so no WM
-    // transient hint keeps it stacked above the main window.
     CHECK(viewer->parentWidget() == nullptr);
     CHECK(viewer->isWindow());
     CHECK_FALSE(window.isAncestorOf(viewer));
@@ -172,12 +161,9 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     REQUIRE(viewer->isVisible());
     REQUIRE(viewer->windowHandle() != nullptr);
     CHECK(viewer->windowHandle()->transientParent() == nullptr);
-    // The main module's map is loaded, so the entry renders module-relative and
-    // the view lands exactly on the entry address.
     CHECK(document->display_text(0x1040) == QStringLiteral("low+0x40"));
     CHECK(view->first_byte() == 0x1040);
 
-    // The table menu's Add Address command reaches the same non-modal dialog.
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
     QMenu table_menu;
@@ -204,7 +190,6 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     add_address_action->trigger();
     CHECK(add_dialog->isVisible());
 
-    // Table Settings reaches its own non-modal dialog.
     auto* settings_dialog = window.findChild<slopkit::ui::dialogs::TableSettingsDialog*>();
     REQUIRE(settings_dialog != nullptr);
     CHECK_FALSE(settings_dialog->isVisible());
@@ -227,8 +212,6 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
     auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
     REQUIRE(view != nullptr);
 
-    // The window is three panes now: no loading row remains, but the listing and
-    // the placeholder register table sit above the byte view.
     CHECK(viewer.findChild<QLabel*>(QStringLiteral("loading_label")) == nullptr);
     auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
     REQUIRE(listing != nullptr);
@@ -273,9 +256,7 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
                     {
                         return view->cell_text(0x1000) == QStringLiteral("AB");
                     }));
-    // No indicator row sits below the byte view, so nothing else changes.
 
-    // A changed byte follows on the next pass.
     const std::uint64_t middle                = requests[1].address;
     (*access.memory)[middle][0x1000 - middle] = std::byte {0xCD};
     live.request_now();
@@ -285,25 +266,21 @@ TEST_CASE("the memory viewer follows the live pass", "[ui]")
                         return view->cell_text(0x1000) == QStringLiteral("CD");
                     }));
 
-    // A reading that reports the visible window unreadable paints the placeholder
-    // cells, and a cell no reading covers at all stays blank.
     slopkit::ui::LiveReading unreadable;
     unreadable.id       = 1;
     unreadable.readable = false;
     viewer.apply_live_readings(std::vector<slopkit::ui::LiveReading> {unreadable});
     CHECK(view->cell_text(0x1000) == QStringLiteral("??"));
 
-    // A completion whose window moved on while the pass was in flight is dropped.
     const std::uint64_t next_base = middle + 2 * extent;
     viewer.hide();
-    viewer.set_address(next_base); // hidden, so no pass is submitted
+    viewer.set_address(next_base);
     const std::vector<slopkit::ui::LiveReading> stale {
         slopkit::ui::LiveReading {.id = 1, .readable = true, .bytes = (*access.memory)[middle]}
     };
     viewer.apply_live_readings(stale);
     CHECK(view->cell_text(next_base).isEmpty());
 
-    // Showing it again loads the new window from the seed.
     for (const std::uint64_t base : {next_base - extent, next_base, next_base + extent})
     {
         (*access.memory)[base] = std::vector<std::byte>(extent, std::byte {0xCD});
@@ -341,7 +318,6 @@ TEST_CASE("the memory viewer keeps the top address when its dialog is resized", 
         }
     };
 
-    // An address that is not a multiple of the fitted row width.
     viewer.set_address(0x1010);
     viewer.show();
     settle_panes(worker, viewer);
@@ -365,14 +341,11 @@ TEST_CASE("the memory viewer keeps the top address when its dialog is resized", 
     const int           wide_width = view->width();
     REQUIRE(anchor == 0x1010);
 
-    // A narrower dialog re-fits the row width but leaves the anchor alone.
     viewer.resize(viewer.width() - 200, viewer.height());
     QCoreApplication::processEvents();
     REQUIRE(view->width() < wide_width);
     CHECK(view->first_byte() == anchor);
 
-    // A wider one does too, and the cell seeded before the resize still renders
-    // its bytes after the next pass.
     viewer.resize(viewer.width() + 400, viewer.height());
     QCoreApplication::processEvents();
     REQUIRE(view->width() > wide_width);
@@ -404,23 +377,19 @@ TEST_CASE("the memory viewer go-to accepts module-relative addresses", "[ui]")
 
     viewer.set_modules({module_image("app", 0x1000, 0x1000)});
 
-    // A module+RVA (case-insensitively) jumps to exactly the resolved address.
     CHECK(viewer.go_to(QStringLiteral("APP+40")));
     CHECK(view->first_byte() == 0x1040);
     CHECK(viewer.go_to(QStringLiteral("app+40")));
     CHECK(view->first_byte() == 0x1040);
 
-    // A plain absolute address works too, with no rounding to the row grid.
     CHECK(viewer.go_to(QStringLiteral("0x2000")));
     CHECK(view->first_byte() == 0x2000);
 
-    // A bare module name jumps to the module base, case-insensitively.
     CHECK(viewer.go_to(QStringLiteral("APP")));
     CHECK(view->first_byte() == 0x1000);
     CHECK(viewer.go_to(QStringLiteral("app")));
     CHECK(view->first_byte() == 0x1000);
 
-    // An unparsable value leaves the page where it was.
     const std::uint64_t before = view->first_byte();
     CHECK_FALSE(viewer.go_to(QStringLiteral("missing")));
     CHECK(view->first_byte() == before);
@@ -445,13 +414,11 @@ TEST_CASE("the memory viewer go-to accepts symbol names", "[ui]")
 
     viewer.set_modules({module_image("app", 0x1000, 0x1000)});
 
-    // A symbol name resolves to its live value, with an offset.
     CHECK(viewer.go_to(QStringLiteral("hp")));
     CHECK(view->first_byte() == 0x1337);
     CHECK(viewer.go_to(QStringLiteral("hp+10")));
     CHECK(view->first_byte() == 0x1347);
 
-    // An unknown name still leaves the page where it was.
     const std::uint64_t before = view->first_byte();
     CHECK_FALSE(viewer.go_to(QStringLiteral("nope")));
     CHECK(view->first_byte() == before);
@@ -477,7 +444,6 @@ TEST_CASE("the memory viewer opens Go To with Ctrl+G", "[ui]")
     view->setFocus();
     QCoreApplication::processEvents();
 
-    // Answers the prompt as soon as it opens, recording that it did.
     bool       opened        = false;
     const auto answer_prompt = [&opened]
     {
@@ -498,8 +464,6 @@ TEST_CASE("the memory viewer opens Go To with Ctrl+G", "[ui]")
                            });
     };
 
-    // Ctrl+G opens the prompt; the offscreen platform can decline to dispatch
-    // window shortcuts, so fall back to the action the shortcut triggers.
     answer_prompt();
     QKeyEvent ctrl_g(QEvent::KeyPress, Qt::Key_G, Qt::ControlModifier);
     QApplication::sendEvent(view, &ctrl_g);
@@ -526,7 +490,6 @@ TEST_CASE("the memory viewer go-to follows a pointer-chain expression", "[ui]")
     slopkit::process::AccessWorker worker {access};
     attach_app_session(worker);
 
-    // A pointer stored at the module base points the chain onward.
     constexpr std::uint64_t pointer = 0x200000;
     std::vector<std::byte>  bytes(8);
     for (std::size_t index = 0; index < bytes.size(); ++index)
@@ -543,7 +506,6 @@ TEST_CASE("the memory viewer go-to follows a pointer-chain expression", "[ui]")
     viewer.show();
     QCoreApplication::processEvents();
 
-    // Answer the prompt with the chain text as soon as it opens.
     QTimer::singleShot(0,
                        []
                        {
@@ -573,7 +535,6 @@ TEST_CASE("the memory viewer go-to follows a pointer-chain expression", "[ui]")
     REQUIRE(go_to != nullptr);
     go_to->trigger();
 
-    // The jump happens only once the worker resolves the chain.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -591,7 +552,6 @@ TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
     FakeAccess                     access;
     slopkit::process::AccessWorker worker {access};
     attach_app_session(worker);
-    // The pointer's own address cannot be read, so the chain fails at level 1.
     access.unreadable->insert(0x100000);
 
     std::vector<slopkit::log::Record> records;
@@ -637,7 +597,6 @@ TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
     REQUIRE(go_to != nullptr);
     go_to->trigger();
 
-    // The failure is logged and the page does not move.
     REQUIRE(pump_ui(worker,
                     [&]
                     {
@@ -666,13 +625,11 @@ TEST_CASE("the memory viewer splits the window into the three panes", "[ui]")
 
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
 
-    // A fresh viewer opens at 1280x960 but can still shrink to its 720x480 minimum.
     CHECK(viewer.size() == QSize(1280, 960));
     CHECK(viewer.minimumSize() == QSize(720, 480));
 
     viewer.show();
 
-    // The vertical split puts the upper zone (70 units) above the hex view (30).
     auto* split = viewer.findChild<QSplitter*>(QStringLiteral("viewer_split"));
     REQUIRE(split != nullptr);
     REQUIRE(split->count() == 2);
@@ -692,7 +649,6 @@ TEST_CASE("the memory viewer splits the window into the three panes", "[ui]")
     CHECK(upper_share > 0.63);
     CHECK(upper_share < 0.77);
 
-    // The upper zone splits 70/30 between the listing and the debugger stats.
     auto* code_split = viewer.findChild<QSplitter*>(QStringLiteral("code_split"));
     REQUIRE(code_split != nullptr);
     REQUIRE(code_split->count() == 2);
@@ -736,7 +692,6 @@ TEST_CASE("the memory viewer restores its size across a restart", "[ui]")
         slopkit::ui::MainWindow window {worker, target, host, settings, shared_debug_controller()};
         auto*                   viewer = window.memory_viewer();
         REQUIRE(viewer != nullptr);
-        // The stored blob reopens the window at the size it was closed with.
         CHECK(viewer->size() == QSize(740, 500));
         CHECK(viewer->minimumSize() == QSize(720, 480));
     }
@@ -757,17 +712,14 @@ TEST_CASE("the memory viewer seeds both cursors and then moves them independentl
     auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
     REQUIRE(listing != nullptr);
 
-    // Opening the viewer at an address seeds both panes.
     viewer.set_address(0x1234);
     CHECK(view->first_byte() == 0x1234);
     CHECK(listing->first_address() == 0x1234);
 
-    // The byte view's Go To leaves the listing where it is.
     CHECK(viewer.go_to(QStringLiteral("0x2000")));
     CHECK(view->first_byte() == 0x2000);
     CHECK(listing->first_address() == 0x1234);
 
-    // The listing's own Go To leaves the byte view where it is.
     CHECK(viewer.go_to_disassembly(QStringLiteral("0x3000")));
     CHECK(listing->first_address() == 0x3000);
     CHECK(view->first_byte() == 0x2000);
@@ -794,7 +746,6 @@ TEST_CASE("opening the memory viewer at an address clears both Back histories", 
     REQUIRE(view->can_go_back());
     REQUIRE(listing->can_go_back());
 
-    // A fresh open-at address starts a clean navigation session in both panes.
     viewer.set_address(0x4000);
     CHECK_FALSE(view->can_go_back());
     CHECK_FALSE(listing->can_go_back());
@@ -821,14 +772,11 @@ TEST_CASE("the listing's Follow in Memory View moves only the byte view", "[ui]"
     view->set_first_byte(0x2000);
     REQUIRE(listing->first_address() == 0x1000);
 
-    // "Follow in Memory View" sends the referenced address to the byte view and
-    // leaves the listing where it is.
     emit listing->followInMemoryViewRequested(0x5000);
     CHECK(view->first_byte() == 0x5000);
     CHECK(listing->first_address() == 0x1000);
     REQUIRE(view->can_go_back());
 
-    // The byte view's own Back returns it.
     QMenu    menu;
     QAction* back = nullptr;
     view->populate_options_menu(menu);
@@ -861,7 +809,6 @@ TEST_CASE("the memory viewer routes its single Ctrl+G to the focused pane", "[ui
     auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
     REQUIRE(listing != nullptr);
 
-    // The byte view owns the window's only Ctrl+G.
     REQUIRE(view->goto_action() != nullptr);
     CHECK(view->goto_action()->shortcut() == QKeySequence(QStringLiteral("Ctrl+G")));
     CHECK(listing->goto_action()->shortcut().isEmpty());
@@ -894,7 +841,6 @@ TEST_CASE("the memory viewer routes its single Ctrl+G to the focused pane", "[ui
         QCoreApplication::processEvents();
     };
 
-    // With the listing focused, the shared Ctrl+G moves the listing only.
     viewer.activateWindow();
     listing->setFocus();
     QCoreApplication::processEvents();
@@ -905,7 +851,7 @@ TEST_CASE("the memory viewer routes its single Ctrl+G to the focused pane", "[ui
     CHECK(view->first_byte() == 0x1000);
 
     // With the byte view focused, it moves the byte view instead.
-    viewer.activateWindow(); // closing the prompt dropped the active window
+    viewer.activateWindow();
     view->setFocus();
     QCoreApplication::processEvents();
     REQUIRE(QApplication::focusWidget() == view);
@@ -942,17 +888,13 @@ TEST_CASE("the memory viewer shows a read-only register placeholder", "[ui]")
     CHECK(model->data(model->index(0, RegisterModel::value), Qt::DisplayRole).toString() == dash);
     CHECK(model->data(model->index(17, RegisterModel::value), Qt::DisplayRole).toString() == dash);
 
-    // Read-only: the debugger drives the values, not the user.
     CHECK_FALSE(model->flags(model->index(0, RegisterModel::value)) & Qt::ItemIsEditable);
     CHECK_FALSE(model->flags(model->index(0, RegisterModel::name)) & Qt::ItemIsEditable);
 
-    // The pane carries no `Debugger` title, while its two section headers still
-    // name the tables inside it.
     CHECK_FALSE(panel_has_title(ancestor_panel(table), QStringLiteral("Debugger")));
     CHECK(panel_has_title(ancestor_panel(table), QStringLiteral("Registers")));
     CHECK(panel_has_title(ancestor_panel(table), QStringLiteral("Call stack")));
 
-    // The set_values seam the debugger will fill.
     const std::vector<slopkit::ui::models::RegisterValue> values {
         {.name = "RAX", .value = QStringLiteral("0x1"), .read = true}
     };
@@ -965,11 +907,6 @@ namespace
 {
     using slopkit::tests::pump_until;
 
-    // The dialog's live requests once its panes are up. A pane asks for its
-    // window only while the dialog is shown, and the show/layout pass is not
-    // synchronous with show(), so wait on the request itself: a fixed number of
-    // processEvents() turns cannot guarantee it and the seeding pass below would
-    // then be empty.
     std::vector<slopkit::ui::LiveRequest> wait_for_panes(slopkit::process::AccessWorker&           worker,
                                                          slopkit::ui::dialogs::MemoryViewerDialog& viewer)
     {
@@ -990,8 +927,6 @@ namespace
         return requests;
     }
 
-    // Waits until the listing has decoded its first row, i.e. until the pass the
-    // seeding helper applied has landed: `row_text(0)` is empty while it has none.
     void wait_for_listing_row(slopkit::process::AccessWorker& worker, slopkit::ui::dialogs::MemoryViewerDialog& viewer)
     {
         auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
@@ -1003,8 +938,6 @@ namespace
                         }));
     }
 
-    // Puts `MOV EAX, [RBX+0x10]` at the front of the listing's code window and
-    // applies one live pass, so row 0 is that instruction.
     std::uint64_t seed_listing_operand(FakeAccess&                               access,
                                        slopkit::process::AccessWorker&           worker,
                                        slopkit::ui::dialogs::MemoryViewerDialog& viewer)
@@ -1063,8 +996,6 @@ namespace
         return code_base;
     }
 
-    // Puts `JMP <+7>` at the front of the listing's code window and applies one
-    // live pass, so row 0 is a branch that references an address.
     std::uint64_t seed_listing_jump(FakeAccess&                               access,
                                     slopkit::process::AccessWorker&           worker,
                                     slopkit::ui::dialogs::MemoryViewerDialog& viewer)
@@ -1098,7 +1029,7 @@ namespace
         wait_for_listing_row(worker, viewer);
         return code_base;
     }
-} // namespace
+}
 
 TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
 {
@@ -1109,7 +1040,6 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     slopkit::process::AttachedTarget target = fake_target();
     attach_app_session(worker);
 
-    // A stopped session leaves the controller's register cache populated.
     slopkit::tests::FakeDebugBackend backend;
     slopkit::debug::Controller       controller {backend};
     controller.start(42, "fake");
@@ -1140,16 +1070,12 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
                      });
 
     viewer.instruction_accesses(0);
-    // The listing decodes from its page-aligned window base, so row 0 is that
-    // base; the operand resolves against the controller's cached registers.
     CHECK(instruction == code_base);
     CHECK(length == 3);
     REQUIRE(resolved.size() == 1);
     CHECK(resolved[0].operand == QStringLiteral("[RBX+0x10]"));
     CHECK(resolved[0].width == 4);
     CHECK_FALSE(resolved[0].writes);
-    // The fake register file holds zeroes, so the operand resolves to the
-    // instruction's own address plus the displacement.
     CHECK(resolved[0].resolved);
     CHECK(resolved[0].address == code_base + 0x10);
 
@@ -1198,12 +1124,9 @@ TEST_CASE("the memory viewer resolves an instruction's memory operands", "[ui]")
     REQUIRE(resolved.size() == 1);
     CHECK_FALSE(resolved[0].resolved);
     CHECK(warnings == 1);
-    // The invisible capture read the registers once and left the target running.
     CHECK(plain_backend.count("registers") == 1);
     CHECK(plain_controller.state() == slopkit::debug::Controller::State::running);
 
-    // Every invocation captures again, so a repeated click reads the registers
-    // once more and resolves against current values.
     resolved.clear();
     plain.instruction_accesses(0);
     REQUIRE(pump_until(plain_controller,
@@ -1265,12 +1188,9 @@ TEST_CASE("the memory viewer attaches the debugger on demand for the operands", 
                            return !resolved.empty();
                        }));
     REQUIRE(resolved.size() == 1);
-    // The fake register file holds zeroes, so the operand resolves, and the
-    // session is left running.
     CHECK(resolved[0].resolved);
     CHECK(controller.state() == slopkit::debug::Controller::State::running);
 
-    // A declined prompt never starts a session and yields no rows.
     slopkit::tests::FakeDebugBackend         denied_backend;
     slopkit::debug::Controller               denied_controller {denied_backend};
     slopkit::ui::dialogs::MemoryViewerDialog denied {worker, target, denied_controller};
@@ -1323,8 +1243,6 @@ TEST_CASE("the memory viewer puts the debug controls in the listing column", "[u
     QWidget* code_pane  = code_split->widget(0);
     QWidget* stats_pane = code_split->widget(1);
 
-    // The bar belongs to the listing column: it is a child of that column and
-    // shares its width, and it never reaches over the registers pane.
     auto* controls = viewer.findChild<slopkit::ui::panels::DebugControls*>();
     REQUIRE(controls != nullptr);
     CHECK(code_pane->isAncestorOf(controls));
@@ -1332,18 +1250,15 @@ TEST_CASE("the memory viewer puts the debug controls in the listing column", "[u
     CHECK_FALSE(stats_pane->isAncestorOf(controls));
     CHECK(controls->width() == code_pane->width());
 
-    // Its right edge stays left of the stats pane's left edge.
     const int controls_right = controls->mapTo(&viewer, QPoint(controls->width(), 0)).x();
     const int stats_left     = stats_pane->mapTo(&viewer, QPoint(0, 0)).x();
     CHECK(controls_right <= stats_left);
 
-    // It sits above the Disassembly panel inside that column.
     auto* listing_panel = code_pane->findChild<slopkit::ui::widgets::Panel*>();
     REQUIRE(listing_panel != nullptr);
     CHECK(listing_panel->isAncestorOf(code_pane->findChild<slopkit::ui::components::DisassemblyView*>()));
     CHECK(controls->y() < listing_panel->y());
 
-    // The bar carries all nine controls; with no session they are gated off.
     CHECK(controls->toggle_breakpoint_button() != nullptr);
     CHECK(controls->start_stop_button() != nullptr);
     CHECK(controls->resume_button() != nullptr);
@@ -1354,7 +1269,6 @@ TEST_CASE("the memory viewer puts the debug controls in the listing column", "[u
     CHECK_FALSE(controls->step_out_button()->isEnabled());
     CHECK(controls->breakpoints_button() != nullptr);
 
-    // The right pane holds the registers and the call stack and no run control.
     CHECK(stats_pane->findChildren<QPushButton*>().isEmpty());
     auto* register_table = stats_pane->findChild<QTableView*>(QStringLiteral("register_table"));
     REQUIRE(register_table != nullptr);
@@ -1395,7 +1309,6 @@ TEST_CASE("the memory viewer listing NOPs and restores an instruction", "[ui]")
         return nullptr;
     };
 
-    // `NOP Instruction` on the MOV replaces its whole three-byte instruction.
     QMenu menu;
     listing->populate_menu(menu, 1);
     QAction* nop = menu_action(menu, QStringLiteral("NOP Instruction"));
@@ -1418,8 +1331,6 @@ TEST_CASE("the memory viewer listing NOPs and restores an instruction", "[ui]")
     CHECK(listing->row_text(3) == QStringLiteral("NOP"));
     CHECK(listing->row_text(4) == QStringLiteral("RET"));
 
-    // Right-clicking a later row of the run offers the restore, which writes the
-    // original bytes back.
     QMenu patched;
     listing->populate_menu(patched, 2);
     QAction* restore = menu_action(patched, QStringLiteral("Restore Original Instruction at "));
@@ -1462,7 +1373,6 @@ TEST_CASE("the toggle breakpoint button sets and clears a breakpoint", "[ui]")
     const std::uint64_t code_base = seed_listing_code(access, worker, viewer);
     REQUIRE(listing->row_text(0) == QStringLiteral("PUSH RBP"));
 
-    // The toggle needs a live session: start one and wait for the stop.
     controls->start_stop_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
@@ -1470,16 +1380,13 @@ TEST_CASE("the toggle breakpoint button sets and clears a breakpoint", "[ui]")
                            return controller.state() == slopkit::debug::Controller::State::stopped;
                        }));
 
-    // Select the first instruction: the bar's toggle comes live.
     listing->set_selected_address(code_base);
     REQUIRE(controls->toggle_breakpoint_button()->isEnabled());
 
-    // The first click adds one software breakpoint at the selected address.
     controls->toggle_breakpoint_button()->click();
     REQUIRE(controller.table().software_at(code_base) != nullptr);
     CHECK(controller.breakpoints().size() == 1);
 
-    // The second click removes it again.
     controls->toggle_breakpoint_button()->click();
     CHECK(controller.table().software_at(code_base) == nullptr);
     CHECK(controller.breakpoints().empty());
@@ -1507,11 +1414,9 @@ TEST_CASE("the memory viewer shows the debugger read-out on its bottom status li
     auto* status = viewer.findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("viewer_status"));
     REQUIRE(status != nullptr);
 
-    // The line is the mono read-out and starts at the controller's idle text.
     CHECK(status->font().family() == slopkit::ui::mono_font().family());
     CHECK(viewer.status_text() == QStringLiteral("Not debugging"));
 
-    // Starting the session updates the line through the controller's signal.
     controller.start(target.pid, target.plugin_id);
     REQUIRE(pump_until(controller,
                        [&]
@@ -1520,7 +1425,6 @@ TEST_CASE("the memory viewer shows the debugger read-out on its bottom status li
                        }));
     CHECK(viewer.status_text() == QStringLiteral("Running..."));
 
-    // A deliberate stop shows where the target stopped.
     controller.interrupt();
     REQUIRE(pump_until(controller,
                        [&]
@@ -1529,7 +1433,6 @@ TEST_CASE("the memory viewer shows the debugger read-out on its bottom status li
                        }));
     CHECK(viewer.status_text().startsWith(QStringLiteral("Stopped at")));
 
-    // A controller message replaces it and is coloured by its kind.
     controller.start(target.pid, target.plugin_id);
     CHECK(viewer.status_text() == QStringLiteral("A debug session is already open."));
     CHECK(status->palette().color(QPalette::WindowText)
@@ -1557,13 +1460,11 @@ TEST_CASE("the memory viewer shows its own four-menu bar above the panes", "[ui]
     REQUIRE(view != nullptr);
     CHECK(viewer.findChild<slopkit::ui::panels::ViewerMenu*>() == menu);
 
-    // Exactly the four menus, in the required order.
     REQUIRE(menu->actions().size() == 4);
     CHECK(action_texts(menu->actions())
           == QStringList {
               QStringLiteral("File"), QStringLiteral("View"), QStringLiteral("Tools"), QStringLiteral("Debug")});
 
-    // The Debug menu carries the bar's entries plus Remove All Breakpoints.
     CHECK(action_texts(menu->debug_menu()->actions())
           == QStringList {QStringLiteral("Start Debugging"),
                           QStringLiteral("Toggle Breakpoint"),
@@ -1575,12 +1476,9 @@ TEST_CASE("the memory viewer shows its own four-menu bar above the panes", "[ui]
                           QStringLiteral("Breakpoints..."),
                           QStringLiteral("Remove All Breakpoints")});
 
-    // The byte view's own Go To... action leads the View menu, so its Ctrl+G is
-    // never duplicated.
     REQUIRE_FALSE(menu->view_menu()->actions().isEmpty());
     CHECK(menu->view_menu()->actions().first() == view->goto_action());
 
-    // The bar sits above the panes.
     viewer.resize(900, 600);
     viewer.show();
     QCoreApplication::processEvents();
@@ -1611,7 +1509,6 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     REQUIRE(controls != nullptr);
     REQUIRE(menu != nullptr);
 
-    // Idle with a valid target: Start is live, the run entries are not.
     CHECK(menu->start_stop_action()->text() == QStringLiteral("Start Debugging"));
     CHECK(menu->start_stop_action()->isEnabled());
     CHECK_FALSE(menu->resume_action()->isEnabled());
@@ -1628,7 +1525,6 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     const QString selected_text =
         QStringLiteral("0x") + QStringLiteral("%1").arg(code_base, 16, 16, QLatin1Char('0')).toUpper();
 
-    // Every debug entry agrees with its bar button in every state.
     const auto parity = [&]
     {
         CHECK(menu->resume_action()->isEnabled() == controls->resume_button()->isEnabled());
@@ -1639,12 +1535,10 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
         CHECK(menu->toggle_breakpoint_action()->isEnabled() == controls->toggle_breakpoint_button()->isEnabled());
     };
 
-    // No session: the toggle explains it cannot set breakpoints yet.
     CHECK_FALSE(menu->toggle_breakpoint_action()->isEnabled());
     CHECK(menu->toggle_breakpoint_action()->toolTip() == QStringLiteral("Start the debugger to set breakpoints."));
     parity();
 
-    // Starting through the menu entry flips it to Stop and lights Break.
     menu->start_stop_action()->trigger();
     REQUIRE(pump_until(controller,
                        [&]
@@ -1660,7 +1554,6 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     CHECK(menu->toggle_breakpoint_action()->toolTip() == QStringLiteral("Select an instruction in the listing first."));
     parity();
 
-    // Break through the menu stops the target and lights the step entries.
     menu->break_action()->trigger();
     REQUIRE(pump_until(controller,
                        [&]
@@ -1674,19 +1567,16 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     CHECK_FALSE(menu->break_action()->isEnabled());
     parity();
 
-    // Selecting an instruction lights the toggle on both surfaces.
     listing->set_selected_address(code_base);
     CHECK(menu->toggle_breakpoint_action()->isEnabled());
     CHECK(menu->toggle_breakpoint_action()->toolTip() == QStringLiteral("Set a breakpoint at %1.").arg(selected_text));
     parity();
 
-    // Toggling through the menu arms the same address the bar would.
     menu->toggle_breakpoint_action()->trigger();
     REQUIRE(controller.table().software_at(code_base) != nullptr);
     CHECK(menu->toggle_breakpoint_action()->toolTip()
           == QStringLiteral("Remove the breakpoint at %1.").arg(selected_text));
 
-    // A second breakpoint on the next row: Remove All clears both at once.
     listing->set_selected_address(code_base + 1);
     menu->toggle_breakpoint_action()->trigger();
     REQUIRE(controller.breakpoints().size() == 2);
@@ -1698,7 +1588,6 @@ TEST_CASE("the debug menu mirrors the control bar across the session states", "[
     CHECK_FALSE(menu->remove_all_breakpoints_action()->isEnabled());
     CHECK(menu->remove_all_breakpoints_action()->toolTip() == QStringLiteral("No breakpoints to remove."));
 
-    // Breakpoints... reaches the same request the bar's button emits.
     int requests = 0;
     QObject::connect(controls,
                      &slopkit::ui::panels::DebugControls::breakpointsRequested,
@@ -1737,7 +1626,6 @@ TEST_CASE("the menu bar's Tools entries track the selected instruction", "[ui]")
     REQUIRE_FALSE(listing->row_text(0).isEmpty());
     CHECK(listing->row_text(0).startsWith(QStringLiteral("MOV EAX")));
 
-    // Nothing selected: every Tools entry is off and explains itself.
     CHECK_FALSE(menu->nop_action()->isEnabled());
     CHECK_FALSE(menu->restore_action()->isEnabled());
     CHECK_FALSE(menu->edit_action()->isEnabled());
@@ -1746,8 +1634,6 @@ TEST_CASE("the menu bar's Tools entries track the selected instruction", "[ui]")
     CHECK_FALSE(menu->edit_action()->toolTip().isEmpty());
     CHECK_FALSE(menu->instruction_accesses_action()->toolTip().isEmpty());
 
-    // A decoded instruction with a memory operand can be NOPed, edited and its
-    // operands resolved.
     listing->set_selected_address(code_base);
     CHECK(menu->nop_action()->isEnabled());
     CHECK(menu->edit_action()->isEnabled());
@@ -1791,11 +1677,9 @@ TEST_CASE("the menu bar's Hook Instruction generates a prefilled script", "[ui]"
     viewer.show();
     const std::uint64_t code_base = seed_listing_operand(access, worker, viewer);
 
-    // Nothing selected: the Tools entry is off and explains itself.
     CHECK_FALSE(menu->hook_action()->isEnabled());
     CHECK_FALSE(menu->hook_action()->toolTip().isEmpty());
 
-    // A decoded instruction can be hooked.
     listing->set_selected_address(code_base);
     REQUIRE(menu->hook_action()->isEnabled());
 
@@ -1850,16 +1734,13 @@ TEST_CASE("the menu bar's viewer commands act on the panes", "[ui]")
     viewer.show();
     QCoreApplication::processEvents();
 
-    // Neither pane has anywhere to go back to yet.
     CHECK_FALSE(menu->back_action()->isEnabled());
     CHECK_FALSE(menu->back_action()->toolTip().isEmpty());
 
-    // With nothing selected the Follow entries are off and explain why.
     CHECK_FALSE(menu->follow_action()->isEnabled());
     CHECK_FALSE(menu->follow_in_memory_view_action()->isEnabled());
     CHECK(menu->follow_action()->toolTip() == QStringLiteral("Select an instruction that references an address."));
 
-    // The byte view's own Back moves only the focused byte view.
     view->navigate_to(0x2000);
     REQUIRE(view->can_go_back());
     menu->view_menu()->aboutToShow();
@@ -1868,8 +1749,6 @@ TEST_CASE("the menu bar's viewer commands act on the panes", "[ui]")
     CHECK(view->first_byte() == 0x1000);
     CHECK(listing->first_address() == 0x1000);
 
-    // A selected row that references an address enables Follow: it moves the
-    // byte view and, separately, the listing.
     const std::uint64_t jump_base = seed_listing_jump(access, worker, viewer);
     listing->set_selected_address(jump_base);
     menu->view_menu()->aboutToShow();
@@ -1883,7 +1762,6 @@ TEST_CASE("the menu bar's viewer commands act on the panes", "[ui]")
     menu->follow_action()->trigger();
     CHECK(listing->can_go_back());
 
-    // File > Close hides the viewer.
     CHECK(viewer.isVisible());
     menu->close_action()->trigger();
     CHECK_FALSE(viewer.isVisible());
@@ -1896,7 +1774,6 @@ TEST_CASE("the viewer re-gates its Start/Stop surfaces when the attached target 
     FakeAccess                     access;
     slopkit::process::AccessWorker worker {access};
 
-    // Built before any attach: both Start/Stop surfaces read Start and are off.
     slopkit::process::AttachedTarget         target;
     slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
     auto*                                    controls = viewer.debug_controls();
@@ -1907,8 +1784,6 @@ TEST_CASE("the viewer re-gates its Start/Stop surfaces when the attached target 
     CHECK_FALSE(controls->start_stop_button()->isEnabled());
     CHECK_FALSE(menu->start_stop_action()->isEnabled());
 
-    // A fresh attach makes the target valid; no controller signal announces it,
-    // so the explicit refresh is what lights both surfaces up.
     target.pid          = 4242;
     target.plugin_id    = "linux-proc";
     target.session_live = true;
@@ -1916,7 +1791,6 @@ TEST_CASE("the viewer re-gates its Start/Stop surfaces when the attached target 
     CHECK(controls->start_stop_button()->isEnabled());
     CHECK(menu->start_stop_action()->isEnabled());
 
-    // Detaching again turns them off, matching the window's own label.
     target.clear();
     viewer.refresh_target_state();
     CHECK_FALSE(controls->start_stop_button()->isEnabled());

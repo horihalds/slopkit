@@ -22,7 +22,6 @@ print(ok, addr)
     REQUIRE(result.ok);
     REQUIRE(result.output.size() == 1);
     CHECK(result.output[0] == "true\t" + std::to_string(fixture.fake.address(0x20)));
-    // The name was new, so it became a label and never reached the shared table.
     CHECK_FALSE(fixture.symbols.lookup("origin").has_value());
 }
 

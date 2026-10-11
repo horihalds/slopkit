@@ -15,15 +15,10 @@ class QPushButton;
 namespace slopkit::ui::widgets
 {
     class StatusLabel;
-} // namespace slopkit::ui::widgets
+}
 
 namespace slopkit::ui::dialogs
 {
-
-    // The Table Settings dialog: the process the current table belongs to, the
-    // auto attach toggle and the match-by-executable-path toggle. It also shows
-    // the currently attached process and can copy its identity into the table.
-    // It edits the table's settings in place and re-reads them when shown.
     class TableSettingsDialog : public QDialog
     {
         Q_OBJECT
@@ -34,7 +29,6 @@ namespace slopkit::ui::dialogs
                             QWidget*                       parent = nullptr);
         ~TableSettingsDialog() override;
 
-        // Re-renders the attached-process card; cheap when nothing changed.
         void refresh_target();
 
     protected:
@@ -61,8 +55,6 @@ namespace slopkit::ui::dialogs
         widgets::StatusLabel* status_ {};
         bool                  updating_ {false};
 
-        // The attachment the card was last rendered from, so refresh_target()
-        // can return early on the 50 ms tick when nothing changed.
         bool               rendered_ {false};
         process::ProcessId rendered_pid_ {};
         std::string        rendered_name_;
@@ -70,4 +62,4 @@ namespace slopkit::ui::dialogs
         bool               rendered_live_ {false};
     };
 
-} // namespace slopkit::ui::dialogs
+}
