@@ -1015,7 +1015,7 @@ TEST_CASE("the disassembly document plans a hook from the cached window", "[ui]"
     CHECK(target.module_name == "app");
     CHECK(target.original.size() == 7); // SUB RSP, 0x28 and its successor
     CHECK(target.covered.size() == 2);
-    CHECK(target.pattern.rfind("48 83 EC 28 48 89 D8 48 83 C4 28 C3", 0) == 0);
+    CHECK(target.pattern.rfind("48 83 ?? 28 48 89 ?? 48 83 ?? 28 C3", 0) == 0);
     CHECK(target.pattern_offset == 0);
 }
 

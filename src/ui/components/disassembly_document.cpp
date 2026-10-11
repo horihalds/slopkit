@@ -812,7 +812,7 @@ namespace slopkit::ui::components
             script::HookRow row;
             row.address       = instruction.address;
             row.bytes         = cached_bytes(instruction.address, instruction.length);
-            row.address_bytes = instruction.address_bytes;
+            row.pattern_bytes = instruction.encoding_bytes;
             row.addresses     = instruction.addresses;
             row.memory        = instruction.memory;
             row.text          = instruction.text;

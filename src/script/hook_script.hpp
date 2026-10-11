@@ -15,13 +15,13 @@ namespace slopkit::script
     // need about it, and nothing about the live target.
     struct HookRow
     {
-        std::uint64_t                         address {};
-        std::span<const std::byte>            bytes;         // the encoding, from the cache
-        std::span<const disasm::AddressBytes> address_bytes; // where its printed addresses sit
-        std::span<const disasm::AddressRef>   addresses;     // the printed address slices
-        std::span<const disasm::MemoryRef>    memory;        // the memory operands its text prints
-        std::string                           text;          // as the listing prints it, addresses absolute
-        bool                                  valid {};      // false for a `.byte` row
+        std::uint64_t                          address {};
+        std::span<const std::byte>             bytes;         // the encoding, from the cache
+        std::span<const disasm::EncodingBytes> pattern_bytes; // register, offset, address and wide-immediate ranges
+        std::span<const disasm::AddressRef>    addresses;     // the printed address slices
+        std::span<const disasm::MemoryRef>     memory;        // the memory operands its text prints
+        std::string                            text;          // as the listing prints it, addresses absolute
+        bool                                   valid {};      // false for a `.byte` row
     };
 
     // The neighbourhood a hook may be generated from: the decoded listing rows
@@ -72,6 +72,6 @@ namespace slopkit::script
 
     // "??": a byte that is wildcarded, "48": a literal. The wildcard offsets are
     // relative to `bytes`.
-    [[nodiscard]] std::string pattern_text(std::span<const std::byte>            bytes,
-                                           std::span<const disasm::AddressBytes> wildcards);
+    [[nodiscard]] std::string pattern_text(std::span<const std::byte>             bytes,
+                                           std::span<const disasm::EncodingBytes> wildcards);
 } // namespace slopkit::script

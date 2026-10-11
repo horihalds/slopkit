@@ -234,10 +234,10 @@ namespace slopkit::script
         }
     } // namespace
 
-    std::string pattern_text(std::span<const std::byte> bytes, std::span<const disasm::AddressBytes> wildcards)
+    std::string pattern_text(std::span<const std::byte> bytes, std::span<const disasm::EncodingBytes> wildcards)
     {
         std::vector<bool> masked(bytes.size(), false);
-        for (const disasm::AddressBytes& field : wildcards)
+        for (const disasm::EncodingBytes& field : wildcards)
         {
             for (std::size_t index = field.offset; index < field.offset + field.length && index < bytes.size(); ++index)
             {
@@ -332,10 +332,10 @@ namespace slopkit::script
         const std::pair<std::size_t, std::size_t> span =
             pattern_span(candidate, window_first, window_last, target.original.size());
 
-        std::vector<std::byte>            pattern_bytes;
-        std::vector<disasm::AddressBytes> wildcards;
-        std::size_t                       offset       = 0;
-        std::size_t                       match_offset = 0;
+        std::vector<std::byte>             pattern_bytes;
+        std::vector<disasm::EncodingBytes> wildcards;
+        std::size_t                        offset       = 0;
+        std::size_t                        match_offset = 0;
         for (std::size_t index = span.first; index < span.second; ++index)
         {
             const HookRow& row = candidate.rows[index];
@@ -344,10 +344,10 @@ namespace slopkit::script
                 match_offset = offset;
             }
             pattern_bytes.insert(pattern_bytes.end(), row.bytes.begin(), row.bytes.end());
-            // Only an absolute field changes with the module base; a relative
-            // branch or rip-relative displacement is module-relative and stays
-            // literal.
-            for (const disasm::AddressBytes& field : row.address_bytes)
+            // Every register, offset and absolute-address byte a signature may
+            // wildcard; a relative branch or rip-relative displacement is
+            // module-relative and stays literal.
+            for (const disasm::EncodingBytes& field : row.pattern_bytes)
             {
                 if (!field.relative)
                 {

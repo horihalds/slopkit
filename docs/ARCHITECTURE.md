@@ -462,12 +462,16 @@ target.
   generated script is a facts table plus
   `function activate() return hook.install(kHook) end` and
   `function deactivate() return hook.remove(kHook) end`: the target work lives in
-  the `hook` global, not in a self-installing template. The pattern wildcards only
-  the bytes of *absolute* address fields, which the decoder reports as
-  `disasm::AddressBytes {offset, length, relative}` (the encoded-position twin of
+  the `hook` global, not in a self-installing template. The pattern wildcards the
+  register bytes — the ModRM of any instruction that has one and the SIB when
+  present — every memory displacement and every absolute-address or 32/64-bit
+  immediate value, which the decoder reports as
+  `disasm::EncodingBytes {offset, length, relative}` (the encoded-position twin of
   `AddressRef`, which slices the printed text): a relative branch or rip-relative
   displacement is module-relative and stays literal, so a rebased module still
-  matches. The window is whole instructions from the selected row until a 5-byte near
+  matches, while the opcode, a `PUSH`/`POP` reg-encoded opcode, a REX/operand-size
+  prefix and a smaller immediate (`SUB RSP, 0x28`) stay literal too. The window is
+  whole instructions from the selected row until a 5-byte near
   jump fits; an address operand is re-emitted as `0x%X` with its runtime `site ± delta`
   argument, so the trampoline stays position-independent after ASLR; a memory
   operand the decoder printed without a size keyword (`INC [RBX+1C]`) gains the

@@ -45,7 +45,7 @@ namespace
                 script::HookRow row;
                 row.address = instruction.address;
                 row.bytes = std::span<const std::byte>(code.data() + (instruction.address - base), instruction.length);
-                row.address_bytes = instruction.address_bytes;
+                row.pattern_bytes = instruction.encoding_bytes;
                 row.addresses     = instruction.addresses;
                 row.memory        = instruction.memory;
                 row.text          = instruction.text;
@@ -88,8 +88,8 @@ namespace
 
 TEST_CASE("pattern_text wildcards exactly the given byte ranges", "[script][hook]")
 {
-    const std::vector<std::byte>            bytes = byte_list({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00});
-    const std::vector<disasm::AddressBytes> wildcards {
+    const std::vector<std::byte>             bytes = byte_list({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00});
+    const std::vector<disasm::EncodingBytes> wildcards {
         {3, 4, false}
     };
 
@@ -102,7 +102,7 @@ TEST_CASE("pattern_text never wildcards a byte outside a field", "[script][hook]
 
     CHECK(script::pattern_text(bytes, {}) == "00 00 FF");
     CHECK(script::pattern_text(bytes,
-                               std::vector<disasm::AddressBytes> {
+                               std::vector<disasm::EncodingBytes> {
                                    {0, 1, false}
     })
           == "?? 00 FF");
@@ -174,31 +174,45 @@ TEST_CASE("the pattern starts at the window and reaches at least sixteen bytes",
     const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
 
     // The window is 7 bytes; the span adds the two following instructions and
-    // keeps widening until the signature is long enough.
-    CHECK(target.pattern.rfind("48 83 EC 28 48 89 D8 48 83 C4 28 C3", 0) == 0);
-    CHECK(target.pattern.find("??") == std::string::npos);
+    // keeps widening until the signature is long enough. The ModRM byte of each
+    // instruction is wildcarded; the imm8 of `SUB`/`ADD RSP, 0x28` stays literal.
+    CHECK(target.pattern.rfind("48 83 ?? 28 48 89 ?? 48 83 ?? 28 C3", 0) == 0);
     CHECK(pattern_length(target.pattern) >= 16);
     CHECK(target.pattern_offset == 0);
 }
 
-TEST_CASE("only absolute address fields are wildcarded", "[script][hook]")
+TEST_CASE("register, offset and absolute address fields are wildcarded", "[script][hook]")
 {
-    const Listing listing(
-        {0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00,       // MOV RAX, [rip+2F7]: the displacement stays literal
-         0x48, 0x83, 0xEC, 0x28,                         // SUB RSP, 0x28
-         0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00, // MOV RAX, [00402000]: the absolute is wildcarded
-         0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
-        0x1000);
+    // MOV RAX, [rip+2F7] masks its ModRM and keeps the rip displacement;
+    // SUB RSP, 0x28 masks its ModRM and keeps the imm8; MOV RAX, [00402000]
+    // masks its ModRM, SIB and the absolute disp32.
+    const Listing listing({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0x48, 0x83, 0xEC, 0x28, 0x48, 0x8B, 0x04,
+                           0x25, 0x00, 0x20, 0x40, 0x00, 0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          0x1000);
 
     std::string              reason;
     const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
 
-    const std::size_t wildcard = target.pattern.find("??");
-    REQUIRE(wildcard != std::string::npos);
-    // The literal rip-relative displacement sits before the first wildcard.
-    CHECK(target.pattern.substr(0, wildcard).find("F7") != std::string::npos);
-    // Four wildcard bytes for the absolute disp32, and no others.
-    CHECK(target.pattern.substr(wildcard) == "?? ?? ?? ??");
+    CHECK(target.pattern == "48 8B ?? F7 02 00 00 48 83 ?? 28 48 8B ?? ?? ?? ?? ?? ??");
+}
+
+TEST_CASE("the generated pattern wildcards an INC memory operand", "[script][hook]")
+{
+    // INC dword ptr [RBX+0x1C] (FF 43 1C) is the report's example: the ModRM and
+    // the disp8 become wildcards, only the opcode stays literal.
+    const Listing listing({0xFF, 0x43, 0x1C,       // INC dword ptr [RBX+0x1C]
+                           0x48, 0x83, 0xEC, 0x28, // SUB RSP, 0x28
+                           0x48, 0x89, 0xD8,       // MOV RAX, RBX
+                           0x48, 0x83, 0xC4, 0x28, // ADD RSP, 0x28
+                           0xC3, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90},
+                          0x1000);
+
+    std::string              reason;
+    const script::HookTarget target = *script::build_hook(candidate_at(listing, 0), reason);
+
+    CHECK(target.pattern.rfind("FF ?? ?? 48 83 ?? 28 48 89 ?? 48 83 ?? 28", 0) == 0);
+    CHECK(pattern_length(target.pattern) >= 16);
+    CHECK(target.pattern_offset == 0);
 }
 
 TEST_CASE("address operands are re-emitted position-independently", "[script][hook]")

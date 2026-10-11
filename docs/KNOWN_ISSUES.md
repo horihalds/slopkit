@@ -39,6 +39,16 @@ regression: debug it, do not add it just to make a run green.
 - **Lone-run check:** `ctest -R "controller consumes the step-out stop and erases
   the transient entry"` passes.
 
+### controller ignores a step-out without a stop
+
+- **Source:** `tests/debug/controller_test.cpp` (`[debug][controller]`).
+- **Symptom:** `CHECK(backend.count("cont") == 0)` fails (`1 == 0`): the controller
+  issued a `cont` while ignoring a step-out that had no stop to consume.
+- **Cause:** the same shared practice-backend timing as the case above; the calls
+  are ordered correctly when the case has the process to itself.
+- **Lone-run check:** `ctest -R "controller ignores a step-out without a stop"`
+  passes.
+
 ### debug session drives a target with forwarding
 
 - **Source:** `tests/platform/linux/debug_session_test.cpp` (`[debug_session]`).
@@ -61,6 +71,18 @@ regression: debug it, do not add it just to make a run green.
   leaves the agent hooks null.)
 - **Lone-run check:** `ctest -R "a signal storm that keeps the target busy is
   survived harmlessly"` passes.
+
+### the address-table model writes one value to a selection of like entries
+
+- **Source:** `tests/ui/models/address_table_model_test.cpp` (`[ui]`).
+- **Symptom:** `CHECK_FALSE(is_error)` and `CHECK(message == "Value written.")`
+  fail after the single-row `setData` path, reporting an error instead of the
+  write status.
+- **Cause:** the shared `AccessWorker` write races the scheduling of a full
+  `[ui]` run; the same write completes normally when the case has the process to
+  itself.
+- **Lone-run check:** `ctest -R "the address-table model writes one value to a
+  selection of like entries"` passes.
 
 ## Not a flake
 

@@ -30,11 +30,12 @@ namespace slopkit::disasm
         std::uint64_t address {}; // what the printed text names
     };
 
-    // Where inside an instruction's own encoding an address value lives: the
-    // encoded-position twin of AddressRef, which slices `Instruction::text`
-    // instead. A caller that wildcards an AoB pattern - or re-emits an
-    // instruction somewhere else - needs the byte range, not the text range.
-    struct AddressBytes
+    // Where inside an instruction's own encoding a byte range a generated
+    // signature may wildcard lives: the ModRM and SIB register bytes, a memory
+    // displacement, a relative branch/call target and an absolute-address or
+    // wide-immediate value. A caller that wildcards an AoB pattern - or re-emits
+    // an instruction somewhere else - needs the byte range, not the text range.
+    struct EncodingBytes
     {
         std::size_t offset {}; // byte offset into the instruction's own encoding
         std::size_t length {};
@@ -80,16 +81,17 @@ namespace slopkit::disasm
     // is rendered as a one-byte `.byte 0xNN` row so a listing never stalls.
     struct Instruction
     {
-        std::uint64_t             address {};
-        std::size_t               length {};
-        std::string               text;
-        bool                      valid {};
-        std::vector<AddressRef>   addresses; // in the order the text prints them; empty for `.byte`
-        std::vector<MemoryRef>    memory;    // explicit operands only; empty for `lea` and `.byte`
-        std::vector<TokenSpan>    tokens;    // in printed order; empty for `RET` and `.byte`
+        std::uint64_t              address {};
+        std::size_t                length {};
+        std::string                text;
+        bool                       valid {};
+        std::vector<AddressRef>    addresses; // in the order the text prints them; empty for `.byte`
+        std::vector<MemoryRef>     memory;    // explicit operands only; empty for `lea` and `.byte`
+        std::vector<TokenSpan>     tokens;    // in printed order; empty for `RET` and `.byte`
         // In Zydis's raw order; empty for `.byte` and for an instruction whose
-        // operands name no address.
-        std::vector<AddressBytes> address_bytes;
+        // encoding carries no register, offset or address byte a pattern would
+        // wildcard.
+        std::vector<EncodingBytes> encoding_bytes;
     };
 
     // Decodes the instruction at `address` from the front of `code`. Returns
