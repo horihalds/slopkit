@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <signal.h>
 #include <sys/mman.h>
@@ -19,6 +20,7 @@
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/wine.hpp"
 #include "plugin/plugin_host.hpp"
+#include "plugins/wine_proton/wine_target.hpp"
 #include "process/plugin_access.hpp"
 #include "process/types.hpp"
 
@@ -321,4 +323,42 @@ TEST_CASE("closing a suspended wine-proton session resumes the target", "[wine_p
 
     // close_session ran the session destructor, which must un-freeze the child.
     CHECK(wait_for_stopped(static_cast<ProcessId>(child), false, std::chrono::seconds(2)));
+}
+
+TEST_CASE("the injector environment drops process-local handoffs", "[wine_proton]")
+{
+    using slopkit::plugins::wine_proton::injector_environment;
+
+    // A Proton/Wine target carries `WINESERVERSOCKET=<fd>`, an already-open
+    // wineserver socket that only exists in the target's own descriptor table.
+    // Inheriting it makes the injector's wine loader abort with "Bad server
+    // socket <fd> : Bad file descriptor" instead of loading the agent.
+    SECTION("a wineserver socket handed to the target is dropped")
+    {
+        const std::vector<std::string> environment {"PATH=/usr/bin",
+                                                    "WINESERVERSOCKET=64",
+                                                    "WINEPREFIX=/home/user/.steam/steam/steamapps/compatdata/1/pfx",
+                                                    "DISPLAY=:0"};
+
+        const auto filtered = injector_environment(environment);
+        REQUIRE(filtered.size() == 3);
+        CHECK(std::ranges::find(filtered, "WINESERVERSOCKET=64") == filtered.end());
+        CHECK(std::ranges::find(filtered, "PATH=/usr/bin") != filtered.end());
+        CHECK(std::ranges::find(filtered, "DISPLAY=:0") != filtered.end());
+    }
+
+    SECTION("a similarly named variable is kept")
+    {
+        const std::vector<std::string> environment {"WINESERVERSOCKET_BACKUP=1"};
+
+        const auto filtered = injector_environment(environment);
+        CHECK(filtered == environment);
+    }
+
+    SECTION("an environment without the handoff is unchanged")
+    {
+        const std::vector<std::string> environment {"PATH=/usr/bin", "HOME=/home/user"};
+
+        CHECK(injector_environment(environment) == environment);
+    }
 }

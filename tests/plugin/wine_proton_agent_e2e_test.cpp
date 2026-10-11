@@ -5,8 +5,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
+#include <ranges>
 #include <string>
+#include <string_view>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -14,6 +18,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "platform/linux/procfs.hpp"
+#include "platform/linux/wine.hpp"
 #include "plugins/wine_proton/agent/slopkit_agent_protocol.h"
 #include "plugins/wine_proton/agent_client.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
@@ -22,6 +28,7 @@ namespace
 {
     using slopkit::plugins::wine_proton::AgentClient;
     using slopkit::plugins::wine_proton::derive_wine_target;
+    using slopkit::plugins::wine_proton::linux_path_to_windows;
 
     using namespace std::chrono_literals;
 
@@ -78,12 +85,13 @@ namespace
         return {};
     }
 
-    // Starts `wine <probe>` with the ambient environment and waits, bounded, for
-    // the probe's ready line, which also proves the target is up before the
-    // injector is pointed at it.
-    std::optional<ProbeLaunch> launch_probe(const std::filesystem::path& wine,
-                                            const std::filesystem::path& probe,
-                                            std::chrono::milliseconds    timeout)
+    // Starts `wine <arguments...>` with the ambient environment and waits,
+    // bounded, for the probe's ready line, which also proves the target is up
+    // before the injector is pointed at it. The returned pid is the direct
+    // child, which is the process wine starts for the first argument.
+    std::optional<ProbeLaunch> launch_probe(const std::filesystem::path&    wine,
+                                            const std::vector<std::string>& arguments,
+                                            std::chrono::milliseconds       timeout)
     {
         int pipes[2] = {-1, -1};
         if (::pipe2(pipes, O_CLOEXEC) != 0)
@@ -104,9 +112,17 @@ namespace
             ::dup2(pipes[1], STDERR_FILENO);
             ::close(pipes[0]);
             ::close(pipes[1]);
-            const std::string program = wine.string();
-            const std::string target  = probe.string();
-            ::execl(program.c_str(), program.c_str(), target.c_str(), static_cast<char*>(nullptr));
+            std::vector<std::string> arguments_copy;
+            arguments_copy.push_back(wine.string());
+            arguments_copy.insert(arguments_copy.end(), arguments.begin(), arguments.end());
+            std::vector<char*> argv;
+            argv.reserve(arguments_copy.size() + 1);
+            for (auto& entry : arguments_copy)
+            {
+                argv.push_back(entry.data());
+            }
+            argv.push_back(nullptr);
+            ::execv(argv[0], argv.data());
             ::_exit(127);
         }
         ::close(pipes[1]);
@@ -149,6 +165,41 @@ namespace
         }
         return ProbeLaunch {ChildGuard {child}, std::move(output)};
     }
+
+    // The process wine handed a wineserver socket to: a process started from
+    // another Wine process (`wine cmd /c <probe>`) is started by wineserver, so
+    // it is a grandchild of this test and carries `WINESERVERSOCKET=<fd>` in
+    // its own environment. It is found by name, and the handoff is required so
+    // the loader process — whose command line names the probe too — is never
+    // picked.
+    std::optional<slopkit::process::ProcessId> find_handoff_target(std::string_view          probe_name,
+                                                                   std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            for (const auto pid : slopkit::platform::list_pids())
+            {
+                const auto parts = slopkit::platform::read_cmdline_parts(pid);
+                if (parts.empty() || parts.front().find(probe_name) == std::string::npos)
+                {
+                    continue;
+                }
+                const auto environment = slopkit::platform::read_environ(pid);
+                const bool handed_off  = std::ranges::any_of(environment,
+                                                             [](const std::string& entry)
+                                                             {
+                                                                return entry.starts_with("WINESERVERSOCKET=");
+                                                             });
+                if (handed_off)
+                {
+                    return pid;
+                }
+            }
+            std::this_thread::sleep_for(50ms);
+        }
+        return std::nullopt;
+    }
 } // namespace
 
 // The only test that proves the whole chain against a real Wine process: the
@@ -181,7 +232,7 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     // the build's plugin directory directly.
     ::setenv("SLOPKIT_AGENT_DIR", SLOPKIT_AGENT_BINARY_DIR, 1);
 
-    auto launched = launch_probe(wine, probe, 120s);
+    auto launched = launch_probe(wine, {probe.string()}, 120s);
     if (!launched.has_value())
     {
         FAIL("the wine probe did not start; is a wine prefix available?");
@@ -232,5 +283,76 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
 
     // SHUTDOWN frees what is left and stops the service thread; the destructor
     // is idempotent, so the client can be left to clean up on its own.
+    agent->shutdown(5s);
+}
+
+// Proton starts a game from another Wine process, so the game inherits
+// `WINESERVERSOCKET=<fd>`: the wineserver socket its parent already had open.
+// That descriptor only exists in the parent's table, so running the injector
+// with the entry in its environment made Wine's loader abort with "Bad server
+// socket <fd> : Bad file descriptor" before it ever loaded the agent. `cmd /c`
+// starts the probe the same way wine starts a game, so this is the local
+// reproduction of the Proton-only failure; the target is the process wine
+// handed the socket to, which is the direct child here.
+//
+// Run it explicitly with:
+//   SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "inherited a wineserver socket" --timeout 600 --output-on-failure
+TEST_CASE("a target that inherited a wineserver socket is still injectable", "[wine-proton][agent][.]")
+{
+    const char* enabled = std::getenv("SLOPKIT_WINE_E2E");
+    if (enabled == nullptr || std::string(enabled) != "1")
+    {
+        WARN("set SLOPKIT_WINE_E2E=1 to run the wine end-to-end agent test");
+        return;
+    }
+
+    const auto      wine  = find_wine();
+    const auto      probe = std::filesystem::path(SLOPKIT_AGENT_PROBE_DIR) / "slopkit-probe-x86_64.exe";
+    std::error_code error;
+    if (wine.empty() || !std::filesystem::exists(probe, error))
+    {
+        WARN("wine or the 64-bit test probe is unavailable; the handoff test is skipped");
+        return;
+    }
+
+    ::setenv("SLOPKIT_AGENT_DIR", SLOPKIT_AGENT_BINARY_DIR, 1);
+
+    auto launched = launch_probe(wine, {"cmd", "/c", linux_path_to_windows(probe.string())}, 120s);
+    if (!launched.has_value())
+    {
+        WARN("the probe did not start through cmd; this wine cannot reproduce the handoff");
+        return;
+    }
+
+    const auto probe_pid = find_handoff_target(probe.filename().string(), 30s);
+    if (!probe_pid.has_value())
+    {
+        // A wine that does not hand its socket down this way cannot reproduce
+        // the target's situation, so there is nothing to check here.
+        WARN("this wine did not hand a wineserver socket to the probe");
+        return;
+    }
+    // The probe is wine's own child, so it is not the one launch_probe guards.
+    ChildGuard probe_guard(*probe_pid);
+
+    const auto target = derive_wine_target(*probe_pid);
+    REQUIRE(target.has_value());
+    // The handoff is process-local: the environment the injector runs with must
+    // not carry it, or wine's loader refuses to start.
+    CHECK(std::ranges::none_of(target->environment,
+                               [](const std::string& entry)
+                               {
+                                   return entry.starts_with("WINESERVERSOCKET=");
+                               }));
+
+    auto agent = AgentClient::launch(*target, 120s);
+    if (!agent.has_value())
+    {
+        FAIL("the agent could not be launched into a target that inherited a wineserver socket: " << agent.error());
+    }
+
+    const auto allocated = agent->allocate(0x1000, 0, 5s);
+    REQUIRE(allocated.has_value());
+    CHECK(agent->owns(*allocated));
     agent->shutdown(5s);
 }

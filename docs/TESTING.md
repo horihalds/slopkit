@@ -87,18 +87,27 @@ ctest --test-dir build -R "agent" --output-on-failure
   mock agent and covers the handshake, every operation, a refused request and a
   timeout.
 
-The third is hidden and environment-gated, because it needs a working wine
+The last two are hidden and environment-gated, because they need a working wine
 prefix as well as the cross-compiled probe:
 
 ```sh
 SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "resident agent allocates" --timeout 600 --output-on-failure
+SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "inherited a wineserver socket" --timeout 600 --output-on-failure
 ```
 
-It starts `build/agent_probe/slopkit-probe-x86_64.exe` under wine, injects the
-agent and asserts `alloc`, `alloc_near`, `query` (the block must report
+The first starts `build/agent_probe/slopkit-probe-x86_64.exe` under wine, injects
+the agent and asserts `alloc`, `alloc_near`, `query` (the block must report
 `MEM_COMMIT` + `PAGE_EXECUTE_READWRITE`, which the ptrace mapping does not),
 `protect`, `free` and `shutdown`. On a warm prefix the whole run takes about
 0.65 s.
+
+The second reproduces the Proton case, where the game is started *by another Wine
+process*: it runs the probe as `wine cmd /c <probe>`, finds the process wine
+handed its wineserver socket to, and asserts both that the environment the
+injector runs with has no `WINESERVERSOCKET` and that injection, `alloc` and
+`shutdown` still work. It is the regression test for the reported
+`wine: Bad server socket <fd> : Bad file descriptor` failure: without the filter
+that same check fails with that exact message.
 
 ## Manually verify allocation against a Proton game
 

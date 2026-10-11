@@ -27,7 +27,7 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
 | Injector | `src/plugins/wine_proton/agent/slopkit_injector.c` | One-shot exe run under the target's own wine: finds the target by image path, is idempotent when the agent is already loaded, then `OpenProcess` / `VirtualAllocEx` / `WriteProcessMemory` / `CreateRemoteThread(LoadLibraryW)`. |
 | Test probe | `src/plugins/wine_proton/agent/slopkit_probe.c` | A trivial console target for the wine-gated end-to-end test; never installed. |
 | Cross-compile | `cmake/Agent.cmake` | One pair of targets per bitness (`x86_64`, `i686`), a clear error when mingw-w64 and no prebuilt exist, and the install rule. |
-| Target derivation | `src/plugins/wine_proton/wine_target.{hpp,cpp}` | From `/proc/<pid>`: the guest's main PE (for the bitness and the `Z:` image path), the loader to host the injector, the target's own environment and a `WINEPREFIX` fallback. |
+| Target derivation | `src/plugins/wine_proton/wine_target.{hpp,cpp}` | From `/proc/<pid>`: the guest's main PE (for the bitness and the `Z:` image path), the loader to host the injector, the target's own environment (without the process-local handoff entries below) and a `WINEPREFIX` fallback. |
 | Transport | `src/plugins/wine_proton/agent_transport.{hpp,cpp}` | Creates and mmaps the region, publishes one request, waits with a bounded timeout, returns the response. |
 | Client | `src/plugins/wine_proton/agent_client.{hpp,cpp}` | Locates the binaries, spawns the injector under the target's wine, runs the `HELLO` handshake, and serves the operations; tracks the addresses it handed out. |
 | Allocator | `src/plugins/wine_proton/agent_allocator.{hpp,cpp}` | The `allocate`/`free` profile hooks: the agent is the only path, so a failure disables the agent for the session and returns the error, and `close` tears the agent down. |
@@ -38,8 +38,9 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
    bitness-matched DLL and injector into a per-session directory under
    `$XDG_RUNTIME_DIR` (or `/tmp`), creates the region file there and runs the
    injector under the loader the target itself runs, with the target's own
-   environment. Any failure here disables the agent for that session, logs why,
-   and the call is answered with the error — there is no ptrace fallback.
+   environment, minus the process-local handoffs described below. Any failure
+   here disables the agent for that session, logs why, and the call is answered
+   with the error — there is no ptrace fallback.
 2. The agent's service thread opens `slopkit-agent.bin` as the sibling of its own
    module through `Z:` and polls the header's state word. `HELLO` reports the
    protocol version, the record size, the pointer size, the Windows pid, the
@@ -52,6 +53,30 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
 4. On session close the plugin sends `SHUTDOWN`, which frees everything the
    agent allocated and stops the service thread; the region is unmapped and the
    per-session directory removed.
+
+## Proton's environment handoff
+
+A game started by Proton is not started by the shell: Steam runs Proton, Proton
+runs its own wine, and that wine starts the game. Wine gives every process it
+starts an already-connected wineserver socket through the environment
+(`WINESERVERSOCKET=<fd>`), which saves the child a round trip to the server.
+
+The descriptor number only means anything inside the process that owns it. The
+injector this plugin forks has its own descriptor table, so it inherited the
+variable but not the socket, and wine's loader refused to start it:
+
+```
+injector exited with 1: wine: Bad server socket 64 : Bad file descriptor
+```
+
+That made `alloc` fail for every Proton game while a directly started wine
+process worked, which is why the wine-gated tests did not catch it. The
+environment handed to the injector is therefore the target's own with the
+handoff entries removed: the injector connects to the prefix's wineserver
+itself, exactly the way a plain `wine app.exe` does. `WINESERVERSOCKET` is the
+one entry Wine hands down this way today, and the filter is a named list rather
+than a blanket `WINE*` strip, so `WINEPREFIX`, `WINEDLLOVERRIDES` and the rest
+survive.
 
 ## What was measured
 
@@ -66,6 +91,11 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
   `Sleep()` floor rather than the 64 ms idle ceiling.
 - `objdump -p` on the produced DLL and injector shows `kernel32.dll` as the only
   import, so neither needs a CRT, `libgcc_s` or a UCRT DLL.
+- The Proton handoff failure was reproduced and closed locally: with the filter
+  removed, the handoff regression test fails with
+  `the injector exited with 1: wine: Bad server socket 15 : Bad file descriptor`
+  and the environment check reports the handoff still present; with it in place
+  the same test injects, allocates and shuts down.
 - The agent and injector build warning-free for both bitnesses; `tools/verify.sh`
   covers them.
 
