@@ -109,7 +109,10 @@ Check three logs after the run:
 
 A refusal is a valid outcome: `alloc`/`dealloc` reporting that no target thread is
 outside a system call — only after the bounded re-scan of the target's thread states
-has found none — leaves the game running, which is the intended trade.
+has found none — leaves the game running, which is the intended trade. A target
+whose only thread outside a call is the group leader is exactly that case: a live
+group's leader is never borrowed, and a thread procfs already reports inside a call
+is not even stopped, so neither can produce the crash signature above.
 
 ## Diagnose a build or a run
 

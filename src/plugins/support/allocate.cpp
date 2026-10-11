@@ -180,12 +180,13 @@ namespace slopkit::plugins::support
         }
 
         // How many target threads a donor search tries per scan before moving on.
-        // A thread that is inside a system call is never borrowed, so a burst of
-        // them costs one borrow attempt each until a clean one is found.
+        // A thread that is inside a system call is never borrowed - and never
+        // even stopped - so a burst of them costs one skipped candidate each
+        // until a clean one is found.
         constexpr std::size_t kMaxDonorAttempts = 16;
 
         // How long the donor search keeps re-reading the target's thread states
-        // after a scan in which every candidate was inside a system call, and how
+        // after a scan in which no candidate was outside a system call, and how
         // long it waits between scans. A Wine target parks its waiters in
         // `ioctl`/ntsync for as long as it is idle, so a thread outside a call
         // often appears a moment later; the bound keeps a target that never has
@@ -194,35 +195,49 @@ namespace slopkit::plugins::support
         constexpr std::chrono::milliseconds kDonorRescanPause {10};
 
         // The tids to try as a donor, in the order to try them: every thread of
-        // the target's group, running ones first and then the rest in tid order.
-        // The thread-group leader is no longer skipped: Wine can park every
-        // worker in a blocking call (ioctl/ntsync) while the leader runs in user
-        // mode, and then the leader is the only thread the window may borrow. It
-        // still comes last within its bucket, so an all-running target keeps the
-        // donor it had before. A running thread is in user mode, so the first
-        // candidate is usually outside a system call.
+        // the target's group except its leader, running ones first and then the
+        // rest in tid order. The thread-group leader is a candidate only for a
+        // target that has no other thread. Taking a group's leader over is what
+        // crashed a live Proton game (`docs/TESTING.md` records the
+        // `Exception 0x80000003` it raised) while Wine's workers ran on, and a
+        // Wine target parks its waiters in `ioctl`/ntsync and leaves the leader
+        // running in user mode, which is exactly the shape that used to make the
+        // leader look like the only borrowable thread: such a target is refused
+        // rather than robbed of the one thread its runtime still owns. A running
+        // thread is in user mode, so the first candidate is usually outside a
+        // system call.
         std::vector<process::ProcessId> donor_candidates(process::ProcessId pid)
         {
             std::vector<process::ProcessId> running;
             std::vector<process::ProcessId> parked;
-            process::ProcessId              leader {0};
-            bool                            leader_running {false};
+            bool                            have_leader = false;
 
             for (const auto& thread : platform::read_threads(pid))
             {
-                const bool is_running = platform::read_thread_state(pid, thread.tid) == 'R';
                 if (thread.tid == pid)
                 {
-                    leader         = thread.tid;
-                    leader_running = is_running;
+                    have_leader = true;
                     continue;
                 }
-                (is_running ? running : parked).push_back(thread.tid);
+                if (platform::read_thread_state(pid, thread.tid) == 'R')
+                {
+                    running.push_back(thread.tid);
+                }
+                else
+                {
+                    parked.push_back(thread.tid);
+                }
             }
 
-            if (leader != 0)
+            if (running.empty() && parked.empty())
             {
-                (leader_running ? running : parked).push_back(leader);
+                // A single-thread target: the leader is all it has, and no other
+                // thread depends on the work it is doing.
+                if (have_leader)
+                {
+                    running.push_back(pid);
+                }
+                return running;
             }
             running.insert(running.end(), parked.begin(), parked.end());
             return running;
@@ -238,13 +253,14 @@ namespace slopkit::plugins::support
             std::string detail;
         };
 
-        // A stopped thread may be borrowed only when it is provably outside a
-        // system call, because the window would otherwise take over the return
-        // path of a call the target itself started. The procfs field is
-        // authoritative: an interrupt stop reports `none` from
-        // PTRACE_GET_SYSCALL_INFO whether or not a call is in flight, so the
-        // syscall state is only the fallback for a kernel that does not expose
-        // the field.
+        // A thread may be borrowed only when it is provably outside a system
+        // call, because the window would otherwise take over the return path of a
+        // call the target itself started. The procfs field is authoritative: an
+        // interrupt stop reports `none` from PTRACE_GET_SYSCALL_INFO whether or
+        // not a call is in flight, so the syscall state is only the fallback for
+        // a kernel that does not expose the field. The search reads the same field
+        // before it stops a thread at all, so a thread that already reports a call
+        // is never interrupted and never stopped.
         BorrowCheck check_borrowable(process::ProcessId pid, process::ProcessId tid)
         {
             if (const auto number = platform::read_thread_syscall(pid, tid))
@@ -546,11 +562,12 @@ namespace slopkit::plugins::support
 
             // Tries the target's threads until one is provably outside a system
             // call, then seizes and keeps that one. A thread inside a call is
-            // released again at once: never borrow, and never re-enter, a call
-            // the target started. An idle Wine target parks every waiter in a
-            // blocking call and can expose a thread outside one a moment later,
-            // so a fruitless scan is retried within a bounded window; nothing
-            // stays attached while the window waits between scans.
+            // left exactly where it is: never borrow, never stop and never
+            // re-enter a call the target started. An idle Wine target parks every
+            // waiter in a blocking call and can expose a thread outside one a
+            // moment later, so a fruitless scan is retried within a bounded
+            // window; nothing stays attached while the window waits between
+            // scans.
             std::expected<void, AllocationError> borrow_donor()
             {
                 const auto deadline = std::chrono::steady_clock::now() + kDonorRescanWindow;
@@ -571,8 +588,30 @@ namespace slopkit::plugins::support
 
                     for (std::size_t i = 0; i < candidates.size() && i < kMaxDonorAttempts; ++i)
                     {
-                        const process::ProcessId tid      = candidates[i];
-                        const auto               attached = session_.debug.attach_thread(tid);
+                        const process::ProcessId tid = candidates[i];
+
+                        // A thread procfs already reports inside a system call is
+                        // not stopped at all: the search itself must not
+                        // interrupt a wait the target owns (Wine parks its
+                        // waiters in `ioctl`/ntsync), and a stopped thread could
+                        // only be refused anyway. `check_borrowable` below stays
+                        // the authority for a thread procfs does not classify.
+                        if (const auto number = platform::read_thread_syscall(session_.pid, tid))
+                        {
+                            if (*number >= 0)
+                            {
+                                tried       = true;
+                                last_reason = "thread " + std::to_string(tid) + " is inside system call "
+                                            + std::to_string(*number);
+                                if (const auto wchan = platform::read_thread_wchan(session_.pid, tid); !wchan.empty())
+                                {
+                                    last_reason += ", waiting in " + wchan;
+                                }
+                                continue;
+                            }
+                        }
+
+                        const auto attached = session_.debug.attach_thread(tid);
                         if (!attached)
                         {
                             if (attached.error() == process::AccessError::permission_denied)

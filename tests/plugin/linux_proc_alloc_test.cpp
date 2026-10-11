@@ -387,9 +387,10 @@ namespace
 
     // A target shaped like an idle Wine game: every worker thread is parked in a
     // blocking call while the thread-group leader runs in user mode. That is the
-    // reported Proton target's shape, and the window has to borrow the leader
-    // because it is the only thread outside a system call. `wake()` releases the
-    // workers, so the test can show their own wait was never perturbed.
+    // reported Proton target's shape, and the window has to refuse it: the leader
+    // is the only thread outside a system call, and taking it over is what crashed
+    // the game. `wake()` releases the workers, so the test can show their own wait
+    // was never perturbed.
     class IdleWorkersChild
     {
     public:
@@ -439,8 +440,9 @@ namespace
                     worker.detach();
                 }
 
-                // The leader stays in user mode, so it is the one thread the
-                // window may borrow while the workers sit in their calls.
+                // The leader stays in user mode: it is the group's only thread
+                // outside a call while the workers sit in their waits, and it is
+                // the one the window must refuse to borrow.
                 volatile std::uint64_t spin = 0;
                 for (;;)
                 {
@@ -988,7 +990,8 @@ TEST_CASE("allocation completes while the target is inside a syscall", "[linux_p
     CHECK((*allocated % page) == 0);
     CHECK(mapped_rwx(child.pid(), *allocated, page));
 
-    // The interrupted syscall was handed back: the child runs on once woken.
+    // The leader's wait was never touched by the search: it delivers its real
+    // result once woken, and the child runs on.
     child.wake();
     wait_for_progress(child);
 
@@ -996,11 +999,14 @@ TEST_CASE("allocation completes while the target is inside a syscall", "[linux_p
     wait_for_progress(child);
 }
 
-TEST_CASE("a target whose parked workers leave the leader to borrow", "[linux_proc][alloc]")
+TEST_CASE("a target whose parked workers leave only the leader is refused", "[linux_proc][alloc]")
 {
     // Every worker parks in a futex wait while the leader spins in user mode, so
-    // the leader is the only thread the window may borrow. It must no longer be
-    // skipped: skipping it fails this allocation with permission denied.
+    // the leader is the group's only thread outside a call. Taking a live Wine
+    // leader over is what crashed Proton (`docs/TESTING.md` records the
+    // `Exception 0x80000003` it raised) while the workers ran on, so the window
+    // must refuse this shape instead of borrowing it - and the refusal has to
+    // leave the target exactly as it found it.
     IdleWorkersChild child;
     REQUIRE(child.pid() != 0);
 
@@ -1019,8 +1025,9 @@ TEST_CASE("a target whose parked workers leave the leader to borrow", "[linux_pr
 
     constexpr std::size_t page = 0x1000;
 
-    // Samples the thread states across the window: at most the one borrowed
-    // donor may ever sit in a traced stop, and it must never be a parked worker.
+    // Samples the thread states across the whole search: no parked worker may
+    // ever sit in a traced stop, not even briefly, because stopping one would
+    // interrupt a wait the target owns. Only the leader may be stopped.
     std::atomic<bool> monitoring {true};
     std::atomic<bool> worker_stopped {false};
     std::thread       monitor(
@@ -1039,25 +1046,35 @@ TEST_CASE("a target whose parked workers leave the leader to borrow", "[linux_pr
             }
         });
 
-    const auto allocated      = session->allocate_memory(page, 0);
+    const auto before         = map_signature(child.pid());
+    const auto refused        = session->allocate_memory(page, 0);
     const bool no_worker_stop = !worker_stopped.load();
 
     monitoring = false;
     monitor.join();
 
+    REQUIRE_FALSE(refused.has_value());
+    CHECK(refused.error() == slopkit::process::AccessError::permission_denied);
+
+    // The refusal left the target untouched: no thread in a traced stop, nothing
+    // mapped, and not one parked worker was stopped by the search.
+    CHECK(no_worker_stop);
+    CHECK(no_traced_stop(child.pid()));
+    CHECK(map_signature(child.pid()) == before);
+
+    // The workers' own wait was never perturbed: waking it lets them run on.
+    const std::uint64_t before_wake = child.counter();
+    child.wake();
+    CHECK(await_counter(child, before_wake + 1));
+
+    // With every thread running in user mode the target has a thread to borrow
+    // again, so the very next call succeeds: a refusal is not a broken session.
+    const auto allocated = session->allocate_memory(page, 0);
     REQUIRE(allocated.has_value());
     CHECK(*allocated != 0);
     CHECK((*allocated % page) == 0);
     CHECK(mapped_rwx(child.pid(), *allocated, page));
-
-    // No waiting worker was borrowed or left stopped by the window.
-    CHECK(no_worker_stop);
     CHECK(no_traced_stop(child.pid()));
-
-    // The workers' own wait was never perturbed: waking it lets them run on.
-    const std::uint64_t before = child.counter();
-    child.wake();
-    CHECK(await_counter(child, before + 1));
 
     REQUIRE(session->free_memory(*allocated).has_value());
     wait_for_progress(child);
