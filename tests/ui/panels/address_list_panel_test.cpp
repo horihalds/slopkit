@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include <QClipboard>
 #include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QLineEdit>
@@ -853,7 +854,20 @@ TEST_CASE("the address list row menu offers the access watch entries", "[ui]")
     {
         watch_writes   = nullptr;
         watch_accesses = nullptr;
+        QMenu* watch   = nullptr;
         for (QAction* action : menu.actions())
+        {
+            if (action->menu() != nullptr && action->menu()->title() == QStringLiteral("Watch accesses"))
+            {
+                watch = action->menu();
+            }
+        }
+        if (watch == nullptr)
+        {
+            return;
+        }
+        CHECK(watch->toolTipsVisible());
+        for (QAction* action : watch->actions())
         {
             if (action->text() == QStringLiteral("Find out what writes this address"))
             {
@@ -1054,26 +1068,48 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
 
     QMenu script_menu;
     panel.populate_row_menu(script_menu, 1);
-    CHECK(action_texts(script_menu.actions())
+    const QList<QString> script_texts = action_texts(script_menu.actions());
+    CHECK(script_texts
           == QList<QString> {QStringLiteral("Run Script"),
                              QStringLiteral("Edit Script…"),
                              QStringLiteral("Delete"),
                              QStringLiteral("Add Address Manually…"),
                              QStringLiteral("Add Script…"),
                              QStringLiteral("Table Settings…")});
+    CHECK_FALSE(script_texts.contains(QStringLiteral("Copy")));
+    CHECK_FALSE(script_texts.contains(QStringLiteral("Watch accesses")));
+    CHECK_FALSE(script_texts.contains(QStringLiteral("Edit Entry…")));
 
     QMenu value_menu;
     panel.populate_row_menu(value_menu, 0);
     const QList<QString> value_texts = action_texts(value_menu.actions());
-    CHECK(value_texts.contains(QStringLiteral("Change value…")));
-    CHECK(value_texts.contains(QStringLiteral("Browse this memory region")));
+    CHECK(value_texts
+          == QList<QString> {QStringLiteral("Edit Entry…"),
+                             QStringLiteral("Change value…"),
+                             QStringLiteral("Active"),
+                             QStringLiteral("Show as hex"),
+                             QStringLiteral("Copy"),
+                             QStringLiteral("Browse this memory region"),
+                             QStringLiteral("Watch accesses"),
+                             QStringLiteral("Delete"),
+                             QStringLiteral("Add Address Manually…"),
+                             QStringLiteral("Add Script…"),
+                             QStringLiteral("Table Settings…")});
     CHECK_FALSE(value_texts.contains(QStringLiteral("Run Script")));
     CHECK_FALSE(value_texts.contains(QStringLiteral("Edit Script…")));
+    CHECK_FALSE(value_texts.contains(QStringLiteral("Find out what writes this address")));
     CHECK(value_texts.mid(value_texts.size() - 3) == table_commands);
 
-    CHECK_FALSE(action_texts(script_menu.actions()).contains(QStringLiteral("Edit Entry…")));
-    CHECK(value_texts.indexOf(QStringLiteral("Edit Entry…")) + 1
-          == value_texts.indexOf(QStringLiteral("Change value…")));
+    QMenu* copy = submenu_of(value_menu, QStringLiteral("Copy"));
+    REQUIRE(copy != nullptr);
+    CHECK(copy->toolTipsVisible());
+    CHECK(action_texts(copy->actions())
+          == QList<QString> {QStringLiteral("Address (module + RVA)"),
+                             QStringLiteral("Address (absolute)"),
+                             QStringLiteral("Address + value")});
+    QMenu* watch = submenu_of(value_menu, QStringLiteral("Watch accesses"));
+    REQUIRE(watch != nullptr);
+    CHECK(watch->toolTipsVisible());
 
     QAction* change_value = nullptr;
     for (QAction* action : value_menu.actions())
@@ -1089,6 +1125,69 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
     QMenu empty_menu;
     panel.populate_row_menu(empty_menu, 9);
     CHECK(action_texts(empty_menu.actions()).isEmpty());
+}
+
+TEST_CASE("the address list row menu copies the row's address", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    access.memory->at(0x1040)               = std::byte {7};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    panel.set_modules({module_image("app", 0x1000, 0x1000)});
+    panel.resize(800, 400);
+    panel.show();
+    QCoreApplication::processEvents();
+
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = qobject_cast<slopkit::ui::models::AddressTableModel*>(view->model());
+    REQUIRE(model != nullptr);
+
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+
+    QMenu* copy = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->menu() != nullptr && action->menu()->title() == QStringLiteral("Copy"))
+        {
+            copy = action->menu();
+        }
+    }
+    REQUIRE(copy != nullptr);
+    REQUIRE(copy->actions().size() == 3);
+
+    const auto check = [&](const QString& label, slopkit::ui::models::CopyFormat format)
+    {
+        QAction* entry = nullptr;
+        for (QAction* action : copy->actions())
+        {
+            if (action->text() == label)
+            {
+                entry = action;
+            }
+        }
+        REQUIRE(entry != nullptr);
+        QApplication::clipboard()->setText(QStringLiteral("sentinel"));
+        entry->trigger();
+        const QString expected = model->copy_text(0, format);
+        CHECK_FALSE(expected.isEmpty());
+        CHECK(QApplication::clipboard()->text() == expected);
+    };
+    check(QStringLiteral("Address (module + RVA)"), slopkit::ui::models::CopyFormat::module_relative);
+    check(QStringLiteral("Address (absolute)"), slopkit::ui::models::CopyFormat::absolute);
+    check(QStringLiteral("Address + value"), slopkit::ui::models::CopyFormat::address_and_value);
+
+    CHECK(model->copy_text(0, slopkit::ui::models::CopyFormat::module_relative) == QStringLiteral("app+0x40"));
+
+    panel.close();
 }
 
 TEST_CASE("the address list asks to edit the clicked value row", "[ui]")

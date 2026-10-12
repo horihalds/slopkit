@@ -10,9 +10,11 @@
 #include <utility>
 
 #include <QAction>
+#include <QClipboard>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QKeySequence>
@@ -1106,6 +1108,30 @@ namespace slopkit::ui::panels
                         set_status(tr("Display format updated."), false);
                     });
 
+            menu.addSeparator();
+            QMenu* copy = widgets::explained_submenu(menu, tr("Copy"));
+            connect(copy->addAction(tr("Address (module + RVA)")),
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        copy_row(row, models::CopyFormat::module_relative);
+                    });
+            connect(copy->addAction(tr("Address (absolute)")),
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        copy_row(row, models::CopyFormat::absolute);
+                    });
+            connect(copy->addAction(tr("Address + value")),
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        copy_row(row, models::CopyFormat::address_and_value);
+                    });
+
             QAction* browse = menu.addAction(tr("Browse this memory region"));
             connect(browse,
                     &QAction::triggered,
@@ -1133,7 +1159,6 @@ namespace slopkit::ui::panels
                                                                        : debug::Kind::hardware_read_write;
                                             emit accessWatchRequested(table_.entries()[row].address, width, kind);
                                         });
-            (void)widgets::disabled_action(menu, tr("Group"), tr("Disabled: address groups are not implemented"));
 
             menu.addSeparator();
             menu.addAction(remove_action_);
@@ -1141,6 +1166,15 @@ namespace slopkit::ui::panels
 
         menu.addSeparator();
         populate_panel_menu(menu);
+    }
+
+    void AddressListPanel::copy_row(std::size_t row, models::CopyFormat format)
+    {
+        const QString text = model_->copy_text(row, format);
+        if (!text.isEmpty())
+        {
+            QGuiApplication::clipboard()->setText(text);
+        }
     }
 
 }

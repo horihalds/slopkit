@@ -11,6 +11,7 @@
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
+#include "ui/models/copy_format.hpp"
 #include "ui/models/live_cells.hpp"
 
 #include <QAbstractTableModel>
@@ -67,6 +68,8 @@ namespace slopkit::ui::models
         void set_address_mode(ui::AddressMode mode);
 
         [[nodiscard]] QString address_text(std::uint64_t address) const;
+
+        [[nodiscard]] QString copy_text(std::size_t row, ui::models::CopyFormat format) const;
 
         [[nodiscard]] std::vector<LiveRequest> next_live_request();
 

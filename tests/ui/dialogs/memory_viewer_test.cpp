@@ -523,8 +523,18 @@ TEST_CASE("the memory viewer go-to follows a pointer-chain expression", "[ui]")
 
     QMenu menu;
     view->populate_options_menu(menu);
-    QAction* go_to = nullptr;
+    QMenu* navigate = nullptr;
     for (QAction* action : menu.actions())
+    {
+        if (action->menu() != nullptr && action->menu()->title() == QStringLiteral("Navigate"))
+        {
+            navigate = action->menu();
+            break;
+        }
+    }
+    REQUIRE(navigate != nullptr);
+    QAction* go_to = nullptr;
+    for (QAction* action : navigate->actions())
     {
         if (action->text() == QStringLiteral("Go To..."))
         {
@@ -585,8 +595,18 @@ TEST_CASE("the memory viewer go-to reports an unreadable pointer level", "[ui]")
 
     QMenu menu;
     view->populate_options_menu(menu);
-    QAction* go_to = nullptr;
+    QMenu* navigate = nullptr;
     for (QAction* action : menu.actions())
+    {
+        if (action->menu() != nullptr && action->menu()->title() == QStringLiteral("Navigate"))
+        {
+            navigate = action->menu();
+            break;
+        }
+    }
+    REQUIRE(navigate != nullptr);
+    QAction* go_to = nullptr;
+    for (QAction* action : navigate->actions())
     {
         if (action->text() == QStringLiteral("Go To..."))
         {
@@ -782,9 +802,15 @@ TEST_CASE("the listing's Follow in Memory View moves only the byte view", "[ui]"
     view->populate_options_menu(menu);
     for (QAction* candidate : menu.actions())
     {
-        if (candidate->text() == QStringLiteral("Back"))
+        if (candidate->menu() != nullptr && candidate->menu()->title() == QStringLiteral("Navigate"))
         {
-            back = candidate;
+            for (QAction* nested : candidate->menu()->actions())
+            {
+                if (nested->text() == QStringLiteral("Back"))
+                {
+                    back = nested;
+                }
+            }
         }
     }
     REQUIRE(back != nullptr);

@@ -15,6 +15,7 @@
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
+#include "ui/models/copy_format.hpp"
 
 #include <QString>
 #include <QWidget>
@@ -136,6 +137,7 @@ namespace slopkit::ui::panels
         void                                   set_status(const QString& message, bool is_error);
         void                                   save_to_path(const QString& path);
         [[nodiscard]] std::vector<std::size_t> command_rows() const;
+        void                                   copy_row(std::size_t row, models::CopyFormat format);
         void                                   sync_view_selection();
         static std::optional<QString>          default_save_path_prompt(QWidget* parent, const QString& suggested);
         void                                   maybe_resolve_expressions();

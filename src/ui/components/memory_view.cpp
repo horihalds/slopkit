@@ -24,6 +24,7 @@
 
 #include "scan/types.hpp"
 #include "ui/address_format.hpp"
+#include "ui/components/row_menu.hpp"
 #include "ui/fonts.hpp"
 #include "ui/theme.hpp"
 
@@ -566,9 +567,10 @@ namespace slopkit::ui::components
 
     void MemoryView::populate_options_menu(QMenu& menu)
     {
-        menu.addAction(goto_action_);
+        QMenu* navigate = widgets::explained_submenu(menu, tr("Navigate"));
+        navigate->addAction(goto_action_);
 
-        QAction* back_action = menu.addAction(tr("Back"));
+        QAction* back_action = navigate->addAction(tr("Back"));
         back_action->setEnabled(can_go_back());
         connect(back_action,
                 &QAction::triggered,

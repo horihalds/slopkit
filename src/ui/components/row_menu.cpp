@@ -49,6 +49,13 @@ namespace slopkit::ui::widgets
         menu.setToolTipsVisible(true);
     }
 
+    QMenu* explained_submenu(QMenu& parent, const QString& title)
+    {
+        QMenu* submenu = parent.addMenu(title);
+        submenu->setToolTipsVisible(true);
+        return submenu;
+    }
+
     QAction* described_action(QMenu& menu, const QString& text, const QString& description)
     {
         QAction* action = menu.addAction(text);
@@ -73,15 +80,16 @@ namespace slopkit::ui::widgets
     void add_watch_commands(QMenu& menu, bool target_attached, const std::function<void(WatchCommand)>& arm)
     {
         menu.addSeparator();
+        QMenu* submenu = explained_submenu(menu, QCoreApplication::translate(kContext, "Watch accesses"));
         for (const WatchCommand command : {WatchCommand::writes, WatchCommand::accesses})
         {
             if (!target_attached)
             {
                 (void)disabled_action(
-                    menu, watch_text(command), QCoreApplication::translate(kContext, "Attach to a target first."));
+                    *submenu, watch_text(command), QCoreApplication::translate(kContext, "Attach to a target first."));
                 continue;
             }
-            QAction* action = described_action(menu, watch_text(command), watch_description(command));
+            QAction* action = described_action(*submenu, watch_text(command), watch_description(command));
             QObject::connect(action,
                              &QAction::triggered,
                              &menu,

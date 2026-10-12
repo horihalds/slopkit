@@ -17,6 +17,8 @@ namespace slopkit::ui::widgets
 
     void show_explanations(QMenu& menu);
 
+    [[nodiscard]] QMenu* explained_submenu(QMenu& parent, const QString& title);
+
     [[nodiscard]] QAction* described_action(QMenu& menu, const QString& text, const QString& description);
 
     [[nodiscard]] QAction* disabled_action(QMenu& menu, const QString& text, const QString& reason);

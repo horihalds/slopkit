@@ -23,6 +23,18 @@ namespace
         }
         return nullptr;
     }
+
+    QMenu* submenu(QMenu& menu, const QString& title)
+    {
+        for (QAction* candidate : menu.actions())
+        {
+            if (candidate->menu() != nullptr && candidate->menu()->title() == title)
+            {
+                return candidate->menu();
+            }
+        }
+        return nullptr;
+    }
 }
 
 TEST_CASE("the row-menu factories set the enabled flag and the explanation", "[ui]")
@@ -47,6 +59,17 @@ TEST_CASE("the row-menu factories set the enabled flag and the explanation", "[u
     CHECK(disabled->toolTip() == QStringLiteral("Not yet."));
 }
 
+TEST_CASE("a submenu carries the parent's hover explanations", "[ui]")
+{
+    application();
+
+    QMenu  menu;
+    QMenu* submenu = slopkit::ui::widgets::explained_submenu(menu, QStringLiteral("Copy"));
+    REQUIRE(submenu != nullptr);
+    CHECK(submenu->title() == QStringLiteral("Copy"));
+    CHECK(submenu->toolTipsVisible());
+}
+
 TEST_CASE("the shared watch commands are disabled without a target", "[ui]")
 {
     application();
@@ -60,8 +83,12 @@ TEST_CASE("the shared watch commands are disabled without a target", "[ui]")
                                                  ++armed;
                                              });
 
-    QAction* writes   = action(menu, QStringLiteral("Find out what writes this address"));
-    QAction* accesses = action(menu, QStringLiteral("Find out what accesses this address"));
+    QMenu* watch = submenu(menu, QStringLiteral("Watch accesses"));
+    REQUIRE(watch != nullptr);
+    CHECK(watch->toolTipsVisible());
+
+    QAction* writes   = action(*watch, QStringLiteral("Find out what writes this address"));
+    QAction* accesses = action(*watch, QStringLiteral("Find out what accesses this address"));
     REQUIRE(writes != nullptr);
     REQUIRE(accesses != nullptr);
     CHECK_FALSE(writes->isEnabled());
@@ -86,8 +113,11 @@ TEST_CASE("the shared watch commands report the picked command with a target", "
                                                  armed.push_back(command);
                                              });
 
-    QAction* writes   = action(menu, QStringLiteral("Find out what writes this address"));
-    QAction* accesses = action(menu, QStringLiteral("Find out what accesses this address"));
+    QMenu* watch = submenu(menu, QStringLiteral("Watch accesses"));
+    REQUIRE(watch != nullptr);
+
+    QAction* writes   = action(*watch, QStringLiteral("Find out what writes this address"));
+    QAction* accesses = action(*watch, QStringLiteral("Find out what accesses this address"));
     REQUIRE(writes != nullptr);
     REQUIRE(accesses != nullptr);
     CHECK(writes->isEnabled());

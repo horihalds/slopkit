@@ -264,7 +264,11 @@ TEST_CASE("the memory view options menu switches the display", "[ui]")
     CHECK(show_text->isCheckable());
     CHECK(show_text->isChecked());
 
-    QAction* go_to = action(&menu, QStringLiteral("Go To..."));
+    QMenu* navigate = submenu(&menu, QStringLiteral("Navigate"));
+    REQUIRE(navigate != nullptr);
+    CHECK(navigate->toolTipsVisible());
+
+    QAction* go_to = action(navigate, QStringLiteral("Go To..."));
     REQUIRE(go_to != nullptr);
     CHECK(go_to == view.goto_action());
     CHECK(go_to->shortcut() == QKeySequence(QStringLiteral("Ctrl+G")));
@@ -317,10 +321,23 @@ TEST_CASE("the memory view Back returns to the previous top address", "[ui]")
         }
         return nullptr;
     };
+    const auto submenu = [](QMenu* parent, const QString& title) -> QMenu*
+    {
+        for (QAction* candidate : parent->actions())
+        {
+            if (candidate->menu() != nullptr && candidate->menu()->title() == title)
+            {
+                return candidate->menu();
+            }
+        }
+        return nullptr;
+    };
 
     QMenu fresh;
     view.populate_options_menu(fresh);
-    QAction* fresh_back = action(&fresh, QStringLiteral("Back"));
+    QMenu* fresh_navigate = submenu(&fresh, QStringLiteral("Navigate"));
+    REQUIRE(fresh_navigate != nullptr);
+    QAction* fresh_back = action(fresh_navigate, QStringLiteral("Back"));
     REQUIRE(fresh_back != nullptr);
     CHECK_FALSE(fresh_back->isEnabled());
     CHECK_FALSE(view.can_go_back());
@@ -333,7 +350,9 @@ TEST_CASE("the memory view Back returns to the previous top address", "[ui]")
 
     QMenu after;
     view.populate_options_menu(after);
-    QAction* back = action(&after, QStringLiteral("Back"));
+    QMenu* after_navigate = submenu(&after, QStringLiteral("Navigate"));
+    REQUIRE(after_navigate != nullptr);
+    QAction* back = action(after_navigate, QStringLiteral("Back"));
     REQUIRE(back != nullptr);
     CHECK(back->isEnabled());
 

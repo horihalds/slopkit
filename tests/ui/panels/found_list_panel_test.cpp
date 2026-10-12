@@ -222,28 +222,25 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     CHECK(action_texts(menu.actions())
           == QList<QString> {QStringLiteral("Add to address table"),
                              QStringLiteral("Change value…"),
-                             QStringLiteral("Browse this memory region"),
                              QStringLiteral("Copy"),
-                             QStringLiteral("Find out what writes this address"),
-                             QStringLiteral("Find out what accesses this address")});
+                             QStringLiteral("Browse this memory region"),
+                             QStringLiteral("Watch accesses")});
 
-    QMenu* copy = nullptr;
-    for (QAction* action : menu.actions())
-    {
-        if (action->menu() != nullptr)
-        {
-            copy = action->menu();
-        }
-    }
+    QMenu* copy = submenu_of(menu, QStringLiteral("Copy"));
     REQUIRE(copy != nullptr);
+    CHECK(copy->toolTipsVisible());
     CHECK(action_texts(copy->actions())
           == QList<QString> {QStringLiteral("Address (module + RVA)"),
                              QStringLiteral("Address (absolute)"),
                              QStringLiteral("Address + value")});
 
+    QMenu* watch = submenu_of(menu, QStringLiteral("Watch accesses"));
+    REQUIRE(watch != nullptr);
+    CHECK(watch->toolTipsVisible());
+
     QAction* watch_writes   = nullptr;
     QAction* watch_accesses = nullptr;
-    for (QAction* action : menu.actions())
+    for (QAction* action : watch->actions())
     {
         if (action->text() == QStringLiteral("Find out what writes this address"))
         {
@@ -437,9 +434,12 @@ TEST_CASE("the found list row menu arms an access watch on a hit", "[ui]")
     QMenu menu;
     panel.populate_row_menu(menu, 0);
 
+    QMenu* watch = submenu_of(menu, QStringLiteral("Watch accesses"));
+    REQUIRE(watch != nullptr);
+
     QAction* watch_writes   = nullptr;
     QAction* watch_accesses = nullptr;
-    for (QAction* action : menu.actions())
+    for (QAction* action : watch->actions())
     {
         if (action->text() == QStringLiteral("Find out what writes this address"))
         {

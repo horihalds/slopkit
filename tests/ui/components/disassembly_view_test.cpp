@@ -563,7 +563,11 @@ TEST_CASE("the disassembly view menu offers Go To and a Copy submenu", "[ui]")
     QMenu menu;
     view.populate_menu(menu, 0);
 
-    QAction* go_to = action(menu, QStringLiteral("Go To..."));
+    QMenu* navigate = submenu(menu, QStringLiteral("Navigate"));
+    REQUIRE(navigate != nullptr);
+    CHECK(navigate->toolTipsVisible());
+
+    QAction* go_to = action(*navigate, QStringLiteral("Go To..."));
     REQUIRE(go_to != nullptr);
     CHECK(go_to == view.goto_action());
     CHECK(go_to->shortcut().isEmpty());
@@ -614,7 +618,9 @@ TEST_CASE("the disassembly view Back returns to the previous top address", "[ui]
 
     QMenu fresh;
     view.populate_menu(fresh, 0);
-    QAction* fresh_back = action(fresh, QStringLiteral("Back"));
+    QMenu* fresh_navigate = submenu(fresh, QStringLiteral("Navigate"));
+    REQUIRE(fresh_navigate != nullptr);
+    QAction* fresh_back = action(*fresh_navigate, QStringLiteral("Back"));
     REQUIRE(fresh_back != nullptr);
     CHECK_FALSE(fresh_back->isEnabled());
     CHECK_FALSE(view.can_go_back());
@@ -626,7 +632,9 @@ TEST_CASE("the disassembly view Back returns to the previous top address", "[ui]
 
     QMenu after;
     view.populate_menu(after, 0);
-    QAction* back = action(after, QStringLiteral("Back"));
+    QMenu* after_navigate = submenu(after, QStringLiteral("Navigate"));
+    REQUIRE(after_navigate != nullptr);
+    QAction* back = action(*after_navigate, QStringLiteral("Back"));
     REQUIRE(back != nullptr);
     CHECK(back->isEnabled());
     back->trigger();
@@ -654,19 +662,23 @@ TEST_CASE("the disassembly view follows an instruction's referenced address", "[
 
     QMenu referenced;
     view.populate_menu(referenced, 0);
-    QAction* follow        = action(referenced, QStringLiteral("Follow"));
-    QAction* follow_memory = action(referenced, QStringLiteral("Follow in Memory View"));
+    QMenu* navigate = submenu(referenced, QStringLiteral("Navigate"));
+    REQUIRE(navigate != nullptr);
+    QAction* follow        = action(*navigate, QStringLiteral("Follow"));
+    QAction* follow_memory = action(*navigate, QStringLiteral("Follow in Memory View"));
     REQUIRE(follow != nullptr);
     REQUIRE(follow_memory != nullptr);
-    QAction* back = action(referenced, QStringLiteral("Back"));
+    QAction* back = action(*navigate, QStringLiteral("Back"));
     REQUIRE(back != nullptr);
     CHECK_FALSE(back->isEnabled());
 
     QMenu plain;
     view.populate_menu(plain, 1);
-    CHECK(action(plain, QStringLiteral("Follow")) == nullptr);
-    CHECK(action(plain, QStringLiteral("Follow in Memory View")) == nullptr);
-    CHECK(action(plain, QStringLiteral("Back")) != nullptr);
+    QMenu* plain_navigate = submenu(plain, QStringLiteral("Navigate"));
+    REQUIRE(plain_navigate != nullptr);
+    CHECK(action(*plain_navigate, QStringLiteral("Follow")) == nullptr);
+    CHECK(action(*plain_navigate, QStringLiteral("Follow in Memory View")) == nullptr);
+    CHECK(action(*plain_navigate, QStringLiteral("Back")) != nullptr);
 
     std::uint64_t requested = 0;
     QObject::connect(&view,

@@ -10,19 +10,13 @@
 #include "scan/engine.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
+#include "ui/models/copy_format.hpp"
 #include "ui/models/live_cells.hpp"
 
 #include <QAbstractTableModel>
 
 namespace slopkit::ui::models
 {
-    enum class CopyFormat
-    {
-        module_relative,
-        absolute,
-        address_and_value,
-    };
-
     class FoundResultsModel : public QAbstractTableModel
     {
         Q_OBJECT

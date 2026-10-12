@@ -137,6 +137,18 @@ namespace
         return texts;
     }
 
+    [[maybe_unused]] QMenu* submenu_of(QMenu& menu, const QString& title)
+    {
+        for (QAction* action : menu.actions())
+        {
+            if (action->menu() != nullptr && action->menu()->title() == title)
+            {
+                return action->menu();
+            }
+        }
+        return nullptr;
+    }
+
     [[maybe_unused]] QString scratch_settings_file(std::string_view name)
     {
         return slopkit::test::scratch_settings_file("ui_test", name);

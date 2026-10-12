@@ -36,7 +36,7 @@ TEST_CASE("the address-table model edits the table", "[ui]")
     CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::description) == 1);
     CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::value) == 4);
 
-    CHECK(model.headerData(0, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Active"));
+    CHECK(model.headerData(0, Qt::Horizontal, Qt::DisplayRole).toString().isEmpty());
     CHECK(model.headerData(1, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Description"));
 
     CHECK(model.data(model.index(0, slopkit::ui::models::AddressTableModel::address), Qt::DisplayRole).toString()
@@ -594,4 +594,42 @@ TEST_CASE("the address-table model edits only a script row's Description and Act
     const auto requests2 = model.next_live_request();
     REQUIRE(requests2.size() == 1);
     CHECK(requests2[0].address == 0x1040);
+}
+
+TEST_CASE("the address-table model copies a row's address in the three forms", "[ui]")
+{
+    application();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    REQUIRE(table.add_script("helper", "print('hi')") == 1);
+
+    slopkit::plugin::PluginHost            host;
+    slopkit::process::PluginAccess         access {host};
+    slopkit::process::AccessWorker         worker {access};
+    slopkit::process::AttachedTarget       target;
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+    model.set_modules({module_image("app", 0x1000, 0x1000)});
+
+    using slopkit::ui::models::CopyFormat;
+
+    CHECK(model.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0x40"));
+    CHECK(model.copy_text(0, CopyFormat::absolute) == QStringLiteral("0x1040"));
+    CHECK(model.copy_text(0, CopyFormat::address_and_value) == QStringLiteral("app+0x40: 1"));
+
+    // Show as hex follows the cell's own rendering into the copied value.
+    table.entries()[0].hex = true;
+    CHECK(model.copy_text(0, CopyFormat::address_and_value) == QStringLiteral("app+0x40: 00000001"));
+    table.entries()[0].hex = false;
+
+    // A value that could not be read leaves the address alone.
+    (void)model.next_live_request();
+    model.apply_live_readings(std::vector<slopkit::ui::LiveReading> {
+        {.id = 0, .readable = false, .bytes = {}}
+    });
+    CHECK(model.copy_text(0, CopyFormat::address_and_value) == QStringLiteral("app+0x40"));
+
+    // A script row and an out-of-range row have no address to copy.
+    CHECK(model.copy_text(1, CopyFormat::module_relative).isEmpty());
+    CHECK(model.copy_text(2, CopyFormat::absolute).isEmpty());
 }

@@ -569,19 +569,20 @@ namespace slopkit::ui::components
     {
         widgets::show_explanations(menu);
 
-        menu.addAction(goto_action_);
+        QMenu* navigate = widgets::explained_submenu(menu, tr("Navigate"));
+        navigate->addAction(goto_action_);
 
         if (const auto references = document_.row_addresses(row); !references.empty())
         {
             const std::uint64_t target = references.front().address;
-            connect(menu.addAction(tr("Follow")),
+            connect(navigate->addAction(tr("Follow")),
                     &QAction::triggered,
                     this,
                     [this, target]
                     {
                         navigate_to(target);
                     });
-            connect(menu.addAction(tr("Follow in Memory View")),
+            connect(navigate->addAction(tr("Follow in Memory View")),
                     &QAction::triggered,
                     this,
                     [this, target]
@@ -590,7 +591,7 @@ namespace slopkit::ui::components
                     });
         }
 
-        QAction* back_action = menu.addAction(tr("Back"));
+        QAction* back_action = navigate->addAction(tr("Back"));
         back_action->setEnabled(can_go_back());
         connect(back_action,
                 &QAction::triggered,
@@ -663,7 +664,7 @@ namespace slopkit::ui::components
 
         menu.addSeparator();
 
-        QMenu*     copy     = menu.addMenu(tr("Copy"));
+        QMenu*     copy     = widgets::explained_submenu(menu, tr("Copy"));
         const auto add_copy = [this, copy, row](const QString& label, CopyFormat format)
         {
             connect(copy->addAction(label),

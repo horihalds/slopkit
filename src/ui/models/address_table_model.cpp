@@ -190,7 +190,7 @@ namespace slopkit::ui::models
             case value:
                 return tr("Value");
             case active:
-                return tr("Active");
+                return QString();
             default:
                 break;
             }
@@ -594,6 +594,39 @@ namespace slopkit::ui::models
     QString AddressTableModel::address_text(std::uint64_t address) const
     {
         return ui::format_cell_address(address_mode_, module_spans_, address);
+    }
+
+    QString AddressTableModel::copy_text(std::size_t row, ui::models::CopyFormat format) const
+    {
+        if (!table_.valid_index(row))
+        {
+            return {};
+        }
+        const auto& entry = table_.entries()[row];
+        if (is_script(entry))
+        {
+            return {};
+        }
+        switch (format)
+        {
+        case CopyFormat::module_relative:
+            return ui::format_cell_address_full(ui::AddressMode::module_relative, module_spans_, entry.address);
+        case CopyFormat::absolute:
+            return ui::format_absolute(entry.address);
+        case CopyFormat::address_and_value:
+        {
+            const QString   address = ui::format_cell_address_full(address_mode_, module_spans_, entry.address);
+            const LiveCell* cell    = live_cell_at(row);
+            if (cell != nullptr && cell->has_reading && !cell->readable)
+            {
+                return address;
+            }
+            const QString value =
+                data(index(static_cast<int>(row), AddressTableModel::value), Qt::DisplayRole).toString();
+            return value.isEmpty() ? address : address + QStringLiteral(": ") + value;
+        }
+        }
+        return {};
     }
 
     bool AddressTableModel::write_value_at(int row, const QString& text)

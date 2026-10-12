@@ -333,18 +333,7 @@ namespace slopkit::ui::panels
             widgets::show_shortcut_hint(*edit, *edit_value_action_);
         }
 
-        QAction* browse = widgets::described_action(
-            menu, tr("Browse this memory region"), tr("Shows this hit's address in the Memory Viewer."));
-        widgets::show_shortcut_hint(*browse, *browse_region_action_);
-        connect(browse,
-                &QAction::triggered,
-                this,
-                [this, row]
-                {
-                    browse_region(row);
-                });
-
-        QMenu* copy = menu.addMenu(tr("Copy"));
+        QMenu* copy = widgets::explained_submenu(menu, tr("Copy"));
         connect(copy->addAction(tr("Address (module + RVA)")),
                 &QAction::triggered,
                 this,
@@ -365,6 +354,17 @@ namespace slopkit::ui::panels
                 [this, row]
                 {
                     copy_row(row, models::CopyFormat::address_and_value);
+                });
+
+        QAction* browse = widgets::described_action(
+            menu, tr("Browse this memory region"), tr("Shows this hit's address in the Memory Viewer."));
+        widgets::show_shortcut_hint(*browse, *browse_region_action_);
+        connect(browse,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    browse_region(row);
                 });
 
         const std::size_t width = scan::value_size(engine_.config().value_type);
