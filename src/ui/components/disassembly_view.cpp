@@ -37,7 +37,7 @@ namespace slopkit::ui::components
 
         constexpr int kColumnGap = 6;
 
-        constexpr std::size_t kMaxInstructionBytes = 15;
+        constexpr std::size_t kMaxBytesPerLine = 7;
 
         constexpr int kMinInstructionChars = 16;
 
@@ -271,7 +271,7 @@ namespace slopkit::ui::components
             metrics.horizontalAdvance(QString(static_cast<qsizetype>(document_.bytes_width()), QLatin1Char('0')))
             + kCellPadding;
         const int bytes_cap =
-            metrics.horizontalAdvance(QString(static_cast<qsizetype>(kMaxInstructionBytes * 3 - 1), QLatin1Char('0')))
+            metrics.horizontalAdvance(QString(static_cast<qsizetype>(kMaxBytesPerLine * 3 - 1), QLatin1Char('0')))
             + kCellPadding;
         const int room        = viewport()->width() - 2 * kMargin - address_width_ - 2 * kColumnGap;
         const int bytes_max   = std::max(min_bytes, room - kMinInstructionChars * glyph);
@@ -280,7 +280,7 @@ namespace slopkit::ui::components
 
         const int         content_width = std::max(0, bytes_width_ - kCellPadding);
         const std::size_t max_tokens =
-            std::min<std::size_t>(std::max<std::size_t>(1, (document_.bytes_width() + 1) / 3), kMaxInstructionBytes);
+            std::min<std::size_t>(std::max<std::size_t>(1, (document_.bytes_width() + 1) / 3), kMaxBytesPerLine);
         bytes_per_line_ = 1;
         for (std::size_t tokens = 1; tokens <= max_tokens; ++tokens)
         {

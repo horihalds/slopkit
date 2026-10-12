@@ -450,16 +450,16 @@ TEST_CASE("the disassembly listing wraps the bytes column when the pane narrows"
     view.set_first_address(kCode);
     fixture.pass();
 
-    REQUIRE(view.bytes_per_line() >= 15);
-    CHECK(view.row_lines(0) == 1);
+    REQUIRE(view.bytes_per_line() == 7);
+    CHECK(view.row_lines(0) == 3);
 
     view.resize(200, 600);
     CHECK(view.bytes_per_line() == 1);
     CHECK(view.row_lines(0) == 15);
 
     view.resize(1400, 600);
-    CHECK(view.row_lines(0) == 1);
-    CHECK(view.bytes_per_line() >= 15);
+    CHECK(view.row_lines(0) == 3);
+    CHECK(view.bytes_per_line() == 7);
 
     view.hide();
 }
@@ -998,7 +998,7 @@ TEST_CASE("dragging the bytes boundary rewraps the bytes column", "[ui]")
     view.set_first_address(kCode);
     fixture.pass();
 
-    REQUIRE(view.bytes_per_line() >= 15);
+    REQUIRE(view.bytes_per_line() == 7);
     const int wide     = view.bytes_width();
     const int boundary = view.address_width() + wide + 10;
 
@@ -1155,7 +1155,7 @@ TEST_CASE("the selected instruction survives a scroll", "[ui]")
     view.hide();
 }
 
-TEST_CASE("the bytes column cannot be dragged past the fifteen-byte width", "[ui]")
+TEST_CASE("the bytes column cannot be dragged past the seven-byte width", "[ui]")
 {
     application();
     ViewFixture fixture;
@@ -1168,9 +1168,9 @@ TEST_CASE("the bytes column cannot be dragged past the fifteen-byte width", "[ui
     fixture.pass();
 
     const QFontMetrics metrics(slopkit::ui::mono_font());
-    const int          cap = metrics.horizontalAdvance(QString(44, QLatin1Char('0'))) + 10;
+    const int          cap = metrics.horizontalAdvance(QString(20, QLatin1Char('0'))) + 10;
     REQUIRE(view.bytes_width() == cap);
-    CHECK(view.bytes_per_line() == 15);
+    CHECK(view.bytes_per_line() == 7);
 
     const int boundary = 4 + view.address_width() + 6 + view.bytes_width();
     mouse_event(view, QEvent::MouseButtonPress, QPoint(boundary, 2), Qt::LeftButton, Qt::LeftButton);
@@ -1178,7 +1178,7 @@ TEST_CASE("the bytes column cannot be dragged past the fifteen-byte width", "[ui
     mouse_event(view, QEvent::MouseButtonRelease, QPoint(1380, 2), Qt::LeftButton, Qt::NoButton);
 
     CHECK(view.bytes_width() == cap);
-    CHECK(view.bytes_per_line() <= 15);
+    CHECK(view.bytes_per_line() <= 7);
 
     view.hide();
 }
