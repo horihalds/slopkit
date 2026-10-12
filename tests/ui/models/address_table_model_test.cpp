@@ -200,7 +200,7 @@ TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui
         == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x40"));
 }
 
-TEST_CASE("the address-table model shows an entry's expression and its resolved tooltip", "[ui]")
+TEST_CASE("the address-table model shows the resolved address and its expression tooltip", "[ui]")
 {
     application();
 
@@ -219,24 +219,41 @@ TEST_CASE("the address-table model shows an entry's expression and its resolved 
     long_entry.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
     table.add(long_entry);
 
+    slopkit::table::AddressEntry unresolved;
+    unresolved.expression = "future+0x10";
+    unresolved.type       = slopkit::scan::ValueType::int32;
+    unresolved.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(unresolved);
+
     slopkit::plugin::PluginHost      host;
     slopkit::process::PluginAccess   access {host};
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
 
     slopkit::ui::models::AddressTableModel model {table, worker, target};
+    model.set_modules({module_image("app", 0x1000, 0x1000)});
 
     const auto address_index = model.index(0, slopkit::ui::models::AddressTableModel::address);
-    CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+40"));
-    CHECK(model.data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x1040"));
+    CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+0x40"));
+    CHECK(model.data(address_index, Qt::EditRole).toString() == QStringLiteral("app+0x40"));
+    CHECK(model.data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("app+40\n0x1040"));
+    CHECK(model.data(address_index, slopkit::ui::widgets::kFullTextRole).toString() == QStringLiteral("app+0x40"));
 
     const auto long_index = model.index(1, slopkit::ui::models::AddressTableModel::address);
-    CHECK(model.data(long_index, Qt::DisplayRole).toString() == QStringLiteral("DyingL..._rwdi.exe+0x40"));
+    CHECK(model.data(long_index, Qt::DisplayRole).toString() == QStringLiteral("app+0x40"));
+    CHECK(model.data(long_index, Qt::EditRole).toString() == QStringLiteral("app+0x40"));
     CHECK(model.data(long_index, Qt::ToolTipRole).toString()
           == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x40\n0x1040"));
-    CHECK(model.data(long_index, Qt::EditRole).toString()
-          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x40"));
     CHECK(table.entries()[1].expression == "DyingLightGame_TheBeast_x64_rwdi.exe+0x40");
+
+    const auto unresolved_index = model.index(2, slopkit::ui::models::AddressTableModel::address);
+    CHECK(model.data(unresolved_index, Qt::DisplayRole).toString() == QStringLiteral("0x0"));
+    CHECK(model.data(unresolved_index, Qt::ToolTipRole).toString() == QStringLiteral("future+0x10\n0x0"));
+
+    model.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("0x1040"));
+    CHECK(model.data(address_index, Qt::EditRole).toString() == QStringLiteral("0x1040"));
+    CHECK(model.data(address_index, slopkit::ui::widgets::kFullTextRole).toString() == QStringLiteral("0x1040"));
 
     table.entries()[0].expression.clear();
     CHECK(model.data(address_index, Qt::DisplayRole).toString() == QStringLiteral("0x1040"));

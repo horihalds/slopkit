@@ -300,6 +300,8 @@ namespace slopkit::ui
         connect(
             address_list_, &panels::AddressListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(
+            address_list_, &panels::AddressListPanel::editEntryRequested, this, &MainWindow::on_edit_entry_requested);
+        connect(
             address_list_, &panels::AddressListPanel::tableSettingsRequested, this, &MainWindow::show_table_settings);
         connect(address_list_, &panels::AddressListPanel::tableLoaded, this, &MainWindow::on_table_loaded);
         connect(address_list_,
@@ -366,6 +368,14 @@ namespace slopkit::ui
 
         add_address_ = new dialogs::AddAddressDialog(address_table_, worker_, this, symbols_);
         new WindowCenterer(*add_address_);
+
+        connect(add_address_,
+                &dialogs::AddAddressDialog::entryEdited,
+                address_list_,
+                [this](std::size_t row)
+                {
+                    address_list_->note_entry_edited(row);
+                });
 
         table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
         new WindowCenterer(*table_settings_);
@@ -509,6 +519,7 @@ namespace slopkit::ui
     void MainWindow::show_add_address()
     {
         log::debug(log::category::ui, "opening Add Address dialog");
+        add_address_->begin_add();
         add_address_->show();
         add_address_->raise();
         add_address_->activateWindow();
@@ -730,6 +741,15 @@ namespace slopkit::ui
     void MainWindow::on_add_address_requested()
     {
         show_add_address();
+    }
+
+    void MainWindow::on_edit_entry_requested(std::size_t row)
+    {
+        log::debug(log::category::ui, std::format("opening Edit Address dialog on row {}", row));
+        add_address_->edit_entry(row);
+        add_address_->show();
+        add_address_->raise();
+        add_address_->activateWindow();
     }
 
     void MainWindow::on_table_loaded()

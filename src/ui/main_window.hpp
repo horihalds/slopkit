@@ -124,6 +124,7 @@ namespace slopkit::ui
 
         void on_found_values_requested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
         void on_add_address_requested();
+        void on_edit_entry_requested(std::size_t row);
         void on_table_loaded();
 
         using ProcessMatcher =

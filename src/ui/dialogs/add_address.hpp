@@ -42,6 +42,12 @@ namespace slopkit::ui::dialogs
 
         void set_modules(std::vector<process::ModuleInfo> modules);
 
+        void begin_add();
+        void edit_entry(std::size_t row);
+
+    signals:
+        void entryEdited(std::size_t row);
+
     protected:
         void showEvent(QShowEvent* event) override;
 
@@ -77,9 +83,11 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] std::optional<std::size_t> preview_value_size() const;
         void                                     refresh_preview();
         void                                     clear_preview();
-        void                                     add_entry(std::uint64_t address, const std::string& expression);
+        void                                     apply_entry(std::uint64_t address, const std::string& expression);
         void                                     update_size_row();
         void                                     reset_form();
+        [[nodiscard]] bool                       is_editing() const;
+        [[nodiscard]] QString                    submit_label() const;
 
         table::AddressTable&   table_;
         process::AccessWorker& worker_;
@@ -87,7 +95,8 @@ namespace slopkit::ui::dialogs
         ui::ModuleSpans        spans_;
 
         Preview                    preview_;
-        std::optional<std::string> pending_add_;
+        std::optional<std::string> pending_commit_;
+        std::optional<std::size_t> editing_row_ {};
 
         QLineEdit*            description_edit_ {};
         QLineEdit*            address_edit_ {};
@@ -95,7 +104,7 @@ namespace slopkit::ui::dialogs
         QLineEdit*            size_edit_ {};
         QWidget*              size_row_ {};
         QCheckBox*            hex_check_ {};
-        QPushButton*          add_button_ {};
+        QPushButton*          submit_button_ {};
         QLabel*               preview_label_ {};
         QTimer*               preview_timer_ {};
         widgets::StatusLabel* status_ {};

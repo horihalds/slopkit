@@ -28,10 +28,6 @@ namespace slopkit::ui
 
     [[nodiscard]] QString elide_module_name(std::string_view name);
 
-    // Shortens only for display: the stored expression, the parser and the saved
-    // file all keep the untruncated base name.
-    [[nodiscard]] QString elide_address_expression(std::string_view text);
-
     struct ModuleSpan
     {
         std::string   name;

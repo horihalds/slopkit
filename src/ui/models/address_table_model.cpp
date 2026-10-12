@@ -74,11 +74,6 @@ namespace slopkit::ui::models
                 {
                     return {};
                 }
-                if (!entry.expression.empty())
-                {
-                    return role == Qt::DisplayRole ? ui::elide_address_expression(entry.expression)
-                                                   : to_qstring(entry.expression);
-                }
                 return address_text(entry.address);
             case type:
                 return is_script(entry) ? tr("script") : to_qstring(scan::describe(entry.type));
@@ -151,9 +146,7 @@ namespace slopkit::ui::models
             }
             if (index.column() == address && !entry.expression.empty())
             {
-                const QString shown = ui::elide_address_expression(entry.expression);
-                const QString full  = to_qstring(entry.expression) + "\n" + ui::format_absolute(entry.address);
-                return shown == to_qstring(entry.expression) ? ui::format_absolute(entry.address) : full;
+                return to_qstring(entry.expression) + "\n" + ui::format_absolute(entry.address);
             }
             if (index.column() == value)
             {
@@ -165,7 +158,7 @@ namespace slopkit::ui::models
             }
             break;
         case widgets::kFullTextRole:
-            if (index.column() == address && entry.expression.empty() && !is_script(entry))
+            if (index.column() == address && !is_script(entry))
             {
                 return ui::format_cell_address_full(address_mode_, module_spans_, entry.address);
             }
@@ -229,7 +222,6 @@ namespace slopkit::ui::models
         switch (index.column())
         {
         case description:
-        case value:
             item_flags |= Qt::ItemIsEditable;
             break;
         case active:

@@ -4,6 +4,7 @@
 #include "table/table_zip.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -152,8 +153,8 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
                     }));
     CHECK(data_changes > 0);
     const QModelIndex address_index = model->index(0, slopkit::ui::models::AddressTableModel::address);
-    CHECK(model->data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+0+8"));
-    CHECK(model->data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x200008"));
+    CHECK(model->data(address_index, Qt::DisplayRole).toString() == QStringLiteral("0x200008"));
+    CHECK(model->data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("app+0+8\n0x200008"));
 
     const QModelIndex long_index = model->index(2, slopkit::ui::models::AddressTableModel::address);
     CHECK(model->data(long_index, Qt::DisplayRole).toString() == QStringLiteral("DyingL..._rwdi.exe+0x40"));
@@ -1070,9 +1071,61 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
     CHECK_FALSE(value_texts.contains(QStringLiteral("Edit Script…")));
     CHECK(value_texts.mid(value_texts.size() - 3) == table_commands);
 
+    CHECK_FALSE(action_texts(script_menu.actions()).contains(QStringLiteral("Edit Entry…")));
+    CHECK(value_texts.indexOf(QStringLiteral("Edit Entry…")) + 1
+          == value_texts.indexOf(QStringLiteral("Change value…")));
+
+    QAction* change_value = nullptr;
+    for (QAction* action : value_menu.actions())
+    {
+        if (action->text() == QStringLiteral("Change value…"))
+        {
+            change_value = action;
+        }
+    }
+    REQUIRE(change_value != nullptr);
+    CHECK(change_value->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")));
+
     QMenu empty_menu;
     panel.populate_row_menu(empty_menu, 9);
     CHECK(action_texts(empty_menu.actions()).isEmpty());
+}
+
+TEST_CASE("the address list asks to edit the clicked value row", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    std::size_t requested = std::numeric_limits<std::size_t>::max();
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::editEntryRequested,
+                     [&requested](std::size_t row)
+                     {
+                         requested = row;
+                     });
+
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+    QAction* edit_entry = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Edit Entry…"))
+        {
+            edit_entry = action;
+        }
+    }
+    REQUIRE(edit_entry != nullptr);
+    edit_entry->trigger();
+
+    CHECK(requested == 0);
 }
 
 TEST_CASE("the address list changes the value of every selected entry", "[ui]")
@@ -1117,6 +1170,113 @@ TEST_CASE("the address list changes the value of every selected entry", "[ui]")
                       return access.memory->at(0x1040) == std::byte {42} && access.memory->at(0x1044) == std::byte {42};
                   }));
     CHECK(table.entries()[2].bytes.front() == std::byte {1});
+}
+
+TEST_CASE("double-clicking a value cell opens the prefilled value box", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    access.memory->at(0x1040)               = std::byte {1};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    attach_app_session(worker);
+
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    QString prefilled;
+    QTimer::singleShot(0,
+                       [&prefilled]
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               prefilled = box->line_edit()->text();
+                               box->line_edit()->setText(QStringLiteral("42"));
+                               box->accept();
+                               return;
+                           }
+                       });
+    REQUIRE(
+        QMetaObject::invokeMethod(view,
+                                  "doubleClicked",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QModelIndex, model->index(0, slopkit::ui::models::AddressTableModel::value))));
+
+    CHECK(prefilled == QStringLiteral("1"));
+    CHECK(pump_ui(worker,
+                  [&]
+                  {
+                      return access.memory->at(0x1040) == std::byte {42};
+                  }));
+}
+
+TEST_CASE("Ctrl+E on a value cell cancels without writing", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    access.memory->at(0x1040)               = std::byte {1};
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+    const std::size_t selected[] = {0};
+    table.set_selected_rows(selected);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    attach_app_session(worker);
+
+    auto* view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+
+    QAction* change = nullptr;
+    for (QAction* action : view->actions())
+    {
+        if (action->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")))
+        {
+            change = action;
+        }
+    }
+    REQUIRE(change != nullptr);
+    CHECK(change->text() == QStringLiteral("Change value…"));
+    CHECK(change->shortcutContext() == Qt::WidgetWithChildrenShortcut);
+
+    bool opened = false;
+    QTimer::singleShot(0,
+                       [&opened]
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                               if (box == nullptr || !box->isVisible())
+                               {
+                                   continue;
+                               }
+                               opened = true;
+                               box->reject();
+                               return;
+                           }
+                       });
+    change->trigger();
+
+    CHECK(opened);
+    worker.drain();
+    CHECK(access.memory->at(0x1040) == std::byte {1});
+    CHECK(table.entries()[0].bytes.front() == std::byte {1});
 }
 
 TEST_CASE("the address list table menu carries the table-area commands", "[ui]")
@@ -2070,4 +2230,32 @@ TEST_CASE("the address list renames a script row from its Description cell", "[u
     CHECK(reloaded.entries()[0].description == "renamed");
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("the address list keeps the value cell out of inline editing", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    auto*                                 view = panel.findChild<QTableView*>();
+    REQUIRE(view != nullptr);
+    auto* model = view->model();
+    REQUIRE(model != nullptr);
+
+    const QModelIndex description = model->index(0, slopkit::ui::models::AddressTableModel::description);
+    const QModelIndex value       = model->index(0, slopkit::ui::models::AddressTableModel::value);
+    CHECK(model->flags(description) & Qt::ItemIsEditable);
+    CHECK_FALSE(model->flags(value) & Qt::ItemIsEditable);
+
+    panel.show();
+    view->setCurrentIndex(value);
+    view->edit(value);
+    CHECK(view->viewport()->findChild<QLineEdit*>() == nullptr);
 }

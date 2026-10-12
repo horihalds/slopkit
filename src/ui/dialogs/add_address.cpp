@@ -30,6 +30,7 @@
 #include "scan/value.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
+#include "ui/text.hpp"
 
 namespace slopkit::ui::dialogs
 {
@@ -120,14 +121,14 @@ namespace slopkit::ui::dialogs
         layout->addWidget(status_);
 
         auto* buttons      = new QHBoxLayout();
-        add_button_        = new widgets::PrimaryButton(tr("Add"), this);
+        submit_button_     = new widgets::PrimaryButton(tr("Add"), this);
         auto* close_button = widgets::secondary_button(tr("Close"), this);
-        buttons->addWidget(add_button_);
+        buttons->addWidget(submit_button_);
         buttons->addWidget(close_button);
         buttons->addStretch(1);
         layout->addLayout(buttons);
 
-        connect(add_button_, &QPushButton::clicked, this, &AddAddressDialog::commit);
+        connect(submit_button_, &QPushButton::clicked, this, &AddAddressDialog::commit);
         connect(close_button, &QPushButton::clicked, this, &QDialog::close);
         connect(type_combo_,
                 &QComboBox::currentIndexChanged,
@@ -177,10 +178,10 @@ namespace slopkit::ui::dialogs
     {
         spans_.set_modules(modules);
         clear_preview();
-        if (add_button_ != nullptr)
+        if (submit_button_ != nullptr)
         {
-            add_button_->setEnabled(true);
-            add_button_->setText(tr("Add"));
+            submit_button_->setEnabled(true);
+            submit_button_->setText(submit_label());
         }
         if (address_edit_ != nullptr && !address_edit_->text().isEmpty())
         {
@@ -188,10 +189,58 @@ namespace slopkit::ui::dialogs
         }
     }
 
+    void AddAddressDialog::begin_add()
+    {
+        editing_row_.reset();
+        setWindowTitle(tr("Add Address"));
+        reset_form();
+    }
+
+    bool AddAddressDialog::is_editing() const
+    {
+        return editing_row_.has_value();
+    }
+
+    QString AddAddressDialog::submit_label() const
+    {
+        return is_editing() ? tr("Save") : tr("Add");
+    }
+
+    void AddAddressDialog::edit_entry(std::size_t row)
+    {
+        if (!table_.valid_index(row) || table_.entries()[row].kind != table::EntryKind::value)
+        {
+            return;
+        }
+
+        const table::AddressEntry& entry = table_.entries()[row];
+        editing_row_                     = row;
+
+        setWindowTitle(tr("Edit Address"));
+        submit_button_->setEnabled(true);
+        submit_button_->setText(submit_label());
+
+        description_edit_->setText(to_qstring(entry.description));
+        address_edit_->setText(entry.expression.empty() ? ui::format_absolute(entry.address)
+                                                        : to_qstring(entry.expression));
+        type_combo_->setCurrentIndex(static_cast<int>(entry.type));
+        size_edit_->setText(QString::number(entry.bytes.size()));
+        hex_check_->setChecked(entry.hex);
+
+        status_->clear_status();
+        update_size_row();
+        pending_commit_.reset();
+        clear_preview();
+        resolve_now(address_edit_->text().toStdString());
+    }
+
     void AddAddressDialog::showEvent(QShowEvent* event)
     {
         QDialog::showEvent(event);
-        reset_form();
+        if (!is_editing())
+        {
+            reset_form();
+        }
     }
 
     void AddAddressDialog::update_size_row()
@@ -203,10 +252,13 @@ namespace slopkit::ui::dialogs
 
     void AddAddressDialog::reset_form()
     {
-        if (add_button_ != nullptr)
+        editing_row_.reset();
+        setWindowTitle(tr("Add Address"));
+
+        if (submit_button_ != nullptr)
         {
-            add_button_->setEnabled(true);
-            add_button_->setText(tr("Add"));
+            submit_button_->setEnabled(true);
+            submit_button_->setText(submit_label());
         }
 
         description_edit_->setText(tr("New address"));
@@ -217,7 +269,7 @@ namespace slopkit::ui::dialogs
         status_->clear_status();
         update_size_row();
 
-        pending_add_.reset();
+        pending_commit_.reset();
         clear_preview();
     }
 
@@ -235,11 +287,11 @@ namespace slopkit::ui::dialogs
 
         if (preview_.text == text && preview_.state == PreviewState::resolved)
         {
-            add_entry(preview_.address, text);
+            apply_entry(preview_.address, text);
             return;
         }
 
-        pending_add_ = text;
+        pending_commit_ = text;
         resolve_now(text);
     }
 
@@ -272,19 +324,19 @@ namespace slopkit::ui::dialogs
 
         if (preview_.resolve_job.has_value() && preview_.text == text)
         {
-            if (pending_add_.has_value())
+            if (pending_commit_.has_value())
             {
-                add_button_->setEnabled(false);
-                add_button_->setText(tr("Resolving..."));
+                submit_button_->setEnabled(false);
+                submit_button_->setText(tr("Resolving..."));
             }
             return;
         }
 
-        if (pending_add_.has_value() && *pending_add_ != text)
+        if (pending_commit_.has_value() && *pending_commit_ != text)
         {
-            pending_add_.reset();
-            add_button_->setEnabled(true);
-            add_button_->setText(tr("Add"));
+            pending_commit_.reset();
+            submit_button_->setEnabled(true);
+            submit_button_->setText(submit_label());
         }
 
         const auto expression = expr::parse(text);
@@ -323,10 +375,10 @@ namespace slopkit::ui::dialogs
 
         const process::JobId id = worker_.next_job_id();
         preview_.resolve_job    = id;
-        if (pending_add_.has_value())
+        if (pending_commit_.has_value())
         {
-            add_button_->setEnabled(false);
-            add_button_->setText(tr("Resolving..."));
+            submit_button_->setEnabled(false);
+            submit_button_->setText(tr("Resolving..."));
         }
 
         const bool submitted =
@@ -344,8 +396,8 @@ namespace slopkit::ui::dialogs
         if (!submitted)
         {
             preview_.resolve_job.reset();
-            add_button_->setEnabled(true);
-            add_button_->setText(tr("Add"));
+            submit_button_->setEnabled(true);
+            submit_button_->setText(submit_label());
             set_preview_unresolved(text, tr("the resolve worker is not accepting jobs"));
         }
     }
@@ -357,10 +409,10 @@ namespace slopkit::ui::dialogs
             return;
         }
         preview_.resolve_job.reset();
-        if (pending_add_.has_value())
+        if (pending_commit_.has_value())
         {
-            add_button_->setEnabled(true);
-            add_button_->setText(tr("Add"));
+            submit_button_->setEnabled(true);
+            submit_button_->setText(submit_label());
         }
 
         const auto& resolved = std::get<process::ResolveResult>(result);
@@ -389,10 +441,10 @@ namespace slopkit::ui::dialogs
         preview_.read_job.reset();
         refresh_preview();
 
-        if (pending_add_.has_value() && *pending_add_ == text)
+        if (pending_commit_.has_value() && *pending_commit_ == text)
         {
-            pending_add_.reset();
-            add_entry(address, text);
+            pending_commit_.reset();
+            apply_entry(address, text);
             return;
         }
 
@@ -416,12 +468,12 @@ namespace slopkit::ui::dialogs
         refresh_preview();
         log::debug(log::category::ui, std::format("add address preview unresolved: {}", preview_.reason));
 
-        if (pending_add_.has_value() && *pending_add_ == text)
+        if (pending_commit_.has_value() && *pending_commit_ == text)
         {
-            pending_add_.reset();
+            pending_commit_.reset();
             log::info(log::category::ui,
                       std::format("add address accepted unresolved: {} ({})", text, preview_.reason));
-            add_entry(0, text);
+            apply_entry(0, text);
         }
     }
 
@@ -536,7 +588,7 @@ namespace slopkit::ui::dialogs
         }
     }
 
-    void AddAddressDialog::add_entry(std::uint64_t address, const std::string& expression)
+    void AddAddressDialog::apply_entry(std::uint64_t address, const std::string& expression)
     {
         const auto  type    = static_cast<scan::ValueType>(type_combo_->currentIndex());
         const bool  dynamic = type == scan::ValueType::string || type == scan::ValueType::byte_array;
@@ -546,6 +598,29 @@ namespace slopkit::ui::dialogs
             log::warning(log::category::ui,
                          std::format("add address rejected: size {}", size_edit_->text().toStdString()));
             status_->set_status(widgets::StatusKind::error, tr("Size must be a number between 1 and 4096."));
+            return;
+        }
+
+        if (editing_row_.has_value())
+        {
+            const std::size_t row = *editing_row_;
+            if (!table_.valid_index(row) || table_.entries()[row].kind != table::EntryKind::value)
+            {
+                status_->set_status(widgets::StatusKind::error, tr("This entry no longer exists."));
+                return;
+            }
+
+            table::AddressEntry& entry = table_.entries()[row];
+            entry.description          = description_edit_->text().toStdString();
+            entry.address              = address;
+            entry.expression           = expression;
+            entry.type                 = type;
+            entry.hex                  = hex_check_->isChecked();
+            entry.bytes.assign(size, std::byte {0});
+
+            log::info(log::category::ui, "edit address accepted");
+            emit entryEdited(row);
+            accept();
             return;
         }
 

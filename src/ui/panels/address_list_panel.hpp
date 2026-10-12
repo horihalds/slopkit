@@ -84,6 +84,8 @@ namespace slopkit::ui::panels
 
         void refresh();
 
+        void note_entry_edited(std::size_t row);
+
         void set_modules(std::vector<process::ModuleInfo> modules);
 
         void set_address_mode(ui::AddressMode mode);
@@ -125,6 +127,8 @@ namespace slopkit::ui::panels
 
         void addAddressRequested();
 
+        void editEntryRequested(std::size_t row);
+
         void tableSettingsRequested();
 
     private:
@@ -148,6 +152,7 @@ namespace slopkit::ui::panels
         models::AddressTableModel*            model_ {};
         QTableView*                           table_view_ {};
         QAction*                              remove_action_ {};
+        QAction*                              change_value_action_ {};
         bool                                  syncing_ {false};
         std::optional<process::JobId>         resolve_job_;
         std::optional<process::JobId>         script_job_;

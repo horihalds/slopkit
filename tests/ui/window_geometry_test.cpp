@@ -323,6 +323,46 @@ TEST_CASE("Add Address, Settings and Table Settings spawn centred and are not re
     CHECK(reader.value(QStringLiteral("windows/settings_geometry")).toByteArray() == seeded_settings);
 }
 
+TEST_CASE("Edit Entry opens the address dialog in edit mode for the row", "[window_geometry]")
+{
+    application();
+
+    const QString path = scratch_settings_file("edit_entry.skt");
+    write_entry_table(path, QStringLiteral("Health"), 0x1040);
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("edit_entry.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+    window.resize(780, 780);
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+    REQUIRE(address_list->load_table(path));
+    QCoreApplication::processEvents();
+
+    QMenu menu;
+    address_list->populate_row_menu(menu, 0);
+    QAction* edit_entry = nullptr;
+    for (QAction* action : menu.actions())
+    {
+        if (action->text() == QStringLiteral("Edit Entry…"))
+        {
+            edit_entry = action;
+        }
+    }
+    REQUIRE(edit_entry != nullptr);
+    edit_entry->trigger();
+
+    auto* dialog = window.findChild<slopkit::ui::dialogs::AddAddressDialog*>();
+    REQUIRE(dialog != nullptr);
+    QCoreApplication::processEvents();
+    CHECK(dialog->isVisible());
+    CHECK(dialog->windowTitle() == QStringLiteral("Edit Address"));
+}
+
 TEST_CASE("input and message boxes are never remembered", "[window_geometry]")
 {
     application();

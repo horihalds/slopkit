@@ -62,22 +62,6 @@ namespace slopkit::ui
         return label;
     }
 
-    QString elide_address_expression(std::string_view text)
-    {
-        const auto parsed = expr::parse(text);
-        if (!parsed.has_value() || expr::parse_literal(parsed->base).has_value())
-        {
-            return to_qstring(text);
-        }
-        const std::size_t base = text.find(parsed->base);
-        if (base == std::string_view::npos)
-        {
-            return to_qstring(text);
-        }
-        return to_qstring(text.substr(0, base)) + elide_module_name(parsed->base)
-             + to_qstring(text.substr(base + parsed->base.size()));
-    }
-
     std::string_view ModuleSpan::label() const
     {
         return display.empty() ? std::string_view(name) : std::string_view(display);

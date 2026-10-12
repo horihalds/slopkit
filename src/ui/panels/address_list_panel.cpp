@@ -100,6 +100,25 @@ namespace slopkit::ui::panels
         connect(remove_action_, &QAction::triggered, this, &AddressListPanel::delete_selected);
         table_view_->addAction(remove_action_);
 
+        change_value_action_ = new QAction(tr("Change value…"), this);
+        change_value_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+E")));
+        change_value_action_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        connect(change_value_action_, &QAction::triggered, this, &AddressListPanel::change_value);
+        table_view_->addAction(change_value_action_);
+
+        connect(table_view_,
+                &QTableView::doubleClicked,
+                this,
+                [this](const QModelIndex& index)
+                {
+                    const auto row = static_cast<std::size_t>(index.row());
+                    if (index.column() == models::AddressTableModel::value && table_.valid_index(row)
+                        && table_.entries()[row].kind != table::EntryKind::script)
+                    {
+                        change_value();
+                    }
+                });
+
         connect(table_view_->selectionModel(),
                 &QItemSelectionModel::currentRowChanged,
                 this,
@@ -219,6 +238,12 @@ namespace slopkit::ui::panels
         {
             set_status(tr("Scripts deactivated: the target detached."), false);
         }
+    }
+
+    void AddressListPanel::note_entry_edited(std::size_t row)
+    {
+        model_->note_entry_changed(row);
+        set_status(tr("Entry updated."), false);
     }
 
     std::vector<ui::LiveRequest> AddressListPanel::next_live_request()
@@ -1035,8 +1060,18 @@ namespace slopkit::ui::panels
         }
         else
         {
+            QAction* edit_entry = menu.addAction(tr("Edit Entry…"));
+            connect(edit_entry,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        emit editEntryRequested(row);
+                    });
+
             QAction* change_value = menu.addAction(tr("Change value…"));
             connect(change_value, &QAction::triggered, this, &AddressListPanel::change_value);
+            widgets::show_shortcut_hint(*change_value, *change_value_action_);
 
             QAction* active = menu.addAction(tr("Active"));
             active->setCheckable(true);
