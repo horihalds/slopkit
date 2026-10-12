@@ -556,6 +556,50 @@ TEST_CASE("memory map jobs report the target modules and regions", "[process]")
     CHECK(map.regions[0].readable);
 }
 
+TEST_CASE("a failed module listing still reports the target regions", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    bool attached = false;
+    worker.submit_attach_app(worker.next_job_id(),
+                             7,
+                             "fake",
+                             [&](JobResult&&)
+                             {
+                                 attached = true;
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return attached;
+                 }));
+
+    slopkit::process::RegionInfo region;
+    region.start    = 0x1000;
+    region.end      = 0x2000;
+    region.readable = true;
+    access.backend()->region_list.push_back(region);
+    access.backend()->modules_error = AccessError::internal;
+
+    MemoryMapResult map;
+    worker.submit_memory_map(worker.next_job_id(),
+                             [&](JobResult&& result)
+                             {
+                                 map = std::get<MemoryMapResult>(std::move(result));
+                             });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return map.error.has_value();
+                 }));
+
+    CHECK(map.error == AccessError::internal);
+    CHECK(map.modules.empty());
+    REQUIRE(map.regions.size() == 1);
+    CHECK(map.regions[0].start == 0x1000);
+}
+
 TEST_CASE("a failed read job logs exactly one warning", "[process][log]")
 {
     LevelGuard level;

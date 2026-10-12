@@ -54,7 +54,10 @@ asking the target's own `VirtualAlloc`/`VirtualFree`/`VirtualProtect`/
    file there and runs the injector under the loader the target itself runs — once
    to reserve the block that is to carry the DLL path, then again to load it (see
    "Wine's write into a Proton game" below) — with the target's own environment,
-   minus the process-local handoffs described below. A failure here records the reason and is retried by a later call,
+   minus the process-local handoffs described below. One launch serves the whole
+   process: a call that arrives while a bring-up is already in flight waits for it
+   (bounded by the launch timeout) instead of being told the agent is unavailable.
+   A failure here records the reason and is retried by a later call,
    bounded by the revive policy (three revives with a five second cooldown); the
    failing call is answered with the error — there is no ptrace fallback for
    allocation.
@@ -203,7 +206,9 @@ trace and never the injector's message. It now reports the injector's last
 `slopkit-injector:` line, or its last non-empty line when the loader died before
 the injector printed anything. The shared host line for a failed module list
 (`could not list modules: I/O error`) only ever carries the error code, so the
-plugin logs the recorded reason next to it as well.
+plugin logs the recorded reason next to it as well — and only for the first
+occurrence of that reason, because a caller that retries the listing would
+otherwise repeat the same warning on every attempt.
 
 ## Wine's write into a Proton game
 

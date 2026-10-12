@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <latch>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -32,9 +34,13 @@
 
 namespace
 {
+    using slopkit::plugins::support::AccessFault;
+    using slopkit::plugins::support::Session;
     using slopkit::plugins::wine_proton::AgentClient;
+    using slopkit::plugins::wine_proton::AgentService;
     using slopkit::plugins::wine_proton::derive_wine_target;
     using slopkit::plugins::wine_proton::linux_path_to_windows;
+    using slopkit::process::ModuleInfo;
 
     using namespace std::chrono_literals;
 
@@ -515,4 +521,85 @@ TEST_CASE("a target that inherited a wineserver socket is still injectable", "[w
     REQUIRE(allocated.has_value());
     CHECK(agent->owns(*allocated));
     agent->shutdown(5s);
+}
+
+// The scanner's first module fetch is the same call that stages, injects and
+// handshakes the resident agent, so a second fetch that lands while that launch
+// is still running must wait for it instead of reporting "the resident agent is
+// not available"; otherwise module names and RVAs stay absent until the next
+// attach. Both concurrent fetches must therefore come back with the loader walk.
+//
+// Run it explicitly with:
+//   SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "meets a bring-up in flight" --timeout 600 --output-on-failure
+TEST_CASE("a module fetch that meets a bring-up in flight waits for it", "[wine-proton][agent][.]")
+{
+    const char* enabled = std::getenv("SLOPKIT_WINE_E2E");
+    if (enabled == nullptr || std::string(enabled) != "1")
+    {
+        WARN("set SLOPKIT_WINE_E2E=1 to run the wine end-to-end agent test");
+        return;
+    }
+
+    const auto      wine  = find_wine();
+    const auto      probe = std::filesystem::path(SLOPKIT_AGENT_PROBE_DIR) / "slopkit-probe-x86_64.exe";
+    std::error_code error;
+    if (wine.empty() || !std::filesystem::exists(probe, error))
+    {
+        WARN("wine or the 64-bit test probe is unavailable; the bring-up wait test is skipped");
+        return;
+    }
+
+    ::setenv("SLOPKIT_AGENT_DIR", SLOPKIT_AGENT_BINARY_DIR, 1);
+
+    auto launched = launch_probe(wine, {probe.string()}, 120s);
+    if (!launched.has_value())
+    {
+        FAIL("the wine probe did not start; is a wine prefix available?");
+    }
+
+    constexpr std::size_t kCallers = 2;
+
+    std::vector<std::unique_ptr<Session>> sessions;
+    sessions.reserve(kCallers);
+    for (std::size_t index = 0; index < kCallers; ++index)
+    {
+        sessions.push_back(
+            std::make_unique<Session>(launched->guard.pid, slopkit::platform::ForeignSignalPolicy::forward));
+    }
+
+    std::vector<std::expected<std::vector<ModuleInfo>, AccessFault>> results(kCallers);
+    std::latch                                                       ready(kCallers);
+    std::latch                                                       go(1);
+
+    std::vector<std::thread> callers;
+    callers.reserve(kCallers);
+    for (std::size_t index = 0; index < kCallers; ++index)
+    {
+        callers.emplace_back(
+            [&, index]
+            {
+                ready.count_down();
+                go.wait();
+                results[index] = AgentService::modules(*sessions[index]);
+            });
+    }
+
+    // Both fetch at once. Exactly one of them performs the bring-up and the
+    // other must have observed that launch in flight: the stage and inject step
+    // outlasts the thread start, so it cannot have missed it.
+    ready.wait();
+    go.count_down();
+    for (auto& caller : callers)
+    {
+        caller.join();
+    }
+
+    for (std::size_t index = 0; index < kCallers; ++index)
+    {
+        INFO("caller " << index);
+        REQUIRE(results[index].has_value());
+        CHECK_FALSE(results[index]->empty());
+    }
+
+    AgentService::close(launched->guard.pid);
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -72,6 +73,7 @@ namespace slopkit::ui::panels
         void request_scan_session();
         void request_memory_map();
         void apply_memory_map(process::MemoryMapResult result);
+        void note_memory_map_failure(process::AccessError error);
         void apply_range(std::uint64_t start, std::uint64_t end);
         void clear_memory_map();
         void rebuild_range_items();
@@ -147,12 +149,21 @@ namespace slopkit::ui::panels
         bool                          can_suspend_ {false};
         bool                          debug_session_active_ {false};
 
-        std::optional<process::JobId>    map_pending_;
-        process::ProcessId               map_pid_ {0};
-        std::string                      map_plugin_;
-        std::vector<process::ModuleInfo> modules_;
-        bool                             map_ready_ {false};
-        bool                             range_updating_ {false};
+        // The memory map is re-requested until it succeeds, so a single failed
+        // fetch (for example while the Wine resident agent is being brought up)
+        // no longer strips module+RVA from the whole session. `map_pid_`/
+        // `map_plugin_` track the target the map belongs to, `map_ready_` says
+        // whether it has been applied, and `map_retry_after_` rate-limits the
+        // retries.
+        std::optional<process::JobId>         map_pending_;
+        process::ProcessId                    map_pid_ {0};
+        std::string                           map_plugin_;
+        std::vector<process::ModuleInfo>      modules_;
+        bool                                  map_ready_ {false};
+        unsigned                              map_attempts_ {0};
+        std::chrono::steady_clock::time_point map_retry_after_ {};
+        bool                                  map_failure_logged_ {false};
+        bool                                  range_updating_ {false};
 
         scan::ScanEngine engine_;
     };

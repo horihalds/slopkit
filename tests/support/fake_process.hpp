@@ -68,6 +68,13 @@ namespace slopkit::test
         std::shared_ptr<std::set<std::uint64_t>>           unreadable {std::make_shared<std::set<std::uint64_t>>()};
         std::optional<process::AccessError>                read_error;
         std::vector<process::ModuleInfo>                   module_list;
+        // `modules_error` fails every listing with its error; `modules_failing`
+        // is a shared switch a test can flip on a live backend, and
+        // `modules_calls` counts every listing, including the attach-time check
+        // `do_attach` performs.
+        std::optional<process::AccessError>                modules_error;
+        std::shared_ptr<std::atomic<bool>>                 modules_failing;
+        std::shared_ptr<std::atomic<int>>                  modules_calls;
         std::vector<process::RegionInfo>                   region_list;
         std::size_t                                        module_count {0};
         std::size_t                                        thread_count {0};
@@ -137,6 +144,9 @@ namespace slopkit::test
         std::vector<process::RegionInfo>         regions;
         bool                                     attach_fails {false};
         std::optional<process::AccessError>      read_error;
+        std::optional<process::AccessError>      modules_error;
+        std::shared_ptr<std::atomic<bool>>       modules_failing;
+        std::shared_ptr<std::atomic<int>>        modules_calls;
         std::shared_ptr<FakeMemory>              memory {std::make_shared<FakeMemory>()};
         std::shared_ptr<std::set<std::uint64_t>> unreadable {std::make_shared<std::set<std::uint64_t>>()};
         process::ProcessId                       fake_pid {42};

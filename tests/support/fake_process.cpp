@@ -160,6 +160,18 @@ namespace slopkit::test
 
     std::expected<std::vector<process::ModuleInfo>, process::AccessError> FakeBackend::modules()
     {
+        if (modules_calls)
+        {
+            ++(*modules_calls);
+        }
+        if (modules_error.has_value())
+        {
+            return std::unexpected(*modules_error);
+        }
+        if (modules_failing && modules_failing->load())
+        {
+            return std::unexpected(process::AccessError::not_found);
+        }
         if (!module_list.empty())
         {
             return module_list;
@@ -314,6 +326,9 @@ namespace slopkit::test
         backend->unreadable      = unreadable;
         backend->read_error      = read_error;
         backend->module_list     = modules;
+        backend->modules_error   = modules_error;
+        backend->modules_failing = modules_failing;
+        backend->modules_calls   = modules_calls;
         backend->region_list     = regions;
         backend->can_suspend     = can_suspend;
         backend->suspend_error   = suspend_error;

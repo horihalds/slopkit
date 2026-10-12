@@ -48,7 +48,11 @@ namespace slopkit::plugins::wine_proton
             bool                                  bringing_up {false};
             bool                                  has_modules {false};
             std::vector<process::ModuleInfo>      modules;
+            // `idle` drains in-flight calls on close; `bringup_done` wakes the
+            // callers that are waiting for a launch already in progress.
             std::condition_variable               idle;
+            std::condition_variable               bringup_done;
+            std::string                           reported_reason;
         };
 
         std::mutex                                                              g_mutex;
@@ -105,22 +109,40 @@ namespace slopkit::plugins::wine_proton
 
         std::shared_ptr<AgentClient> ensure_client(AgentState& state, process::ProcessId pid)
         {
+            const auto deadline = std::chrono::steady_clock::now() + kLaunchTimeout;
             {
-                const std::lock_guard lock(g_mutex);
-                if (state.client)
+                std::unique_lock lock(g_mutex);
+                for (;;)
                 {
-                    return state.client;
+                    if (state.client)
+                    {
+                        return state.client;
+                    }
+                    if (state.permanent || state.revives >= kMaxAgentRevives)
+                    {
+                        state.permanent = true;
+                        return nullptr;
+                    }
+                    if (state.bringing_up)
+                    {
+                        if (std::chrono::steady_clock::now() >= deadline)
+                        {
+                            return nullptr;
+                        }
+                        // A launch is already in flight, so waiting here costs
+                        // the same as the launching caller's own call and keeps
+                        // the first module request from failing. The lock is
+                        // dropped while waiting.
+                        state.bringup_done.wait_until(lock, deadline);
+                        continue;
+                    }
+                    if (std::chrono::steady_clock::now() < state.cooldown_until)
+                    {
+                        return nullptr;
+                    }
+                    state.bringing_up = true;
+                    break;
                 }
-                if (state.permanent || state.revives >= kMaxAgentRevives)
-                {
-                    state.permanent = true;
-                    return nullptr;
-                }
-                if (state.bringing_up || std::chrono::steady_clock::now() < state.cooldown_until)
-                {
-                    return nullptr;
-                }
-                state.bringing_up = true;
             }
 
             std::shared_ptr<AgentClient> fresh;
@@ -155,6 +177,7 @@ namespace slopkit::plugins::wine_proton
 
             const std::lock_guard lock(g_mutex);
             state.bringing_up = false;
+            state.bringup_done.notify_all();
             if (fresh)
             {
                 state.client = fresh;
@@ -205,6 +228,29 @@ namespace slopkit::plugins::wine_proton
                                      reason,
                                      dropped ? "every slot is retired, a later call will try a fresh agent"
                                              : "the remaining slots still serve"));
+        }
+
+        // The host only sees the error code, so the reason is named here, next to
+        // the failure it explains. A retry that keeps meeting the same reason is
+        // demoted to debug so a recovery loop cannot spam the host log.
+        void report_module_failure(AgentState& state, process::ProcessId pid, const std::string& reason)
+        {
+            bool repeated = false;
+            {
+                const std::lock_guard lock(g_mutex);
+                repeated = reason == state.reported_reason;
+                if (!repeated)
+                {
+                    state.reported_reason = reason;
+                }
+            }
+
+            if (repeated)
+            {
+                log::debug(log::category::process, std::format("cannot list modules of pid {}: {}", pid, reason));
+                return;
+            }
+            log::warning(log::category::process, std::format("cannot list modules of pid {}: {}", pid, reason));
         }
 
         std::optional<std::vector<process::ModuleInfo>> cached_modules(const AgentState& state)
@@ -437,10 +483,8 @@ namespace slopkit::plugins::wine_proton
                     return *cached;
                 }
             }
-            // The host only sees the error code, so the recorded reason is named
-            // here, next to the failure it explains.
             const std::string reason = failure_reason(state);
-            log::warning(log::category::process, std::format("cannot list modules of pid {}: {}", session.pid, reason));
+            report_module_failure(state, session.pid, reason);
             return std::unexpected(support::AccessFault {SLOPKIT_ERR_IO, reason});
         }
 

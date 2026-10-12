@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <format>
 #include <utility>
 
 #include <QCheckBox>
@@ -477,25 +479,40 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::request_memory_map()
     {
-        const bool changed = target_.pid != map_pid_ || target_.plugin_id != map_plugin_;
-        if (!changed || map_pending_.has_value() || !target_.valid() || !worker_.attached())
+        if (!target_.valid() || !worker_.attached() || map_pending_.has_value())
         {
             return;
         }
 
         const process::ProcessId pid    = target_.pid;
         const std::string        plugin = target_.plugin_id;
-        map_pid_                        = pid;
-        map_plugin_                     = plugin;
+        if (pid != map_pid_ || plugin != map_plugin_)
+        {
+            // A new target replaces the map once its fetch lands; its fetch
+            // starts a fresh attempt sequence and never inherits the previous
+            // target's backoff.
+            map_pid_            = pid;
+            map_plugin_         = plugin;
+            map_attempts_       = 0;
+            map_failure_logged_ = false;
+            map_retry_after_    = {};
+        }
+        else if (map_ready_ || std::chrono::steady_clock::now() < map_retry_after_)
+        {
+            return;
+        }
 
         const process::JobId job_id = worker_.next_job_id();
         map_pending_                = job_id;
 
-        range_updating_ = true;
-        module_combo_->clear();
-        module_combo_->addItem(tr("Loading…"));
-        module_combo_->setEnabled(false);
-        range_updating_ = false;
+        if (modules_.empty() && map_attempts_ == 0)
+        {
+            range_updating_ = true;
+            module_combo_->clear();
+            module_combo_->addItem(tr("Loading…"));
+            module_combo_->setEnabled(false);
+            range_updating_ = false;
+        }
 
         const bool submitted =
             worker_.submit_memory_map(job_id,
@@ -520,13 +537,49 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::apply_memory_map(process::MemoryMapResult result)
     {
-        modules_   = std::move(result.modules);
-        map_ready_ = true;
+        if (result.error)
+        {
+            // A failed fetch is inert: whatever module list, range and dropdown
+            // the previous success produced stay in place until a fetch works.
+            note_memory_map_failure(*result.error);
+            return;
+        }
+
+        map_attempts_       = 0;
+        map_failure_logged_ = false;
+        map_retry_after_    = {};
+        modules_            = std::move(result.modules);
+        map_ready_          = true;
 
         apply_range(0, scan::kMaxUserAddress);
         rebuild_range_items();
 
         emit memoryMapApplied(modules_);
+    }
+
+    void ScannerPanel::note_memory_map_failure(process::AccessError error)
+    {
+        ++map_attempts_;
+
+        // 250 ms, then doubling up to a 5 s cap: enough to ride out the Wine
+        // resident agent's bring-up without hammering a permanently dead target.
+        constexpr std::chrono::milliseconds initial_retry {250};
+        constexpr std::chrono::milliseconds max_retry {5000};
+        const auto                          shift = std::min<unsigned>(map_attempts_ - 1, 5);
+        const auto                          delay = std::min(initial_retry * (1U << shift), max_retry);
+        map_retry_after_                          = std::chrono::steady_clock::now() + delay;
+
+        if (map_failure_logged_)
+        {
+            log::debug(log::category::scan,
+                       std::format("retrying the memory map of pid {}: {}", target_.pid, process::describe(error)));
+            return;
+        }
+        map_failure_logged_ = true;
+        log::warning(log::category::scan,
+                     std::format("could not load the memory map of pid {}: {}; retrying",
+                                 target_.pid,
+                                 process::describe(error)));
     }
 
     void ScannerPanel::apply_range(std::uint64_t start, std::uint64_t end)
@@ -541,7 +594,10 @@ namespace slopkit::ui::panels
         map_pid_ = 0;
         map_plugin_.clear();
         modules_.clear();
-        map_ready_ = false;
+        map_ready_          = false;
+        map_attempts_       = 0;
+        map_retry_after_    = {};
+        map_failure_logged_ = false;
         apply_range(0, scan::kMaxUserAddress);
 
         range_updating_ = true;
