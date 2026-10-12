@@ -45,6 +45,16 @@ namespace slopkit::disasm
                 ZydisFormatterSetProperty(&formatter, ZYDIS_FORMATTER_PROP_HEX_UPPERCASE, ZYAN_TRUE);
                 ZydisFormatterSetProperty(
                     &formatter, ZYDIS_FORMATTER_PROP_HEX_PREFIX, reinterpret_cast<ZyanUPointer>("0x"));
+                ZydisFormatterSetProperty(&formatter,
+                                          ZYDIS_FORMATTER_PROP_ADDR_PADDING_ABSOLUTE,
+                                          static_cast<ZyanUPointer>(ZYDIS_PADDING_DISABLED));
+                ZydisFormatterSetProperty(&formatter,
+                                          ZYDIS_FORMATTER_PROP_ADDR_PADDING_RELATIVE,
+                                          static_cast<ZyanUPointer>(ZYDIS_PADDING_DISABLED));
+                ZydisFormatterSetProperty(
+                    &formatter, ZYDIS_FORMATTER_PROP_DISP_PADDING, static_cast<ZyanUPointer>(ZYDIS_PADDING_DISABLED));
+                ZydisFormatterSetProperty(
+                    &formatter, ZYDIS_FORMATTER_PROP_IMM_PADDING, static_cast<ZyanUPointer>(ZYDIS_PADDING_DISABLED));
                 return formatter;
             }();
             return instance;

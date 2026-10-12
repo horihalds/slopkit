@@ -228,13 +228,18 @@ namespace slopkit::ui::components
         const QFontMetrics metrics(mono_font());
         const int          glyph = std::max(1, metrics.horizontalAdvance(QLatin1Char('0')));
 
-        QString       address_sample = QStringLiteral("0x0000000000000000");
-        const QString top_text       = document_.address_text(first_address_);
-        if (top_text.size() > address_sample.size())
+        QString           address_sample = document_.address_text(first_address_);
+        const std::size_t last_row =
+            std::min(document_.row_count(), first_row_ + visible_rows_ + DisassemblyDocument::kDecodeSlack);
+        for (std::size_t index = first_row_; index < last_row; ++index)
         {
-            address_sample = top_text;
+            const QString text = document_.address_text(document_.row(index).address);
+            if (text.size() > address_sample.size())
+            {
+                address_sample = text;
+            }
         }
-        const int min_address = metrics.horizontalAdvance(QStringLiteral("0000000000000000")) + kCellPadding;
+        const int min_address = metrics.horizontalAdvance(address_sample) + kCellPadding;
         const int min_bytes   = metrics.horizontalAdvance(QStringLiteral("00")) + kCellPadding;
         if (address_width_user_ > 0)
         {

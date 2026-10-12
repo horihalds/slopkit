@@ -157,12 +157,12 @@ namespace slopkit::ui::components
 
     QString DisassemblyDocument::address_text(std::uint64_t address) const
     {
-        return ui::format_pane_address(address_mode_, module_spans_, address);
+        return ui::format_cell_address(address_mode_, module_spans_, address);
     }
 
     QString DisassemblyDocument::full_address_text(std::uint64_t address) const
     {
-        return ui::format_pane_address_full(address_mode_, module_spans_, address);
+        return ui::format_cell_address_full(address_mode_, module_spans_, address);
     }
 
     const ui::ModuleSpans& DisassemblyDocument::module_spans() const

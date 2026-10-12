@@ -68,7 +68,7 @@ namespace slopkit::ui
         {
             if (ref.rip_relative || (ref.base.empty() && ref.index.empty()))
             {
-                return QLatin1Char('[') + format_padded_hex(address, 16) + QLatin1Char(']');
+                return QLatin1Char('[') + format_absolute(address) + QLatin1Char(']');
             }
 
             QString text = QStringLiteral("[");
@@ -94,7 +94,7 @@ namespace slopkit::ui
                 const std::uint64_t magnitude = ref.displacement > 0
                                                   ? static_cast<std::uint64_t>(ref.displacement)
                                                   : static_cast<std::uint64_t>(-(ref.displacement + 1)) + 1;
-                text += format_padded_hex(magnitude, 2);
+                text += format_absolute(magnitude);
             }
             text += QLatin1Char(']');
             return text;

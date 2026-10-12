@@ -120,25 +120,24 @@ TEST_CASE("an empty buffer decodes to nothing", "[disasm]")
 TEST_CASE("a relative branch reports the address slice its text prints", "[disasm]")
 {
     const auto instruction = *slopkit::disasm::decode(bytes({0x74, 0x15}), 0x2000);
-    CHECK(instruction.text == "JZ 0x0000000000002017");
+    CHECK(instruction.text == "JZ 0x2017");
     REQUIRE(instruction.addresses.size() == 1);
     CHECK(instruction.addresses[0].offset == 3);
-    CHECK(instruction.addresses[0].length == 18);
+    CHECK(instruction.addresses[0].length == 6);
     CHECK(instruction.addresses[0].address == 0x2017);
-    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length)
-          == "0x0000000000002017");
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length) == "0x2017");
 }
 
 TEST_CASE("32-bit relative branches report their address slice", "[disasm]")
 {
     const auto jmp = *slopkit::disasm::decode(bytes({0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1000);
-    CHECK(jmp.text == "JMP 0x0000000000001005");
+    CHECK(jmp.text == "JMP 0x1005");
     REQUIRE(jmp.addresses.size() == 1);
     CHECK(jmp.addresses[0].address == 0x1005);
-    CHECK(jmp.text.substr(jmp.addresses[0].offset, jmp.addresses[0].length) == "0x0000000000001005");
+    CHECK(jmp.text.substr(jmp.addresses[0].offset, jmp.addresses[0].length) == "0x1005");
 
     const auto call = *slopkit::disasm::decode(bytes({0xE8, 0x10, 0x00, 0x00, 0x00}), 0x1000);
-    CHECK(call.text == "CALL 0x0000000000001015");
+    CHECK(call.text == "CALL 0x1015");
     REQUIRE(call.addresses.size() == 1);
     CHECK(call.addresses[0].address == 0x1015);
 }
@@ -148,17 +147,17 @@ TEST_CASE("a prefixed relative branch reports its address slice", "[disasm]")
     const auto instruction = *slopkit::disasm::decode(bytes({0x67, 0xE3, 0x12}), 0x1000);
     REQUIRE(instruction.addresses.size() == 1);
     CHECK(instruction.addresses[0].offset == 6);
-    CHECK(instruction.addresses[0].length == 10);
+    CHECK(instruction.addresses[0].length == 6);
     CHECK(instruction.addresses[0].address == 0x1015);
 }
 
 TEST_CASE("RIP-relative and indirect memory operands report their address slice", "[disasm]")
 {
     const auto mov = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
-    CHECK(mov.text == "MOV RAX, [0x00000000000012FE]");
+    CHECK(mov.text == "MOV RAX, [0x12FE]");
     REQUIRE(mov.addresses.size() == 1);
     CHECK(mov.addresses[0].address == 0x12FE);
-    CHECK(mov.text.substr(mov.addresses[0].offset, mov.addresses[0].length) == "0x00000000000012FE");
+    CHECK(mov.text.substr(mov.addresses[0].offset, mov.addresses[0].length) == "0x12FE");
 
     const auto call = *slopkit::disasm::decode(bytes({0xFF, 0x15, 0x0A, 0x00, 0x00, 0x00}), 0x1000);
     REQUIRE(call.addresses.size() == 1);
@@ -178,8 +177,17 @@ TEST_CASE("an absolute memory operand reports its address slice", "[disasm]")
     const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}), 0x1000);
     REQUIRE(instruction.addresses.size() == 1);
     CHECK(instruction.addresses[0].address == 0x402000);
-    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length)
-          == "0x0000000000402000");
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length) == "0x402000");
+}
+
+TEST_CASE("a segment-relative absolute operand is printed unpadded", "[disasm]")
+{
+    const auto instruction =
+        *slopkit::disasm::decode(bytes({0x65, 0x48, 0x8B, 0x04, 0x25, 0x58, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(instruction.text == "MOV RAX, GS:[0x58]");
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].address == 0x58);
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length) == "0x58");
 }
 
 TEST_CASE("instructions without a printed address carry no slices", "[disasm]")
@@ -204,22 +212,22 @@ TEST_CASE("decode classifies registers, immediates and displacements", "[disasm]
 {
     const auto mov =
         *slopkit::disasm::decode(bytes({0x48, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}), 0x1000);
-    CHECK(mov.text == "MOV RAX, 0x01");
+    CHECK(mov.text == "MOV RAX, 0x1");
     REQUIRE(mov.tokens.size() == 2);
     CHECK(mov.tokens[0].kind == slopkit::disasm::TokenKind::cpu_register);
     CHECK(mov.text.substr(mov.tokens[0].offset, mov.tokens[0].length) == "RAX");
     CHECK(mov.tokens[1].kind == slopkit::disasm::TokenKind::immediate);
-    CHECK(mov.text.substr(mov.tokens[1].offset, mov.tokens[1].length) == "0x01");
+    CHECK(mov.text.substr(mov.tokens[1].offset, mov.tokens[1].length) == "0x1");
 
     const auto load = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x5D, 0xFC}), 0x1000);
-    CHECK(load.text == "MOV RBX, [RBP-0x04]");
+    CHECK(load.text == "MOV RBX, [RBP-0x4]");
     REQUIRE(load.tokens.size() == 3);
     CHECK(load.tokens[0].kind == slopkit::disasm::TokenKind::cpu_register);
     CHECK(load.text.substr(load.tokens[0].offset, load.tokens[0].length) == "RBX");
     CHECK(load.tokens[1].kind == slopkit::disasm::TokenKind::cpu_register);
     CHECK(load.text.substr(load.tokens[1].offset, load.tokens[1].length) == "RBP");
     CHECK(load.tokens[2].kind == slopkit::disasm::TokenKind::displacement);
-    CHECK(load.text.substr(load.tokens[2].offset, load.tokens[2].length) == "0x04");
+    CHECK(load.text.substr(load.tokens[2].offset, load.tokens[2].length) == "0x4");
 
     for (const auto& instruction : {mov, load})
     {
@@ -274,7 +282,7 @@ TEST_CASE("decode_block keeps every slice inside its own instruction", "[disasm]
 TEST_CASE("a register-relative store describes the memory it writes", "[disasm]")
 {
     const auto instruction = *slopkit::disasm::decode(bytes({0x89, 0x43, 0x08}), 0x1000);
-    CHECK(instruction.text == "MOV [RBX+0x08], EAX");
+    CHECK(instruction.text == "MOV [RBX+0x8], EAX");
     REQUIRE(instruction.memory.size() == 1);
 
     const auto& ref = instruction.memory[0];
@@ -285,7 +293,7 @@ TEST_CASE("a register-relative store describes the memory it writes", "[disasm]"
     CHECK(ref.width == 4);
     CHECK_FALSE(ref.rip_relative);
     CHECK(ref.writes);
-    CHECK(instruction.text.substr(ref.offset, ref.length) == "[RBX+0x08]");
+    CHECK(instruction.text.substr(ref.offset, ref.length) == "[RBX+0x8]");
 }
 
 TEST_CASE("a scaled index operand reports base, index, scale and displacement", "[disasm]")
@@ -307,7 +315,7 @@ TEST_CASE("a scaled index operand reports base, index, scale and displacement", 
 TEST_CASE("a rip-relative load is flagged and keeps its displacement", "[disasm]")
 {
     const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0x34, 0x12, 0x00, 0x00}), 0x1000);
-    CHECK(instruction.text == "MOV RAX, [0x000000000000223B]");
+    CHECK(instruction.text == "MOV RAX, [0x223B]");
     REQUIRE(instruction.memory.size() == 1);
 
     const auto& ref = instruction.memory[0];
