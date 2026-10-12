@@ -778,8 +778,7 @@ namespace slopkit::script
                     }
 
                     const std::size_t         pointer_size = api.pointer_size ? api.pointer_size() : 8;
-                    const disasm::MachineMode mode =
-                        pointer_size == 4 ? disasm::MachineMode::legacy_32 : disasm::MachineMode::long_64;
+                    const disasm::MachineMode mode = disasm::machine_mode_for(static_cast<std::uint32_t>(pointer_size));
 
                     const std::expected<std::vector<std::byte>, std::string> bytes =
                         disasm::assemble_block(text, disasm::AssembleBlockContext {.base = address, .mode = mode});

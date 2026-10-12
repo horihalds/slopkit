@@ -530,12 +530,13 @@ namespace slopkit::plugin
         for (std::size_t i = 0; i < count; ++i)
         {
             process::ModuleInfo module;
-            module.base    = array[i].base;
-            module.size    = array[i].size;
-            module.offset  = array[i].offset;
-            module.entry   = array[i].entry;
-            module.kind    = module_kind_from_abi(array[i].kind);
-            module.is_main = array[i].is_main != 0;
+            module.base         = array[i].base;
+            module.size         = array[i].size;
+            module.offset       = array[i].offset;
+            module.entry        = array[i].entry;
+            module.kind         = module_kind_from_abi(array[i].kind);
+            module.is_main      = array[i].is_main != 0;
+            module.pointer_size = array[i].pointer_size;
             if (array[i].name != nullptr)
             {
                 module.name = array[i].name;

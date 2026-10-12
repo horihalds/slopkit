@@ -256,4 +256,36 @@ namespace slopkit::platform
         return parse_pe_machine(std::span<const std::byte>(header->data.data(), header->size));
     }
 
+    std::optional<std::uint32_t> parse_elf_pointer_size(std::span<const std::byte> bytes)
+    {
+        constexpr std::uint8_t kElfClass32 = 1;
+        constexpr std::uint8_t kElfClass64 = 2;
+
+        if (bytes.size() < 5 || byte_at(bytes, 0) != 0x7f || byte_at(bytes, 1) != 'E' || byte_at(bytes, 2) != 'L'
+            || byte_at(bytes, 3) != 'F')
+        {
+            return std::nullopt;
+        }
+        const auto elf_class = byte_at(bytes, 4);
+        if (elf_class == kElfClass32)
+        {
+            return 4;
+        }
+        if (elf_class == kElfClass64)
+        {
+            return 8;
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::uint32_t> read_elf_pointer_size(const std::filesystem::path& path)
+    {
+        const auto header = read_header(path);
+        if (!header)
+        {
+            return std::nullopt;
+        }
+        return parse_elf_pointer_size(std::span<const std::byte>(header->data.data(), header->size));
+    }
+
 }

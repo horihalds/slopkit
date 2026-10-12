@@ -96,7 +96,10 @@ host calls:
   `list_regions` is the agent's `VirtualQuery` walk merged with the `/proc` paths,
   and its `list_modules` is the target's own loader list (`MODULES`) merged with
   the same paths; both fall back while the target cannot run the agent, the module
-  list to the last agent-derived list recorded for that session
+  list to the last agent-derived list recorded for that session. Each module also
+  carries the target's `pointer_size` (ABI 1.8), its pointer width in bytes, 0 when
+  the plugin cannot tell; the field sits in what used to be trailing padding of
+  `slopkit_module_info`, so the struct layout is unchanged.
 - `access_methods` — the access primitives the plugin can use
 - `debug_*` — the ABI 1.4 opt-in debugger operations (`debug_attach` /
   `debug_detach` / `debug_continue` / `debug_step` / `debug_interrupt` /
@@ -182,20 +185,33 @@ exactly the set the display pages through.
 ## Referenced strings
 
 `analysis::find_string_references` (`src/analysis/string_references.cpp`) is a
-target-free sweep of one module: it decodes every executable, file-backed region
-inside the module in `chunk_size` reads and resolves each instruction's **direct**
-memory operand (RIP-relative or absolute, never a base/index register) to an
-absolute target. A target is accepted only when it lands in a readable,
-non-executable region of the same module and the bytes there form an ASCII string
+target-free sweep of one module: it decodes the target's executable regions,
+clamped to `[module.base, module.end)`, in `chunk_size` reads in address order and
+resolves each instruction's **direct** memory operand (RIP-relative or absolute,
+never a base/index register) to an absolute target. A region is swept on its
+readable/executable flags and its overlap with the module alone: a missing mapped
+file path — the Wine host-map overlay case — and a region that reaches past the
+module end do not void it, and a module of unknown or zero size is reported as
+empty instead of swept silently. A target is accepted only when it is a
+**readable** address of the same module and the bytes there form an ASCII string
 (at least `min_length` printable characters, NUL-terminated) or a UTF-16LE string
-(same rule over 16-bit code units), capped at `max_string_bytes`. Validated
-addresses — hits and misses — are cached, so a trampoline or vtable that many
-instructions reference costs one read. A read spanning a chunk boundary carries
-up to the longest x86 instruction (15 bytes) into the next chunk so an
-instruction is never lost at the seam, and a failed decode resynchronises one
-byte forward. The result is the address-sorted `StringReference` list the Memory
-Viewer paints as per-instruction comments and lists in its Referenced strings
-window; the sweep itself performs no reads on the UI thread.
+(same rule over 16-bit code units); the containing region need not be
+non-executable, so an image that merged `.rdata` into `.text` still resolves, and
+the string read is bounded by the containing region's end
+(`min(max_string_bytes, region.end - address)`) so a string that ends at the
+region boundary is still classified. Validated addresses — hits and misses — are
+cached, so a trampoline or vtable that many instructions reference costs one read.
+A read spanning a chunk boundary carries up to the longest x86 instruction (15
+bytes) into the next chunk so an instruction is never lost at the seam, a failed
+decode resynchronises one byte forward, and an unreadable chunk is skipped and
+counted instead of ending the region. The sweep runs in the target's bitness
+(`disasm::machine_mode_for(pointer_size)`), and returns its address-sorted
+`StringReference` list beside a `StringScanReport` — the counters of every stage
+plus the rejected regions' reasons, rendered by `analysis::describe` for the
+Memory Viewer's status line and the `scan` log — so an empty result always states
+which stage gave up. The Memory Viewer paints the references as per-instruction
+comments and lists them in its Referenced strings window; the sweep itself
+performs no reads on the UI thread.
 
 ## The debugger
 

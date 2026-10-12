@@ -101,7 +101,19 @@ namespace
     std::expected<std::vector<slopkit::process::ModuleInfo>, slopkit::plugins::support::AccessFault>
     modules(slopkit::plugins::support::Session& session)
     {
-        return slopkit::plugins::wine_proton::AgentService::modules(session);
+        auto result = slopkit::plugins::wine_proton::AgentService::modules(session);
+        if (!result)
+        {
+            return result;
+        }
+        // Every PE module of a Wine target shares the guest's bitness, which is
+        // what the host needs to decode the module's code in the right mode.
+        const std::uint32_t pointer_size = slopkit::plugins::wine_proton::guest_pointer_size(session.pid);
+        for (auto& module : *result)
+        {
+            module.pointer_size = pointer_size;
+        }
+        return result;
     }
 
     std::vector<ProcessId> debug_excluded_threads(slopkit::plugins::support::Session& session)

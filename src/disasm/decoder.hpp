@@ -15,6 +15,13 @@ namespace slopkit::disasm
         legacy_32,
     };
 
+    // The decode mode a target with this pointer size runs in. Zero, the
+    // "unknown" value, falls back to the 64-bit mode.
+    [[nodiscard]] constexpr MachineMode machine_mode_for(std::uint32_t pointer_size) noexcept
+    {
+        return pointer_size == 4 ? MachineMode::legacy_32 : MachineMode::long_64;
+    }
+
     struct AddressRef
     {
         std::size_t   offset {};

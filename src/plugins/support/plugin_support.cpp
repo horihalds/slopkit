@@ -370,14 +370,15 @@ namespace slopkit::plugins::support
             std::size_t count = 0;
             for (const auto& module : modules)
             {
-                array[count].base    = module.base;
-                array[count].size    = module.size;
-                array[count].offset  = module.offset;
-                array[count].kind    = static_cast<int32_t>(module.kind);
-                array[count].name    = intern(module.name);
-                array[count].path    = module.path.empty() ? nullptr : intern(module.path);
-                array[count].entry   = module.entry;
-                array[count].is_main = module.is_main ? 1 : 0;
+                array[count].base         = module.base;
+                array[count].size         = module.size;
+                array[count].offset       = module.offset;
+                array[count].kind         = static_cast<int32_t>(module.kind);
+                array[count].name         = intern(module.name);
+                array[count].path         = module.path.empty() ? nullptr : intern(module.path);
+                array[count].entry        = module.entry;
+                array[count].is_main      = module.is_main ? 1 : 0;
+                array[count].pointer_size = module.pointer_size;
                 ++count;
             }
 

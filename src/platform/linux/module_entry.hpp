@@ -32,4 +32,10 @@ namespace slopkit::platform
 
     [[nodiscard]] std::optional<std::uint16_t> read_pe_machine(const std::filesystem::path& path);
 
+    // The ELF class of the image as a pointer width in bytes (4 or 8), or nothing
+    // when the bytes are not an ELF header.
+    [[nodiscard]] std::optional<std::uint32_t> parse_elf_pointer_size(std::span<const std::byte> bytes);
+
+    [[nodiscard]] std::optional<std::uint32_t> read_elf_pointer_size(const std::filesystem::path& path);
+
 }

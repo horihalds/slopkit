@@ -1914,3 +1914,79 @@ TEST_CASE("a module analysis comments the listing and reports it", "[ui]")
 
     viewer.hide();
 }
+
+TEST_CASE("a module analysis that finds nothing states the reason", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+
+    // The module's only region is not readable, so there is nothing to sweep and
+    // the report has to say why.
+    access.regions = {
+        slopkit::process::RegionInfo {0x1000, 0x1100, 0, false, true, false, false, "app"}
+    };
+
+    attach_app_session(worker);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    viewer.set_modules({module_image("app", 0x1000, 0x1000)});
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    viewer.analyze_module(viewer.modules().front());
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return viewer.status_text().contains(QStringLiteral("found 0 string"));
+                    }));
+
+    CHECK(viewer.status_text().contains(QStringLiteral("not readable")));
+    CHECK(viewer.referenced_strings().total() == 0);
+
+    const bool stated_in_log = std::ranges::any_of(
+        records,
+        [](const slopkit::log::Record& record)
+        {
+            return record.message.find("referenced-string scan of app found 0 string(s)") != std::string::npos
+                && record.message.find("not readable") != std::string::npos;
+        });
+    CHECK(stated_in_log);
+
+    viewer.hide();
+}
+
+TEST_CASE("the disassembly mode follows the module's pointer size", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+
+    slopkit::process::ModuleInfo narrow = module_image("app32", 0x1000, 0x1000);
+    narrow.pointer_size                 = 4;
+    viewer.set_modules({narrow});
+    CHECK(viewer.machine_mode() == slopkit::disasm::MachineMode::legacy_32);
+
+    slopkit::process::ModuleInfo wide = module_image("app64", 0x1000, 0x1000);
+    wide.pointer_size                 = 8;
+    viewer.set_modules({wide});
+    CHECK(viewer.machine_mode() == slopkit::disasm::MachineMode::long_64);
+
+    viewer.hide();
+}

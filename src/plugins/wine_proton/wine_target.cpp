@@ -196,6 +196,12 @@ namespace slopkit::plugins::wine_proton
         return std::filesystem::path(*path).filename().string();
     }
 
+    std::uint32_t guest_pointer_size(process::ProcessId pid)
+    {
+        const auto image = guest_image(pid);
+        return image ? image->pointer_size : 0;
+    }
+
     std::string linux_path_to_windows(const std::string& path)
     {
         std::string result = "Z:";

@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -19,30 +20,68 @@ namespace slopkit::analysis
 {
     namespace
     {
+        // A target can map thousands of regions; the report keeps only enough
+        // rejected regions to name the reasons without flooding the log.
+        constexpr std::size_t kMaxExcludedRegions = 16;
+
         [[nodiscard]] constexpr bool is_printable_ascii(std::byte value) noexcept
         {
             const auto byte = std::to_integer<unsigned char>(value);
             return byte >= 0x20 && byte <= 0x7E;
         }
 
-        [[nodiscard]] bool within_module(const ModuleRange& module, const process::RegionInfo& region) noexcept
+        [[nodiscard]] bool overlaps_module(const ModuleRange& module, const process::RegionInfo& region) noexcept
         {
-            return region.start >= module.base && region.end <= module.end;
+            return region.start < module.end && region.end > module.base;
         }
 
-        [[nodiscard]] bool is_string_data_region(const ModuleRange&                   module,
-                                                 std::span<const process::RegionInfo> regions,
-                                                 std::uint64_t                        address) noexcept
+        [[nodiscard]] constexpr std::string_view reason_name(RegionReason reason) noexcept
         {
+            switch (reason)
+            {
+            case RegionReason::not_readable:
+                return "not readable";
+            case RegionReason::not_executable:
+                return "not executable";
+            case RegionReason::no_path:
+                return "with no mapped file";
+            case RegionReason::outside_module:
+                return "outside the module";
+            case RegionReason::empty_module:
+                return "the module has no size";
+            }
+            return "unclassified";
+        }
+
+        void exclude(StringScanReport& report, std::uint64_t start, std::uint64_t end, RegionReason reason)
+        {
+            if (report.excluded.size() < kMaxExcludedRegions)
+            {
+                report.excluded.push_back(ExcludedRegion {start, end, reason});
+            }
+        }
+
+        // The readable region of the module that holds `address`, or nullptr when
+        // the address is outside the module or inside no readable region. The
+        // region neither needs a mapped file nor has to be non-executable, and it
+        // may reach past the module end: the address, not the region, is what has
+        // to be inside the module.
+        [[nodiscard]] const process::RegionInfo* readable_module_region(const ModuleRange&                   module,
+                                                                        std::span<const process::RegionInfo> regions,
+                                                                        std::uint64_t address) noexcept
+        {
+            if (address < module.base || address >= module.end)
+            {
+                return nullptr;
+            }
             for (const process::RegionInfo& region : regions)
             {
-                if (address < region.start || address >= region.end)
+                if (region.readable && address >= region.start && address < region.end)
                 {
-                    continue;
+                    return &region;
                 }
-                return region.readable && !region.executable && within_module(module, region);
             }
-            return false;
+            return nullptr;
         }
 
         struct Match
@@ -84,18 +123,62 @@ namespace slopkit::analysis
         }
     }
 
-    std::vector<StringReference> find_string_references(ReadIntoFn                           read,
-                                                        const ModuleRange&                   module,
-                                                        std::span<const process::RegionInfo> regions,
-                                                        disasm::MachineMode                  mode,
-                                                        const StringReferenceConfig&         config)
+    std::string describe(const StringScanReport& report)
     {
-        std::vector<StringReference>                            references;
+        std::string text =
+            std::format("{} region(s) in the module, {} code region(s), {} byte(s), {} unreadable chunk(s), "
+                        "{} instruction(s), {} resolved reference(s), {} string(s)",
+                        report.regions_in_module,
+                        report.code_regions,
+                        report.bytes_read,
+                        report.read_failures,
+                        report.instructions,
+                        report.address_references,
+                        report.strings);
+        if (report.excluded.empty())
+        {
+            return text;
+        }
+
+        std::string skipped;
+        for (const RegionReason reason : {RegionReason::empty_module,
+                                          RegionReason::not_readable,
+                                          RegionReason::not_executable,
+                                          RegionReason::no_path,
+                                          RegionReason::outside_module})
+        {
+            const std::size_t count = std::ranges::count(report.excluded, reason, &ExcludedRegion::reason);
+            if (count == 0)
+            {
+                continue;
+            }
+            skipped += std::format("{}{} region(s) {}", skipped.empty() ? "" : ", ", count, reason_name(reason));
+        }
+        return std::format("{}; skipped {}", text, skipped);
+    }
+
+    StringScanResult find_string_references(ReadIntoFn                           read,
+                                            const ModuleRange&                   module,
+                                            std::span<const process::RegionInfo> regions,
+                                            disasm::MachineMode                  mode,
+                                            const StringReferenceConfig&         config)
+    {
+        StringScanResult                                        scan;
+        StringScanReport&                                       report     = scan.report;
+        std::vector<StringReference>&                           references = scan.references;
         std::unordered_map<std::uint64_t, std::optional<Match>> cache;
         std::vector<std::byte>                                  string_buffer(config.max_string_bytes);
         std::vector<std::byte>                                  code_buffer(config.chunk_size + 15);
 
-        const auto lookup_string = [&](std::uint64_t address) -> const std::optional<Match>&
+        if (module.end <= module.base)
+        {
+            exclude(report, module.base, module.end, RegionReason::empty_module);
+            log::debug(log::category::scan,
+                       std::format("referenced-string analysis of {}: {}", module.name, describe(report)));
+            return scan;
+        }
+
+        const auto lookup_string = [&](std::uint64_t address, std::size_t limit) -> const std::optional<Match>&
         {
             const auto found = cache.find(address);
             if (found != cache.end())
@@ -104,9 +187,11 @@ namespace slopkit::analysis
             }
 
             std::optional<Match> match;
-            if (const auto result = read(address, string_buffer); result.has_value() && *result > 0)
+            const std::size_t    want = std::min(limit, string_buffer.size());
+            if (const auto result = read(address, std::span<std::byte>(string_buffer.data(), want));
+                result.has_value() && *result > 0)
             {
-                const std::size_t available = std::min<std::size_t>(*result, string_buffer.size());
+                const std::size_t available = std::min<std::size_t>(*result, want);
                 match = classify(std::span<const std::byte>(string_buffer.data(), available), config.min_length);
             }
             return cache.emplace(address, std::move(match)).first->second;
@@ -116,12 +201,14 @@ namespace slopkit::analysis
         // absolute memory operand and a LEA's address-generation operand alike -
         // into `addresses`; a base/index register operand has no absolute target
         // and so is excluded there. Branch targets share the list and are dropped
-        // by the readable, non-executable region test.
+        // by the readable region test.
         const auto annotate = [&](const disasm::Instruction& instruction)
         {
+            report.address_references += instruction.addresses.size();
             for (const disasm::AddressRef& ref : instruction.addresses)
             {
-                if (!is_string_data_region(module, regions, ref.address))
+                const process::RegionInfo* region = readable_module_region(module, regions, ref.address);
+                if (region == nullptr)
                 {
                     continue;
                 }
@@ -130,40 +217,86 @@ namespace slopkit::analysis
                 {
                     continue;
                 }
-                if (const std::optional<Match>& match = lookup_string(ref.address); match.has_value())
+                // A string that ends at the region boundary is still classified,
+                // so the read stops there instead of at the global cap alone.
+                const std::size_t limit = static_cast<std::size_t>(
+                    std::min<std::uint64_t>(config.max_string_bytes, region->end - ref.address));
+                if (const std::optional<Match>& match = lookup_string(ref.address, limit); match.has_value())
                 {
                     references.push_back(StringReference {instruction.address, ref.address, match->text, match->wide});
                 }
             }
         };
 
+        struct SweepRange
+        {
+            std::uint64_t start {};
+            std::uint64_t end {};
+        };
+
+        std::vector<SweepRange> sweeps;
         for (const process::RegionInfo& region : regions)
         {
-            if (!region.executable || !region.readable || region.path.empty() || !within_module(module, region))
+            if (!overlaps_module(module, region))
             {
                 continue;
             }
+            ++report.regions_in_module;
 
-            std::uint64_t address = region.start;
+            if (!region.readable)
+            {
+                exclude(report, region.start, region.end, RegionReason::not_readable);
+                continue;
+            }
+            if (!region.executable)
+            {
+                exclude(report, region.start, region.end, RegionReason::not_executable);
+                continue;
+            }
+            sweeps.push_back(SweepRange {std::max(region.start, module.base), std::min(region.end, module.end)});
+            ++report.code_regions;
+        }
+
+        std::ranges::sort(sweeps, {}, &SweepRange::start);
+
+        for (const SweepRange& sweep : sweeps)
+        {
+            std::uint64_t address = sweep.start;
             std::size_t   carry   = 0;
-            while (address < region.end)
+            while (address < sweep.end)
             {
                 const std::size_t want =
-                    static_cast<std::size_t>(std::min<std::uint64_t>(config.chunk_size, region.end - address));
-                std::size_t got = 0;
-                if (const auto result = read(address, std::span<std::byte>(code_buffer.data() + carry, want));
-                    result.has_value())
-                {
-                    got = std::min<std::size_t>(*result, want);
-                }
-                if (got == 0)
+                    static_cast<std::size_t>(std::min<std::uint64_t>(config.chunk_size, sweep.end - address));
+                if (want == 0)
                 {
                     break;
                 }
 
+                std::size_t got = 0;
+                if (const auto chunk = read(address, std::span<std::byte>(code_buffer.data() + carry, want));
+                    chunk.has_value())
+                {
+                    got = std::min<std::size_t>(*chunk, want);
+                }
+                if (got == 0)
+                {
+                    // One unreadable chunk must not erase the region's other
+                    // references, and the carry no longer precedes the new
+                    // address, so it is dropped with the skipped bytes.
+                    ++report.read_failures;
+                    log::debug(log::category::scan,
+                               std::format("referenced-string analysis of {}: unreadable chunk at {:#x}",
+                                           module.name,
+                                           address));
+                    carry = 0;
+                    address += want;
+                    continue;
+                }
+                report.bytes_read += got;
+
                 const std::size_t   limit = carry + got;
                 const std::uint64_t base  = address - carry;
-                const bool          last  = address + got >= region.end;
+                const bool          last  = address + got >= sweep.end;
 
                 std::size_t offset = 0;
                 while (offset < limit)
@@ -183,6 +316,7 @@ namespace slopkit::analysis
                         ++offset;
                         continue;
                     }
+                    ++report.instructions;
                     annotate(*decoded);
                     offset += decoded->length;
                 }
@@ -208,9 +342,9 @@ namespace slopkit::analysis
                              return lhs.string_address < rhs.string_address;
                          });
 
-        log::debug(
-            log::category::scan,
-            std::format("referenced-string analysis of {} produced {} reference(s)", module.name, references.size()));
-        return references;
+        report.strings = references.size();
+        log::debug(log::category::scan,
+                   std::format("referenced-string analysis of {}: {}", module.name, describe(report)));
+        return scan;
     }
 }

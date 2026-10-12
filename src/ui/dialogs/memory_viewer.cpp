@@ -666,6 +666,16 @@ namespace slopkit::ui::dialogs
         modules_ = std::move(modules);
         document_.set_modules(modules_);
         disassembly_document_.set_modules(modules_);
+
+        // Decode in the attached target's bitness; 0 means the plugin could not
+        // report it, which keeps the 64-bit default.
+        std::uint32_t pointer_size = 0;
+        if (const process::ModuleInfo* main = process::main_module(modules_))
+        {
+            pointer_size = main->pointer_size;
+        }
+        disassembly_document_.set_machine_mode(disasm::machine_mode_for(pointer_size));
+
         debugger_->refresh();
     }
 
@@ -683,6 +693,11 @@ namespace slopkit::ui::dialogs
             return;
         }
 
+        // The decoded mode follows the analyzed module, which is what the worker
+        // then decodes the sweep in too.
+        const disasm::MachineMode mode = disasm::machine_mode_for(module.pointer_size);
+        disassembly_document_.set_machine_mode(mode);
+
         const process::JobId id = worker_.next_job_id();
         strings_job_            = id;
         status_->set_status(widgets::StatusKind::info,
@@ -695,7 +710,7 @@ namespace slopkit::ui::dialogs
             module.name,
             module.base,
             module.size,
-            disassembly_document_.machine_mode(),
+            mode,
             [this, id](process::JobResult&& result)
             {
                 if (strings_job_ != id)
@@ -733,12 +748,23 @@ namespace slopkit::ui::dialogs
                 {
                     strings_dialog_->refresh();
                 }
-                status_->set_status(widgets::StatusKind::info,
-                                    tr("Referenced-string scan of %1 found %2 string(s).")
-                                        .arg(QString::fromStdString(scan.module))
-                                        .arg(count));
-                log::info(log::category::scan,
-                          std::format("referenced-string scan of {} found {} string(s)", scan.module, count));
+                const std::string reason = analysis::describe(scan.report);
+                if (count == 0)
+                {
+                    status_->set_status(widgets::StatusKind::info,
+                                        tr("Referenced-string scan of %1 found 0 string(s). %2")
+                                            .arg(QString::fromStdString(scan.module), QString::fromStdString(reason)));
+                }
+                else
+                {
+                    status_->set_status(widgets::StatusKind::info,
+                                        tr("Referenced-string scan of %1 found %2 string(s).")
+                                            .arg(QString::fromStdString(scan.module))
+                                            .arg(count));
+                }
+                log::info(
+                    log::category::scan,
+                    std::format("referenced-string scan of {} found {} string(s): {}", scan.module, count, reason));
                 refresh_menu_command_state();
             });
 
@@ -780,6 +806,11 @@ namespace slopkit::ui::dialogs
     ReferencedStringsDialog* MemoryViewerDialog::referenced_strings_dialog() const noexcept
     {
         return strings_dialog_.get();
+    }
+
+    disasm::MachineMode MemoryViewerDialog::machine_mode() const noexcept
+    {
+        return disassembly_document_.machine_mode();
     }
 
     void MemoryViewerDialog::show_referenced_strings()

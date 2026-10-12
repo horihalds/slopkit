@@ -16,7 +16,7 @@ extern "C"
 #endif
 
 #define SLOPKIT_PLUGIN_ABI_VERSION_MAJOR 1
-#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 7
+#define SLOPKIT_PLUGIN_ABI_VERSION_MINOR 8
 #define SLOPKIT_PLUGIN_ABI_VERSION       ((SLOPKIT_PLUGIN_ABI_VERSION_MAJOR << 16) | SLOPKIT_PLUGIN_ABI_VERSION_MINOR)
 
     enum slopkit_status
@@ -105,6 +105,10 @@ extern "C"
         const char* path;
         uint64_t    entry;
         int32_t     is_main;
+
+        /* The target's pointer width in bytes (4 or 8); 0 when unknown. It sits
+           in what used to be trailing padding, so the layout is unchanged. */
+        uint32_t pointer_size;
     } slopkit_module_info;
 
     typedef struct slopkit_thread_info

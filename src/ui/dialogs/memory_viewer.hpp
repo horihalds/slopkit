@@ -89,6 +89,7 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] const components::ReferencedStringTable& referenced_strings() const noexcept;
         [[nodiscard]] const std::vector<process::ModuleInfo>&  modules() const noexcept;
         [[nodiscard]] ReferencedStringsDialog*                 referenced_strings_dialog() const noexcept;
+        [[nodiscard]] disasm::MachineMode                      machine_mode() const noexcept;
 
         [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
         void apply_live_readings(std::span<const ui::LiveReading> readings) override;

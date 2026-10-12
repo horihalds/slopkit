@@ -1370,7 +1370,13 @@ namespace slopkit::process
         const analysis::ModuleRange module {
             .name = request.module_name, .base = request.address, .end = request.address + request.size};
 
-        result.entries = analysis::find_string_references(read, module, *regions, request.machine_mode);
+        analysis::StringScanResult scan =
+            analysis::find_string_references(read, module, *regions, request.machine_mode);
+        result.entries = std::move(scan.references);
+        result.report  = std::move(scan.report);
+        log::debug(
+            log::category::scan,
+            std::format("referenced-string scan of {}: {}", request.module_name, analysis::describe(result.report)));
         return result;
     }
 }

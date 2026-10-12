@@ -1763,4 +1763,7 @@ TEST_CASE("the string-reference job sweeps the module over the fake plugin", "[p
     CHECK(result.entries[0].string_address == kBase + 0x200);
     CHECK(result.entries[0].text == "hello");
     CHECK_FALSE(result.entries[0].wide);
+    CHECK(result.report.code_regions == 1);
+    CHECK(result.report.strings == 1);
+    CHECK(result.report.instructions > 0);
 }

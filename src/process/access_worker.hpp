@@ -164,6 +164,7 @@ namespace slopkit::process
         std::string                            module;
         std::uint64_t                          base {};
         std::vector<analysis::StringReference> entries;
+        analysis::StringScanReport             report;
         std::optional<AccessError>             error;
     };
 

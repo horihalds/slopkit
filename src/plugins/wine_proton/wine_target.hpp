@@ -29,6 +29,10 @@ namespace slopkit::plugins::wine_proton
     // nothing when the process maps no executable PE image.
     [[nodiscard]] std::optional<std::string> guest_image_name(process::ProcessId pid);
 
+    // The guest image's pointer width in bytes (4 or 8), or 0 when its PE image
+    // cannot be identified.
+    [[nodiscard]] std::uint32_t guest_pointer_size(process::ProcessId pid);
+
     // The picker re-lists every two seconds, so a claimed pid's guest-image walk
     // is remembered instead of repeated per refresh; a name is therefore up to
     // the TTL stale, including after a pid is reused.

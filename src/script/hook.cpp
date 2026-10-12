@@ -28,7 +28,7 @@ namespace slopkit::script::hook
         [[nodiscard]] disasm::MachineMode machine_mode(const MemoryApi& memory)
         {
             const std::size_t pointer = memory.pointer_size ? memory.pointer_size() : sizeof(std::uint64_t);
-            return pointer == 4 ? disasm::MachineMode::legacy_32 : disasm::MachineMode::long_64;
+            return disasm::machine_mode_for(static_cast<std::uint32_t>(pointer));
         }
 
         [[nodiscard]] std::string expand(std::string_view text, std::span<const std::uint64_t> values)

@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "platform/linux/module_entry.hpp"
 #include "platform/linux/procfs.hpp"
 #include "plugins/support/plugin_support.hpp"
 
@@ -45,6 +46,17 @@ namespace
         if (const auto exe = slopkit::platform::read_exe(pid))
         {
             (void)slopkit::platform::flag_main_module_by_path(modules, *exe);
+        }
+        for (auto& module : modules)
+        {
+            if (module.path.empty())
+            {
+                continue;
+            }
+            if (const auto pointer_size = slopkit::platform::read_elf_pointer_size(module.path))
+            {
+                module.pointer_size = *pointer_size;
+            }
         }
     }
 

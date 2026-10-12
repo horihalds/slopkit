@@ -36,6 +36,8 @@ namespace slopkit::process
         bool          is_main {};
         std::string   name;
         std::string   path;
+        // The target's pointer width in bytes; 0 when the plugin cannot tell.
+        std::uint32_t pointer_size {};
     };
 
     [[nodiscard]] const ModuleInfo* main_module(std::span<const ModuleInfo> modules) noexcept;
