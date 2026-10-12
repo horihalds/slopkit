@@ -1686,3 +1686,81 @@ TEST_CASE("a script job with allocation globals is refused without an attached t
     CHECK_FALSE(result.run.ok);
     CHECK(result.run.error == "no target is attached");
 }
+
+TEST_CASE("the string-reference job sweeps the module over the fake plugin", "[process]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    // Without a session the job still answers, with the error set.
+    slopkit::process::StringRefsResult unattached;
+    worker.submit_string_references(worker.next_job_id(),
+                                    "mod",
+                                    kBase,
+                                    0x400,
+                                    slopkit::disasm::MachineMode::long_64,
+                                    [&](JobResult&& result)
+                                    {
+                                        unattached = std::get<slopkit::process::StringRefsResult>(std::move(result));
+                                    });
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return unattached.error.has_value();
+                 }));
+    CHECK(unattached.error == AccessError::internal);
+
+    REQUIRE(attach_target(worker));
+
+    access.backend()->region_list = {
+        slopkit::process::RegionInfo {        kBase, kBase + 0x100, 0, true, false,  true, false, "mod"},
+        slopkit::process::RegionInfo {kBase + 0x200, kBase + 0x300, 0, true, false, false, false, "mod"}
+    };
+    access.backend()->module_list = {slopkit::test::module_image("mod", kBase, 0x400)};
+
+    auto& flat = access.backend()->memory->flat;
+    flat.assign(0x1000, std::byte {0});
+    std::fill(flat.begin(), flat.begin() + 0x100, std::byte {0x90});
+    // LEA RAX, [kBase + 0x200] at kBase (7 bytes), then the ASCII string it points at.
+    const std::vector<std::byte> lea {std::byte {0x48},
+                                      std::byte {0x8D},
+                                      std::byte {0x05},
+                                      std::byte {0xF9},
+                                      std::byte {0x01},
+                                      std::byte {0x00},
+                                      std::byte {0x00}};
+    for (std::size_t index = 0; index < lea.size(); ++index)
+    {
+        flat[index] = lea[index];
+    }
+    const std::string text = "hello";
+    for (std::size_t index = 0; index < text.size(); ++index)
+    {
+        flat[0x200 + index] = static_cast<std::byte>(text[index]);
+    }
+
+    slopkit::process::StringRefsResult result;
+    REQUIRE(worker.submit_string_references(worker.next_job_id(),
+                                            "mod",
+                                            kBase,
+                                            0x400,
+                                            slopkit::disasm::MachineMode::long_64,
+                                            [&](JobResult&& job)
+                                            {
+                                                result = std::get<slopkit::process::StringRefsResult>(std::move(job));
+                                            }));
+    REQUIRE(pump(worker,
+                 [&]
+                 {
+                     return !result.entries.empty() || result.error.has_value();
+                 }));
+
+    CHECK_FALSE(result.error.has_value());
+    CHECK(result.module == "mod");
+    CHECK(result.base == kBase);
+    REQUIRE(result.entries.size() == 1);
+    CHECK(result.entries[0].instruction == kBase);
+    CHECK(result.entries[0].string_address == kBase + 0x200);
+    CHECK(result.entries[0].text == "hello");
+    CHECK_FALSE(result.entries[0].wide);
+}

@@ -22,6 +22,7 @@
 #include "ui/components/input_box.hpp"
 #include "ui/components/memory_view.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/dialogs/module_chooser.hpp"
 #include "ui/fonts.hpp"
 #include "ui/panels/debug_controls.hpp"
 #include "ui/panels/debugger_panel.hpp"
@@ -170,6 +171,12 @@ namespace slopkit::ui::dialogs
                         instruction_accesses(*row);
                     }
                 });
+        connect(menu_,
+                &panels::ViewerMenu::analyzeReferencedStringsRequested,
+                this,
+                &MemoryViewerDialog::prompt_string_analysis);
+        connect(
+            menu_, &panels::ViewerMenu::referencedStringsRequested, this, &MemoryViewerDialog::show_referenced_strings);
         connect(menu_,
                 &panels::ViewerMenu::hookRequested,
                 this,
@@ -381,6 +388,9 @@ namespace slopkit::ui::dialogs
 
         const bool listing_focused = go_to_target() == GoToTarget::disassembly;
         state.can_go_back          = listing_focused ? disassembly_->can_go_back() : view_->can_go_back();
+
+        state.can_analyze_strings = target_.valid() && !modules_.empty() && !strings_job_.has_value();
+        state.can_show_strings    = target_.valid() && !modules_.empty();
 
         menu_->set_command_state(state);
     }
@@ -653,8 +663,9 @@ namespace slopkit::ui::dialogs
 
     void MemoryViewerDialog::set_modules(std::vector<process::ModuleInfo> modules)
     {
-        document_.set_modules(modules);
-        disassembly_document_.set_modules(std::move(modules));
+        modules_ = std::move(modules);
+        document_.set_modules(modules_);
+        disassembly_document_.set_modules(modules_);
         debugger_->refresh();
     }
 
@@ -663,6 +674,138 @@ namespace slopkit::ui::dialogs
         document_.set_address_mode(mode);
         disassembly_document_.set_address_mode(mode);
         debugger_->refresh();
+    }
+
+    void MemoryViewerDialog::analyze_module(const process::ModuleInfo& module)
+    {
+        if (strings_job_.has_value() || !target_.valid())
+        {
+            return;
+        }
+
+        const process::JobId id = worker_.next_job_id();
+        strings_job_            = id;
+        status_->set_status(widgets::StatusKind::info,
+                            tr("Analyzing %1 for referenced strings...").arg(QString::fromStdString(module.name)));
+        log::info(log::category::scan, std::format("referenced-string scan of {} started", module.name));
+        refresh_menu_command_state();
+
+        const bool submitted = worker_.submit_string_references(
+            id,
+            module.name,
+            module.base,
+            module.size,
+            disassembly_document_.machine_mode(),
+            [this, id](process::JobResult&& result)
+            {
+                if (strings_job_ != id)
+                {
+                    return;
+                }
+                strings_job_.reset();
+
+                const auto& scan = std::get<process::StringRefsResult>(result);
+                if (scan.error.has_value())
+                {
+                    status_->set_status(widgets::StatusKind::warning,
+                                        tr("Could not analyze %1: %2")
+                                            .arg(QString::fromStdString(scan.module),
+                                                 QString::fromStdString(std::string(describe(*scan.error)))));
+                    refresh_menu_command_state();
+                    return;
+                }
+
+                std::vector<components::ReferencedString> entries;
+                entries.reserve(scan.entries.size());
+                for (const analysis::StringReference& entry : scan.entries)
+                {
+                    entries.push_back(components::ReferencedString {.instruction    = entry.instruction,
+                                                                    .string_address = entry.string_address,
+                                                                    .text           = entry.text,
+                                                                    .wide           = entry.wide});
+                }
+
+                const std::size_t count = entries.size();
+                strings_.set_module(scan.module, std::move(entries));
+                disassembly_document_.set_referenced_strings(&strings_);
+                disassembly_->viewport()->update();
+                if (strings_dialog_ != nullptr)
+                {
+                    strings_dialog_->refresh();
+                }
+                status_->set_status(widgets::StatusKind::info,
+                                    tr("Referenced-string scan of %1 found %2 string(s).")
+                                        .arg(QString::fromStdString(scan.module))
+                                        .arg(count));
+                log::info(log::category::scan,
+                          std::format("referenced-string scan of {} found {} string(s)", scan.module, count));
+                refresh_menu_command_state();
+            });
+
+        if (!submitted)
+        {
+            strings_job_.reset();
+            status_->set_status(widgets::StatusKind::warning, tr("Could not start the referenced-string analysis."));
+            refresh_menu_command_state();
+        }
+    }
+
+    void MemoryViewerDialog::prompt_string_analysis()
+    {
+        if (modules_.empty())
+        {
+            return;
+        }
+        ModuleChooserDialog chooser(modules_, this);
+        if (chooser.exec() != QDialog::Accepted)
+        {
+            return;
+        }
+        if (const auto module = chooser.selected_module(); module.has_value())
+        {
+            analyze_module(*module);
+        }
+    }
+
+    const components::ReferencedStringTable& MemoryViewerDialog::referenced_strings() const noexcept
+    {
+        return strings_;
+    }
+
+    const std::vector<process::ModuleInfo>& MemoryViewerDialog::modules() const noexcept
+    {
+        return modules_;
+    }
+
+    ReferencedStringsDialog* MemoryViewerDialog::referenced_strings_dialog() const noexcept
+    {
+        return strings_dialog_;
+    }
+
+    void MemoryViewerDialog::show_referenced_strings()
+    {
+        if (strings_dialog_ == nullptr)
+        {
+            strings_dialog_ = new ReferencedStringsDialog(strings_, this);
+            connect(strings_dialog_,
+                    &ReferencedStringsDialog::analyzeRequested,
+                    this,
+                    &MemoryViewerDialog::prompt_string_analysis);
+            connect(strings_dialog_,
+                    &ReferencedStringsDialog::instructionActivated,
+                    this,
+                    [this](std::uint64_t address)
+                    {
+                        disassembly_->navigate_to(address);
+                        disassembly_->set_selected_address(address);
+                        raise();
+                        activateWindow();
+                    });
+        }
+        strings_dialog_->refresh();
+        strings_dialog_->show();
+        strings_dialog_->raise();
+        strings_dialog_->activateWindow();
     }
 
     panels::DebuggerPanel* MemoryViewerDialog::debugger_panel() const noexcept
@@ -728,7 +871,19 @@ namespace slopkit::ui::dialogs
 
     std::vector<ui::LiveRequest> MemoryViewerDialog::next_live_request()
     {
-        patches_.note_target(target_.valid() ? target_.pid : 0);
+        const std::uint64_t pid = target_.valid() ? target_.pid : 0;
+        patches_.note_target(pid);
+        if (pid != strings_pid_)
+        {
+            strings_pid_ = pid;
+            strings_job_.reset();
+            strings_.clear();
+            disassembly_->viewport()->update();
+            if (strings_dialog_ != nullptr)
+            {
+                strings_dialog_->refresh();
+            }
+        }
         std::vector<ui::LiveRequest>       requests = document_.next_live_request();
         const std::vector<ui::LiveRequest> code     = disassembly_document_.next_live_request();
         requests.insert(requests.end(), code.begin(), code.end());

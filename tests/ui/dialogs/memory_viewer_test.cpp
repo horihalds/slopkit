@@ -1,6 +1,8 @@
 #include <catch2/catch.hpp>
 
 #include <cmath>
+#include <ranges>
+#include <string_view>
 
 #include <QAction>
 #include <QMenu>
@@ -13,6 +15,7 @@
 #include "support/ui_helpers.hpp"
 #include "ui/components/disassembly_view.hpp"
 #include "ui/components/memory_view.hpp"
+#include "ui/dialogs/module_chooser.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/register_model.hpp"
 #include "ui/panels/debug_controls.hpp"
@@ -1821,4 +1824,79 @@ TEST_CASE("the viewer re-gates its Start/Stop surfaces when the attached target 
     viewer.refresh_target_state();
     CHECK_FALSE(controls->start_stop_button()->isEnabled());
     CHECK_FALSE(menu->start_stop_action()->isEnabled());
+}
+
+TEST_CASE("a module analysis comments the listing and reports it", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+
+    access.regions = {
+        slopkit::process::RegionInfo {0x1000, 0x1100, 0, true, false,  true, false, "app"},
+        slopkit::process::RegionInfo {0x1200, 0x1300, 0, true, false, false, false, "app"}
+    };
+
+    // LEA RAX, [0x1200] at 0x1000, then the ASCII string it points at.
+    const std::vector<std::byte> lea {std::byte {0x48},
+                                      std::byte {0x8D},
+                                      std::byte {0x05},
+                                      std::byte {0xF9},
+                                      std::byte {0x01},
+                                      std::byte {0x00},
+                                      std::byte {0x00}};
+    for (std::size_t index = 0; index < lea.size(); ++index)
+    {
+        access.memory->bytes[0x1000 + index] = lea[index];
+    }
+    const std::string text = "hello";
+    for (std::size_t index = 0; index < text.size(); ++index)
+    {
+        access.memory->bytes[0x1200 + index] = static_cast<std::byte>(text[index]);
+    }
+
+    attach_app_session(worker);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    viewer.set_modules({module_image("app", 0x1000, 0x1000)});
+    viewer.show();
+    QCoreApplication::processEvents();
+
+    // The chooser lists the target's modules and hands back the picked one.
+    slopkit::ui::dialogs::ModuleChooserDialog chooser(viewer.modules(), &viewer);
+    REQUIRE(chooser.count() == 1);
+    chooser.set_current_index(0);
+    REQUIRE(chooser.selected_module().has_value());
+    CHECK(chooser.selected_module()->name == "app");
+
+    viewer.analyze_module(*chooser.selected_module());
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return viewer.referenced_strings().total() == 1;
+                    }));
+
+    const auto logged = [&records](std::string_view needle)
+    {
+        return std::ranges::any_of(records,
+                                   [needle](const slopkit::log::Record& record)
+                                   {
+                                       return record.message.find(needle) != std::string::npos;
+                                   });
+    };
+    CHECK(logged("referenced-string scan of app started"));
+    CHECK(logged("referenced-string scan of app found 1 string(s)"));
+    CHECK(viewer.status_text().contains(QStringLiteral("found 1 string")));
+
+    viewer.hide();
 }

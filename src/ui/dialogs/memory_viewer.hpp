@@ -17,11 +17,14 @@
 #include "ui/components/code_patch.hpp"
 #include "ui/components/disassembly_document.hpp"
 #include "ui/components/memory_view_document.hpp"
+#include "ui/components/referenced_strings.hpp"
 #include "ui/debug_session.hpp"
+#include "ui/dialogs/referenced_strings.hpp"
 #include "ui/live_values.hpp"
 
 #include <QByteArray>
 #include <QDialog>
+#include <QPointer>
 #include <QString>
 
 class QSplitter;
@@ -81,6 +84,12 @@ namespace slopkit::ui::dialogs
         void set_modules(std::vector<process::ModuleInfo> modules);
         void set_address_mode(ui::AddressMode mode);
 
+        void analyze_module(const process::ModuleInfo& module);
+
+        [[nodiscard]] const components::ReferencedStringTable& referenced_strings() const noexcept;
+        [[nodiscard]] const std::vector<process::ModuleInfo>&  modules() const noexcept;
+        [[nodiscard]] ReferencedStringsDialog*                 referenced_strings_dialog() const noexcept;
+
         [[nodiscard]] std::vector<ui::LiveRequest> next_live_request() override;
         void apply_live_readings(std::span<const ui::LiveReading> readings) override;
 
@@ -113,6 +122,8 @@ namespace slopkit::ui::dialogs
 
         void                      prompt_go_to();
         void                      prompt_go_to(GoToTarget target);
+        void                      prompt_string_analysis();
+        void                      show_referenced_strings();
         [[nodiscard]] std::string validate_go_to(std::string_view text, GoToTarget target) const;
         void                      resolve_go_to(const std::string& expression, GoToTarget target);
 
@@ -161,6 +172,12 @@ namespace slopkit::ui::dialogs
         QSplitter*                      code_split_ {};
         bool                            ratios_applied_ {false};
         std::optional<process::JobId>   resolve_job_;
+
+        std::vector<process::ModuleInfo>  modules_;
+        components::ReferencedStringTable strings_;
+        std::optional<process::JobId>     strings_job_;
+        std::uint64_t                     strings_pid_ {};
+        QPointer<ReferencedStringsDialog> strings_dialog_;
     };
 
 }

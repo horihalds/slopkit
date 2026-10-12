@@ -63,6 +63,13 @@ namespace slopkit::ui::panels
         tools_menu_->addSeparator();
         instruction_accesses_action_ = tools_menu_->addAction(tr("Find out what addresses this instruction accesses"));
         connect(instruction_accesses_action_, &QAction::triggered, this, &ViewerMenu::instructionAccessesRequested);
+        analyze_referenced_strings_action_ = tools_menu_->addAction(tr("Analyze Referenced Strings"));
+        connect(analyze_referenced_strings_action_,
+                &QAction::triggered,
+                this,
+                &ViewerMenu::analyzeReferencedStringsRequested);
+        referenced_strings_action_ = tools_menu_->addAction(tr("Referenced Strings..."));
+        connect(referenced_strings_action_, &QAction::triggered, this, &ViewerMenu::referencedStringsRequested);
 
         start_stop_action_ = debug_menu_->addAction(tr("Start Debugging"));
         connect(start_stop_action_, &QAction::triggered, this, &ViewerMenu::toggle_session);
@@ -246,6 +253,17 @@ namespace slopkit::ui::panels
                 ? tr("Resolve this instruction's memory operands from live registers; the debugger is attached first "
                      "(after a confirmation) when no session is running.")
                 : tr("Only an instruction with a memory operand can be resolved."));
+
+        analyze_referenced_strings_action_->setEnabled(command_state_.can_analyze_strings);
+        analyze_referenced_strings_action_->setToolTip(
+            command_state_.can_analyze_strings
+                ? tr("Decode a module and comment every instruction that points at a string it contains.")
+                : tr("Attach to a target with a known module list and wait for any running analysis first."));
+
+        referenced_strings_action_->setEnabled(command_state_.can_show_strings);
+        referenced_strings_action_->setToolTip(command_state_.can_show_strings
+                                                   ? tr("List the referenced strings found so far.")
+                                                   : tr("Analyze a module first."));
     }
 
     QMenu* ViewerMenu::file_menu() const noexcept
@@ -356,6 +374,16 @@ namespace slopkit::ui::panels
     QAction* ViewerMenu::instruction_accesses_action() const noexcept
     {
         return instruction_accesses_action_;
+    }
+
+    QAction* ViewerMenu::analyze_referenced_strings_action() const noexcept
+    {
+        return analyze_referenced_strings_action_;
+    }
+
+    QAction* ViewerMenu::referenced_strings_action() const noexcept
+    {
+        return referenced_strings_action_;
     }
 
 }

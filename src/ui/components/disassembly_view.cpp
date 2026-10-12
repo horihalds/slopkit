@@ -37,6 +37,8 @@ namespace slopkit::ui::components
 
         constexpr int kColumnGap = 6;
 
+        constexpr std::size_t kMaxInstructionBytes = 15;
+
         constexpr int kMinInstructionChars = 16;
 
         bool is_muted(const DisassemblyDocument::Row& row)
@@ -196,6 +198,19 @@ namespace slopkit::ui::components
                     }
                     x += metrics.horizontalAdvance(run.text);
                 }
+                if (const QString comment = document_.row_comment(index); !comment.isEmpty())
+                {
+                    int           comment_x = text_left + metrics.horizontalAdvance(row.text) + kMarkerGap;
+                    const QString marker    = document_.row_annotation(index);
+                    if (!marker.isEmpty())
+                    {
+                        comment_x += metrics.horizontalAdvance(marker) + kMarkerGap;
+                    }
+                    if (position.x() >= comment_x)
+                    {
+                        return comment;
+                    }
+                }
             }
             return {};
         }
@@ -255,13 +270,18 @@ namespace slopkit::ui::components
         const int natural_bytes =
             metrics.horizontalAdvance(QString(static_cast<qsizetype>(document_.bytes_width()), QLatin1Char('0')))
             + kCellPadding;
-        const int room      = viewport()->width() - 2 * kMargin - address_width_ - 2 * kColumnGap;
-        const int bytes_max = std::max(min_bytes, room - kMinInstructionChars * glyph);
-        bytes_width_ = std::clamp(bytes_width_user_ > 0 ? bytes_width_user_ : natural_bytes, min_bytes, bytes_max);
+        const int bytes_cap =
+            metrics.horizontalAdvance(QString(static_cast<qsizetype>(kMaxInstructionBytes * 3 - 1), QLatin1Char('0')))
+            + kCellPadding;
+        const int room        = viewport()->width() - 2 * kMargin - address_width_ - 2 * kColumnGap;
+        const int bytes_max   = std::max(min_bytes, room - kMinInstructionChars * glyph);
+        const int bytes_upper = std::max(min_bytes, std::min(bytes_max, bytes_cap));
+        bytes_width_ = std::clamp(bytes_width_user_ > 0 ? bytes_width_user_ : natural_bytes, min_bytes, bytes_upper);
 
         const int         content_width = std::max(0, bytes_width_ - kCellPadding);
-        const std::size_t max_tokens    = std::max<std::size_t>(1, (document_.bytes_width() + 1) / 3);
-        bytes_per_line_                 = 1;
+        const std::size_t max_tokens =
+            std::min<std::size_t>(std::max<std::size_t>(1, (document_.bytes_width() + 1) / 3), kMaxInstructionBytes);
+        bytes_per_line_ = 1;
         for (std::size_t tokens = 1; tokens <= max_tokens; ++tokens)
         {
             const int width =
@@ -793,13 +813,24 @@ namespace slopkit::ui::components
                     x += painter.fontMetrics().horizontalAdvance(run.text);
                 }
             }
+            int used = painter.fontMetrics().horizontalAdvance(row.text);
             painter.setPen(base);
             if (const QString marker = document_.row_annotation(index); !marker.isEmpty())
             {
-                const int used = painter.fontMetrics().horizontalAdvance(row.text) + kMarkerGap;
+                used += kMarkerGap;
                 painter.drawText(QRect(text_left + used, y, std::max(0, text_width - used), line_height_),
                                  Qt::AlignLeft | Qt::AlignVCenter,
                                  marker);
+                used += painter.fontMetrics().horizontalAdvance(marker);
+            }
+            if (const QString comment = document_.row_comment(index); !comment.isEmpty())
+            {
+                used += kMarkerGap;
+                const int     remaining = std::max(0, text_width - used);
+                const QString elided    = painter.fontMetrics().elidedText(comment, Qt::ElideRight, remaining);
+                painter.setPen(theme.syntax_comment);
+                painter.drawText(
+                    QRect(text_left + used, y, remaining, line_height_), Qt::AlignLeft | Qt::AlignVCenter, elided);
             }
 
             for (std::size_t line = 0; line < lines; ++line)

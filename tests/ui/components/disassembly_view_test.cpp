@@ -1154,3 +1154,52 @@ TEST_CASE("the selected instruction survives a scroll", "[ui]")
 
     view.hide();
 }
+
+TEST_CASE("the bytes column cannot be dragged past the fifteen-byte width", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+
+    DisassemblyView view(fixture.document);
+    view.resize(1400, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    const QFontMetrics metrics(slopkit::ui::mono_font());
+    const int          cap = metrics.horizontalAdvance(QString(44, QLatin1Char('0'))) + 10;
+    REQUIRE(view.bytes_width() == cap);
+    CHECK(view.bytes_per_line() == 15);
+
+    const int boundary = 4 + view.address_width() + 6 + view.bytes_width();
+    mouse_event(view, QEvent::MouseButtonPress, QPoint(boundary, 2), Qt::LeftButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseMove, QPoint(1380, 2), Qt::NoButton, Qt::LeftButton);
+    mouse_event(view, QEvent::MouseButtonRelease, QPoint(1380, 2), Qt::LeftButton, Qt::NoButton);
+
+    CHECK(view.bytes_width() == cap);
+    CHECK(view.bytes_per_line() <= 15);
+
+    view.hide();
+}
+
+TEST_CASE("a narrow bytes column clamps to the two-character minimum", "[ui]")
+{
+    application();
+    ViewFixture fixture;
+    fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+
+    DisassemblyView view(fixture.document);
+    view.resize(200, 600);
+    view.show();
+    view.set_first_address(kCode);
+    fixture.pass();
+
+    const QFontMetrics metrics(slopkit::ui::mono_font());
+    const int          minimum = metrics.horizontalAdvance(QStringLiteral("00")) + 10;
+    CHECK(view.bytes_width() == minimum);
+    CHECK(view.bytes_per_line() == 1);
+    CHECK(view.row_lines(0) == 15);
+
+    view.hide();
+}

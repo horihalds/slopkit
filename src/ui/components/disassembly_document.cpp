@@ -481,6 +481,26 @@ namespace slopkit::ui::components
         return (patch->nop ? QStringLiteral("NOPed: ") : QStringLiteral("Edited: ")) + patch->original_text;
     }
 
+    void DisassemblyDocument::set_referenced_strings(const ReferencedStringTable* strings)
+    {
+        referenced_strings_ = strings;
+    }
+
+    QString DisassemblyDocument::row_comment(std::size_t index) const
+    {
+        if (referenced_strings_ == nullptr || index >= instructions_.size())
+        {
+            return {};
+        }
+        QString comment;
+        for (const ReferencedString& entry : referenced_strings_->at(instructions_[index].address))
+        {
+            comment += entry.wide ? QStringLiteral("; L\"%1\"").arg(QString::fromStdString(entry.text))
+                                  : QStringLiteral("; \"%1\"").arg(QString::fromStdString(entry.text));
+        }
+        return comment;
+    }
+
     bool DisassemblyDocument::nop_instruction(std::size_t index)
     {
         if (!target_.valid())

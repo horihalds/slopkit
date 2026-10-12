@@ -179,6 +179,24 @@ that one set to the UI, which pages through it (the snapshot's `hits` copies onl
 the first `kDisplayPage` rows as a cheap preview). A `Next Scan` therefore refines
 exactly the set the display pages through.
 
+## Referenced strings
+
+`analysis::find_string_references` (`src/analysis/string_references.cpp`) is a
+target-free sweep of one module: it decodes every executable, file-backed region
+inside the module in `chunk_size` reads and resolves each instruction's **direct**
+memory operand (RIP-relative or absolute, never a base/index register) to an
+absolute target. A target is accepted only when it lands in a readable,
+non-executable region of the same module and the bytes there form an ASCII string
+(at least `min_length` printable characters, NUL-terminated) or a UTF-16LE string
+(same rule over 16-bit code units), capped at `max_string_bytes`. Validated
+addresses — hits and misses — are cached, so a trampoline or vtable that many
+instructions reference costs one read. A read spanning a chunk boundary carries
+up to the longest x86 instruction (15 bytes) into the next chunk so an
+instruction is never lost at the seam, and a failed decode resynchronises one
+byte forward. The result is the address-sorted `StringReference` list the Memory
+Viewer paints as per-instruction comments and lists in its Referenced strings
+window; the sweep itself performs no reads on the UI thread.
+
 ## The debugger
 
 The debugger is opt-in and is the only `ptrace` user in the project. It sits

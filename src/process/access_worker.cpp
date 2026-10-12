@@ -349,6 +349,24 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_string_references(JobId               id,
+                                                std::string         module,
+                                                std::uint64_t       base,
+                                                std::uint64_t       size,
+                                                disasm::MachineMode mode,
+                                                JobCallback         on_done)
+    {
+        Request request;
+        request.kind         = JobKind::string_references;
+        request.id           = id;
+        request.module_name  = std::move(module);
+        request.address      = base;
+        request.size         = static_cast<std::size_t>(size);
+        request.machine_mode = mode;
+        request.on_done      = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_write(
         JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done)
     {
@@ -464,6 +482,8 @@ namespace slopkit::process
             return "detach";
         case JobKind::resolve_expressions:
             return "resolve-expressions";
+        case JobKind::string_references:
+            return "string-references";
         }
         return "unknown";
     }
@@ -504,6 +524,8 @@ namespace slopkit::process
             return do_detach();
         case JobKind::resolve_expressions:
             return do_resolve(request);
+        case JobKind::string_references:
+            return do_string_references(request);
         }
         return ListResult {};
     }
@@ -1315,4 +1337,40 @@ namespace slopkit::process
         return result;
     }
 
+    StringRefsResult AccessWorker::do_string_references(const Request& request)
+    {
+        StringRefsResult result;
+        result.module = request.module_name;
+        result.base   = request.address;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::scan,
+                         std::format("referenced-string analysis of {} requested without an attached target",
+                                     request.module_name));
+            return result;
+        }
+
+        const auto regions = session_->regions();
+        if (!regions)
+        {
+            result.error = regions.error();
+            log::warning(log::category::scan,
+                         std::format("region list for the referenced-string analysis of {} is unavailable: {}",
+                                     request.module_name,
+                                     describe(regions.error())));
+            return result;
+        }
+
+        const analysis::ReadIntoFn read = [this](std::uint64_t address, std::span<std::byte> buffer)
+        {
+            return session_->read_into(address, buffer);
+        };
+        const analysis::ModuleRange module {
+            .name = request.module_name, .base = request.address, .end = request.address + request.size};
+
+        result.entries = analysis::find_string_references(read, module, *regions, request.machine_mode);
+        return result;
+    }
 }

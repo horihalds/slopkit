@@ -17,6 +17,8 @@
 #include <variant>
 #include <vector>
 
+#include "analysis/string_references.hpp"
+#include "disasm/decoder.hpp"
 #include "expr/resolver.hpp"
 #include "process/access.hpp"
 #include "process/types.hpp"
@@ -157,6 +159,14 @@ namespace slopkit::process
         std::optional<AccessError> error;
     };
 
+    struct StringRefsResult
+    {
+        std::string                            module;
+        std::uint64_t                          base {};
+        std::vector<analysis::StringReference> entries;
+        std::optional<AccessError>             error;
+    };
+
     using JobResult = std::variant<ListResult,
                                    ProbeResult,
                                    AttachResult,
@@ -169,7 +179,8 @@ namespace slopkit::process
                                    FreezeResult,
                                    SuspendResult,
                                    MemoryMapResult,
-                                   ResolveResult>;
+                                   ResolveResult,
+                                   StringRefsResult>;
 
     using JobCallback = std::move_only_function<void(JobResult&&)>;
 
@@ -197,6 +208,12 @@ namespace slopkit::process
                                         std::vector<expr::ModuleRef> modules,
                                         std::size_t                  pointer_size,
                                         JobCallback                  on_done);
+        bool submit_string_references(JobId               id,
+                                      std::string         module,
+                                      std::uint64_t       base,
+                                      std::uint64_t       size,
+                                      disasm::MachineMode mode,
+                                      JobCallback         on_done);
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
@@ -240,6 +257,7 @@ namespace slopkit::process
             resume,
             detach,
             resolve_expressions,
+            string_references,
         };
 
         struct Request
@@ -260,6 +278,8 @@ namespace slopkit::process
             std::string                  description;
             std::string                  chunk;
             std::string                  function;
+            std::string                  module_name;
+            disasm::MachineMode          machine_mode {disasm::MachineMode::long_64};
             JobCallback                  on_done;
         };
 
@@ -307,6 +327,7 @@ namespace slopkit::process
         SuspendResult           do_resume(const Request& request);
         AttachResult            do_detach();
         ResolveResult           do_resolve(const Request& request);
+        StringRefsResult        do_string_references(const Request& request);
 
         ProcessAccess&                access_;
         script::SymbolTable&          symbols_;

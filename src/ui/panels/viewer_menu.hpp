@@ -32,6 +32,8 @@ namespace slopkit::ui::panels
             bool    selected_is_patched {};
             bool    selected_has_memory_operand {};
             bool    can_hook {};
+            bool    can_analyze_strings {};
+            bool    can_show_strings {};
             QString restore_description;
         };
 
@@ -68,6 +70,8 @@ namespace slopkit::ui::panels
         [[nodiscard]] QAction* edit_action() const noexcept;
         [[nodiscard]] QAction* hook_action() const noexcept;
         [[nodiscard]] QAction* instruction_accesses_action() const noexcept;
+        [[nodiscard]] QAction* analyze_referenced_strings_action() const noexcept;
+        [[nodiscard]] QAction* referenced_strings_action() const noexcept;
 
     signals:
         void breakpointsRequested();
@@ -81,6 +85,8 @@ namespace slopkit::ui::panels
         void editRequested();
         void hookRequested();
         void instructionAccessesRequested();
+        void analyzeReferencedStringsRequested();
+        void referencedStringsRequested();
 
     private:
         void build_menus();
@@ -116,6 +122,8 @@ namespace slopkit::ui::panels
         QAction* edit_action_ {};
         QAction* hook_action_ {};
         QAction* instruction_accesses_action_ {};
+        QAction* analyze_referenced_strings_action_ {};
+        QAction* referenced_strings_action_ {};
 
         CommandState                 command_state_;
         std::optional<std::uint64_t> selected_address_;

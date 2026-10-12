@@ -1018,3 +1018,33 @@ TEST_CASE("a hook window that leaves the decoded bytes is refused", "[ui]")
     CHECK_FALSE(analysis.target.has_value());
     CHECK(analysis.reason.find("runs past") != std::string::npos);
 }
+
+TEST_CASE("the disassembly document renders referenced-string comments", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    slopkit::ui::components::ReferencedStringTable strings;
+
+    CHECK(fixture.document.row_comment(0).isEmpty());
+
+    fixture.document.set_referenced_strings(&strings);
+    CHECK(fixture.document.row_comment(0).isEmpty());
+
+    strings.set_module("mod",
+                       {
+                           {.instruction = kCode, .string_address = 0x3000, .text = "hello", .wide = false}
+    });
+    CHECK(fixture.document.row_comment(0) == QStringLiteral("; \"hello\""));
+    CHECK(fixture.document.row_comment(1).isEmpty());
+    CHECK(fixture.document.row_comment(99).isEmpty());
+
+    strings.set_module("mod",
+                       {
+                           {.instruction = kCode + 1, .string_address = 0x3004, .text = "wide", .wide = true}
+    });
+    CHECK(fixture.document.row_comment(0).isEmpty());
+    CHECK(fixture.document.row_comment(1) == QStringLiteral("; L\"wide\""));
+}

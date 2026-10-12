@@ -17,6 +17,7 @@
 #include "script/symbols.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/code_patch.hpp"
+#include "ui/components/referenced_strings.hpp"
 #include "ui/live_values.hpp"
 
 #include <QObject>
@@ -115,6 +116,9 @@ namespace slopkit::ui::components
         [[nodiscard]] bool             editable(std::size_t index) const;
         [[nodiscard]] QString          row_annotation(std::size_t index) const;
 
+        void                  set_referenced_strings(const ReferencedStringTable* strings);
+        [[nodiscard]] QString row_comment(std::size_t index) const;
+
         struct HookAnalysis
         {
             std::optional<script::HookTarget> target;
@@ -177,6 +181,8 @@ namespace slopkit::ui::components
         std::vector<disasm::Instruction> instructions_;
         std::size_t                      decoded_offset_ {0};
         bool                             decode_exhausted_ {false};
+
+        const ReferencedStringTable* referenced_strings_ {nullptr};
     };
 
 }
