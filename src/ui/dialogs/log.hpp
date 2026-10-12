@@ -23,7 +23,7 @@ namespace slopkit::ui::dialogs
         Q_OBJECT
 
     public:
-        explicit LogDialog(QWidget* parent = nullptr);
+        LogDialog();
 
         void set_dialog_directory(const QString& directory);
 

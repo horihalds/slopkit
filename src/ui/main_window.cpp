@@ -160,6 +160,21 @@ namespace slopkit::ui
         return memory_view_.get();
     }
 
+    dialogs::LogDialog* MainWindow::log() const noexcept
+    {
+        return log_.get();
+    }
+
+    dialogs::BreakpointsDialog* MainWindow::breakpoints() const noexcept
+    {
+        return breakpoints_.get();
+    }
+
+    dialogs::AccessWatchDialog* MainWindow::access_watch() const noexcept
+    {
+        return access_watch_.get();
+    }
+
     void MainWindow::on_open_table_requested()
     {
         const std::optional<QString> path = address_list_->choose_table_path();
@@ -408,15 +423,15 @@ namespace slopkit::ui
                 this,
                 &MainWindow::show_breakpoints);
 
-        log_ = new dialogs::LogDialog(this);
-        new WindowGeometryKeeper(*log_, settings_, WindowId::log, log_);
+        log_ = std::make_unique<dialogs::LogDialog>();
+        new WindowGeometryKeeper(*log_, settings_, WindowId::log, log_.get());
 
-        breakpoints_ = new dialogs::BreakpointsDialog(debug_, this);
-        new WindowGeometryKeeper(*breakpoints_, settings_, WindowId::breakpoints, breakpoints_);
+        breakpoints_ = std::make_unique<dialogs::BreakpointsDialog>(debug_);
+        new WindowGeometryKeeper(*breakpoints_, settings_, WindowId::breakpoints, breakpoints_.get());
 
-        access_watch_ = new dialogs::AccessWatchDialog(debug_, worker_, target_, this);
-        new WindowGeometryKeeper(*access_watch_, settings_, WindowId::access_watch, access_watch_);
-        connect(access_watch_,
+        access_watch_ = std::make_unique<dialogs::AccessWatchDialog>(debug_, worker_, target_);
+        new WindowGeometryKeeper(*access_watch_, settings_, WindowId::access_watch, access_watch_.get());
+        connect(access_watch_.get(),
                 &dialogs::AccessWatchDialog::followRequested,
                 this,
                 [this](std::uint64_t address)
@@ -500,7 +515,7 @@ namespace slopkit::ui
         log_->set_dialog_directory(persisted.last_directory);
 
         connect(address_list_, &panels::AddressListPanel::tablePathChanged, this, &MainWindow::remember_table_path);
-        connect(log_, &dialogs::LogDialog::logSaved, this, &MainWindow::remember_file_path);
+        connect(log_.get(), &dialogs::LogDialog::logSaved, this, &MainWindow::remember_file_path);
 
         if (initial_table_path_.isEmpty() && persisted.auto_load_last_table && !persisted.last_table_path.isEmpty())
         {

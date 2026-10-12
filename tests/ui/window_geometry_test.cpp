@@ -185,7 +185,7 @@ TEST_CASE("the Log dialog reopens at its remembered size", "[window_geometry]")
         QAction* log_action = window.menuBar()->actions().at(1)->menu()->actions().first();
         REQUIRE(log_action->text() == QStringLiteral("Log"));
         log_action->trigger();
-        auto* log_dialog = window.findChild<slopkit::ui::dialogs::LogDialog*>();
+        auto* log_dialog = window.log();
         REQUIRE(log_dialog != nullptr);
 
         log_dialog->resize(700, 640);
@@ -212,7 +212,7 @@ TEST_CASE("the Log dialog reopens at its remembered size", "[window_geometry]")
 
         QAction* log_action = window.menuBar()->actions().at(1)->menu()->actions().first();
         log_action->trigger();
-        auto* log_dialog = window.findChild<slopkit::ui::dialogs::LogDialog*>();
+        auto* log_dialog = window.log();
         REQUIRE(log_dialog != nullptr);
         CHECK(log_dialog->size() == saved_size);
         CHECK(log_dialog->pos() == saved_position);

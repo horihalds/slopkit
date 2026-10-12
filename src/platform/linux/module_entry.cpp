@@ -216,12 +216,7 @@ namespace slopkit::platform
             log::warning(log::category::process, std::format("cannot read the PE header of {}", path.string()));
             return std::nullopt;
         }
-        auto kind = parse_pe_kind(std::span<const std::byte>(header->data.data(), header->size));
-        if (!kind)
-        {
-            log::warning(log::category::process, std::format("cannot parse the PE header of {}", path.string()));
-        }
-        return kind;
+        return parse_pe_kind(std::span<const std::byte>(header->data.data(), header->size));
     }
 
     std::optional<std::uint16_t> parse_pe_machine(std::span<const std::byte> bytes)

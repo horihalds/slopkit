@@ -101,6 +101,16 @@ namespace slopkit::ui
         // like any other window instead of keeping it above this one.
         [[nodiscard]] dialogs::MemoryViewerDialog* memory_viewer() const noexcept;
 
+        // The detached Log window, or nullptr before build_dialogs(); like the
+        // Memory Viewer it is a parentless top-level window.
+        [[nodiscard]] dialogs::LogDialog* log() const noexcept;
+
+        // The detached Breakpoints and Access Watch windows, or nullptr before
+        // build_dialogs(); like the Memory Viewer they are parentless top-level
+        // windows.
+        [[nodiscard]] dialogs::BreakpointsDialog* breakpoints() const noexcept;
+        [[nodiscard]] dialogs::AccessWatchDialog* access_watch() const noexcept;
+
     protected:
         bool event(QEvent* event) override;
 
@@ -176,9 +186,9 @@ namespace slopkit::ui
         dialogs::AddAddressDialog*                   add_address_ {};
         dialogs::TableSettingsDialog*                table_settings_ {};
         std::unique_ptr<dialogs::MemoryViewerDialog> memory_view_;
-        dialogs::LogDialog*                          log_ {};
-        dialogs::BreakpointsDialog*                  breakpoints_ {};
-        dialogs::AccessWatchDialog*                  access_watch_ {};
+        std::unique_ptr<dialogs::LogDialog>          log_;
+        std::unique_ptr<dialogs::BreakpointsDialog>  breakpoints_;
+        std::unique_ptr<dialogs::AccessWatchDialog>  access_watch_;
         dialogs::SettingsDialog*                     settings_dialog_ {};
 
         QLabel*               process_label_ {};

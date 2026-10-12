@@ -20,12 +20,14 @@ namespace slopkit::ui::dialogs
         constexpr int kKindRole = Qt::UserRole;
     }
 
-    BreakpointsDialog::BreakpointsDialog(debug::Controller& controller, QWidget* parent)
-        : QDialog(parent), controller_(controller)
+    BreakpointsDialog::BreakpointsDialog(debug::Controller& controller) : QDialog(nullptr), controller_(controller)
     {
         setWindowTitle(tr("Breakpoints"));
         setWindowFlag(Qt::Window, true);
         resize(560, 320);
+        // A companion window: it must not own the process lifetime, or closing
+        // the shell would leave slopkit running.
+        setAttribute(Qt::WA_QuitOnClose, false);
         build_layout();
 
         connect(&controller_, &debug::Controller::breakpointsChanged, this, &BreakpointsDialog::refresh);

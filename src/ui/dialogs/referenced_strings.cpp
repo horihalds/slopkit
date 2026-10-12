@@ -21,12 +21,15 @@
 
 namespace slopkit::ui::dialogs
 {
-    ReferencedStringsDialog::ReferencedStringsDialog(const components::ReferencedStringTable& table, QWidget* parent)
-        : QDialog(parent), table_(table)
+    ReferencedStringsDialog::ReferencedStringsDialog(const components::ReferencedStringTable& table)
+        : QDialog(nullptr), table_(table)
     {
         setWindowTitle(tr("Referenced strings"));
         setWindowFlag(Qt::Window, true);
         resize(760, 460);
+        // A companion window: it must not own the process lifetime, or closing
+        // the shell would leave slopkit running.
+        setAttribute(Qt::WA_QuitOnClose, false);
 
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(6, 6, 6, 6);

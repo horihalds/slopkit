@@ -779,19 +779,19 @@ namespace slopkit::ui::dialogs
 
     ReferencedStringsDialog* MemoryViewerDialog::referenced_strings_dialog() const noexcept
     {
-        return strings_dialog_;
+        return strings_dialog_.get();
     }
 
     void MemoryViewerDialog::show_referenced_strings()
     {
         if (strings_dialog_ == nullptr)
         {
-            strings_dialog_ = new ReferencedStringsDialog(strings_, this);
-            connect(strings_dialog_,
+            strings_dialog_ = std::make_unique<ReferencedStringsDialog>(strings_);
+            connect(strings_dialog_.get(),
                     &ReferencedStringsDialog::analyzeRequested,
                     this,
                     &MemoryViewerDialog::prompt_string_analysis);
-            connect(strings_dialog_,
+            connect(strings_dialog_.get(),
                     &ReferencedStringsDialog::instructionActivated,
                     this,
                     [this](std::uint64_t address)

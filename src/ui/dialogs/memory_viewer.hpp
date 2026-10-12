@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -24,7 +25,6 @@
 
 #include <QByteArray>
 #include <QDialog>
-#include <QPointer>
 #include <QString>
 
 class QSplitter;
@@ -173,11 +173,11 @@ namespace slopkit::ui::dialogs
         bool                            ratios_applied_ {false};
         std::optional<process::JobId>   resolve_job_;
 
-        std::vector<process::ModuleInfo>  modules_;
-        components::ReferencedStringTable strings_;
-        std::optional<process::JobId>     strings_job_;
-        std::uint64_t                     strings_pid_ {};
-        QPointer<ReferencedStringsDialog> strings_dialog_;
+        std::vector<process::ModuleInfo>         modules_;
+        components::ReferencedStringTable        strings_;
+        std::optional<process::JobId>            strings_job_;
+        std::uint64_t                            strings_pid_ {};
+        std::unique_ptr<ReferencedStringsDialog> strings_dialog_;
     };
 
 }

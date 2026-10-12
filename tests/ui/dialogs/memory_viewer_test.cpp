@@ -1898,5 +1898,19 @@ TEST_CASE("a module analysis comments the listing and reports it", "[ui]")
     CHECK(logged("referenced-string scan of app found 1 string(s)"));
     CHECK(viewer.status_text().contains(QStringLiteral("found 1 string")));
 
+    // The Referenced strings window is created lazily from the Tools menu and is
+    // an independent top-level window owned by the viewer.
+    auto* menu = viewer.viewer_menu();
+    REQUIRE(menu != nullptr);
+    CHECK(viewer.referenced_strings_dialog() == nullptr);
+    REQUIRE(menu->referenced_strings_action()->isEnabled());
+    menu->referenced_strings_action()->trigger();
+    auto* strings_window = viewer.referenced_strings_dialog();
+    REQUIRE(strings_window != nullptr);
+    CHECK(strings_window->parentWidget() == nullptr);
+    CHECK(strings_window->isWindow());
+    CHECK_FALSE(viewer.isAncestorOf(strings_window));
+    CHECK_FALSE(strings_window->testAttribute(Qt::WA_QuitOnClose));
+
     viewer.hide();
 }

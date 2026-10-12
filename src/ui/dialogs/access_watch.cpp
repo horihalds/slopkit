@@ -75,13 +75,15 @@ namespace slopkit::ui::dialogs
 
     AccessWatchDialog::AccessWatchDialog(debug::Controller&       controller,
                                          process::AccessWorker&   worker,
-                                         process::AttachedTarget& target,
-                                         QWidget*                 parent)
-        : QDialog(parent), controller_(controller), worker_(worker), gate_(controller, target, *this, this)
+                                         process::AttachedTarget& target)
+        : QDialog(nullptr), controller_(controller), worker_(worker), gate_(controller, target, *this, this)
     {
         setWindowTitle(tr("Access Watch"));
         setWindowFlag(Qt::Window, true);
         resize(760, 480);
+        // A companion window: it must not own the process lifetime, or closing
+        // the shell would leave slopkit running.
+        setAttribute(Qt::WA_QuitOnClose, false);
         build_layout();
 
         connect(&controller_, &debug::Controller::watchChanged, this, &AccessWatchDialog::refresh);

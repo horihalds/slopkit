@@ -27,7 +27,7 @@ namespace slopkit::ui::dialogs
         Q_OBJECT
 
     public:
-        explicit ReferencedStringsDialog(const components::ReferencedStringTable& table, QWidget* parent = nullptr);
+        explicit ReferencedStringsDialog(const components::ReferencedStringTable& table);
 
         void refresh();
 

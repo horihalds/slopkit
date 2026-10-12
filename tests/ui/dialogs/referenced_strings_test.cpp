@@ -31,6 +31,11 @@ TEST_CASE("the referenced-strings window lists every module and filters case-ins
     table.set_module("beta", {entry(0x2000, 0x4010, "HELLO there")});
 
     slopkit::ui::dialogs::ReferencedStringsDialog dialog(table);
+    // A companion window: no parent widget keeps it above the viewer, and it
+    // must not own the process lifetime.
+    CHECK(dialog.parentWidget() == nullptr);
+    CHECK(dialog.isWindow());
+    CHECK_FALSE(dialog.testAttribute(Qt::WA_QuitOnClose));
     dialog.show();
     QCoreApplication::processEvents();
 

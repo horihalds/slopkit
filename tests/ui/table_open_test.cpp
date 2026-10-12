@@ -77,7 +77,7 @@ TEST_CASE("a log save is remembered in the settings", "[ui]")
     slopkit::ui::SettingsController  settings {scratch_settings_file("remember_log.ini")};
     slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
-    auto* log = window.findChild<slopkit::ui::dialogs::LogDialog*>();
+    auto* log = window.log();
     REQUIRE(log != nullptr);
 
     const QString path = scratch_settings_file("saved.log");

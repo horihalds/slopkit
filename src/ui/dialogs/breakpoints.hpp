@@ -29,7 +29,7 @@ namespace slopkit::ui::dialogs
         Q_OBJECT
 
     public:
-        explicit BreakpointsDialog(debug::Controller& controller, QWidget* parent = nullptr);
+        explicit BreakpointsDialog(debug::Controller& controller);
 
         void refresh();
 

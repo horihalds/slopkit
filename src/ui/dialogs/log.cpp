@@ -45,10 +45,13 @@ namespace slopkit::ui::dialogs
         }
     }
 
-    LogDialog::LogDialog(QWidget* parent) : QDialog(parent)
+    LogDialog::LogDialog() : QDialog(nullptr)
     {
         setWindowTitle(tr("Log"));
         resize(760, 520);
+        // A companion window: it must not own the process lifetime, or closing
+        // the shell would leave slopkit running.
+        setAttribute(Qt::WA_QuitOnClose, false);
 
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(10, 10, 10, 10);

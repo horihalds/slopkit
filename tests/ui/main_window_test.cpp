@@ -85,7 +85,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     QAction* log_action = menus[1]->menu()->actions().first();
     CHECK(log_action->text() == QStringLiteral("Log"));
     log_action->trigger();
-    auto* log_dialog = window.findChild<slopkit::ui::dialogs::LogDialog*>();
+    auto* log_dialog = window.log();
     REQUIRE(log_dialog != nullptr);
     CHECK(log_dialog->isVisible());
 
@@ -102,25 +102,28 @@ TEST_CASE("the main window shell is built", "[ui]")
     log_search->clear();
 
     log_action->trigger();
-    CHECK(window.findChildren<slopkit::ui::dialogs::LogDialog*>().size() == 1);
+    CHECK(window.log() == log_dialog);
+    CHECK(window.findChildren<slopkit::ui::dialogs::LogDialog*>().isEmpty());
 
     QAction* breakpoints_action = menus[1]->menu()->actions().at(2);
     CHECK(breakpoints_action->text() == QStringLiteral("Breakpoints"));
     breakpoints_action->trigger();
-    auto* breakpoints_dialog = window.findChild<slopkit::ui::dialogs::BreakpointsDialog*>();
+    auto* breakpoints_dialog = window.breakpoints();
     REQUIRE(breakpoints_dialog != nullptr);
     CHECK(breakpoints_dialog->isVisible());
     breakpoints_action->trigger();
-    CHECK(window.findChildren<slopkit::ui::dialogs::BreakpointsDialog*>().size() == 1);
+    CHECK(window.breakpoints() == breakpoints_dialog);
+    CHECK(window.findChildren<slopkit::ui::dialogs::BreakpointsDialog*>().isEmpty());
 
     QAction* access_watch_action = menus[1]->menu()->actions().at(3);
     CHECK(access_watch_action->text() == QStringLiteral("Access Watch"));
     access_watch_action->trigger();
-    auto* access_watch_dialog = window.findChild<slopkit::ui::dialogs::AccessWatchDialog*>();
+    auto* access_watch_dialog = window.access_watch();
     REQUIRE(access_watch_dialog != nullptr);
     CHECK(access_watch_dialog->isVisible());
     access_watch_action->trigger();
-    CHECK(window.findChildren<slopkit::ui::dialogs::AccessWatchDialog*>().size() == 1);
+    CHECK(window.access_watch() == access_watch_dialog);
+    CHECK(window.findChildren<slopkit::ui::dialogs::AccessWatchDialog*>().isEmpty());
 
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
@@ -361,6 +364,46 @@ TEST_CASE("the memory viewer is a detached top-level window", "[ui]")
     CHECK_FALSE(viewer->testAttribute(Qt::WA_QuitOnClose));
 }
 
+TEST_CASE("the companion windows are detached top-level windows", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("detached_log.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    // No parent widget and not a child of the window: the compositor is free to
+    // stack each companion normally instead of keeping it above the shell.
+    auto* log_window = window.log();
+    REQUIRE(log_window != nullptr);
+    CHECK(log_window->parentWidget() == nullptr);
+    CHECK(log_window->isWindow());
+    CHECK_FALSE(window.isAncestorOf(log_window));
+    CHECK(window.findChild<slopkit::ui::dialogs::LogDialog*>() == nullptr);
+    // A companion window, not a window that owns the process lifetime: closing
+    // the shell must still end slopkit.
+    CHECK_FALSE(log_window->testAttribute(Qt::WA_QuitOnClose));
+
+    auto* breakpoints_window = window.breakpoints();
+    REQUIRE(breakpoints_window != nullptr);
+    CHECK(breakpoints_window->parentWidget() == nullptr);
+    CHECK(breakpoints_window->isWindow());
+    CHECK_FALSE(window.isAncestorOf(breakpoints_window));
+    CHECK(window.findChild<slopkit::ui::dialogs::BreakpointsDialog*>() == nullptr);
+    CHECK_FALSE(breakpoints_window->testAttribute(Qt::WA_QuitOnClose));
+
+    auto* access_watch_window = window.access_watch();
+    REQUIRE(access_watch_window != nullptr);
+    CHECK(access_watch_window->parentWidget() == nullptr);
+    CHECK(access_watch_window->isWindow());
+    CHECK_FALSE(window.isAncestorOf(access_watch_window));
+    CHECK(window.findChild<slopkit::ui::dialogs::AccessWatchDialog*>() == nullptr);
+    CHECK_FALSE(access_watch_window->testAttribute(Qt::WA_QuitOnClose));
+}
+
 TEST_CASE("the debug control bar's Breakpoints button opens the window", "[ui]")
 {
     application();
@@ -379,7 +422,7 @@ TEST_CASE("the debug control bar's Breakpoints button opens the window", "[ui]")
     REQUIRE(controls != nullptr);
 
     controls->breakpoints_button()->click();
-    auto* dialog = window.findChild<slopkit::ui::dialogs::BreakpointsDialog*>();
+    auto* dialog = window.breakpoints();
     REQUIRE(dialog != nullptr);
     CHECK(dialog->isVisible());
 }

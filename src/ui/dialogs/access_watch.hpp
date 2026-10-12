@@ -34,8 +34,7 @@ namespace slopkit::ui::dialogs
     public:
         AccessWatchDialog(debug::Controller&       controller,
                           process::AccessWorker&   worker,
-                          process::AttachedTarget& target,
-                          QWidget*                 parent = nullptr);
+                          process::AttachedTarget& target);
 
         void start_watch(std::uint64_t address, debug::Kind kind, std::size_t size);
 
