@@ -46,42 +46,6 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     CHECK(panel.findChildren<QLabel*>().size() == 1);
 }
 
-TEST_CASE("the found list header names both numbers of a capped set", "[ui]")
-{
-    application();
-
-    std::vector<std::byte> bytes(1u << 12, std::byte {0});
-
-    slopkit::scan::ScanEngine engine;
-    engine.set_stored_result_budget(3 * sizeof(slopkit::scan::ScanHit));
-    slopkit::scan::ScanConfig config;
-    config.type             = slopkit::scan::ScanType::exact_value;
-    config.value_type       = slopkit::scan::ValueType::int32;
-    config.value            = std::int64_t {0};
-    config.filter.alignment = 4;
-    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
-    for (int i = 0; i < 5000 && engine.is_running(); ++i)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-
-    const auto snapshot = engine.snapshot();
-    REQUIRE(snapshot.state == slopkit::scan::ScanState::done);
-    REQUIRE(snapshot.capped);
-    REQUIRE(snapshot.stored_count == 3);
-    REQUIRE(snapshot.page.hits.size() == 3);
-
-    slopkit::table::AddressTable        table;
-    slopkit::ui::panels::FoundListPanel panel {engine, table};
-    panel.refresh();
-
-    auto* header = panel.findChild<QLabel*>();
-    REQUIRE(header != nullptr);
-    CHECK(header->text()
-          == QStringLiteral("Showing 3 of 3 stored results of %1 matches (capped)")
-                 .arg(static_cast<qulonglong>(snapshot.hit_count)));
-}
-
 TEST_CASE("the found list stays empty until the scan finishes", "[ui]")
 {
     application();

@@ -139,12 +139,10 @@ TEST_CASE("head builds a self-contained page", "[scan]")
     append(set, 0x1000, first, {});
     append(set, 0x2000, second, {});
     append(set, 0x3000, third, {});
-    set.matches = 3;
 
     const slopkit::scan::ScanResults page = set.head(2);
 
     REQUIRE(page.hits.size() == 2);
-    CHECK(page.matches == 2);
     CHECK_FALSE(page.keeps_previous);
     CHECK(page.hits[0].address == 0x1000);
     CHECK(page.hits[1].address == 0x2000);
@@ -169,7 +167,6 @@ TEST_CASE("head keeps the previous bytes of its wide rows", "[scan]")
     set.keeps_previous = true;
     append(set, 0x7000, value, before);
     append(set, 0x8000, value, before);
-    set.matches = 2;
 
     const slopkit::scan::ScanResults page = set.head(1);
 
@@ -190,7 +187,6 @@ TEST_CASE("head of an empty or shorter set is well behaved", "[scan]")
 
     slopkit::scan::ScanResults set;
     const auto                 hit = append(set, 0x9000, value, {});
-    set.matches                    = 1;
 
     const slopkit::scan::ScanResults page = set.head(256);
     REQUIRE(page.hits.size() == 1);

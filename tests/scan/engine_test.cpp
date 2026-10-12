@@ -401,7 +401,7 @@ TEST_CASE("a refinement that rejects everything finishes empty", "[scan]")
     CHECK(snapshot.progress == Approx(1.0f));
 }
 
-TEST_CASE("a refinement stores every kept hit under the budget", "[scan]")
+TEST_CASE("a refinement stores every kept hit", "[scan]")
 {
     auto bytes = std::make_shared<std::vector<std::byte>>(32);
     for (std::size_t i = 0; i < 8; ++i)
@@ -426,113 +426,82 @@ TEST_CASE("a refinement stores every kept hit under the budget", "[scan]")
     CHECK(snapshot.page.hits.size() == 8);
 }
 
-TEST_CASE("a scan whose matches exceed the budget stores a bounded set", "[scan]")
+TEST_CASE("a scan stores every match it finds", "[scan]")
 {
-    // A zero-filled region matches far more often than the budget can store; the
-    // reported match count stays exact and the stored bytes stay bounded.
-    constexpr std::size_t  kRegion = 1u << 20;
+    // A zero-filled region matches at every aligned offset; every one of those
+    // addresses is stored and reported with its value.
+    constexpr std::size_t  kRegion = 1u << 16;
     std::vector<std::byte> bytes(kRegion);
 
     ScanConfig config       = exact_config(ValueType::int32, 0);
     config.filter.alignment = 4;
 
     ScanEngine engine;
-    const auto budget = 64 * sizeof(slopkit::scan::ScanHit);
-    engine.set_stored_result_budget(budget);
     engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, kBase));
     const auto snapshot = wait(engine);
 
     REQUIRE(snapshot.state == ScanState::done);
     CHECK(snapshot.hit_count == kRegion / 4);
-    CHECK(snapshot.stored_count == 64);
-    CHECK(snapshot.capped);
     REQUIRE(snapshot.result_hits != nullptr);
-    CHECK(snapshot.result_hits->bytes() <= engine.stored_result_budget());
-
-    REQUIRE(snapshot.page.hits.size() == 64);
-    for (std::size_t i = 0; i < 64; ++i)
-    {
-        CHECK(snapshot.page.hits[i].address == kBase + i * 4);
-        CHECK(read_int32(snapshot.page.value(snapshot.page.hits[i]), 0) == 0);
-    }
+    CHECK(snapshot.result_hits->hits.size() == kRegion / 4);
+    REQUIRE(snapshot.page.hits.size() == slopkit::scan::kDisplayPage);
+    CHECK(snapshot.page.hits[0].address == kBase);
+    CHECK(read_int32(snapshot.page.value(snapshot.page.hits[0]), 0) == 0);
+    CHECK(engine.result_count() == kRegion / 4);
 }
 
-TEST_CASE("a scan under the budget keeps every hit", "[scan]")
+TEST_CASE("a refinement of a large set keeps its previous value and undo restores it", "[scan]")
 {
-    constexpr std::size_t  kRegion = 64 * 4;
-    std::vector<std::byte> bytes(kRegion);
-
-    ScanConfig config       = exact_config(ValueType::int32, 0);
-    config.filter.alignment = 4;
-
-    ScanEngine engine;
-    engine.set_stored_result_budget((64 + 1) * sizeof(slopkit::scan::ScanHit));
-    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, kBase));
-    const auto snapshot = wait(engine);
-
-    REQUIRE(snapshot.state == ScanState::done);
-    CHECK(snapshot.hit_count == 64);
-    CHECK(snapshot.stored_count == 64);
-    CHECK_FALSE(snapshot.capped);
-    CHECK(snapshot.page.hits.size() == 64);
-}
-
-TEST_CASE("a refinement of a capped set stays capped and undo restores it", "[scan]")
-{
-    constexpr std::size_t kRegion = 1u << 20;
+    constexpr std::size_t kRegion = 1u << 16;
     auto                  bytes   = std::make_shared<std::vector<std::byte>>(kRegion);
 
     ScanConfig config       = exact_config(ValueType::int32, 0);
     config.filter.alignment = 4;
 
     ScanEngine engine;
-    engine.set_stored_result_budget(64 * sizeof(slopkit::scan::ScanHit));
     engine.first_scan(config, mutable_source(bytes));
-    REQUIRE(wait(engine).capped);
+    REQUIRE(wait(engine).hit_count == kRegion / 4);
 
     engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
     const auto refined = wait(engine);
     REQUIRE(refined.state == ScanState::done);
-    CHECK(refined.hit_count == 64);
-    CHECK(refined.stored_count == 64);
-    CHECK(refined.capped);
-    REQUIRE(refined.page.hits.size() == 64);
+    CHECK(refined.hit_count == kRegion / 4);
+    REQUIRE(refined.page.hits.size() == slopkit::scan::kDisplayPage);
     CHECK(read_int32(refined.page.previous(refined.page.hits[0]), 0) == 0);
 
     engine.undo();
     const auto undone = engine.snapshot();
     REQUIRE(undone.state == ScanState::done);
     CHECK(undone.hit_count == kRegion / 4);
-    CHECK(undone.stored_count == 64);
-    CHECK(undone.capped);
 }
 
-TEST_CASE("retained result sets stay under the retained budget", "[scan]")
+TEST_CASE("the undo history keeps at most eight result sets", "[scan]")
 {
-    constexpr std::size_t  kRegion = 1u << 12;
-    std::vector<std::byte> bytes(kRegion);
-
-    ScanConfig config       = exact_config(ValueType::int32, 0);
-    config.filter.alignment = 4;
+    auto bytes = std::make_shared<std::vector<std::byte>>(32);
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        write_int32(*bytes, i * 4, 0);
+    }
 
     ScanEngine engine;
-    engine.set_stored_result_budget(64 * sizeof(slopkit::scan::ScanHit));
-    engine.set_retained_result_budget(4 * 64 * sizeof(slopkit::scan::ScanHit));
-    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, kBase));
-    REQUIRE(wait(engine).stored_count == 64);
+    ScanConfig config       = exact_config(ValueType::int32, 0);
+    config.filter.alignment = 4;
+    engine.first_scan(config, mutable_source(bytes));
+    REQUIRE(wait(engine).hit_count == 8);
 
-    for (int i = 0; i < 6; ++i)
+    for (int i = 0; i < 10; ++i)
     {
         engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
         REQUIRE(wait(engine).state == ScanState::done);
     }
 
-    // Six capped sets under a four-set budget leaves the three newest undo sets.
-    CHECK(engine.can_undo());
-    engine.undo();
-    engine.undo();
-    engine.undo();
-    CHECK_FALSE(engine.can_undo());
+    int undos = 0;
+    while (engine.can_undo())
+    {
+        engine.undo();
+        ++undos;
+    }
+    CHECK(undos == 8);
 }
 
 TEST_CASE("a cancelled refinement keeps the previous result set", "[scan]")

@@ -180,23 +180,17 @@ A stored hit is one fixed 32-byte `scan::ScanHit` (`src/scan/results.hpp`) that
 owns no heap block: values up to 8 bytes live inside the record, and only a wider
 value (a `string` or `byte_array` needle) goes into the set's shared `blob`,
 addressed by the record's `blob_offset` with a refinement's before-bytes right
-after the value. `scan::ScanResults` owns that one address-sorted set plus the
-`matches` count, so a set costs `hits.size() * sizeof(ScanHit)` plus the blob.
+after the value. `scan::ScanResults` owns that one address-sorted set, so
+recording a hit is one `memcpy` and a whole set costs
+`hits.size() * sizeof(ScanHit)` plus the blob.
 
-The stored set is bounded by `kStoredResultBudget` (128 MiB per set) and the
-retained sets as a whole by `kRetainedResultBudget` (384 MiB across the live set
-and up to `kHistoryDepth` undo sets, oldest dropped first). Each shard or read
-batch records into its own slice of the per-set budget, and the slices are
-derived from the slot index alone, so which hits are stored — like the addresses
-and their order — does not depend on the thread count or on shard completion
-order. Once the store is full the scan keeps walking and **counting**, so
-`ScanSnapshot::hit_count` stays the exact number of matches while
-`stored_count` is what was kept and `capped` is true exactly when the two differ.
-`ScanSnapshot::result_hits` hands the set to the UI, which pages through it (the
-snapshot's `page` is a self-contained `ScanResults` copy of the first
-`kDisplayPage` rows, wide bytes re-packed, as a cheap preview). A `Next Scan`
-therefore refines exactly the stored set — not every match — and keeps `capped`
-set, because a refined set can only ever see the stored subset.
+Nothing caps the stored set: every match is kept, so `ScanSnapshot::hit_count` is
+both the number of matches and `hits.size()`. `ScanSnapshot::result_hits` hands
+the set to the UI, which pages through it (the snapshot's `page` is a
+self-contained `ScanResults` copy of the first `kDisplayPage` rows, wide bytes
+re-packed, as a cheap preview). A `Next Scan` therefore refines exactly the stored
+set and `undo()` restores the previous one; the undo history is bounded by
+`kHistoryDepth` (8) sets alone, independent of their size.
 
 ## Referenced strings
 

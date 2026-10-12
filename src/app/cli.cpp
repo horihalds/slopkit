@@ -156,10 +156,6 @@ namespace slopkit::app
                                scan::format_value(value_type, snapshot.page.value(hit), false));
         }
         out << snapshot.hit_count << " hit(s)\n";
-        if (snapshot.capped)
-        {
-            out << std::format("capped: {} of {} match(es) stored\n", snapshot.stored_count, snapshot.hit_count);
-        }
     }
 
     int scan_process(std::ostream& out, std::ostream& err, std::uint32_t pid, std::string_view value_text)
@@ -244,14 +240,6 @@ namespace slopkit::app
         }
 
         report_scan_hits(out, snapshot, value_type);
-        if (snapshot.capped)
-        {
-            log::info(log::category::app,
-                      std::format("command scan: capped, {} of {} match(es) stored for pid {}",
-                                  snapshot.stored_count,
-                                  snapshot.hit_count,
-                                  pid));
-        }
         log::info(log::category::app, std::format("command scan: done, {} hit(s) for pid {}", snapshot.hit_count, pid));
         return 0;
     }

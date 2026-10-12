@@ -95,11 +95,9 @@ TEST_CASE("the scan engine finds a sentinel in the current process through the p
     CHECK(found);
 }
 
-TEST_CASE("the scan output names the stored and match counts of a capped set", "[scan]")
+TEST_CASE("the scan output lists the stored hits and their count", "[scan]")
 {
     slopkit::scan::ScanResults set;
-    set.matches = 87'231'904;
-    set.capped  = true;
     for (std::uint64_t i = 0; i < 3; ++i)
     {
         const std::array<std::byte, 4> value {std::byte {0}, std::byte {0}, std::byte {0}, std::byte {0}};
@@ -107,17 +105,15 @@ TEST_CASE("the scan output names the stored and match counts of a capped set", "
     }
 
     slopkit::scan::ScanSnapshot snapshot;
-    snapshot.hit_count    = set.matches;
-    snapshot.stored_count = set.hits.size();
-    snapshot.capped       = true;
-    snapshot.page         = set.head(slopkit::scan::kDisplayPage);
+    snapshot.hit_count = set.hits.size();
+    snapshot.page      = set.head(slopkit::scan::kDisplayPage);
 
     std::ostringstream out;
     slopkit::app::report_scan_hits(out, snapshot, slopkit::scan::ValueType::int32);
 
     CHECK(out.str().find("1000\t4 Bytes\t") != std::string::npos);
-    CHECK(out.str().find("87231904 hit(s)") != std::string::npos);
-    CHECK(out.str().find("capped: 3 of 87231904 match(es) stored") != std::string::npos);
+    CHECK(out.str().find("3 hit(s)") != std::string::npos);
+    CHECK(out.str().find("capped") == std::string::npos);
 }
 
 TEST_CASE("the scan command reports an unknown pid", "[scan][integration]")

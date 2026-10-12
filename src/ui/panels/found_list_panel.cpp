@@ -53,7 +53,7 @@ namespace slopkit::ui::panels
         bool same_snapshot(const scan::ScanSnapshot& lhs, const scan::ScanSnapshot& rhs)
         {
             if (lhs.state != rhs.state || lhs.progress != rhs.progress || lhs.hit_count != rhs.hit_count
-                || lhs.stored_count != rhs.stored_count || lhs.capped != rhs.capped || lhs.message != rhs.message)
+                || lhs.message != rhs.message)
             {
                 return false;
             }
@@ -207,16 +207,9 @@ namespace slopkit::ui::panels
             return;
         }
 
-        const qulonglong shown   = static_cast<qulonglong>(model_->rowCount());
-        const qulonglong stored  = static_cast<qulonglong>(last_snapshot_.stored_count);
-        const qulonglong matches = static_cast<qulonglong>(last_snapshot_.hit_count);
-        if (last_snapshot_.capped)
-        {
-            header_->setText(
-                tr("Showing %1 of %2 stored results of %3 matches (capped)").arg(shown).arg(stored).arg(matches));
-            return;
-        }
-        header_->setText(tr("Showing %1 of %2 results").arg(shown).arg(matches));
+        header_->setText(tr("Showing %1 of %2 results")
+                             .arg(static_cast<qulonglong>(model_->rowCount()))
+                             .arg(static_cast<qulonglong>(last_snapshot_.hit_count)));
     }
 
     void FoundListPanel::add_to_table(int row)

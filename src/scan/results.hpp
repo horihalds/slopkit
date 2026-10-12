@@ -36,14 +36,12 @@ namespace slopkit::scan
     static_assert(std::is_trivially_copyable_v<ScanHit>);
     static_assert(sizeof(ScanHit) == 32);
 
-    // Every result set of one scan. `hits` is the address-ordered stored set,
-    // `matches` is every match the scan found (>= hits.size() when capped).
+    // Every result set of one scan: the address-ordered hits and the blob holding
+    // the values of the hits whose needle is wider than the inline buffer.
     struct ScanResults
     {
         std::vector<ScanHit>   hits;
         std::vector<std::byte> blob;
-        std::size_t            matches {};
-        bool                   capped {};
         bool                   keeps_previous {};
 
         [[nodiscard]] std::span<const std::byte> value(const ScanHit& hit) const noexcept
@@ -87,7 +85,6 @@ namespace slopkit::scan
 
             const std::size_t count = std::min(rows, hits.size());
             page.hits.assign(hits.begin(), hits.begin() + static_cast<std::ptrdiff_t>(count));
-            page.matches = count;
             for (ScanHit& hit : page.hits)
             {
                 if (hit.wide == 0)

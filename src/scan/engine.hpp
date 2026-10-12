@@ -35,8 +35,6 @@ namespace slopkit::scan
         std::size_t                        scanned_bytes {};
         std::size_t                        total_bytes {};
         std::size_t                        hit_count {};
-        std::size_t                        stored_count {};
-        bool                               capped {};
         ScanResults                        page;
         std::shared_ptr<const ScanResults> result_hits;
         std::string                        message;
@@ -74,23 +72,11 @@ namespace slopkit::scan
         void                      set_max_threads(std::size_t threads) noexcept;
         [[nodiscard]] std::size_t max_threads() const noexcept;
 
-        void                      set_stored_result_budget(std::size_t bytes) noexcept;
-        [[nodiscard]] std::size_t stored_result_budget() const noexcept;
-
-        void                      set_retained_result_budget(std::size_t bytes) noexcept;
-        [[nodiscard]] std::size_t retained_result_budget() const noexcept;
-
     private:
         using ResultSetPtr = std::shared_ptr<const ScanResults>;
 
         static constexpr std::size_t kHistoryDepth   = 8;
         static constexpr std::size_t kMaxScanThreads = 8;
-
-        // Both the stored set of one scan and the whole retained history are
-        // bounded in bytes, so a scan that matches most of a large target cannot
-        // exhaust RAM.
-        static constexpr std::size_t kStoredResultBudget   = 128u << 20;
-        static constexpr std::size_t kRetainedResultBudget = 384u << 20;
 
         void run_first(ScanConfig config, MemorySource source, const std::stop_token& token);
         void run_next(ScanConfig config, ResultSetPtr previous, MemorySource source, const std::stop_token& token);
@@ -108,8 +94,6 @@ namespace slopkit::scan
         MemorySource              source_;
         std::atomic<bool>         cancel_requested_ {false};
         std::atomic<std::size_t>  max_threads_ {0};
-        std::atomic<std::size_t>  stored_budget_ {kStoredResultBudget};
-        std::atomic<std::size_t>  retained_budget_ {kRetainedResultBudget};
         std::jthread              worker_;
     };
 
