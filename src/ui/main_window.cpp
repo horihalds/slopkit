@@ -35,6 +35,7 @@
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
 #include "ui/dialogs/settings.hpp"
+#include "ui/dialogs/struct_viewer.hpp"
 #include "ui/dialogs/table_settings.hpp"
 #include "ui/live_values.hpp"
 #include "ui/panels/address_list_panel.hpp"
@@ -106,7 +107,8 @@ namespace slopkit::ui
 
     bool MainWindow::open_table_request(const QString& path)
     {
-        auto parsed = address_list_->parse_table(path);
+        structs::Structs parsed_definitions;
+        auto             parsed = address_list_->parse_table(path, &parsed_definitions);
         if (!parsed)
         {
             return false;
@@ -114,7 +116,9 @@ namespace slopkit::ui
 
         if (address_table_.empty())
         {
+            structs_ = std::move(parsed_definitions);
             address_list_->adopt_table(path, std::move(*parsed));
+            reload_struct_definitions();
             return true;
         }
 
@@ -128,7 +132,9 @@ namespace slopkit::ui
         switch (table_conflict_prompt_(this, info))
         {
         case dialogs::TableConflictChoice::overwrite:
+            structs_ = std::move(parsed_definitions);
             address_list_->adopt_table(path, std::move(*parsed));
+            reload_struct_definitions();
             return true;
         case dialogs::TableConflictChoice::merge:
             static_cast<void>(address_list_->merge_table(*parsed));
@@ -173,6 +179,12 @@ namespace slopkit::ui
     dialogs::AccessWatchDialog* MainWindow::access_watch() const noexcept
     {
         return access_watch_.get();
+    }
+
+    // The detached Struct View window.
+    dialogs::StructViewerDialog* MainWindow::struct_viewer() const noexcept
+    {
+        return struct_view_.get();
     }
 
     void MainWindow::on_open_table_requested()
@@ -228,6 +240,8 @@ namespace slopkit::ui
 
         access_watch_action_ = new QAction(tr("Access Watch"), this);
 
+        struct_view_action_ = new QAction(tr("Struct View"), this);
+
         launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
 
         about_action_ = new QAction(tr("About slopkit"), this);
@@ -249,6 +263,7 @@ namespace slopkit::ui
         view_menu->addAction(settings_action_);
         view_menu->addAction(breakpoints_action_);
         view_menu->addAction(access_watch_action_);
+        view_menu->addAction(struct_view_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
         help_menu->addAction(launch_sandbox_action_);
@@ -283,6 +298,7 @@ namespace slopkit::ui
                 });
         connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
         connect(found_list_, &panels::FoundListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
+        connect(found_list_, &panels::FoundListPanel::dissectRequested, this, &MainWindow::dissect_address);
         connect(
             found_list_, &panels::FoundListPanel::changeValuesRequested, this, &MainWindow::on_found_values_requested);
         connect(scanner_,
@@ -298,6 +314,10 @@ namespace slopkit::ui
                         add_address_->set_modules(modules);
                     }
                     debug_.set_modules(modules);
+                    if (struct_view_ != nullptr)
+                    {
+                        struct_view_->set_modules(modules);
+                    }
                     memory_view_->set_modules(std::move(modules));
                 });
         connect(&debug_,
@@ -309,9 +329,10 @@ namespace slopkit::ui
                 });
         scanner_->set_debug_session_active(debug_.state() != debug::Controller::State::idle);
 
-        address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
+        address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this, &structs_);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(address_list_, &panels::AddressListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
+        connect(address_list_, &panels::AddressListPanel::dissectRequested, this, &MainWindow::dissect_address);
         connect(
             address_list_, &panels::AddressListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(
@@ -398,10 +419,14 @@ namespace slopkit::ui
         memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_, nullptr, symbols_);
         new WindowGeometryKeeper(*memory_view_, settings_, WindowId::memory_viewer, memory_view_.get());
 
+        struct_view_ = std::make_unique<dialogs::StructViewerDialog>(worker_, target_, structs_, nullptr, symbols_);
+        new WindowGeometryKeeper(*struct_view_, settings_, WindowId::struct_view, struct_view_.get());
+
         live_values_ = new LiveValues(worker_, target_, settings_, this);
         live_values_->add_surface(found_list_);
         live_values_->add_surface(address_list_);
         live_values_->add_surface(memory_view_.get());
+        live_values_->add_surface(struct_view_.get());
 
         // The ticked scripts' `update` hooks share that cadence, after the read
         // pass; a failed tick was already deactivated by the worker, so the
@@ -494,6 +519,7 @@ namespace slopkit::ui
                     address_list_->set_address_mode(mode);
                     debug_.set_address_mode(mode);
                     memory_view_->set_address_mode(mode);
+                    struct_view_->set_address_mode(mode);
                 });
 
         const ui::AddressMode persisted_mode = settings_.values().address_mode;
@@ -501,11 +527,13 @@ namespace slopkit::ui
         address_list_->set_address_mode(persisted_mode);
         debug_.set_address_mode(persisted_mode);
         memory_view_->set_address_mode(persisted_mode);
+        struct_view_->set_address_mode(persisted_mode);
 
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
         connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
         connect(breakpoints_action_, &QAction::triggered, this, &MainWindow::show_breakpoints);
         connect(access_watch_action_, &QAction::triggered, this, &MainWindow::show_access_watch);
+        connect(struct_view_action_, &QAction::triggered, this, &MainWindow::show_struct_view);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
 
@@ -577,6 +605,37 @@ namespace slopkit::ui
         access_watch_->show();
         access_watch_->raise();
         access_watch_->activateWindow();
+    }
+
+    void MainWindow::show_struct_view()
+    {
+        if (struct_view_ == nullptr)
+        {
+            return;
+        }
+        log::debug(log::category::ui, "opening Struct View");
+        struct_view_->show();
+        struct_view_->raise();
+        struct_view_->activateWindow();
+    }
+
+    void MainWindow::dissect_address(std::uint64_t address)
+    {
+        if (struct_view_ == nullptr)
+        {
+            return;
+        }
+        log::debug(log::category::ui, std::format("dissecting 0x{:X} as a struct", address));
+        show_struct_view();
+        struct_view_->dissect(address);
+    }
+
+    void MainWindow::reload_struct_definitions()
+    {
+        if (struct_view_ != nullptr)
+        {
+            struct_view_->refresh_definitions();
+        }
     }
 
     void MainWindow::start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind)

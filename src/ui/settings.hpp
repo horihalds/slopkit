@@ -18,7 +18,8 @@ namespace slopkit::ui
         log,
         breakpoints,
         access_watch,
-        memory_viewer
+        memory_viewer,
+        struct_view
     };
 
     struct Settings

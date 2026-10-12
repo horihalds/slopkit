@@ -375,6 +375,23 @@ namespace slopkit::ui::panels
                     browse_region(row);
                 });
 
+        QAction* dissect =
+            target_attached_
+                ? widgets::described_action(
+                      menu, tr("Dissect as struct…"), tr("Opens a struct view at this hit's address."))
+                : widgets::disabled_action(menu, tr("Dissect as struct…"), tr("Attach to a target first."));
+        connect(dissect,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    const scan::ScanHit* hit = model_->hit_at(row);
+                    if (hit != nullptr)
+                    {
+                        emit dissectRequested(hit->address);
+                    }
+                });
+
         const std::size_t width = scan::value_size(engine_.config().value_type);
         widgets::add_watch_commands(menu,
                                     target_attached_ && model_->hit_at(row) != nullptr,

@@ -19,6 +19,7 @@
 #include "core/log_categories.hpp"
 #include "expr/expression.hpp"
 #include "expr/resolver.hpp"
+#include "structs/serializer.hpp"
 #include "table/entry_name.hpp"
 #include "table/table_zip.hpp"
 
@@ -26,11 +27,15 @@ namespace slopkit::table
 {
     namespace
     {
-        constexpr std::string_view kFormatToken         = "slopkit-table 5";
-        constexpr std::string_view kPreviousFormatToken = "slopkit-table 4";
+        constexpr std::string_view kFormatToken         = "slopkit-table 6";
+        constexpr std::string_view kPreviousFormatToken = "slopkit-table 5";
+        constexpr std::string_view kOlderFormatToken    = "slopkit-table 4";
         constexpr std::string_view kOldestFormatToken   = "slopkit-table 3";
 
         constexpr std::string_view kParentSuffix = " parent=\"";
+
+        constexpr std::string_view kStructsPrefix      = "structs/";
+        constexpr std::string_view kStructsIndexMember = "structs/index.txt";
 
         std::string_view trim(std::string_view value)
         {
@@ -345,10 +350,17 @@ namespace slopkit::table
 
     std::expected<void, std::string> save(const std::filesystem::path& path, const AddressTable& table)
     {
+        const structs::Structs definitions;
+        return save(path, table, definitions);
+    }
+
+    std::expected<void, std::string>
+    save(const std::filesystem::path& path, const AddressTable& table, const structs::Structs& definitions)
+    {
         const TableSettings& settings = table.settings();
 
         std::vector<ArchiveMember> members;
-        members.reserve(table.size() + 3);
+        members.reserve(table.size() + definitions.size() + 4);
         members.push_back(ArchiveMember {.name = "version.txt", .text = std::string(kFormatToken) + "\n"});
         if (!settings.empty())
         {
@@ -413,6 +425,29 @@ namespace slopkit::table
         }
         members.push_back(ArchiveMember {.name = "index.txt", .text = std::move(index)});
 
+        if (!definitions.empty())
+        {
+            std::vector<std::string> struct_taken;
+            std::string              structs_index;
+            struct_taken.reserve(definitions.size());
+            for (const std::uint64_t root : definitions.root_ids())
+            {
+                const structs::StructNode* node = definitions.find(root);
+                if (node == nullptr)
+                {
+                    continue;
+                }
+                const std::string stem   = entry_member_name(node->name, struct_taken, kValueMemberExtension);
+                const std::string member = std::string(kStructsPrefix) + stem;
+                struct_taken.push_back(stem);
+                members.push_back(ArchiveMember {.name = member, .text = structs::to_text(definitions, root)});
+                structs_index += member;
+                structs_index += '\n';
+            }
+            members.push_back(
+                ArchiveMember {.name = std::string(kStructsIndexMember), .text = std::move(structs_index)});
+        }
+
         const auto written = write_archive(path, members);
         if (!written)
         {
@@ -424,6 +459,13 @@ namespace slopkit::table
     }
 
     std::expected<void, std::string> load(const std::filesystem::path& path, AddressTable& table)
+    {
+        structs::Structs ignored;
+        return load(path, table, ignored);
+    }
+
+    std::expected<void, std::string>
+    load(const std::filesystem::path& path, AddressTable& table, structs::Structs& definitions)
     {
         if (!is_zip_archive(path))
         {
@@ -449,7 +491,8 @@ namespace slopkit::table
             return std::unexpected(std::string {"version.txt: missing"});
         }
         if (const std::string_view version_text = trim(*version);
-            version_text != kFormatToken && version_text != kPreviousFormatToken && version_text != kOldestFormatToken)
+            version_text != kFormatToken && version_text != kPreviousFormatToken && version_text != kOlderFormatToken
+            && version_text != kOldestFormatToken)
         {
             const std::string message =
                 std::format("{}: version.txt: unknown format '{}'", path.string(), version_text);
@@ -608,6 +651,56 @@ namespace slopkit::table
                     std::format("index.txt: entry '{}' names a later parent '{}'", listed[child], parent_member));
             }
             parent_positions.emplace_back(child, parent_position);
+        }
+
+        definitions.clear();
+        if (const std::string* structs_index = find_member(members, kStructsIndexMember); structs_index != nullptr)
+        {
+            std::vector<std::string> listed_structs;
+            std::size_t              offset = 0;
+            while (offset <= structs_index->size())
+            {
+                const auto             newline = structs_index->find('\n', offset);
+                const std::string_view raw     = std::string_view {*structs_index}.substr(
+                    offset, newline == std::string::npos ? std::string::npos : newline - offset);
+                const std::string_view line = trim(raw);
+                if (!line.empty())
+                {
+                    const std::string  member(line);
+                    const std::string* body = find_member(members, member);
+                    if (body == nullptr)
+                    {
+                        const std::string message =
+                            std::format("{}: structs/index.txt: missing member '{}'", path.string(), member);
+                        log::warning(log::category::table, message);
+                        return std::unexpected(std::format("structs/index.txt: missing member '{}'", member));
+                    }
+                    const auto root = structs::from_text(*body, definitions);
+                    if (!root)
+                    {
+                        const std::string message = std::format("{}: {}: {}", path.string(), member, root.error());
+                        log::warning(log::category::table, message);
+                        return std::unexpected(root.error());
+                    }
+                    listed_structs.push_back(member);
+                }
+                if (newline == std::string::npos)
+                {
+                    break;
+                }
+                offset = newline + 1;
+            }
+            for (const ArchiveMember& member : members)
+            {
+                if (member.name.starts_with(kStructsPrefix) && member.name != kStructsIndexMember
+                    && std::ranges::find(listed_structs, member.name) == listed_structs.end())
+                {
+                    const std::string message =
+                        std::format("{}: {}: not listed in structs/index.txt", path.string(), member.name);
+                    log::warning(log::category::table, message);
+                    return std::unexpected(std::format("{}: not listed in structs/index.txt", member.name));
+                }
+            }
         }
 
         loaded.replace(std::move(entries));

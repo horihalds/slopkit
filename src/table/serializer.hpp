@@ -5,12 +5,20 @@
 #include <string>
 #include <string_view>
 
+#include "structs/definition.hpp"
 #include "table/address_table.hpp"
 
 namespace slopkit::table
 {
     std::expected<void, std::string> save(const std::filesystem::path& path, const AddressTable& table);
+
+    std::expected<void, std::string>
+    save(const std::filesystem::path& path, const AddressTable& table, const structs::Structs& definitions);
+
     std::expected<void, std::string> load(const std::filesystem::path& path, AddressTable& table);
+
+    std::expected<void, std::string>
+    load(const std::filesystem::path& path, AddressTable& table, structs::Structs& definitions);
 
     [[nodiscard]] std::string_view type_token(scan::ValueType type) noexcept;
 

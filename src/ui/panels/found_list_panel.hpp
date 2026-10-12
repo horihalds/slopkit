@@ -57,6 +57,9 @@ namespace slopkit::ui::panels
 
         void browseRequested(quint64 address);
 
+        // The row menu's `Dissect as struct…`, seeded with the hit's address.
+        void dissectRequested(std::uint64_t address);
+
         void changeValuesRequested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
 
     private:
