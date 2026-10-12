@@ -16,9 +16,7 @@
 #include <QComboBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QLineEdit>
-#include <QPalette>
 #include <QPushButton>
 #include <QShowEvent>
 #include <QTimer>
@@ -64,35 +62,51 @@ namespace slopkit::ui::dialogs
         : QDialog(parent), table_(table), worker_(worker), symbols_(symbols)
     {
         setWindowTitle(tr("Add Address"));
-        setMinimumWidth(360);
+        setMinimumWidth(460);
 
         auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(10, 10, 10, 10);
-        layout->setSpacing(8);
+        layout->setContentsMargins(12, 12, 12, 12);
+        layout->setSpacing(10);
 
-        auto* form = new QFormLayout();
-        form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+        auto* entry_panel = new widgets::Panel(tr("Address entry"), this);
+        auto* entry_body  = entry_panel->body();
+
+        auto* entry_form = new QFormLayout();
+        entry_form->setContentsMargins(0, 0, 0, 0);
+        entry_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
         description_edit_ = new QLineEdit(this);
         description_edit_->setObjectName(QStringLiteral("description_edit"));
-        form->addRow(tr("Description"), description_edit_);
+        entry_form->addRow(tr("Description"), description_edit_);
 
         address_edit_ = new QLineEdit(this);
         address_edit_->setObjectName(QStringLiteral("address_edit"));
         address_edit_->setFont(mono_font());
         address_edit_->setPlaceholderText(QStringLiteral("firefox-bin+0x4096"));
-        form->addRow(tr("Address"), address_edit_);
+        entry_form->addRow(tr("Address"), address_edit_);
 
-        preview_label_ = new QLabel(this);
+        auto* preview_panel = new widgets::Panel(QString(), entry_panel);
+        auto* preview_body  = preview_panel->body();
+        preview_body->addWidget(widgets::hint_text(tr("Resolved value"), preview_panel));
+
+        preview_label_ = new widgets::StatusLabel(preview_panel);
         preview_label_->setObjectName(QStringLiteral("preview_label"));
         preview_label_->setFont(mono_font());
-        preview_label_->setWordWrap(true);
-        {
-            QPalette preview_palette = preview_label_->palette();
-            preview_palette.setColor(QPalette::WindowText, widgets::status_color(widgets::StatusKind::info));
-            preview_label_->setPalette(preview_palette);
-        }
-        form->addRow(preview_label_);
+        preview_body->addWidget(preview_label_);
+        entry_form->addRow(preview_panel);
+
+        entry_body->addLayout(entry_form);
+        entry_body->addWidget(widgets::hint_text(tr("Accepts a module, symbol or hex base with +0x offsets, and "
+                                                    "[bracketed] pointer chains."),
+                                                 this));
+        layout->addWidget(entry_panel);
+
+        auto* value_panel = new widgets::Panel(tr("Value format"), this);
+        auto* value_body  = value_panel->body();
+
+        auto* value_form = new QFormLayout();
+        value_form->setContentsMargins(0, 0, 0, 0);
+        value_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
         type_combo_ = new QComboBox(this);
         type_combo_->setObjectName(QStringLiteral("type_combo"));
@@ -100,7 +114,7 @@ namespace slopkit::ui::dialogs
         {
             type_combo_->addItem(QString::fromUtf8(name));
         }
-        form->addRow(tr("Type"), type_combo_);
+        value_form->addRow(tr("Type"), type_combo_);
 
         size_row_         = new QWidget(this);
         auto* size_layout = new QHBoxLayout(size_row_);
@@ -109,23 +123,28 @@ namespace slopkit::ui::dialogs
         size_edit_->setObjectName(QStringLiteral("size_edit"));
         size_edit_->setFont(mono_font());
         size_layout->addWidget(size_edit_);
-        form->addRow(tr("Size (bytes)"), size_row_);
-
-        layout->addLayout(form);
+        size_layout->addWidget(widgets::hint_text(tr("bytes"), size_row_));
+        size_layout->addStretch(1);
+        value_form->addRow(tr("Size"), size_row_);
+        value_body->addLayout(value_form);
 
         hex_check_ = new QCheckBox(tr("Show as hex"), this);
         hex_check_->setObjectName(QStringLiteral("hex_check"));
-        layout->addWidget(hex_check_);
+        value_body->addWidget(hex_check_);
+        layout->addWidget(value_panel);
 
         status_ = new widgets::StatusLabel(this);
+        status_->setObjectName(QStringLiteral("status_label"));
         layout->addWidget(status_);
 
         auto* buttons      = new QHBoxLayout();
         submit_button_     = new widgets::PrimaryButton(tr("Add"), this);
         auto* close_button = widgets::secondary_button(tr("Close"), this);
-        buttons->addWidget(submit_button_);
-        buttons->addWidget(close_button);
+        submit_button_->setDefault(true);
+        close_button->setAutoDefault(false);
         buttons->addStretch(1);
+        buttons->addWidget(close_button);
+        buttons->addWidget(submit_button_);
         layout->addLayout(buttons);
 
         connect(submit_button_, &QPushButton::clicked, this, &AddAddressDialog::commit);
@@ -541,14 +560,15 @@ namespace slopkit::ui::dialogs
         switch (preview_.state)
         {
         case PreviewState::idle:
-            preview_label_->clear();
+            preview_label_->clear_status();
             return;
         case PreviewState::resolving:
-            preview_label_->setText(tr("resolving..."));
+            preview_label_->set_status(widgets::StatusKind::info, tr("resolving..."));
             return;
         case PreviewState::unresolved:
-            preview_label_->setText(preview_.reason.empty() ? tr("not resolved yet")
-                                                            : QString::fromStdString(preview_.reason));
+            preview_label_->set_status(widgets::StatusKind::info,
+                                       preview_.reason.empty() ? tr("not resolved yet")
+                                                               : QString::fromStdString(preview_.reason));
             return;
         case PreviewState::resolved:
             break;
@@ -572,7 +592,7 @@ namespace slopkit::ui::dialogs
             value_text = QStringLiteral("?");
         }
 
-        preview_label_->setText(QStringLiteral("%1 = %2").arg(address_text, value_text));
+        preview_label_->set_status(widgets::StatusKind::info, QStringLiteral("%1 = %2").arg(address_text, value_text));
     }
 
     void AddAddressDialog::clear_preview()
@@ -584,7 +604,7 @@ namespace slopkit::ui::dialogs
         preview_ = Preview {};
         if (preview_label_ != nullptr)
         {
-            preview_label_->clear();
+            preview_label_->clear_status();
         }
     }
 

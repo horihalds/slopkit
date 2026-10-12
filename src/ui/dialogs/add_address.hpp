@@ -17,7 +17,6 @@
 
 class QCheckBox;
 class QComboBox;
-class QLabel;
 class QLineEdit;
 class QPushButton;
 class QShowEvent;
@@ -105,7 +104,7 @@ namespace slopkit::ui::dialogs
         QWidget*              size_row_ {};
         QCheckBox*            hex_check_ {};
         QPushButton*          submit_button_ {};
-        QLabel*               preview_label_ {};
+        widgets::StatusLabel* preview_label_ {};
         QTimer*               preview_timer_ {};
         widgets::StatusLabel* status_ {};
     };

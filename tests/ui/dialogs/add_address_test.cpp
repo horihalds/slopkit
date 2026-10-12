@@ -18,6 +18,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -94,6 +95,23 @@ namespace
         }
         return nullptr;
     }
+
+    slopkit::ui::widgets::StatusLabel* status_label_of(AddAddressDialog& dialog)
+    {
+        return dialog.findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("status_label"));
+    }
+
+    slopkit::ui::widgets::Panel* panel_titled(AddAddressDialog& dialog, const QString& title)
+    {
+        for (QLabel* label : dialog.findChildren<QLabel*>())
+        {
+            if (label->text() == title)
+            {
+                return qobject_cast<slopkit::ui::widgets::Panel*>(label->parentWidget());
+            }
+        }
+        return nullptr;
+    }
 }
 
 TEST_CASE("the add address dialog resets its form every time it is shown", "[ui]")
@@ -115,6 +133,17 @@ TEST_CASE("the add address dialog resets its form every time it is shown", "[ui]
     REQUIRE(size != nullptr);
     REQUIRE(type != nullptr);
     REQUIRE(hex != nullptr);
+
+    auto* entry_panel = panel_titled(dialog, QStringLiteral("Address entry"));
+    auto* value_panel = panel_titled(dialog, QStringLiteral("Value format"));
+    auto* status      = status_label_of(dialog);
+    REQUIRE(entry_panel != nullptr);
+    REQUIRE(value_panel != nullptr);
+    REQUIRE(status != nullptr);
+    CHECK(status->text().isEmpty());
+    CHECK(status->parentWidget() == &dialog);
+    CHECK(entry_panel->isAncestorOf(address));
+    CHECK(value_panel->isAncestorOf(type));
 
     dialog.show();
     QApplication::processEvents();
@@ -341,7 +370,7 @@ TEST_CASE("a malformed address keeps the add address dialog open", "[ui]")
 
     auto* address = edit_named(dialog, QStringLiteral("address_edit"));
     auto* add     = button_labelled(dialog, QStringLiteral("Add"));
-    auto* status  = dialog.findChild<slopkit::ui::widgets::StatusLabel*>();
+    auto* status  = status_label_of(dialog);
     REQUIRE(address != nullptr);
     REQUIRE(add != nullptr);
     REQUIRE(status != nullptr);
@@ -484,7 +513,7 @@ TEST_CASE("an invalid dynamic size keeps the add address dialog open", "[ui]")
     auto* size    = edit_named(dialog, QStringLiteral("size_edit"));
     auto* type    = dialog.findChild<QComboBox*>(QStringLiteral("type_combo"));
     auto* add     = button_labelled(dialog, QStringLiteral("Add"));
-    auto* status  = dialog.findChild<slopkit::ui::widgets::StatusLabel*>();
+    auto* status  = status_label_of(dialog);
     REQUIRE(address != nullptr);
     REQUIRE(size != nullptr);
     REQUIRE(type != nullptr);
@@ -642,7 +671,7 @@ TEST_CASE("a malformed address keeps the edit dialog open", "[ui]")
     AddAddressDialog               dialog {table, worker};
 
     auto* address = edit_named(dialog, QStringLiteral("address_edit"));
-    auto* status  = dialog.findChild<slopkit::ui::widgets::StatusLabel*>();
+    auto* status  = status_label_of(dialog);
     REQUIRE(address != nullptr);
     REQUIRE(status != nullptr);
 
@@ -699,4 +728,66 @@ TEST_CASE("starting a new address after an edit resets to add mode", "[ui]")
     CHECK(button_labelled(dialog, QStringLiteral("Add")) != nullptr);
     CHECK(description->text() == QStringLiteral("New address"));
     CHECK(address->text().isEmpty());
+}
+
+TEST_CASE("Return submits the add address dialog", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    AddAddressDialog               dialog {table, worker};
+
+    auto* description = edit_named(dialog, QStringLiteral("description_edit"));
+    auto* address     = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* add         = button_labelled(dialog, QStringLiteral("Add"));
+    REQUIRE(description != nullptr);
+    REQUIRE(address != nullptr);
+    REQUIRE(add != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+    REQUIRE(dialog.isVisible());
+    CHECK(add->isDefault());
+
+    description->setText(QStringLiteral("Health"));
+    address->setText(QStringLiteral("0x4000"));
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QCoreApplication::sendEvent(address, &enter);
+    QApplication::processEvents();
+
+    CHECK_FALSE(dialog.isVisible());
+    REQUIRE(table.size() == 1);
+    CHECK(table.entries().front().description == "Health");
+    CHECK(table.entries().front().address == 0x4000);
+}
+
+TEST_CASE("Escape closes the add address dialog without adding a row", "[ui]")
+{
+    ensure_application();
+
+    AddressTable                   table;
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    AddAddressDialog               dialog {table, worker};
+
+    auto* address = edit_named(dialog, QStringLiteral("address_edit"));
+    auto* close   = button_labelled(dialog, QStringLiteral("Close"));
+    REQUIRE(address != nullptr);
+    REQUIRE(close != nullptr);
+
+    dialog.show();
+    QApplication::processEvents();
+    REQUIRE(dialog.isVisible());
+    CHECK_FALSE(close->isDefault());
+
+    address->setText(QStringLiteral("0x4000"));
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+    QCoreApplication::sendEvent(address, &escape);
+    QApplication::processEvents();
+
+    CHECK_FALSE(dialog.isVisible());
+    CHECK(table.size() == 0);
 }
