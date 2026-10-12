@@ -15,8 +15,6 @@
 #include "core/log_categories.hpp"
 #include "process/access_worker.hpp"
 #include "scan/types.hpp"
-#include "structs/definition.hpp"
-#include "structs/types.hpp"
 #include "table/address_table.hpp"
 #include "table/serializer.hpp"
 #include "table/table_zip.hpp"
@@ -289,7 +287,7 @@ TEST_CASE("the archive holds version, index and one member per entry", "[table]"
 
     CHECK(member_names(path)
           == std::vector<std::string> {"version.txt", "entries/health.txt", "entries/armor.txt", "index.txt"});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
     CHECK(member_text(path, "index.txt") == std::optional<std::string> {"entries/health.txt\nentries/armor.txt\n"});
     CHECK(member_text(path, "entries/health.txt")
           == std::optional<std::string> {"type=i32 hex=0 size=4 expr=\"1234\"\n"});
@@ -1149,7 +1147,7 @@ TEST_CASE("a script entry is stored as a lua member holding only the source", "[
     CHECK(member_text(path, "index.txt")
           == std::optional<std::string> {"entries/health.txt\nentries/greet.lua\nentries/armor.txt\n"});
     CHECK(member_text(path, "entries/greet.lua") == std::optional<std::string> {source});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
 
     std::filesystem::remove(path);
 }
@@ -1218,7 +1216,7 @@ TEST_CASE("a nested table round-trips its hierarchy", "[table]")
     std::filesystem::remove(path);
     REQUIRE(slopkit::table::save(path, table).has_value());
 
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
     CHECK(member_text(path, "index.txt")
           == std::optional<std::string> {"entries/parent.txt\n"
                                          "entries/script-child.lua parent=\"entries/parent.txt\"\n"
@@ -1260,7 +1258,7 @@ TEST_CASE("a version 3 archive still loads and is re-saved as version 5", "[tabl
     CHECK(table.entries()[0].description == "health");
 
     REQUIRE(slopkit::table::save(path, table).has_value());
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
     std::filesystem::remove(path);
 }
 
@@ -1346,102 +1344,4 @@ TEST_CASE("merge treats scripts by description and source text", "[table]")
     CHECK(table.entries()[1].script == "return 2");
     CHECK(table.entries()[2].description == "other");
     CHECK(table.entries()[3].kind == EntryKind::value);
-}
-
-TEST_CASE("struct definitions ride along in the archive", "[table]")
-{
-    AddressTable table;
-    auto         health = make_entry(0x1234, ValueType::int32, {1, 0, 0, 0});
-    health.description  = "health";
-    health.expression   = "1234";
-    table.add(health);
-
-    slopkit::structs::Structs   definitions;
-    const std::uint64_t         root = definitions.add_struct("Player", "game.exe+0x1A40");
-    slopkit::structs::FieldType field;
-    field.kind  = slopkit::structs::FieldKind::integer;
-    field.width = 4;
-    definitions.add_field(root, "health", 0x10, field);
-
-    const auto path = scratch_file("structs.skt");
-    std::filesystem::remove(path);
-    REQUIRE(slopkit::table::save(path, table, definitions).has_value());
-
-    CHECK(member_names(path)
-          == std::vector<std::string> {
-              "version.txt", "entries/health.txt", "index.txt", "structs/Player.txt", "structs/index.txt"});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
-    CHECK(member_text(path, "structs/index.txt") == std::optional<std::string> {"structs/Player.txt\n"});
-    CHECK(member_text(path, "structs/Player.txt")
-          == std::optional<std::string> {"struct name=\"Player\" expr=\"game.exe+0x1A40\"\n"
-                                         "depth=1 name=\"health\" offset=0x10 type=i32 hex=0\n"});
-
-    AddressTable              loaded;
-    slopkit::structs::Structs loaded_definitions;
-    REQUIRE(slopkit::table::load(path, loaded, loaded_definitions).has_value());
-    std::filesystem::remove(path);
-
-    REQUIRE(loaded.size() == 1);
-    REQUIRE(loaded_definitions.size() == 2);
-    CHECK(loaded_definitions.struct_names() == std::vector<std::string> {"Player"});
-    CHECK(loaded_definitions.nodes()[0].expression == "game.exe+0x1A40");
-    CHECK(loaded_definitions.nodes()[1].name == "health");
-    CHECK(loaded_definitions.nodes()[1].offset == 0x10);
-}
-
-TEST_CASE("a struct-free table is written without struct members", "[table]")
-{
-    AddressTable table;
-    auto         health = make_entry(0x1234, ValueType::int32, {1, 0, 0, 0});
-    health.expression   = "1234";
-    table.add(health);
-
-    const auto path = scratch_file("struct_free.skt");
-    std::filesystem::remove(path);
-    REQUIRE(slopkit::table::save(path, table).has_value());
-
-    CHECK(member_names(path) == std::vector<std::string> {"version.txt", "entries/unnamed.txt", "index.txt"});
-    std::filesystem::remove(path);
-}
-
-TEST_CASE("a version 5 archive loads with no struct definitions", "[table]")
-{
-    const auto path = scratch_file("legacy_structs.skt");
-    std::filesystem::remove(path);
-    REQUIRE(write_archive(path,
-                          std::vector<ArchiveMember> {
-                              {       .name = "version.txt",                     .text = "slopkit-table 5\n"},
-                              {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 expr=\"1234\"\n"},
-                              {         .name = "index.txt",                  .text = "entries/health.txt\n"}
-    })
-                .has_value());
-
-    AddressTable              table;
-    slopkit::structs::Structs definitions;
-    definitions.add_struct("Stale", "1000");
-    REQUIRE(slopkit::table::load(path, table, definitions).has_value());
-    std::filesystem::remove(path);
-
-    REQUIRE(table.size() == 1);
-    CHECK(definitions.empty());
-}
-
-TEST_CASE("the two-argument load ignores the struct members", "[table]")
-{
-    AddressTable table;
-    auto         health = make_entry(0x1234, ValueType::int32, {1, 0, 0, 0});
-    health.expression   = "1234";
-    table.add(health);
-
-    slopkit::structs::Structs            definitions;
-    [[maybe_unused]] const std::uint64_t root = definitions.add_struct("Player", "1000");
-
-    const auto path = scratch_file("ignored_structs.skt");
-    std::filesystem::remove(path);
-    REQUIRE(slopkit::table::save(path, table, definitions).has_value());
-
-    AddressTable loaded;
-    REQUIRE(slopkit::table::load(path, loaded).has_value());
-    std::filesystem::remove(path);
-    CHECK(loaded.size() == 1);
 }

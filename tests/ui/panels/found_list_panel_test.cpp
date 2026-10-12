@@ -224,7 +224,6 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
                              QStringLiteral("Change value…"),
                              QStringLiteral("Copy"),
                              QStringLiteral("Browse this memory region"),
-                             QStringLiteral("Dissect as struct…"),
                              QStringLiteral("Watch accesses")});
 
     QMenu* copy = submenu_of(menu, QStringLiteral("Copy"));
@@ -276,18 +275,6 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
     CHECK_FALSE(change->isEnabled());
     CHECK(change->toolTip() == QStringLiteral("Attach to a target first."));
     CHECK(browse->isEnabled());
-
-    QAction* dissect = nullptr;
-    for (QAction* action : menu.actions())
-    {
-        if (action->text() == QStringLiteral("Dissect as struct…"))
-        {
-            dissect = action;
-        }
-    }
-    REQUIRE(dissect != nullptr);
-    CHECK_FALSE(dissect->isEnabled());
-    CHECK(dissect->toolTip() == QStringLiteral("Attach to a target first."));
 
     CHECK(change->shortcut() == QKeySequence(QStringLiteral("Ctrl+E")));
     CHECK(change->shortcutContext() == Qt::WidgetShortcut);

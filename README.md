@@ -29,7 +29,6 @@ table or merge the file.
 | Access Watch | Record every instruction that writes or accesses a watched address, and resolve an instruction's memory operands from live registers. The "find out what writes/accesses" commands attach the debug session on demand after a confirmation, so the Memory Viewer does not have to be opened first. | Implemented (Access Watch window) |
 | Referenced strings | Analyze a loaded module for the ASCII and UTF-16LE strings its code directly references and show each as a comment on the referencing disassembly line, with a filterable, per-module list in the Referenced strings window. | Implemented (Referenced strings window) |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
-| Struct dissector | Reconstruct C/C++ structures from live memory: place a struct on an address expression, describe its fields with offsets and a ReClass-like type set, watch decoded live values, follow pointer fields, write a field back and export the layout as C++ (`View > Struct View`, also reachable from the address list's and the scan results' `Dissect as struct…` row command). Definitions are saved in the `.skt` archive. | Implemented (Struct View window) |
 
 ## Quick start
 

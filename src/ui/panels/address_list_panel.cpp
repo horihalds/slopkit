@@ -66,9 +66,8 @@ namespace slopkit::ui::panels
     AddressListPanel::AddressListPanel(table::AddressTable&     table,
                                        process::AccessWorker&   worker,
                                        process::AttachedTarget& target,
-                                       QWidget*                 parent,
-                                       structs::Structs*        definitions)
-        : QWidget(parent), table_(table), worker_(worker), target_(target), definitions_(definitions)
+                                       QWidget*                 parent)
+        : QWidget(parent), table_(table), worker_(worker), target_(target)
     {
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(8, 8, 8, 8);
@@ -439,12 +438,10 @@ namespace slopkit::ui::panels
         return path;
     }
 
-    std::optional<table::AddressTable> AddressListPanel::parse_table(const QString& path, structs::Structs* definitions)
+    std::optional<table::AddressTable> AddressListPanel::parse_table(const QString& path)
     {
         table::AddressTable parsed;
-        structs::Structs    parsed_definitions;
-        structs::Structs*   target = definitions != nullptr ? definitions : &parsed_definitions;
-        if (const auto result = table::load(std::filesystem::path(path.toStdString()), parsed, *target); !result)
+        if (const auto result = table::load(std::filesystem::path(path.toStdString()), parsed); !result)
         {
             log::warning(log::category::ui, std::format("table load failed: {}", result.error()));
             set_status(tr("Open failed: %1").arg(to_qstring(result.error())), true);
@@ -475,7 +472,7 @@ namespace slopkit::ui::panels
 
     bool AddressListPanel::load_table(const QString& path)
     {
-        auto parsed = parse_table(path, definitions_);
+        auto parsed = parse_table(path);
         if (!parsed)
         {
             set_table_path(path);
@@ -520,10 +517,7 @@ namespace slopkit::ui::panels
     void AddressListPanel::save_to_path(const QString& path)
     {
         set_table_path(path);
-        const auto result = definitions_ != nullptr
-                              ? table::save(std::filesystem::path(path.toStdString()), table_, *definitions_)
-                              : table::save(std::filesystem::path(path.toStdString()), table_);
-        if (!result)
+        if (const auto result = table::save(std::filesystem::path(path.toStdString()), table_); !result)
         {
             set_status(tr("Save failed: %1").arg(to_qstring(result.error())), true);
             return;
@@ -1147,22 +1141,6 @@ namespace slopkit::ui::panels
                         if (table_.valid_index(row))
                         {
                             emit browseRequested(table_.entries()[row].address);
-                        }
-                    });
-
-            QAction* dissect =
-                target_.valid()
-                    ? menu.addAction(tr("Dissect as struct…"))
-                    : widgets::described_action(menu, tr("Dissect as struct…"), tr("Attach to a target first."));
-            dissect->setEnabled(target_.valid());
-            connect(dissect,
-                    &QAction::triggered,
-                    this,
-                    [this, row]
-                    {
-                        if (table_.valid_index(row))
-                        {
-                            emit dissectRequested(table_.entries()[row].address);
                         }
                     });
 

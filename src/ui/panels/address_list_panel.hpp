@@ -12,7 +12,6 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
-#include "structs/definition.hpp"
 #include "table/address_table.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
@@ -46,8 +45,7 @@ namespace slopkit::ui::panels
         AddressListPanel(table::AddressTable&     table,
                          process::AccessWorker&   worker,
                          process::AttachedTarget& target,
-                         QWidget*                 parent      = nullptr,
-                         structs::Structs*        definitions = nullptr);
+                         QWidget*                 parent = nullptr);
 
         void save_table();
         void save_table_as();
@@ -71,10 +69,7 @@ namespace slopkit::ui::panels
         using SavePathPrompt = std::function<std::optional<QString>(QWidget* parent, const QString& suggested)>;
         void set_save_path_prompt(SavePathPrompt prompt);
 
-        // Loads a table; when `definitions` is given, its struct definitions
-        // are filled from the archive too.
-        [[nodiscard]] std::optional<table::AddressTable> parse_table(const QString&    path,
-                                                                     structs::Structs* definitions = nullptr);
+        [[nodiscard]] std::optional<table::AddressTable> parse_table(const QString& path);
 
         void adopt_table(const QString& path, table::AddressTable&& loaded);
 
@@ -137,9 +132,6 @@ namespace slopkit::ui::panels
 
         void tableSettingsRequested();
 
-        // The row menu's `Dissect as struct…`, seeded with the row's address.
-        void dissectRequested(std::uint64_t address);
-
     private:
         void                                   show_context_menu(const QPoint& position);
         void                                   set_status(const QString& message, bool is_error);
@@ -158,7 +150,6 @@ namespace slopkit::ui::panels
         table::AddressTable&                  table_;
         process::AccessWorker&                worker_;
         process::AttachedTarget&              target_;
-        structs::Structs*                     definitions_ {};
         ui::ModuleSpans                       modules_;
         models::AddressTableModel*            model_ {};
         QTableView*                           table_view_ {};

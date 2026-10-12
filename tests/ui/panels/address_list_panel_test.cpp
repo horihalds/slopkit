@@ -1090,7 +1090,6 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
                              QStringLiteral("Show as hex"),
                              QStringLiteral("Copy"),
                              QStringLiteral("Browse this memory region"),
-                             QStringLiteral("Dissect as struct…"),
                              QStringLiteral("Watch accesses"),
                              QStringLiteral("Delete"),
                              QStringLiteral("Add Address Manually…"),
@@ -1126,39 +1125,6 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
     QMenu empty_menu;
     panel.populate_row_menu(empty_menu, 9);
     CHECK(action_texts(empty_menu.actions()).isEmpty());
-}
-
-TEST_CASE("the address list row menu dissects a value row as a struct", "[ui]")
-{
-    application();
-
-    FakeAccess                       access;
-    slopkit::process::AccessWorker   worker {access};
-    slopkit::process::AttachedTarget target = fake_target();
-
-    slopkit::table::AddressTable table;
-    add_int32(table, 0x1040);
-
-    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
-
-    std::uint64_t dissected = 0;
-    QObject::connect(&panel,
-                     &slopkit::ui::panels::AddressListPanel::dissectRequested,
-                     [&dissected](std::uint64_t address)
-                     {
-                         dissected = address;
-                     });
-
-    QMenu menu;
-    panel.populate_row_menu(menu, 0);
-    for (QAction* action : menu.actions())
-    {
-        if (action->text() == QStringLiteral("Dissect as struct…"))
-        {
-            action->trigger();
-        }
-    }
-    CHECK(dissected == 0x1040);
 }
 
 TEST_CASE("the address list row menu copies the row's address", "[ui]")

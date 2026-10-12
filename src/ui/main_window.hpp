@@ -16,7 +16,6 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "script/symbols.hpp"
-#include "structs/definition.hpp"
 #include "table/address_table.hpp"
 #include "ui/access_watch.hpp"
 #include "ui/dialogs/table_conflict.hpp"
@@ -38,7 +37,6 @@ namespace slopkit::ui::dialogs
     class MemoryViewerDialog;
     class ProcessListDialog;
     class SettingsDialog;
-    class StructViewerDialog;
     class TableSettingsDialog;
 }
 
@@ -113,10 +111,6 @@ namespace slopkit::ui
         [[nodiscard]] dialogs::BreakpointsDialog* breakpoints() const noexcept;
         [[nodiscard]] dialogs::AccessWatchDialog* access_watch() const noexcept;
 
-        // The detached Struct View window, or nullptr before build_dialogs();
-        // like the Memory Viewer it is a parentless top-level window.
-        [[nodiscard]] dialogs::StructViewerDialog* struct_viewer() const noexcept;
-
     protected:
         bool event(QEvent* event) override;
 
@@ -132,7 +126,6 @@ namespace slopkit::ui
         void build_status_bar();
         void build_central();
         void build_dialogs();
-        void reload_struct_definitions();
         void apply_tab_order();
         void refresh_target_label();
         void run_freeze_pass();
@@ -160,8 +153,6 @@ namespace slopkit::ui
         void show_access_watch();
         void show_settings();
         void show_about();
-        void show_struct_view();
-        void dissect_address(std::uint64_t address);
 
         void start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind);
         void show_instruction_accesses(std::uint64_t                   instruction,
@@ -186,7 +177,6 @@ namespace slopkit::ui
         SandboxAttachPrompt sandbox_attach_prompt_;
 
         table::AddressTable address_table_;
-        structs::Structs    structs_;
 
         panels::ScannerPanel*     scanner_ {};
         panels::FoundListPanel*   found_list_ {};
@@ -196,7 +186,6 @@ namespace slopkit::ui
         dialogs::AddAddressDialog*                   add_address_ {};
         dialogs::TableSettingsDialog*                table_settings_ {};
         std::unique_ptr<dialogs::MemoryViewerDialog> memory_view_;
-        std::unique_ptr<dialogs::StructViewerDialog> struct_view_;
         std::unique_ptr<dialogs::LogDialog>          log_;
         std::unique_ptr<dialogs::BreakpointsDialog>  breakpoints_;
         std::unique_ptr<dialogs::AccessWatchDialog>  access_watch_;
@@ -216,7 +205,6 @@ namespace slopkit::ui
         QAction* settings_action_ {};
         QAction* breakpoints_action_ {};
         QAction* access_watch_action_ {};
-        QAction* struct_view_action_ {};
         QAction* launch_sandbox_action_ {};
         QAction* about_action_ {};
 

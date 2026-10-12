@@ -40,8 +40,7 @@ TEST_CASE("the main window shell is built", "[ui]")
           == QList<QString> {QStringLiteral("Log"),
                              QStringLiteral("Settings"),
                              QStringLiteral("Breakpoints"),
-                             QStringLiteral("Access Watch"),
-                             QStringLiteral("Struct View")});
+                             QStringLiteral("Access Watch")});
     CHECK(action_texts(menus[2]->menu()->actions())
           == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
 
