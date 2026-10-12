@@ -104,16 +104,6 @@ TEST_CASE("an inline refinement keeps the previous value inline", "[scan]")
     CHECK(std::ranges::equal(set.previous(hit), before));
 }
 
-TEST_CASE("a set without previous bytes reports none", "[scan]")
-{
-    const std::vector<std::byte> value = bytes_of(4, 0x40);
-
-    slopkit::scan::ScanResults set;
-    const auto                 hit = append(set, 0x4000, value, {});
-
-    CHECK(set.previous(hit).empty());
-}
-
 TEST_CASE("several wide values each address their own blob slice", "[scan]")
 {
     const std::vector<std::byte> first  = bytes_of(12, 0x01);

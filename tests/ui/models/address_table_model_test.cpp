@@ -34,10 +34,6 @@ TEST_CASE("the address-table model edits the table", "[ui]")
     CHECK(model.rowCount() == 1);
     CHECK(model.columnCount() == 5);
 
-    CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::active) == 0);
-    CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::description) == 1);
-    CHECK(static_cast<int>(slopkit::ui::models::AddressTableModel::value) == 4);
-
     CHECK(model.headerData(0, Qt::Horizontal, Qt::DisplayRole).toString().isEmpty());
     CHECK(model.headerData(1, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Description"));
 

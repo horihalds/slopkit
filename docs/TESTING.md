@@ -64,6 +64,27 @@ QT_QPA_PLATFORM=offscreen ./build/slopkit_tests "name1,name2,*glob*"
 - Never run broad tags like `[ui]` through the binary directly: the full set
   exceeds the tool timeout. Use `./tools/test.sh`.
 
+## What earns a test
+
+A case earns its place only when a plausible defect — a change to slopkit's own
+logic — would make it fail. Judge a case by that question, not by its size. A
+case is removed when every assertion in it falls under one of four criteria:
+
+- **Framework behavior** — it asserts Qt, Zydis, Lua or sol2 behavior rather than
+  slopkit's; only that library changing would fail it.
+- **Duplicated coverage** — another case already fails if the behavior breaks.
+- **Trivial accessors/constants** — it restates a literal, an enum name, or a
+  one-line accessor.
+- **Over-specified internals** — a harmless refactor would fail it while the
+  behavior is unchanged.
+
+A case that mixes valuable and low-value assertions is **trimmed** — drop the
+low-value sections/checks — not deleted wholesale; delete only when every
+assertion falls under a criterion. Tests that model a documented failure mode
+stay: the regressions in [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md), the
+hazards [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes, and the hidden
+wine-agent cases below.
+
 ## The Wine resident agent
 
 The agent is a cross-compiled PE, so it is part of the normal build: the

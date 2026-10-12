@@ -68,20 +68,8 @@ TEST_CASE("The logger drops records below the minimum level", "[log]")
     REQUIRE(received == 1);
 }
 
-TEST_CASE("Log level names round-trip and junk is rejected", "[log]")
+TEST_CASE("Junk log level names are rejected", "[log]")
 {
-    REQUIRE(slopkit::log::level_name(Level::debug) == "debug");
-    REQUIRE(slopkit::log::level_name(Level::info) == "info");
-    REQUIRE(slopkit::log::level_name(Level::warning) == "warning");
-    REQUIRE(slopkit::log::level_name(Level::error) == "error");
-
-    for (const Level level : {Level::debug, Level::info, Level::warning, Level::error})
-    {
-        Level parsed = Level::error;
-        REQUIRE(slopkit::log::parse_level(slopkit::log::level_name(level), parsed));
-        REQUIRE(parsed == level);
-    }
-
     Level parsed = Level::info;
     REQUIRE_FALSE(slopkit::log::parse_level("trace", parsed));
     REQUIRE_FALSE(slopkit::log::parse_level("", parsed));

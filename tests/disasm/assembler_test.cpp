@@ -69,14 +69,6 @@ namespace
     }
 }
 
-TEST_CASE("a register instruction assembles to the known encoding", "[disasm]")
-{
-    CHECK(encoded("MOV RBP, RSP") == bytes({0x48, 0x89, 0xE5}));
-    CHECK(encoded("mov rbp, rsp") == bytes({0x48, 0x89, 0xE5}));
-    CHECK(encoded("RET") == bytes({0xC3}));
-    CHECK(encoded("NOP") == bytes({0x90}));
-}
-
 TEST_CASE("an immediate assembles in its shortest form", "[disasm]")
 {
     CHECK(encoded("MOV EAX, 1") == bytes({0xB8, 0x01, 0x00, 0x00, 0x00}));
