@@ -1,8 +1,10 @@
 #include <catch2/catch.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include <QMimeData>
@@ -114,13 +116,18 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
     access.memory->at(0x1040) = std::byte {0};
 
     CHECK(model.write_values(like_rows, QStringLiteral("42")));
+    // Wait for the status this case asserts, not for the memory the job writes
+    // on its way there: the completion that produces the status is drained after
+    // the write, so the memory alone would accept the previous job's result.
     CHECK(pump_ui(worker,
                   [&]
                   {
-                      return access.memory->at(0x1040) == std::byte {42} && access.memory->at(0x1044) == std::byte {42};
+                      return !is_error && message == QStringLiteral("2 values written.");
                   }));
     CHECK_FALSE(is_error);
     CHECK(message == QStringLiteral("2 values written."));
+    CHECK(access.memory->at(0x1040) == std::byte {42});
+    CHECK(access.memory->at(0x1044) == std::byte {42});
     CHECK(table.entries()[0].bytes.front() == std::byte {42});
     CHECK(table.entries()[1].bytes.front() == std::byte {42});
     CHECK(table.entries()[2].bytes.front() == std::byte {7});
@@ -137,10 +144,11 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
     CHECK(pump_ui(worker,
                   [&]
                   {
-                      return access.memory->at(0x1048) == std::byte {0x2A};
+                      return !is_error && message == QStringLiteral("Value written.");
                   }));
     CHECK_FALSE(is_error);
     CHECK(message == QStringLiteral("Value written."));
+    CHECK(access.memory->at(0x1048) == std::byte {0x2A});
 
     slopkit::process::AttachedTarget       detached;
     slopkit::ui::models::AddressTableModel detached_model {table, worker, detached};
@@ -156,6 +164,66 @@ TEST_CASE("the address-table model writes one value to a selection of like entri
     CHECK_FALSE(detached_model.write_values(single_row, QStringLiteral("1")));
     CHECK(is_error);
     CHECK(message.contains(QStringLiteral("Not attached")));
+}
+
+TEST_CASE("the address-table write status waits for the queued completion", "[ui]")
+{
+    application();
+
+    FakeAccess               access;
+    slopkit::test::WriteGate gate;
+    // Hold the write after its memory effect, so the memory is already updated
+    // while the status a caller reads is still the previous one.
+    access.after_write = gate.hook();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    add_int32(table, 0x1040);
+
+    slopkit::ui::models::AddressTableModel model {table, worker, target};
+
+    QString message  = QStringLiteral("stale");
+    bool    is_error = false;
+    QObject::connect(&model,
+                     &slopkit::ui::models::AddressTableModel::statusChanged,
+                     &model,
+                     [&](const QString& text, bool error)
+                     {
+                         message  = text;
+                         is_error = error;
+                     });
+
+    attach_app_session(worker);
+    access.memory->at(0x1040) = std::byte {0};
+
+    const std::size_t single_row[] = {0};
+    gate.hold();
+    CHECK(model.write_values(single_row, QStringLiteral("42")));
+    REQUIRE(gate.wait_until_held());
+
+    // The job's side effect is visible while the completion that produces the
+    // status is still pending: exactly the window a wait on the memory alone
+    // returns in, and then asserts this stale status.
+    CHECK(access.memory->at(0x1040) == std::byte {42});
+    CHECK(message == QStringLiteral("stale"));
+    CHECK_FALSE(is_error);
+
+    // Release the gate from another thread, so the wait is still in its first
+    // evaluations when the completion lands. A wait that returned on the memory
+    // alone would accept the stale status below.
+    std::jthread releaser {[&gate]
+                           {
+                               std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                               gate.release();
+                           }};
+    CHECK(pump_ui(worker,
+                  [&]
+                  {
+                      return access.memory->at(0x1040) == std::byte {42};
+                  }));
+    CHECK_FALSE(is_error);
+    CHECK(message == QStringLiteral("Value written."));
 }
 
 TEST_CASE("the address-table model renders static addresses as module+RVA", "[ui]")

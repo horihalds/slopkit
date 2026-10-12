@@ -94,6 +94,11 @@ namespace slopkit::debug
         void        set_completion_hook(CompletionHook hook);
         std::size_t drain(std::size_t max_jobs = 32);
 
+        // No queued job, no job in flight and no undelivered completion, so a
+        // drain() would find nothing to do. What a test has to wait for before
+        // asserting on state a job completion produces.
+        [[nodiscard]] bool idle() const noexcept;
+
     signals:
         void stateChanged();
         void stopped();

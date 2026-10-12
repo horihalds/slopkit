@@ -19,6 +19,11 @@ namespace slopkit::debug
         return drained;
     }
 
+    bool Controller::idle() const noexcept
+    {
+        return worker_.idle();
+    }
+
     void Controller::apply_run_result(JobResult&& result)
     {
         const auto* stop = std::get_if<StopResult>(&result);

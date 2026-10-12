@@ -164,6 +164,30 @@ TEST_CASE("submissions do not block and completions arrive after the job finishe
     CHECK_FALSE(captured.error.has_value());
 }
 
+TEST_CASE("the worker is idle only once its job has settled", "[process]")
+{
+    GatedAccess  access {true};
+    AccessWorker worker {access};
+
+    CHECK(worker.idle());
+
+    std::atomic<bool> completed {false};
+    worker.submit_list(worker.next_job_id(),
+                       [&](JobResult&&)
+                       {
+                           completed = true;
+                       });
+
+    access.wait_until_entered();
+    // In flight: the job has not reached its completion yet.
+    CHECK_FALSE(worker.idle());
+
+    access.open_gate();
+    REQUIRE(drain_until_idle(worker));
+    CHECK(completed.load());
+    CHECK(worker.idle());
+}
+
 TEST_CASE("completions run on the calling thread in submission order", "[process]")
 {
     GatedAccess  access {false};

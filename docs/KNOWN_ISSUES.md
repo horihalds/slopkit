@@ -13,98 +13,34 @@ and is listed below, the failure is the known flake — note it and move on; the
 is nothing to debug. If it fails alone, or is not listed here, it is a
 regression: debug it, do not add it just to make a run green.
 
+Two facts decide most of these cases before any debugging:
+
+- Every Catch2 case runs as its own CTest process (`catch_discover_tests`, see
+  `CMakeLists.txt`), so no case can be disturbed by another case's state. A cause
+  that blames a shared, long-lived object such as the process-wide controller is
+  wrong here.
+- A job's side effect and its completion are two steps, and only the drained
+  completion produces what a test asserts; see the drain gotcha in
+  [`docs/ARCHITECTURE_MAP.md`](docs/ARCHITECTURE_MAP.md).
+
+`tools/flake-check.sh` repeats one case under CPU contention, which is how a
+scheduling-dependent cause is proven rather than guessed; the recipe is in
+[`docs/TESTING.md`](docs/TESTING.md).
+
 ## Known flaky tests
 
-### breakpoints window adds, removes and clears breakpoints
+None. The entries that used to live here were each fixed at its root cause:
 
-- **Source:** `tests/ui/dialogs/breakpoints_test.cpp`
-  (`[ui][dialogs][breakpoints]`).
-- **Symptom:** `CHECK(dialog.model()->rowCount() == 1)` and
-  `CHECK(controller.breakpoints().size() == 1)` fail after
-  `remove_button()->click()`, reporting two rows and two controller entries.
-- **Cause:** an earlier case in the shared `[ui]` run leaves breakpoints in the
-  process-wide `DebugController`, so removing the selected row drops a different
-  entry than the test expects. It reproduces on a clean checkout.
-- **Lone-run check:** `ctest -R "breakpoints window adds, removes and clears
-  breakpoints"` passes.
-
-### controller consumes the step-out stop and erases the transient entry
-
-- **Source:** `tests/debug/controller_test.cpp` (`[debug][controller]`).
-- **Symptom:** `REQUIRE(pump_until(controller, ...))` fails: the controller never
-  reaches the stopped state with the transient breakpoint erased and the register
-  writes recorded.
-- **Cause:** the step-out pass races the shared controller/worker under a full
-  run; the same case passes when it has the process to itself.
-- **Lone-run check:** `ctest -R "controller consumes the step-out stop and erases
-  the transient entry"` passes.
-
-### controller ignores a step-out without a stop
-
-- **Source:** `tests/debug/controller_test.cpp` (`[debug][controller]`).
-- **Symptom:** `CHECK(backend.count("cont") == 0)` fails (`1 == 0`): the controller
-  issued a `cont` while ignoring a step-out that had no stop to consume.
-- **Cause:** the same shared practice-backend timing as the case above; the calls
-  are ordered correctly when the case has the process to itself.
-- **Lone-run check:** `ctest -R "controller ignores a step-out without a stop"`
-  passes.
-
-### controller drops a pending step-out when the session ends
-
-- **Source:** `tests/debug/controller_test.cpp` (`[debug][controller]`).
-- **Symptom:** `REQUIRE(pump_until(controller, ...))` fails, or a following
-  `CHECK` reports a different state: the controller does not settle after the
-  session ends.
-- **Cause:** the same shared controller/worker timing as the two cases above; the
-  pass completes normally when the case has the process to itself.
-- **Lone-run check:** `ctest -R "controller drops a pending step-out when the
-  session ends"` passes.
-
-### debug session drives a target with forwarding
-
-- **Source:** `tests/platform/linux/debug_session_test.cpp` (`[debug_session]`).
-- **Symptom:** `REQUIRE(leader.has_value())` fails to attach, or a later
-  `CHECK(hit->reason == StopReason::breakpoint)` reports a different stop.
-- **Cause:** `ptrace` attach/stop timing against the spawned practice target under
-  a full run; the session behaves normally when run alone.
-- **Lone-run check:** `ctest -R "debug session drives a target with forwarding"`
-  passes.
-
-### a signal storm that keeps the target busy is survived harmlessly
-
-- **Source:** `tests/plugin/linux_proc_alloc_test.cpp` (`[linux_proc][alloc]`).
-- **Symptom:** `REQUIRE(ok)` fails, so a `free_memory` inside the loop returned an
-  error while the storm thread was signalling every thread of the target.
-- **Cause:** the ptrace allocation window races the storm: under a full 900-test
-  run the free can meet a stop the storm caused, and the call is refused. The
-  window behaves normally when the case has the CPU to itself. (The wine-proton
-  agent path is not involved — this case drives `linux-proc`, whose profile
-  leaves the agent hooks null.)
-- **Lone-run check:** `ctest -R "a signal storm that keeps the target busy is
-  survived harmlessly"` passes.
-
-### the address-table model writes one value to a selection of like entries
-
-- **Source:** `tests/ui/models/address_table_model_test.cpp` (`[ui]`).
-- **Symptom:** `CHECK_FALSE(is_error)` and `CHECK(message == "Value written.")`
-  fail after the single-row `setData` path, reporting an error instead of the
-  write status.
-- **Cause:** the shared `AccessWorker` write races the scheduling of a full
-  `[ui]` run; the same write completes normally when the case has the process to
-  itself.
-- **Lone-run check:** `ctest -R "the address-table model writes one value to a
-  selection of like entries"` passes.
-
-### the address list changes the value of every selected entry
-
-- **Source:** `tests/ui/panels/address_list_panel_test.cpp` (`[ui][panels]`).
-- **Symptom:** `CHECK(pump_ui(worker, ...))` fails after `change_value()`: the
-  two batched writes never land within the pump timeout.
-- **Cause:** the shared `AccessWorker` write races the scheduling of a full
-  `[ui]` run, the same class as the address-table model flake above; both writes
-  complete normally when the case has the process to itself.
-- **Lone-run check:** `ctest -R "the address list changes the value of every
-  selected entry"` passes.
+| Case | What it really was |
+| --- | --- |
+| `breakpoints window adds, removes and clears breakpoints` | No defect at all: the case is fully synchronous (no worker, no timer), and hundreds of single-CPU repeats under load never failed. The recorded cause — another `[ui]` case leaking breakpoints into a shared controller — cannot happen, because every case has its own process. |
+| `controller consumes the step-out stop and erases the transient entry` | The test raced the controller: the step-out's `cont` was returned immediately, so the stop arrived and the controller was back to stopped inside one drain, and the wait for `running` could miss it. The wait now parks that `cont` in the backend, which makes the running state stable. |
+| `controller ignores a step-out without a stop` | The test cleared the backend's call log while the start's parked `cont` was still unrecorded, so the `cont` it then saw and rejected was that one, not a new one. The wait now includes the recorded `cont`. |
+| `controller drops a pending step-out when the session ends` | The test stopped a session whose `cont` was not parked, which left the release flag for the next step-out's `cont` to eat: that `cont` returned an empty stop instead of the queued one. The parked `cont` is now released by the stop itself. |
+| `debug session drives a target with forwarding` | The parent seized a freshly forked child with no readiness handshake, so the seize could be refused (`ESRCH` on a task that was not established yet). The child runs first, and the attach retries a bounded number of times. |
+| `a signal storm that keeps the target busy is survived harmlessly` | The allocation window forwarded the storm's signals at about one stop per millisecond and livelocked before the planted call could run, so it refused the call. It now polls tightly, and a window that never saw the call's entry is opened again. |
+| `the address-table model writes one value to a selection of like entries` | The test waited for the job's memory side effect and then read the status, which the worker's *undelivered* completion sets — so it read the previous job's status. The shared wait helpers now drain to quiescence first. |
+| `the address list changes the value of every selected entry` | The same completion/effect race, in the batched `change_value()` path. |
 
 ## Not a flake
 

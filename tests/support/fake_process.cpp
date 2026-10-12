@@ -155,7 +155,12 @@ namespace slopkit::test
                                                                         std::span<const std::byte> data)
     {
         ++writes;
-        return memory->write(address, data);
+        auto written = memory->write(address, data);
+        if (written.has_value() && after_write)
+        {
+            after_write();
+        }
+        return written;
     }
 
     std::expected<std::vector<process::ModuleInfo>, process::AccessError> FakeBackend::modules()
@@ -341,6 +346,7 @@ namespace slopkit::test
         backend->free_error      = free_error;
         backend->can_validate    = can_validate;
         backend->validate_error  = validate_error;
+        backend->after_write     = after_write;
         return process::Session {std::move(backend)};
     }
 

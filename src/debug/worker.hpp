@@ -90,6 +90,11 @@ namespace slopkit::debug
 
         std::size_t drain(std::size_t max_jobs = 32);
 
+        // No queued request, no job in flight and no undelivered completion, so
+        // a drain() would find nothing to do. What a test has to wait for
+        // before asserting on anything a completion produces.
+        [[nodiscard]] bool idle() const noexcept;
+
         void set_completion_hook(CompletionHook hook);
 
         [[nodiscard]] JobId next_job_id() noexcept;
@@ -149,6 +154,10 @@ namespace slopkit::debug
         std::atomic<bool>          interrupt_active_ {false};
         std::atomic<std::uint32_t> current_tid_ {0};
         std::atomic<JobId>         next_id_ {1};
+        // Jobs counted from submit() (or start_run()) until their completion is
+        // drained; direct submits through start_run() are counted too, and a
+        // request abandoned at shutdown is dropped in ~Worker.
+        std::atomic<std::size_t>   pending_ {0};
 
         std::jthread worker_;
         std::jthread run_thread_;

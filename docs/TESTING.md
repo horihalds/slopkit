@@ -239,6 +239,14 @@ If it passes alone, check [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) — it 
 the accepted flakes and their lone-run commands. Add a newly accepted flake there
 in the same commit; a failure that also happens alone is a regression, not a flake.
 
+When the failure looks scheduling-dependent, prove it instead of guessing.
+`./tools/flake-check.sh "<test name>" [runs] [--load]` builds, then repeats the
+case with the run pinned to one CPU (`taskset -c 0`), optionally sharing that CPU
+with a busy loop. It stops at the first failure, keeps that transcript in
+`tmp/flake-check-<name>.log` and exits non-zero, so a few hundred repeats are the
+normal way to show a fix holds; it is a manual tool and is not registered with
+CTest, which runs each case once.
+
 A case whose reported `Test time` equals the timeout did not hang: its process
 crashed and left a forked child holding CTest's output pipe open, so CTest kept
 draining the pipe until the timeout expired. Check

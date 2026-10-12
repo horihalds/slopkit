@@ -406,6 +406,27 @@ namespace slopkit::tests
         return predicate();
     }
 
+    // Drains until the controller has no job queued, none in flight and no
+    // undelivered completion. False means the deadline expired with work still
+    // outstanding: a loud failure for a case whose job never completes, never a
+    // silent pass.
+    template<typename Controller>
+    bool drain_until_idle(Controller& controller, std::chrono::milliseconds deadline = std::chrono::seconds(5))
+    {
+        const auto until = std::chrono::steady_clock::now() + deadline;
+        while (std::chrono::steady_clock::now() < until)
+        {
+            controller.drain();
+            if (controller.idle())
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        controller.drain();
+        return controller.idle();
+    }
+
     template<typename Predicate>
     bool wait_until(Predicate predicate, int iterations = 2000)
     {

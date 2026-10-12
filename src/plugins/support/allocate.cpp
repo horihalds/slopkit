@@ -66,6 +66,11 @@ namespace slopkit::plugins::support
         // call run is refused rather than waited on.
         constexpr std::chrono::milliseconds kWindowWait {500};
 
+        // How many fresh windows one remote call may open when the target's own
+        // signals swamp a window before the call even starts. A window that saw
+        // the call's entry is never retried, so no part of the call runs twice.
+        constexpr int kMaxWindowAttempts = 3;
+
         constexpr const char* kIncompleteMessage = "the remote syscall did not complete";
 
         constexpr const char* kNoAddressMessage = "the target returned no address for the mapping";
@@ -74,6 +79,9 @@ namespace slopkit::plugins::support
         {
             int         error {0};
             std::string message;
+            // Set when the window ran out of budget before the call reached its
+            // entry: nothing of the call ran, so a fresh window is safe.
+            bool        retryable {false};
         };
 
         std::string errno_text(int error)
@@ -401,7 +409,7 @@ namespace slopkit::plugins::support
                         }
                     }
                 }
-                return std::unexpected(SyscallRefusal {0, kIncompleteMessage});
+                return std::unexpected(SyscallRefusal {0, kIncompleteMessage, !entry_seen_});
             }
 
         private:
@@ -584,9 +592,14 @@ namespace slopkit::plugins::support
                     }
                     if (std::chrono::steady_clock::now() >= deadline)
                     {
-                        return std::unexpected(SyscallRefusal {0, kIncompleteMessage});
+                        // Time, not a ptrace failure: the target's own signals can
+                        // hold the stop off, so a fresh window may still succeed.
+                        return std::unexpected(SyscallRefusal {0, kIncompleteMessage, !entry_seen_});
                     }
-                    std::this_thread::sleep_for(std::chrono::milliseconds {1});
+                    // Poll tightly: the target may signal itself faster than a
+                    // millisecond per stop, and a window that forwards its signals
+                    // slower than that never gets to run the planted call at all.
+                    std::this_thread::sleep_for(std::chrono::microseconds {50});
                 }
             }
 
@@ -645,21 +658,31 @@ namespace slopkit::plugins::support
         std::expected<std::uint64_t, AllocationError>
         run_remote_syscall(Session& session, std::uint64_t number, const std::array<std::uint64_t, 6>& arguments)
         {
-            RemoteRunner runner(session);
-            if (!runner.ready())
+            std::expected<std::uint64_t, AllocationError> last =
+                std::unexpected(failure(SLOPKIT_ERR_IO, kIncompleteMessage));
+            for (int attempt = 0; attempt < kMaxWindowAttempts; ++attempt)
             {
-                return std::unexpected(runner.error());
+                RemoteRunner runner(session);
+                if (!runner.ready())
+                {
+                    return std::unexpected(runner.error());
+                }
+                const auto result = runner.run(number, arguments);
+                if (result)
+                {
+                    if (const auto released = runner.release(); !released)
+                    {
+                        return std::unexpected(released.error());
+                    }
+                    return *result;
+                }
+                last = std::unexpected(as_allocation_error(result.error()));
+                if (!result.error().retryable)
+                {
+                    break;
+                }
             }
-            const auto result = runner.run(number, arguments);
-            if (!result)
-            {
-                return std::unexpected(as_allocation_error(result.error()));
-            }
-            if (const auto released = runner.release(); !released)
-            {
-                return std::unexpected(released.error());
-            }
-            return *result;
+            return last;
         }
 
         std::vector<std::uint64_t>

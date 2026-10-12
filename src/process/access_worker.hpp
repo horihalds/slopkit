@@ -231,6 +231,11 @@ namespace slopkit::process
 
         std::size_t drain(std::size_t max_jobs = 64);
 
+        // No queued request, no job in flight and no undelivered completion, so
+        // a drain() would find nothing to do. What a test has to wait for
+        // before asserting on anything a completion produces.
+        [[nodiscard]] bool idle() const noexcept;
+
         void set_completion_hook(CompletionHook hook);
 
         [[nodiscard]] bool attached() const noexcept;
@@ -344,6 +349,10 @@ namespace slopkit::process
         std::atomic<bool>             attached_ {false};
         std::atomic<std::size_t>      active_script_count_ {0};
         std::atomic<JobId>            next_id_ {1};
+        // Jobs counted from submit() (or the direct interrupt path) until their
+        // completion is drained; a request abandoned at shutdown is dropped in
+        // ~AccessWorker so idle() cannot latch false.
+        std::atomic<std::size_t>      pending_ {0};
         bool                          stopping_ {false};
 
         std::jthread worker_;

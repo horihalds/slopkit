@@ -123,6 +123,9 @@ namespace slopkit::process
         completions_.clear();
         requests_.clear();
         completion_hook_ = nullptr;
+        // The abandoned requests will never be drained; drop their count so the
+        // accounting stays balanced rather than latching idle() false.
+        pending_.store(0);
 
         log::debug(log::category::process, "access worker stopped");
     }
@@ -157,6 +160,7 @@ namespace slopkit::process
 
             if (token.stop_requested())
             {
+                pending_.fetch_sub(1);
                 break;
             }
 
@@ -180,6 +184,7 @@ namespace slopkit::process
                 return false;
             }
             requests_.push_back(std::move(request));
+            pending_.fetch_add(1);
         }
         log::debug(log::category::process, std::format("queued job {} ({})", request.id, job_kind_name(request.kind)));
         cv_.notify_one();
@@ -206,6 +211,7 @@ namespace slopkit::process
             {
                 completion.on_done(std::move(completion.result));
             }
+            pending_.fetch_sub(1);
             ++drained;
         }
         if (drained > 0)
@@ -219,6 +225,11 @@ namespace slopkit::process
     {
         const std::lock_guard lock(mutex_);
         completion_hook_ = std::move(hook);
+    }
+
+    bool AccessWorker::idle() const noexcept
+    {
+        return pending_.load() == 0;
     }
 
     bool AccessWorker::attached() const noexcept

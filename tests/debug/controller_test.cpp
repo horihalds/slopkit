@@ -13,6 +13,7 @@ using slopkit::debug::Controller;
 using slopkit::debug::Kind;
 using slopkit::debug::StopEvent;
 using slopkit::debug::StopReason;
+using slopkit::tests::drain_until_idle;
 using slopkit::tests::FakeDebugBackend;
 using slopkit::tests::pump_until;
 
@@ -896,7 +897,9 @@ TEST_CASE("controller ignores a step-out without a stop", "[debug][controller]")
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return controller.state() == Controller::State::running;
+                           // The continue the attach issues parks in the backend, so
+                           // wait for it to be recorded before clearing the calls.
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
                        }));
     backend.clear_calls();
     controller.step_out();
@@ -930,22 +933,32 @@ TEST_CASE("controller consumes the step-out stop and erases the transient entry"
                                && controller.backtrace().size() == 2;
                        }));
 
+    // Park the step-out's continue, so the state while the step-out is in flight
+    // is stable: otherwise the stop that continue returns can be applied and the
+    // transient entry erased inside one drain, and the running state is never
+    // observable.
+    backend.block_continue = true;
     controller.step_out();
     REQUIRE(pump_until(controller,
                        [&]
                        {
-                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1
+                               && backend.continue_entered.load();
                        }));
     REQUIRE(controller.breakpoints().size() == 1);
 
     backend.clear_calls();
+    // The stop is queued while the continue is parked, so this is the stop the
+    // step-out's continue consumes.
     backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x6001, 0x6000, std::nullopt, 0});
+    REQUIRE(backend.interrupt(4242).has_value());
     REQUIRE(pump_until(controller,
                        [&]
                        {
                            return controller.state() == Controller::State::stopped && controller.breakpoints().empty()
                                && !backend.register_writes().empty();
                        }));
+    REQUIRE(drain_until_idle(controller));
 
     CHECK(controller.last_stop().trap_address == 0x6000);
     CHECK(controller.state_text() == QStringLiteral("Stopped at 0x6000"));
@@ -1078,11 +1091,13 @@ TEST_CASE("controller drops a pending step-out when the session ends", "[debug][
     REQUIRE(pump_until(controller,
                        [&]
                        {
+                           // Wait for the step-out's continue to park before stopping:
+                           // the interrupt that stops it then consumes that release
+                           // itself, instead of leaving one for the next continue.
                            return controller.state() == Controller::State::running
-                               && controller.breakpoints().size() == 1;
+                               && controller.breakpoints().size() == 1 && backend.continue_entered.load();
                        }));
 
-    backend.block_continue = false;
     controller.stop();
     REQUIRE(pump_until(controller,
                        [&]
@@ -1091,6 +1106,7 @@ TEST_CASE("controller drops a pending step-out when the session ends", "[debug][
                        }));
     CHECK(controller.table().empty());
 
+    backend.block_continue = false;
     backend.clear_calls();
     controller.start(4242, "linux-proc");
     REQUIRE(pump_until(controller,

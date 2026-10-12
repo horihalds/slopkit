@@ -2,9 +2,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -82,6 +84,10 @@ namespace slopkit::test
         std::string                                        fake_plugin_id {"fake"};
         std::atomic<int>                                   reads {0};
         std::atomic<int>                                   writes {0};
+        // Called at the end of a successful `write`, after the memory effect and
+        // before the worker pushes the job's completion. A test uses it to force
+        // that window open.
+        std::function<void()>                              after_write;
         // Suspend capability and recording. `can_suspend` gates the capability
         // the panel queries; `suspends`/`resumes` count the operations that
         // reach the backend, and the error knobs model a refused operation.
@@ -163,14 +169,74 @@ namespace slopkit::test
         std::optional<process::AccessError>      validate_error;
         std::atomic<int>                         attach_calls {0};
         std::atomic<int>                         list_calls {0};
+        std::function<void()>                    after_write;
 
         std::expected<std::vector<process::ProcessInfo>, process::AccessError> list_processes() override;
         std::expected<process::Session, process::AccessError> attach(process::ProcessId pid,
                                                                      std::string_view   plugin_id) override;
     };
 
-    // Drains the worker (and the Qt event loop) until `done` holds or the timeout
-    // elapses.
+    // Holds a write job after its memory effect and before the worker pushes the
+    // job's completion, so a test can force that window open: the fake memory is
+    // already updated while the completion that produces the status text is
+    // still pending. Install `hook()` on the access before the target attaches.
+    class WriteGate
+    {
+    public:
+        [[nodiscard]] std::function<void()> hook()
+        {
+            return [this]
+            {
+                std::unique_lock lock(mutex_);
+                entered_ = true;
+                entered_cv_.notify_all();
+                release_cv_.wait(lock,
+                                 [this]
+                                 {
+                                     return !held_;
+                                 });
+            };
+        }
+
+        // Makes the next write park after its memory effect.
+        void hold()
+        {
+            const std::lock_guard lock(mutex_);
+            held_    = true;
+            entered_ = false;
+        }
+
+        [[nodiscard]] bool wait_until_held(std::chrono::milliseconds timeout = std::chrono::seconds(5))
+        {
+            std::unique_lock lock(mutex_);
+            return entered_cv_.wait_for(lock,
+                                        timeout,
+                                        [this]
+                                        {
+                                            return entered_;
+                                        });
+        }
+
+        void release()
+        {
+            const std::lock_guard lock(mutex_);
+            held_ = false;
+            release_cv_.notify_all();
+        }
+
+    private:
+        std::mutex              mutex_;
+        std::condition_variable entered_cv_;
+        std::condition_variable release_cv_;
+        bool                    held_ {false};
+        bool                    entered_ {false};
+    };
+
+    // Drains the worker (and the Qt event loop) until `done` holds and the
+    // worker is quiescent, or the timeout elapses. A job's side effect and its
+    // completion are two steps, and only the drained completion produces what a
+    // caller asserts (the status text, a model update), so evaluating `done`
+    // before the worker settles would observe the previous job's result.
     template<typename Predicate>
     bool pump_ui(process::AccessWorker& worker, Predicate done)
     {
@@ -179,13 +245,14 @@ namespace slopkit::test
         {
             worker.drain();
             QCoreApplication::processEvents();
-            if (done())
+            if (worker.idle() && done())
             {
                 return true;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
-        return done();
+        worker.drain();
+        return worker.idle() && done();
     }
 
 }

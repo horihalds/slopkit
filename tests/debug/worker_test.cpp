@@ -133,6 +133,45 @@ TEST_CASE("worker services an interrupt while a continue blocks", "[debug][worke
         }));
 }
 
+TEST_CASE("worker is idle only once its completion has been drained", "[debug][worker]")
+{
+    FakeDebugBackend backend;
+    backend.block_continue = true;
+    Worker worker(backend);
+
+    CHECK(worker.idle());
+
+    std::atomic<bool> finished {false};
+    REQUIRE(worker.submit_continue(worker.next_job_id(),
+                                   7,
+                                   0,
+                                   0,
+                                   [&](JobResult&&)
+                                   {
+                                       finished = true;
+                                   }));
+    REQUIRE(wait_until(
+        [&]
+        {
+            return backend.continue_entered.load();
+        }));
+    // In flight: the job has not reached its completion yet.
+    CHECK_FALSE(worker.idle());
+
+    backend.interrupt(7);
+    // Finished or not, the completion is still undelivered, so the worker is not
+    // quiescent and a caller must not read the state the completion produces.
+    CHECK_FALSE(worker.idle());
+
+    REQUIRE(wait_until(
+        [&]
+        {
+            worker.drain();
+            return finished.load();
+        }));
+    CHECK(worker.idle());
+}
+
 TEST_CASE("worker shutdown interrupts a blocking continue", "[debug][worker]")
 {
     FakeDebugBackend backend;

@@ -177,6 +177,7 @@ namespace slopkit::debug
                 completions_.pop_front();
             }
             completion.on_done(std::move(completion.result));
+            pending_.fetch_sub(1);
             ++drained;
         }
         return drained;
@@ -186,6 +187,11 @@ namespace slopkit::debug
     {
         const std::lock_guard lock(mutex_);
         completion_hook_ = std::move(hook);
+    }
+
+    bool Worker::idle() const noexcept
+    {
+        return pending_.load() == 0;
     }
 
     JobId Worker::next_job_id() noexcept
@@ -223,6 +229,9 @@ namespace slopkit::debug
 
     void Worker::start_run(Request request)
     {
+        // Every path below delivers exactly one completion, so the job is
+        // counted here, next to the ones submit() queues.
+        pending_.fetch_add(1);
         if (interrupt_active_.load())
         {
             complete(std::move(request.on_done), VoidResult {});
@@ -370,6 +379,7 @@ namespace slopkit::debug
                 return false;
             }
             requests_.push_back(std::move(request));
+            pending_.fetch_add(1);
         }
         cv_.notify_one();
         return true;

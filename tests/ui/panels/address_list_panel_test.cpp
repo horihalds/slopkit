@@ -1246,6 +1246,17 @@ TEST_CASE("the address list changes the value of every selected entry", "[ui]")
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
     attach_app_session(worker);
 
+    QString status;
+    bool    status_is_error = false;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&](const QString& message, bool is_error)
+                     {
+                         status          = message;
+                         status_is_error = is_error;
+                     });
+
     QTimer::singleShot(0,
                        []
                        {
@@ -1263,11 +1274,16 @@ TEST_CASE("the address list changes the value of every selected entry", "[ui]")
                        });
     panel.change_value();
 
+    // Wait for the status the completion produces, not for the memory the job
+    // writes on its way there: the completion is drained after the write, so the
+    // memory alone would accept the previous job's result.
     CHECK(pump_ui(worker,
                   [&]
                   {
-                      return access.memory->at(0x1040) == std::byte {42} && access.memory->at(0x1044) == std::byte {42};
+                      return !status_is_error && status == QStringLiteral("2 values written.");
                   }));
+    CHECK(access.memory->at(0x1040) == std::byte {42});
+    CHECK(access.memory->at(0x1044) == std::byte {42});
     CHECK(table.entries()[2].bytes.front() == std::byte {1});
 }
 

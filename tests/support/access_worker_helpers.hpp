@@ -140,6 +140,30 @@ namespace
         FakeBackend*            backend_ {nullptr};
     };
 
+    // Drains until the worker has no request queued, no job in flight and no
+    // undelivered completion. False means the deadline expired with work still
+    // outstanding: a loud failure for a case whose job never completes, never a
+    // silent pass.
+    inline bool drain_until_idle(AccessWorker& worker, std::chrono::milliseconds deadline = 5s)
+    {
+        const auto until = std::chrono::steady_clock::now() + deadline;
+        while (std::chrono::steady_clock::now() < until)
+        {
+            worker.drain();
+            if (worker.idle())
+            {
+                return true;
+            }
+            std::this_thread::sleep_for(1ms);
+        }
+        worker.drain();
+        return worker.idle();
+    }
+
+    // Evaluates the predicate only once the worker is quiescent. A job's side
+    // effect and its completion are two steps, and only the drained completion
+    // produces what a caller asserts (the status text, a model update), so
+    // waiting for the side effect alone would observe the previous job's result.
     template<typename Predicate>
     bool pump(AccessWorker& worker, Predicate done)
     {
@@ -147,13 +171,14 @@ namespace
         while (std::chrono::steady_clock::now() < deadline)
         {
             worker.drain();
-            if (done())
+            if (worker.idle() && done())
             {
                 return true;
             }
             std::this_thread::sleep_for(2ms);
         }
-        return done();
+        worker.drain();
+        return worker.idle() && done();
     }
 
     class LevelGuard

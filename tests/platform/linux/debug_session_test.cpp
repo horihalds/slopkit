@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <expected>
 #include <future>
 #include <optional>
@@ -226,7 +227,21 @@ TEST_CASE("debug session drives a target with forwarding", "[debug_session]")
     MemAccess    memory(child.pid());
     DebugSession session(child.pid(), memory, ForeignSignalPolicy::forward);
 
-    const auto leader = session.attach();
+    // The count proves the task has run, which is the readiness the seize needs:
+    // attaching to a child that is not yet established can be refused.
+    REQUIRE(await_tick(memory, 0));
+
+    // A freshly forked task can refuse a seize for a moment, so retry briefly
+    // rather than failing the case on the first attempt.
+    std::expected<ProcessId, AccessError> leader = std::unexpected(AccessError::not_found);
+    for (int attempt = 0; attempt < 100 && !leader.has_value(); ++attempt)
+    {
+        leader = session.attach();
+        if (!leader)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
     REQUIRE(leader.has_value());
     CHECK(*leader == child.pid());
     CHECK(session.attached());

@@ -164,8 +164,11 @@ docs that hold the detail behind this map.
   performs the job on the worker thread and only then queues the completion that
   `drain()` invokes on the UI thread. A test that asserts anything the completion
   produces — a log record, a model refresh, a repaint — must wait for the drained
-  completion, never for the worker-thread side effect — worked example in
-  `tests/ui/components/memory_view_document_test.cpp`.
+  completion, never for the worker-thread side effect. `pump` and `pump_ui`
+  (`tests/support/access_worker_helpers.hpp`, `tests/support/fake_process.hpp`)
+  drain until `AccessWorker::idle()`, and `drain_until_idle`
+  (`tests/support/fake_debug.hpp`) does the same for `Controller::idle()` — worked
+  example in `tests/ui/components/memory_view_document_test.cpp`.
 - Configure fails without ImageMagick, the Zydis, libzip, Lua and sol2 dev
   packages and `pkg-config`.
 - The `slopkit-agent` target cross-compiles the Wine resident agent with
