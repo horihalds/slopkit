@@ -59,20 +59,22 @@ namespace slopkit::ui::models
 
         [[nodiscard]] const scan::ScanHit* hit_at(int row) const;
 
+        [[nodiscard]] std::span<const std::byte> value_at(int row) const;
+
     private:
         void                          rebuild_window();
         void                          refresh_static_flags();
         [[nodiscard]] const LiveCell* live_cell_at(int row) const;
 
-        std::shared_ptr<const std::vector<scan::ScanHit>> hits_;
-        scan::ScanConfig                                  config_;
-        std::vector<int>                                  order_;
-        std::vector<bool>                                 static_hits_;
-        LiveCells                                         cells_;
-        ui::ModuleSpans                                   module_spans_;
-        ui::AddressMode                                   address_mode_ {ui::AddressMode::module_relative};
-        int                                               sort_column_ {address};
-        Qt::SortOrder                                     sort_order_ {Qt::AscendingOrder};
+        std::shared_ptr<const scan::ScanResults> hits_;
+        scan::ScanConfig                         config_;
+        std::vector<int>                         order_;
+        std::vector<bool>                        static_hits_;
+        LiveCells                                cells_;
+        ui::ModuleSpans                          module_spans_;
+        ui::AddressMode                          address_mode_ {ui::AddressMode::module_relative};
+        int                                      sort_column_ {address};
+        Qt::SortOrder                            sort_order_ {Qt::AscendingOrder};
     };
 
 }

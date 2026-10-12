@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "scan/engine.hpp"
+
 namespace slopkit::app
 {
     int run(int argc, char** argv);
@@ -19,5 +21,9 @@ namespace slopkit::app
     int list_processes(std::ostream& out, std::ostream& err);
 
     int scan_process(std::ostream& out, std::ostream& err, std::uint32_t pid, std::string_view value_text);
+
+    // Prints one stored hit per line and the result summary, naming the stored and
+    // match counts apart when the scan had to cap its stored set.
+    void report_scan_hits(std::ostream& out, const scan::ScanSnapshot& snapshot, scan::ValueType value_type);
 
 }

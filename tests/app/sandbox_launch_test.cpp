@@ -108,5 +108,5 @@ TEST_CASE("a launched practice target's memory is readable and scannable", "[app
     const auto snapshot = wait(engine);
     REQUIRE(snapshot.state == ScanState::done);
     REQUIRE(snapshot.result_hits != nullptr);
-    CHECK_FALSE(snapshot.result_hits->empty());
+    CHECK_FALSE(snapshot.result_hits->hits.empty());
 }

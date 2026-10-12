@@ -24,7 +24,7 @@ TEST_CASE("a parallel first scan matches the sequential one", "[scan]")
         const auto snapshot = wait(engine);
         REQUIRE(snapshot.state == ScanState::done);
         REQUIRE(snapshot.hit_count == expected);
-        for (const auto& hit : snapshot.hits)
+        for (const auto& hit : snapshot.page.hits)
         {
             reference.push_back(hit.address);
         }
@@ -40,7 +40,7 @@ TEST_CASE("a parallel first scan matches the sequential one", "[scan]")
         CHECK(snapshot.hit_count == expected);
 
         std::vector<std::uint64_t> addresses;
-        for (const auto& hit : snapshot.hits)
+        for (const auto& hit : snapshot.page.hits)
         {
             addresses.push_back(hit.address);
         }
@@ -78,8 +78,8 @@ TEST_CASE("a match straddling a chunk or shard boundary is found", "[scan]")
         const auto snapshot = wait(engine);
         REQUIRE(snapshot.state == ScanState::done);
         REQUIRE(snapshot.hit_count == 2);
-        CHECK(snapshot.hits[0].address == kBase + starts[0]);
-        CHECK(snapshot.hits[1].address == kBase + starts[1]);
+        CHECK(snapshot.page.hits[0].address == kBase + starts[0]);
+        CHECK(snapshot.page.hits[1].address == kBase + starts[1]);
     }
 }
 
@@ -199,7 +199,7 @@ TEST_CASE("a parallel refinement matches the sequential one", "[scan]")
         const auto snapshot = wait(engine);
         REQUIRE(snapshot.state == ScanState::done);
         REQUIRE(snapshot.result_hits != nullptr);
-        for (const auto& hit : *snapshot.result_hits)
+        for (const auto& hit : snapshot.result_hits->hits)
         {
             reference.push_back(hit.address);
         }
@@ -220,7 +220,7 @@ TEST_CASE("a parallel refinement matches the sequential one", "[scan]")
         REQUIRE(snapshot.result_hits != nullptr);
 
         std::vector<std::uint64_t> addresses;
-        for (const auto& hit : *snapshot.result_hits)
+        for (const auto& hit : snapshot.result_hits->hits)
         {
             addresses.push_back(hit.address);
         }
@@ -254,4 +254,52 @@ TEST_CASE("a refinement coalesces its reads into 4 KiB batches", "[scan]")
 
     CHECK(counter->read_into_calls.load() <= kBytes / (4 * 1024) + 1);
     CHECK(counter->read_calls.load() == 0);
+}
+
+TEST_CASE("a small budget stores the same set for every thread count", "[scan]")
+{
+    // More than one shard, so the per-shard slices are exercised; the stored set
+    // must not depend on which thread claimed which shard.
+    constexpr std::size_t  kBytes = 36u << 20;
+    std::vector<std::byte> bytes(kBytes);
+    const auto             source = slopkit::scan::make_buffer_source(bytes, kBase);
+    const ScanConfig       config = exact_config(ValueType::int32, 0);
+
+    const auto budget = 64 * sizeof(slopkit::scan::ScanHit);
+
+    std::vector<std::uint64_t> reference;
+    {
+        ScanEngine engine;
+        engine.set_max_threads(1);
+        engine.set_stored_result_budget(budget);
+        engine.first_scan(config, source);
+        const auto snapshot = wait(engine);
+        REQUIRE(snapshot.state == ScanState::done);
+        REQUIRE(snapshot.capped);
+        REQUIRE(snapshot.stored_count == 64);
+        for (const auto& hit : snapshot.page.hits)
+        {
+            reference.push_back(hit.address);
+        }
+    }
+
+    for (const std::size_t threads : {std::size_t {2}, std::size_t {4}, std::size_t {8}})
+    {
+        ScanEngine engine;
+        engine.set_max_threads(threads);
+        engine.set_stored_result_budget(budget);
+        engine.first_scan(config, source);
+        const auto snapshot = wait(engine);
+        REQUIRE(snapshot.state == ScanState::done);
+        // Alignment 1 matches at every byte offset inside the region.
+        CHECK(snapshot.hit_count == kBytes - 3);
+        CHECK(snapshot.stored_count == 64);
+
+        std::vector<std::uint64_t> addresses;
+        for (const auto& hit : snapshot.page.hits)
+        {
+            addresses.push_back(hit.address);
+        }
+        CHECK(addresses == reference);
+    }
 }

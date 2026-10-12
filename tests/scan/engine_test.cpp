@@ -16,9 +16,9 @@ TEST_CASE("a first scan finds exact values", "[scan]")
     const auto snapshot = wait(engine);
     REQUIRE(snapshot.state == ScanState::done);
     REQUIRE(snapshot.hit_count == 1);
-    REQUIRE(snapshot.hits.size() == 1);
-    CHECK(snapshot.hits[0].address == kBase + 8);
-    CHECK(snapshot.hits[0].previous.empty());
+    REQUIRE(snapshot.page.hits.size() == 1);
+    CHECK(snapshot.page.hits[0].address == kBase + 8);
+    CHECK(snapshot.page.previous(snapshot.page.hits[0]).empty());
     CHECK(snapshot.progress == Approx(1.0f));
 }
 
@@ -64,7 +64,7 @@ TEST_CASE("a finished scan publishes the whole stored result set", "[scan]")
 
     const auto running = engine.snapshot();
     REQUIRE(running.state == ScanState::running);
-    CHECK(running.hits.empty());
+    CHECK(running.page.hits.empty());
     CHECK(running.result_hits == nullptr);
     CHECK(running.progress >= 0.0f);
     CHECK(running.progress <= 1.0f);
@@ -72,9 +72,9 @@ TEST_CASE("a finished scan publishes the whole stored result set", "[scan]")
     const auto snapshot = wait(engine);
     REQUIRE(snapshot.state == ScanState::done);
     REQUIRE(snapshot.hit_count == 300);
-    CHECK(snapshot.hits.size() == slopkit::scan::kDisplayPage);
+    CHECK(snapshot.page.hits.size() == slopkit::scan::kDisplayPage);
     REQUIRE(snapshot.result_hits != nullptr);
-    CHECK(snapshot.result_hits->size() == 300);
+    CHECK(snapshot.result_hits->hits.size() == 300);
 
     CHECK(engine.snapshot().result_hits.get() == snapshot.result_hits.get());
 }
@@ -126,7 +126,7 @@ TEST_CASE("a refinement publishes no rows before it finishes", "[scan]")
     const auto first = wait(engine);
     REQUIRE(first.state == ScanState::done);
     REQUIRE(first.result_hits != nullptr);
-    REQUIRE(first.result_hits->size() == 300);
+    REQUIRE(first.result_hits->hits.size() == 300);
 
     block->store(true);
     ScanConfig refinement;
@@ -136,14 +136,14 @@ TEST_CASE("a refinement publishes no rows before it finishes", "[scan]")
 
     const auto running = engine.snapshot();
     REQUIRE(running.state == ScanState::running);
-    CHECK(running.hits.empty());
+    CHECK(running.page.hits.empty());
     CHECK(running.result_hits == nullptr);
 
     release->store(true);
     const auto refined = wait(engine);
     REQUIRE(refined.state == ScanState::done);
     REQUIRE(refined.result_hits != nullptr);
-    CHECK(refined.result_hits->size() == 300);
+    CHECK(refined.result_hits->hits.size() == 300);
 }
 
 TEST_CASE("undo republishes the whole result set through the handle", "[scan]")
@@ -162,7 +162,7 @@ TEST_CASE("undo republishes the whole result set through the handle", "[scan]")
     REQUIRE(first.state == ScanState::done);
     REQUIRE(first.hit_count == 300);
     REQUIRE(first.result_hits != nullptr);
-    CHECK(first.result_hits->size() == 300);
+    CHECK(first.result_hits->hits.size() == 300);
 
     for (std::size_t i = 0; i < 150; ++i)
     {
@@ -176,13 +176,13 @@ TEST_CASE("undo republishes the whole result set through the handle", "[scan]")
     REQUIRE(refined.state == ScanState::done);
     REQUIRE(refined.hit_count == 150);
     REQUIRE(refined.result_hits != nullptr);
-    CHECK(refined.result_hits->size() == 150);
+    CHECK(refined.result_hits->hits.size() == 150);
 
     engine.undo();
     const auto undone = engine.snapshot();
     REQUIRE(undone.state == ScanState::done);
     REQUIRE(undone.result_hits != nullptr);
-    CHECK(undone.result_hits->size() == 300);
+    CHECK(undone.result_hits->hits.size() == 300);
     CHECK(undone.hit_count == 300);
 }
 
@@ -288,8 +288,8 @@ TEST_CASE("refinement scans narrow the result set and undo restores it", "[scan]
         engine.next_scan(config);
         const auto snapshot = wait(engine);
         REQUIRE(snapshot.hit_count == 2);
-        CHECK(snapshot.hits[0].address == kBase);
-        CHECK(read_int32(snapshot.hits[0].previous, 0) == 10);
+        CHECK(snapshot.page.hits[0].address == kBase);
+        CHECK(read_int32(snapshot.page.previous(snapshot.page.hits[0]), 0) == 10);
     }
 
     SECTION("decreased")
@@ -348,7 +348,7 @@ TEST_CASE("every refinement type keeps the same addresses over a mutated buffer"
         REQUIRE(snapshot.state == ScanState::done);
 
         std::vector<std::uint64_t> addresses;
-        for (const auto& hit : snapshot.hits)
+        for (const auto& hit : snapshot.page.hits)
         {
             addresses.push_back(hit.address);
         }
@@ -376,7 +376,7 @@ TEST_CASE("a refinement over a single hit stays a single hit", "[scan]")
 
     REQUIRE(snapshot.state == ScanState::done);
     REQUIRE(snapshot.hit_count == 1);
-    CHECK(snapshot.hits[0].address == kBase);
+    CHECK(snapshot.page.hits[0].address == kBase);
     CHECK(snapshot.progress == Approx(1.0f));
 }
 
@@ -397,11 +397,11 @@ TEST_CASE("a refinement that rejects everything finishes empty", "[scan]")
 
     CHECK(snapshot.state == ScanState::done);
     CHECK(snapshot.hit_count == 0);
-    CHECK(snapshot.hits.empty());
+    CHECK(snapshot.page.hits.empty());
     CHECK(snapshot.progress == Approx(1.0f));
 }
 
-TEST_CASE("a refinement stores every kept hit, with no result cap", "[scan]")
+TEST_CASE("a refinement stores every kept hit under the budget", "[scan]")
 {
     auto bytes = std::make_shared<std::vector<std::byte>>(32);
     for (std::size_t i = 0; i < 8; ++i)
@@ -422,8 +422,117 @@ TEST_CASE("a refinement stores every kept hit, with no result cap", "[scan]")
     CHECK(snapshot.hit_count == 8);
     CHECK(engine.result_count() == 8);
     REQUIRE(snapshot.result_hits != nullptr);
-    CHECK(snapshot.result_hits->size() == 8);
-    CHECK(snapshot.hits.size() == 8);
+    CHECK(snapshot.result_hits->hits.size() == 8);
+    CHECK(snapshot.page.hits.size() == 8);
+}
+
+TEST_CASE("a scan whose matches exceed the budget stores a bounded set", "[scan]")
+{
+    // A zero-filled region matches far more often than the budget can store; the
+    // reported match count stays exact and the stored bytes stay bounded.
+    constexpr std::size_t  kRegion = 1u << 20;
+    std::vector<std::byte> bytes(kRegion);
+
+    ScanConfig config       = exact_config(ValueType::int32, 0);
+    config.filter.alignment = 4;
+
+    ScanEngine engine;
+    const auto budget = 64 * sizeof(slopkit::scan::ScanHit);
+    engine.set_stored_result_budget(budget);
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, kBase));
+    const auto snapshot = wait(engine);
+
+    REQUIRE(snapshot.state == ScanState::done);
+    CHECK(snapshot.hit_count == kRegion / 4);
+    CHECK(snapshot.stored_count == 64);
+    CHECK(snapshot.capped);
+    REQUIRE(snapshot.result_hits != nullptr);
+    CHECK(snapshot.result_hits->bytes() <= engine.stored_result_budget());
+
+    REQUIRE(snapshot.page.hits.size() == 64);
+    for (std::size_t i = 0; i < 64; ++i)
+    {
+        CHECK(snapshot.page.hits[i].address == kBase + i * 4);
+        CHECK(read_int32(snapshot.page.value(snapshot.page.hits[i]), 0) == 0);
+    }
+}
+
+TEST_CASE("a scan under the budget keeps every hit", "[scan]")
+{
+    constexpr std::size_t  kRegion = 64 * 4;
+    std::vector<std::byte> bytes(kRegion);
+
+    ScanConfig config       = exact_config(ValueType::int32, 0);
+    config.filter.alignment = 4;
+
+    ScanEngine engine;
+    engine.set_stored_result_budget((64 + 1) * sizeof(slopkit::scan::ScanHit));
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, kBase));
+    const auto snapshot = wait(engine);
+
+    REQUIRE(snapshot.state == ScanState::done);
+    CHECK(snapshot.hit_count == 64);
+    CHECK(snapshot.stored_count == 64);
+    CHECK_FALSE(snapshot.capped);
+    CHECK(snapshot.page.hits.size() == 64);
+}
+
+TEST_CASE("a refinement of a capped set stays capped and undo restores it", "[scan]")
+{
+    constexpr std::size_t kRegion = 1u << 20;
+    auto                  bytes   = std::make_shared<std::vector<std::byte>>(kRegion);
+
+    ScanConfig config       = exact_config(ValueType::int32, 0);
+    config.filter.alignment = 4;
+
+    ScanEngine engine;
+    engine.set_stored_result_budget(64 * sizeof(slopkit::scan::ScanHit));
+    engine.first_scan(config, mutable_source(bytes));
+    REQUIRE(wait(engine).capped);
+
+    engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
+    const auto refined = wait(engine);
+    REQUIRE(refined.state == ScanState::done);
+    CHECK(refined.hit_count == 64);
+    CHECK(refined.stored_count == 64);
+    CHECK(refined.capped);
+    REQUIRE(refined.page.hits.size() == 64);
+    CHECK(read_int32(refined.page.previous(refined.page.hits[0]), 0) == 0);
+
+    engine.undo();
+    const auto undone = engine.snapshot();
+    REQUIRE(undone.state == ScanState::done);
+    CHECK(undone.hit_count == kRegion / 4);
+    CHECK(undone.stored_count == 64);
+    CHECK(undone.capped);
+}
+
+TEST_CASE("retained result sets stay under the retained budget", "[scan]")
+{
+    constexpr std::size_t  kRegion = 1u << 12;
+    std::vector<std::byte> bytes(kRegion);
+
+    ScanConfig config       = exact_config(ValueType::int32, 0);
+    config.filter.alignment = 4;
+
+    ScanEngine engine;
+    engine.set_stored_result_budget(64 * sizeof(slopkit::scan::ScanHit));
+    engine.set_retained_result_budget(4 * 64 * sizeof(slopkit::scan::ScanHit));
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, kBase));
+    REQUIRE(wait(engine).stored_count == 64);
+
+    for (int i = 0; i < 6; ++i)
+    {
+        engine.next_scan(refine_config(ScanType::unchanged, ValueType::int32));
+        REQUIRE(wait(engine).state == ScanState::done);
+    }
+
+    // Six capped sets under a four-set budget leaves the three newest undo sets.
+    CHECK(engine.can_undo());
+    engine.undo();
+    engine.undo();
+    engine.undo();
+    CHECK_FALSE(engine.can_undo());
 }
 
 TEST_CASE("a cancelled refinement keeps the previous result set", "[scan]")
@@ -486,7 +595,7 @@ TEST_CASE("a refinement works over a read-only source", "[scan]")
 
     REQUIRE(snapshot.state == ScanState::done);
     REQUIRE(snapshot.hit_count == 1);
-    CHECK(snapshot.hits[0].address == kBase);
+    CHECK(snapshot.page.hits[0].address == kBase);
 }
 
 TEST_CASE("undo with no history keeps the result set", "[scan]")
@@ -558,7 +667,7 @@ TEST_CASE("resetting the engine returns it to the constructed state", "[scan]")
     CHECK_FALSE(engine.is_running());
     const auto snapshot = engine.snapshot();
     CHECK(snapshot.state == ScanState::idle);
-    CHECK(snapshot.hits.empty());
+    CHECK(snapshot.page.hits.empty());
     CHECK(snapshot.hit_count == 0);
     CHECK(snapshot.progress == Approx(0.0f));
 
@@ -589,9 +698,9 @@ TEST_CASE("a first scan continues past an unreadable hole", "[scan]")
 
     REQUIRE(snapshot.state == ScanState::done);
     REQUIRE(snapshot.hit_count == 2);
-    REQUIRE(snapshot.hits.size() == 2);
-    CHECK(snapshot.hits[0].address == kBase);
-    CHECK(snapshot.hits[1].address == kBase + kHoleEnd);
+    REQUIRE(snapshot.page.hits.size() == 2);
+    CHECK(snapshot.page.hits[0].address == kBase);
+    CHECK(snapshot.page.hits[1].address == kBase + kHoleEnd);
     CHECK(snapshot.progress == Approx(1.0f));
 }
 
@@ -634,9 +743,9 @@ TEST_CASE("a hole spanning chunk and shard boundaries is bridged", "[scan]")
 
     REQUIRE(snapshot.state == ScanState::done);
     REQUIRE(snapshot.hit_count == 3);
-    CHECK(snapshot.hits[0].address == kBase);
-    CHECK(snapshot.hits[1].address == kBase + kHoleAt - 8);
-    CHECK(snapshot.hits[2].address == kBase + kHoleEnd + 8);
+    CHECK(snapshot.page.hits[0].address == kBase);
+    CHECK(snapshot.page.hits[1].address == kBase + kHoleAt - 8);
+    CHECK(snapshot.page.hits[2].address == kBase + kHoleEnd + 8);
 }
 
 TEST_CASE("a fully unreadable region still terminates", "[scan]")

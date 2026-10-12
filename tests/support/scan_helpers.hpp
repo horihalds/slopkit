@@ -55,6 +55,13 @@ namespace
         return value;
     }
 
+    [[maybe_unused]] std::int32_t read_int32(std::span<const std::byte> bytes, std::size_t offset)
+    {
+        std::int32_t value = 0;
+        std::memcpy(&value, bytes.data() + offset, sizeof(value));
+        return value;
+    }
+
     [[maybe_unused]] ScanSnapshot wait(ScanEngine& engine)
     {
         for (int i = 0; i < 5000; ++i)

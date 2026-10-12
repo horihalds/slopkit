@@ -41,7 +41,7 @@ TEST_CASE("region flags, address range and alignment restrict the scan", "[scan]
         engine.first_scan(config, space.source());
         const auto snapshot = wait(engine);
         REQUIRE(snapshot.hit_count == 1);
-        CHECK(snapshot.hits[0].address == 0x2100);
+        CHECK(snapshot.page.hits[0].address == 0x2100);
     }
 
     SECTION("copy-on-write only")
@@ -53,7 +53,7 @@ TEST_CASE("region flags, address range and alignment restrict the scan", "[scan]
         engine.first_scan(config, space.source());
         const auto snapshot = wait(engine);
         REQUIRE(snapshot.hit_count == 1);
-        CHECK(snapshot.hits[0].address == 0x3100);
+        CHECK(snapshot.page.hits[0].address == 0x3100);
     }
 
     SECTION("no attribute filter scans every readable region")
@@ -77,8 +77,8 @@ TEST_CASE("region flags, address range and alignment restrict the scan", "[scan]
         engine.first_scan(config, space.source());
         const auto snapshot = wait(engine);
         REQUIRE(snapshot.hit_count == 2);
-        CHECK(snapshot.hits[0].address == 0x1100);
-        CHECK(snapshot.hits[1].address == 0x2100);
+        CHECK(snapshot.page.hits[0].address == 0x1100);
+        CHECK(snapshot.page.hits[1].address == 0x2100);
     }
 
     SECTION("alignment skips unaligned matches")
@@ -97,7 +97,7 @@ TEST_CASE("region flags, address range and alignment restrict the scan", "[scan]
         unaligned.first_scan(config, space.source());
         const auto snapshot = wait(unaligned);
         REQUIRE(snapshot.hit_count == 1);
-        CHECK(snapshot.hits[0].address == 0x4202);
+        CHECK(snapshot.page.hits[0].address == 0x4202);
     }
 }
 
@@ -123,7 +123,7 @@ TEST_CASE("a whole-address-space scan stops at the last mapped region", "[scan]"
     REQUIRE(snapshot.state == ScanState::done);
     CHECK(snapshot.total_bytes == 0x2000);
     REQUIRE(snapshot.hit_count == 2);
-    for (const auto& hit : snapshot.hits)
+    for (const auto& hit : snapshot.page.hits)
     {
         const bool mapped =
             (hit.address >= 0x1000 && hit.address < 0x2000) || (hit.address >= 0x5000 && hit.address < 0x6000);

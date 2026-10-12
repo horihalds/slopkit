@@ -31,10 +31,29 @@ namespace slopkit::ui::panels
 {
     namespace
     {
+        bool same_page(const scan::ScanResults& lhs, const scan::ScanResults& rhs)
+        {
+            if (lhs.hits.size() != rhs.hits.size() || lhs.keeps_previous != rhs.keeps_previous)
+            {
+                return false;
+            }
+            for (std::size_t index = 0; index < lhs.hits.size(); ++index)
+            {
+                const scan::ScanHit& left  = lhs.hits[index];
+                const scan::ScanHit& right = rhs.hits[index];
+                if (left.address != right.address || !std::ranges::equal(lhs.value(left), rhs.value(right))
+                    || !std::ranges::equal(lhs.previous(left), rhs.previous(right)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         bool same_snapshot(const scan::ScanSnapshot& lhs, const scan::ScanSnapshot& rhs)
         {
             if (lhs.state != rhs.state || lhs.progress != rhs.progress || lhs.hit_count != rhs.hit_count
-                || lhs.message != rhs.message)
+                || lhs.stored_count != rhs.stored_count || lhs.capped != rhs.capped || lhs.message != rhs.message)
             {
                 return false;
             }
@@ -46,19 +65,7 @@ namespace slopkit::ui::panels
             {
                 return true;
             }
-            if (lhs.hits.size() != rhs.hits.size())
-            {
-                return false;
-            }
-            for (std::size_t index = 0; index < lhs.hits.size(); ++index)
-            {
-                if (lhs.hits[index].address != rhs.hits[index].address || lhs.hits[index].value != rhs.hits[index].value
-                    || lhs.hits[index].previous != rhs.hits[index].previous)
-                {
-                    return false;
-                }
-            }
-            return true;
+            return same_page(lhs.page, rhs.page);
         }
 
         bool same_config(const scan::ScanConfig& lhs, const scan::ScanConfig& rhs)
@@ -200,9 +207,16 @@ namespace slopkit::ui::panels
             return;
         }
 
-        header_->setText(tr("Showing %1 of %2 results")
-                             .arg(static_cast<qulonglong>(model_->rowCount()))
-                             .arg(static_cast<qulonglong>(last_snapshot_.hit_count)));
+        const qulonglong shown   = static_cast<qulonglong>(model_->rowCount());
+        const qulonglong stored  = static_cast<qulonglong>(last_snapshot_.stored_count);
+        const qulonglong matches = static_cast<qulonglong>(last_snapshot_.hit_count);
+        if (last_snapshot_.capped)
+        {
+            header_->setText(
+                tr("Showing %1 of %2 stored results of %3 matches (capped)").arg(shown).arg(stored).arg(matches));
+            return;
+        }
+        header_->setText(tr("Showing %1 of %2 results").arg(shown).arg(matches));
     }
 
     void FoundListPanel::add_to_table(int row)
@@ -213,12 +227,13 @@ namespace slopkit::ui::panels
             return;
         }
 
-        const scan::ScanConfig config = engine_.config();
-        table::AddressEntry    entry;
+        const std::span<const std::byte> value  = model_->value_at(row);
+        const scan::ScanConfig           config = engine_.config();
+        table::AddressEntry              entry;
         entry.address = hit->address;
         entry.type    = config.value_type;
-        entry.bytes   = hit->value;
-        entry.hex     = config.hex;
+        entry.bytes.assign(value.begin(), value.end());
+        entry.hex = config.hex;
         table_.add(std::move(entry));
     }
 

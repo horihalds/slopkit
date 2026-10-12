@@ -434,31 +434,55 @@ namespace
         slopkit::ui::models::FoundResultsModel& model_;
     };
 
-    [[maybe_unused]] std::shared_ptr<std::vector<slopkit::scan::ScanHit>> late_static_result()
+    [[maybe_unused]] std::shared_ptr<slopkit::scan::ScanResults> late_static_result()
     {
-        auto whole = std::make_shared<std::vector<slopkit::scan::ScanHit>>();
+        auto whole     = std::make_shared<slopkit::scan::ScanResults>();
+        whole->matches = 300;
         for (int i = 0; i < 300; ++i)
         {
-            slopkit::scan::ScanHit hit;
-            hit.address               = 0x100000 + static_cast<std::uint64_t>(i) * 4;
-            const std::uint32_t value = static_cast<std::uint32_t>(i);
-            hit.value                 = {static_cast<std::byte>((value >> 24) & 0xFF),
-                                         static_cast<std::byte>((value >> 16) & 0xFF),
-                                         static_cast<std::byte>((value >> 8) & 0xFF),
-                                         static_cast<std::byte>(value & 0xFF)};
-            whole->push_back(std::move(hit));
+            const std::uint64_t            address = 0x100000 + static_cast<std::uint64_t>(i) * 4;
+            const std::uint32_t            value   = static_cast<std::uint32_t>(i);
+            const std::array<std::byte, 4> bytes {static_cast<std::byte>((value >> 24) & 0xFF),
+                                                  static_cast<std::byte>((value >> 16) & 0xFF),
+                                                  static_cast<std::byte>((value >> 8) & 0xFF),
+                                                  static_cast<std::byte>(value & 0xFF)};
+            whole->hits.push_back(slopkit::scan::make_hit(address, bytes, {}, whole->blob));
         }
-        (*whole)[280].address = 0x500000;
+        whole->hits[280].address = 0x500000;
         return whole;
     }
 
     [[maybe_unused]] slopkit::scan::ScanSnapshot
-    snapshot_over(const std::shared_ptr<const std::vector<slopkit::scan::ScanHit>>& whole)
+    snapshot_over(const std::shared_ptr<const slopkit::scan::ScanResults>& whole)
     {
         slopkit::scan::ScanSnapshot snapshot;
-        snapshot.hit_count = whole->size();
-        snapshot.hits.assign(whole->begin(), whole->begin() + static_cast<std::ptrdiff_t>(slopkit::scan::kDisplayPage));
-        snapshot.result_hits = whole;
+        snapshot.hit_count    = whole->matches;
+        snapshot.stored_count = whole->hits.size();
+        snapshot.capped       = whole->capped;
+        snapshot.page         = whole->head(slopkit::scan::kDisplayPage);
+        snapshot.result_hits  = whole;
+        return snapshot;
+    }
+
+    // A finished snapshot carrying only a display page, for the consumers that
+    // read `snapshot.page` instead of the shared result set.
+    [[maybe_unused]] slopkit::scan::ScanSnapshot
+    snapshot_of(const std::vector<std::pair<std::uint64_t, std::vector<std::byte>>>& rows)
+    {
+        auto whole     = std::make_shared<slopkit::scan::ScanResults>();
+        whole->matches = rows.size();
+        for (const auto& row : rows)
+        {
+            whole->hits.push_back(slopkit::scan::make_hit(row.first, row.second, {}, whole->blob));
+        }
+
+        slopkit::scan::ScanSnapshot snapshot;
+        snapshot.state        = slopkit::scan::ScanState::done;
+        snapshot.progress     = 1.0f;
+        snapshot.hit_count    = whole->matches;
+        snapshot.stored_count = whole->hits.size();
+        snapshot.capped       = whole->capped;
+        snapshot.page         = whole->head(slopkit::scan::kDisplayPage);
         return snapshot;
     }
 }

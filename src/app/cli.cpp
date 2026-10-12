@@ -146,6 +146,22 @@ namespace slopkit::app
         return 0;
     }
 
+    void report_scan_hits(std::ostream& out, const scan::ScanSnapshot& snapshot, scan::ValueType value_type)
+    {
+        for (const auto& hit : snapshot.page.hits)
+        {
+            out << std::format("{:X}\t{}\t{}\n",
+                               hit.address,
+                               scan::describe(value_type),
+                               scan::format_value(value_type, snapshot.page.value(hit), false));
+        }
+        out << snapshot.hit_count << " hit(s)\n";
+        if (snapshot.capped)
+        {
+            out << std::format("capped: {} of {} match(es) stored\n", snapshot.stored_count, snapshot.hit_count);
+        }
+    }
+
     int scan_process(std::ostream& out, std::ostream& err, std::uint32_t pid, std::string_view value_text)
     {
         log::info(log::category::app, std::format("command scan: start pid {} value {}", pid, value_text));
@@ -220,21 +236,22 @@ namespace slopkit::app
             log::warning(log::category::app, std::format("command scan: failed: {}", snapshot.message));
             return 1;
         }
-        if (snapshot.hits.empty())
+        if (snapshot.hit_count == 0)
         {
             out << "no matches\n";
             log::info(log::category::app, std::format("command scan: done, no matches for pid {}", pid));
             return 0;
         }
 
-        for (const auto& hit : snapshot.hits)
+        report_scan_hits(out, snapshot, value_type);
+        if (snapshot.capped)
         {
-            out << std::format("{:X}\t{}\t{}\n",
-                               hit.address,
-                               scan::describe(value_type),
-                               scan::format_value(value_type, hit.value, false));
+            log::info(log::category::app,
+                      std::format("command scan: capped, {} of {} match(es) stored for pid {}",
+                                  snapshot.stored_count,
+                                  snapshot.hit_count,
+                                  pid));
         }
-        out << snapshot.hit_count << " hit(s)\n";
         log::info(log::category::app, std::format("command scan: done, {} hit(s) for pid {}", snapshot.hit_count, pid));
         return 0;
     }

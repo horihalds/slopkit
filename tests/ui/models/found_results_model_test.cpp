@@ -12,15 +12,9 @@ TEST_CASE("the found-results model mirrors a snapshot", "[ui]")
     slopkit::scan::ScanConfig config;
     config.value_type = slopkit::scan::ValueType::int32;
 
-    slopkit::scan::ScanSnapshot snapshot;
-    snapshot.hit_count = 3;
-    snapshot.hits.push_back(slopkit::scan::ScanHit {
-        0x2000, std::vector<std::byte> {std::byte {2}, std::byte {0}, std::byte {0}, std::byte {0}},
-          {}
-    });
-    snapshot.hits.push_back(slopkit::scan::ScanHit {
-        0x1000, std::vector<std::byte> {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}},
-          {}
+    const slopkit::scan::ScanSnapshot snapshot = snapshot_of({
+        {0x2000, {std::byte {2}, std::byte {0}, std::byte {0}, std::byte {0}}},
+        {0x1000, {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}}},
     });
 
     model.set_snapshot(snapshot, config);
@@ -56,15 +50,9 @@ TEST_CASE("the found-results model renders the clipboard texts", "[ui]")
     slopkit::scan::ScanConfig config;
     config.value_type = slopkit::scan::ValueType::int32;
 
-    slopkit::scan::ScanSnapshot snapshot;
-    snapshot.hit_count = 2;
-    snapshot.hits.push_back(slopkit::scan::ScanHit {
-        0x1040, std::vector<std::byte> {std::byte {10}, std::byte {0}, std::byte {0}, std::byte {0}},
-          {}
-    });
-    snapshot.hits.push_back(slopkit::scan::ScanHit {
-        0x7F3A1B2C, std::vector<std::byte> {std::byte {100}, std::byte {0}, std::byte {0}, std::byte {0}},
-          {}
+    const slopkit::scan::ScanSnapshot snapshot = snapshot_of({
+        {    0x1040,  {std::byte {10}, std::byte {0}, std::byte {0}, std::byte {0}}},
+        {0x7F3A1B2C, {std::byte {100}, std::byte {0}, std::byte {0}, std::byte {0}}},
     });
     model.set_snapshot(snapshot, config);
 
@@ -111,11 +99,8 @@ TEST_CASE("the found-results model copies the value in hex when configured", "[u
     config.value_type = slopkit::scan::ValueType::int32;
     config.hex        = true;
 
-    slopkit::scan::ScanSnapshot snapshot;
-    snapshot.hit_count = 1;
-    snapshot.hits.push_back(slopkit::scan::ScanHit {
-        0x1040, std::vector<std::byte> {std::byte {10}, std::byte {0}, std::byte {0}, std::byte {0}},
-          {}
+    const slopkit::scan::ScanSnapshot snapshot = snapshot_of({
+        {0x1040, {std::byte {10}, std::byte {0}, std::byte {0}, std::byte {0}}},
     });
     model.set_snapshot(snapshot, config);
     model.set_modules({module_image("app", 0x1000, 0x1000)});
@@ -133,11 +118,11 @@ TEST_CASE("the found-results model marks and groups static hits", "[ui]")
     slopkit::scan::ScanConfig config;
     config.value_type = slopkit::scan::ValueType::int32;
 
-    slopkit::scan::ScanSnapshot snapshot;
-    snapshot.hit_count = 3;
-    snapshot.hits.push_back(slopkit::scan::ScanHit {0x1000, std::vector<std::byte> {std::byte {1}}, {}});
-    snapshot.hits.push_back(slopkit::scan::ScanHit {0x5000000, std::vector<std::byte> {std::byte {5}}, {}});
-    snapshot.hits.push_back(slopkit::scan::ScanHit {0x2000, std::vector<std::byte> {std::byte {2}}, {}});
+    const slopkit::scan::ScanSnapshot snapshot = snapshot_of({
+        {   0x1000, {std::byte {1}}},
+        {0x5000000, {std::byte {5}}},
+        {   0x2000, {std::byte {2}}},
+    });
     model.set_snapshot(snapshot, config);
 
     CHECK(model.hit_at(0)->address == 0x1000);
@@ -238,7 +223,7 @@ TEST_CASE("the found-results model orders the whole result set", "[ui]")
 
         CHECK(model.rowCount() == slopkit::scan::kDisplayPage);
         CHECK(model.hit_at(0)->address == 0x500000);
-        CHECK(model.hit_at(0)->value == whole->at(280).value);
+        CHECK(std::ranges::equal(whole->value(whole->hits[280]), whole->value(*model.hit_at(0))));
         CHECK(model.hit_at(1)->address == 0x100000 + 299 * 4);
         CHECK(model.hit_at(2)->address == 0x100000 + 298 * 4);
     }

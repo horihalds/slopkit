@@ -123,7 +123,7 @@ namespace
         REQUIRE(snapshot.state == ScanState::done);
         REQUIRE(snapshot.result_hits != nullptr);
 
-        return std::ranges::any_of(*snapshot.result_hits,
+        return std::ranges::any_of(snapshot.result_hits->hits,
                                    [address](const auto& hit)
                                    {
                                        return hit.address == address;

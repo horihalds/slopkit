@@ -64,7 +64,7 @@ docs that hold the detail behind this map.
 | core | Logging sinks/categories and version | `core/log.hpp`, `log_categories.hpp`, `version.hpp` | `tests/core/*` | — |
 | plugin | Plugin C ABI, host facade, loader | `plugin/plugin_api.h`, `plugin.hpp` (`Plugin`), `plugin_host.hpp` (`PluginHost`) | `tests/plugin/*` | process, core |
 | process | Access seam, worker (incl. the referenced-string analysis job), attachment metadata | `process/access.hpp` (`ProcessAccess`), `access_worker.hpp` (`AccessWorker`, `StringRefsResult`), `attachment.hpp` (`AttachedTarget`), `plugin_access.hpp`, `types.hpp` | `tests/process/*` | plugin, analysis |
-| scan | Multithreaded value scanner and byte-pattern matcher | `scan/engine.hpp` (`ScanEngine`), `matcher.hpp`, `pattern.hpp` (`BytePattern`), `source.hpp`, `value.hpp`, `types.hpp` | `tests/scan/*` | process, expr |
+| scan | Multithreaded value scanner and byte-pattern matcher | `scan/engine.hpp` (`ScanEngine`), `results.hpp` (`ScanHit`, `ScanResults`), `matcher.hpp`, `pattern.hpp` (`BytePattern`), `source.hpp`, `value.hpp`, `types.hpp` | `tests/scan/*` | process, expr |
 | table | Address table, `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, libzip |
 | expr | Address expression parsing (`base + offset...` and bracket pointer chains) and resolution with an injected per-level validator; a dependency-free leaf (it includes nothing outside `expr/`) | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | — |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |

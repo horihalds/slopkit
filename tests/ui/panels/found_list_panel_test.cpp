@@ -33,7 +33,7 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     }
     REQUIRE(engine.has_results());
     const auto snapshot = engine.snapshot();
-    REQUIRE(snapshot.hits.size() == 3);
+    REQUIRE(snapshot.page.hits.size() == 3);
     REQUIRE(snapshot.hit_count == 3);
 
     slopkit::table::AddressTable        table;
@@ -44,6 +44,42 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     REQUIRE(header != nullptr);
     CHECK(header->text() == QStringLiteral("Showing 3 of 3 results"));
     CHECK(panel.findChildren<QLabel*>().size() == 1);
+}
+
+TEST_CASE("the found list header names both numbers of a capped set", "[ui]")
+{
+    application();
+
+    std::vector<std::byte> bytes(1u << 12, std::byte {0});
+
+    slopkit::scan::ScanEngine engine;
+    engine.set_stored_result_budget(3 * sizeof(slopkit::scan::ScanHit));
+    slopkit::scan::ScanConfig config;
+    config.type             = slopkit::scan::ScanType::exact_value;
+    config.value_type       = slopkit::scan::ValueType::int32;
+    config.value            = std::int64_t {0};
+    config.filter.alignment = 4;
+    engine.first_scan(config, slopkit::scan::make_buffer_source(bytes, 0x1000));
+    for (int i = 0; i < 5000 && engine.is_running(); ++i)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    const auto snapshot = engine.snapshot();
+    REQUIRE(snapshot.state == slopkit::scan::ScanState::done);
+    REQUIRE(snapshot.capped);
+    REQUIRE(snapshot.stored_count == 3);
+    REQUIRE(snapshot.page.hits.size() == 3);
+
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    panel.refresh();
+
+    auto* header = panel.findChild<QLabel*>();
+    REQUIRE(header != nullptr);
+    CHECK(header->text()
+          == QStringLiteral("Showing 3 of 3 stored results of %1 matches (capped)")
+                 .arg(static_cast<qulonglong>(snapshot.hit_count)));
 }
 
 TEST_CASE("the found list stays empty until the scan finishes", "[ui]")
@@ -591,18 +627,16 @@ TEST_CASE("the results list Value column follows live memory for the shown rows"
 
     attach_app_session(worker);
 
-    constexpr std::uint64_t     kBase  = 0x1000;
-    constexpr std::size_t       kTotal = 300;
-    slopkit::scan::ScanSnapshot snapshot;
-    snapshot.state     = slopkit::scan::ScanState::done;
-    snapshot.hit_count = kTotal;
+    constexpr std::uint64_t                                       kBase  = 0x1000;
+    constexpr std::size_t                                         kTotal = 300;
+    std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> rows;
+    rows.reserve(kTotal);
     for (std::size_t i = 0; i < kTotal; ++i)
     {
-        slopkit::scan::ScanHit hit;
-        hit.address = kBase + (i * 4);
-        hit.value   = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
-        snapshot.hits.push_back(std::move(hit));
+        rows.emplace_back(kBase + (i * 4),
+                          std::vector<std::byte> {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}});
     }
+    slopkit::scan::ScanSnapshot snapshot = snapshot_of(rows);
 
     slopkit::scan::ScanConfig config;
     config.value_type = slopkit::scan::ValueType::int32;

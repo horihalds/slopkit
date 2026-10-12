@@ -20,9 +20,13 @@ namespace slopkit::ui::models
 {
     namespace
     {
-        int compare_bytes(const std::vector<std::byte>& lhs, const std::vector<std::byte>& rhs)
+        int compare_bytes(std::span<const std::byte> lhs, std::span<const std::byte> rhs)
         {
-            return lhs < rhs ? -1 : (rhs < lhs ? 1 : 0);
+            if (std::lexicographical_compare(lhs.begin(), lhs.end(), rhs.begin(), rhs.end()))
+            {
+                return -1;
+            }
+            return std::lexicographical_compare(rhs.begin(), rhs.end(), lhs.begin(), lhs.end()) ? 1 : 0;
         }
 
         int compare_addresses(std::uint64_t lhs, std::uint64_t rhs)
@@ -42,7 +46,7 @@ namespace slopkit::ui::models
     }
 
     FoundResultsModel::FoundResultsModel(QObject* parent)
-        : QAbstractTableModel(parent), hits_(std::make_shared<const std::vector<scan::ScanHit>>())
+        : QAbstractTableModel(parent), hits_(std::make_shared<const scan::ScanResults>())
     {
     }
 
@@ -63,7 +67,7 @@ namespace slopkit::ui::models
             return {};
         }
 
-        const auto& hit = (*hits_)[static_cast<std::size_t>(order_[static_cast<std::size_t>(index.row())])];
+        const auto& hit = hits_->hits[static_cast<std::size_t>(order_[static_cast<std::size_t>(index.row())])];
 
         switch (role)
         {
@@ -86,12 +90,14 @@ namespace slopkit::ui::models
                         return to_qstring(scan::format_value(config_.value_type, *cell->bytes, config_.hex));
                     }
                 }
-                return to_qstring(scan::format_value(config_.value_type, hit.value, config_.hex));
+                return to_qstring(scan::format_value(config_.value_type, hits_->value(hit), config_.hex));
             }
             case previous:
-                return hit.previous.empty()
-                         ? QString()
-                         : to_qstring(scan::format_value(config_.value_type, hit.previous, config_.hex));
+            {
+                const std::span<const std::byte> previous = hits_->previous(hit);
+                return previous.empty() ? QString()
+                                        : to_qstring(scan::format_value(config_.value_type, previous, config_.hex));
+            }
             default:
                 break;
             }
@@ -178,7 +184,7 @@ namespace slopkit::ui::models
         hits_ = std::move(snapshot.result_hits);
         if (!hits_)
         {
-            hits_ = std::make_shared<const std::vector<scan::ScanHit>>(std::move(snapshot.hits));
+            hits_ = std::make_shared<const scan::ScanResults>(std::move(snapshot.page));
         }
         config_ = std::move(config);
         cells_.clear();
@@ -197,7 +203,13 @@ namespace slopkit::ui::models
         {
             return nullptr;
         }
-        return &(*hits_)[static_cast<std::size_t>(order_[static_cast<std::size_t>(row)])];
+        return &hits_->hits[static_cast<std::size_t>(order_[static_cast<std::size_t>(row)])];
+    }
+
+    std::span<const std::byte> FoundResultsModel::value_at(int row) const
+    {
+        const scan::ScanHit* hit = hit_at(row);
+        return hit == nullptr ? std::span<const std::byte> {} : hits_->value(*hit);
     }
 
     void FoundResultsModel::set_modules(std::vector<process::ModuleInfo> modules)
@@ -252,7 +264,7 @@ namespace slopkit::ui::models
             return ui::format_cell_address_full(ui::AddressMode::module_relative, module_spans_, hit->address);
         }
         return ui::format_cell_address_full(address_mode_, module_spans_, hit->address) + QStringLiteral(": ")
-             + to_qstring(scan::format_value(config_.value_type, hit->value, config_.hex));
+             + to_qstring(scan::format_value(config_.value_type, hits_->value(*hit), config_.hex));
     }
 
     bool FoundResultsModel::is_static(std::uint64_t address) const
@@ -272,11 +284,11 @@ namespace slopkit::ui::models
                               [this](std::size_t row)
                               {
                                   const auto  hit_index = static_cast<std::size_t>(order_[row]);
-                                  const auto& hit       = (*hits_)[hit_index];
+                                  const auto& hit       = hits_->hits[hit_index];
                                   return LiveCandidate {.address  = hit.address,
-                                                        .size     = hit.value.size(),
+                                                        .size     = hits_->value(hit).size(),
                                                         .identity = hit.address,
-                                                        .readable = !hit.value.empty()};
+                                                        .readable = hit.readable != 0};
                               });
     }
 
@@ -291,7 +303,7 @@ namespace slopkit::ui::models
                     return false;
                 }
                 const auto hit_index = static_cast<std::size_t>(order_[row]);
-                return hit_index < hits_->size() && (*hits_)[hit_index].address == identity;
+                return hit_index < hits_->hits.size() && hits_->hits[hit_index].address == identity;
             },
             [this](std::size_t first, std::size_t last)
             {
@@ -312,7 +324,7 @@ namespace slopkit::ui::models
 
     void FoundResultsModel::rebuild_window()
     {
-        const std::size_t total = hits_->size();
+        const std::size_t total = hits_->hits.size();
         const std::size_t shown = std::min<std::size_t>(total, scan::kDisplayPage);
 
         order_.resize(total);
@@ -323,25 +335,25 @@ namespace slopkit::ui::models
                           [this](int lhs, int rhs)
                           {
                               const int left_tier =
-                                  hit_tier(module_spans_, (*hits_)[static_cast<std::size_t>(lhs)].address);
+                                  hit_tier(module_spans_, hits_->hits[static_cast<std::size_t>(lhs)].address);
                               const int right_tier =
-                                  hit_tier(module_spans_, (*hits_)[static_cast<std::size_t>(rhs)].address);
+                                  hit_tier(module_spans_, hits_->hits[static_cast<std::size_t>(rhs)].address);
                               if (left_tier != right_tier)
                               {
                                   return left_tier < right_tier;
                               }
 
-                              const auto& left  = (*hits_)[static_cast<std::size_t>(lhs)];
-                              const auto& right = (*hits_)[static_cast<std::size_t>(rhs)];
+                              const auto& left  = hits_->hits[static_cast<std::size_t>(lhs)];
+                              const auto& right = hits_->hits[static_cast<std::size_t>(rhs)];
 
                               int by = compare_addresses(left.address, right.address);
                               switch (sort_column_)
                               {
                               case value:
-                                  by = compare_bytes(left.value, right.value);
+                                  by = compare_bytes(hits_->value(left), hits_->value(right));
                                   break;
                               case previous:
-                                  by = compare_bytes(left.previous, right.previous);
+                                  by = compare_bytes(hits_->previous(left), hits_->previous(right));
                                   break;
                               default:
                                   break;
@@ -362,7 +374,7 @@ namespace slopkit::ui::models
         static_hits_.resize(order_.size());
         for (std::size_t i = 0; i < order_.size(); ++i)
         {
-            static_hits_[i] = is_static((*hits_)[static_cast<std::size_t>(order_[i])].address);
+            static_hits_[i] = is_static(hits_->hits[static_cast<std::size_t>(order_[i])].address);
         }
     }
 
