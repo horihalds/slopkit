@@ -102,6 +102,27 @@ TEST_CASE("long module names are shortened before the extension", "[ui]")
     CHECK(elide_module_name("") == QString());
 }
 
+TEST_CASE("stored address expressions shorten only their base name", "[ui]")
+{
+    using slopkit::ui::elide_address_expression;
+
+    CHECK(elide_address_expression("app+40") == QStringLiteral("app+40"));
+    CHECK(elide_address_expression("DyingLightGame_TheBeast_x64_rwdi.exe+0x40")
+          == QStringLiteral("DyingL..._rwdi.exe+0x40"));
+    CHECK(elide_address_expression("[[DyingLightGame_TheBeast_x64_rwdi.exe+0x10]+0x18]+0x24")
+          == QStringLiteral("[[DyingL..._rwdi.exe+0x10]+0x18]+0x24"));
+    CHECK(elide_address_expression("  DyingLightGame_TheBeast_x64_rwdi.exe + 40  ")
+          == QStringLiteral("  DyingL..._rwdi.exe + 40  "));
+    CHECK(elide_address_expression("game::Player::getHealth+0x8") == QStringLiteral("game::...ealth+0x8"));
+    CHECK(elide_address_expression("DyingL..._rwdi.exe+0x40") == QStringLiteral("DyingL..._rwdi.exe+0x40"));
+    CHECK(elide_address_expression("0x00007FF6A1B2C3D4+0x10") == QStringLiteral("0x00007FF6A1B2C3D4+0x10"));
+
+    CHECK(elide_address_expression("") == QString());
+    CHECK(elide_address_expression("app+") == QStringLiteral("app+"));
+    CHECK(elide_address_expression("[]") == QStringLiteral("[]"));
+    CHECK(elide_address_expression("[app+10") == QStringLiteral("[app+10"));
+}
+
 TEST_CASE("module-relative addresses render as name+HEX", "[ui]")
 {
     const slopkit::ui::ModuleSpan span {"app", {}, 0x1000, 0x2000};

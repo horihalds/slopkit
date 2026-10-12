@@ -76,7 +76,8 @@ namespace slopkit::ui::models
                 }
                 if (!entry.expression.empty())
                 {
-                    return to_qstring(entry.expression);
+                    return role == Qt::DisplayRole ? ui::elide_address_expression(entry.expression)
+                                                   : to_qstring(entry.expression);
                 }
                 return address_text(entry.address);
             case type:
@@ -150,7 +151,9 @@ namespace slopkit::ui::models
             }
             if (index.column() == address && !entry.expression.empty())
             {
-                return ui::format_absolute(entry.address);
+                const QString shown = ui::elide_address_expression(entry.expression);
+                const QString full  = to_qstring(entry.expression) + "\n" + ui::format_absolute(entry.address);
+                return shown == to_qstring(entry.expression) ? ui::format_absolute(entry.address) : full;
             }
             if (index.column() == value)
             {

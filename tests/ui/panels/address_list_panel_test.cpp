@@ -112,6 +112,11 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
     relative.type       = slopkit::scan::ValueType::int32;
     relative.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
     table.add(relative);
+    slopkit::table::AddressEntry long_relative;
+    long_relative.expression = "DyingLightGame_TheBeast_x64_rwdi.exe+0x40";
+    long_relative.type       = slopkit::scan::ValueType::int32;
+    long_relative.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(long_relative);
 
     slopkit::ui::panels::AddressListPanel panel {table, worker, target};
     auto*                                 view = panel.findChild<QTableView*>();
@@ -135,18 +140,25 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
                      });
 
     attach_app_session(worker);
-    panel.set_modules({module_image("app", module_base, 0x1000)});
+    panel.set_modules({module_image("app", module_base, 0x1000),
+                       module_image("DyingLightGame_TheBeast_x64_rwdi.exe", 0x400000, 0x1000)});
 
     panel.refresh();
     REQUIRE(pump_ui(worker,
                     [&]
                     {
-                        return table.entries()[0].address == 0x200008 && table.entries()[1].address == 0x100020;
+                        return table.entries()[0].address == 0x200008 && table.entries()[1].address == 0x100020
+                            && table.entries()[2].address == 0x400040;
                     }));
     CHECK(data_changes > 0);
     const QModelIndex address_index = model->index(0, slopkit::ui::models::AddressTableModel::address);
     CHECK(model->data(address_index, Qt::DisplayRole).toString() == QStringLiteral("app+0+8"));
     CHECK(model->data(address_index, Qt::ToolTipRole).toString() == QStringLiteral("0x200008"));
+
+    const QModelIndex long_index = model->index(2, slopkit::ui::models::AddressTableModel::address);
+    CHECK(model->data(long_index, Qt::DisplayRole).toString() == QStringLiteral("DyingL..._rwdi.exe+0x40"));
+    CHECK(model->data(long_index, Qt::ToolTipRole).toString()
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x40\n0x400040"));
 
     // A second refresh inside the interval resolves nothing: moving the pointer
     // and refreshing must leave the stored address untouched.
