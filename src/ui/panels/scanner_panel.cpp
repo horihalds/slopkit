@@ -106,6 +106,35 @@ namespace slopkit::ui::panels
         value_edit_->selectAll();
     }
 
+    void ScannerPanel::prime_value(const QString& text, int bytes)
+    {
+        value_edit_->setText(text);
+
+        // The value type combo is indexed by scan::ValueType, so the byte count
+        // picks the widest type that fits a node's storage.
+        scan::ValueType type = scan::ValueType::byte_array;
+        switch (bytes)
+        {
+        case 1:
+            type = scan::ValueType::byte;
+            break;
+        case 2:
+            type = scan::ValueType::int16;
+            break;
+        case 4:
+            type = scan::ValueType::int32;
+            break;
+        case 8:
+            type = scan::ValueType::int64;
+            break;
+        default:
+            break;
+        }
+        value_type_combo_->setCurrentIndex(static_cast<int>(type));
+        update_value_inputs();
+        focus_value_input();
+    }
+
     std::uint64_t ScannerPanel::main_module_address() const noexcept
     {
         if (!map_ready_)

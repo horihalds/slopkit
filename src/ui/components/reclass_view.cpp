@@ -769,7 +769,17 @@ namespace slopkit::ui::components
         const std::optional<QColor> stated = cell_colour(index, *model_);
         painter.setPen(selected ? active_theme().on_accent : stated.value_or(active_theme().text));
 
-        const QString text = model_->data(index, Qt::DisplayRole).toString();
+        // A hidden node collapses to `...` in the name column and shows nothing
+        // in the others, the reference's collapsed placeholder.
+        QString text;
+        if (entry.row->hidden)
+        {
+            text = column == models::ReclassStructureModel::name ? QStringLiteral("...") : QString();
+        }
+        else
+        {
+            text = model_->data(index, Qt::DisplayRole).toString();
+        }
         if (text.isEmpty())
         {
             return;
@@ -832,6 +842,12 @@ namespace slopkit::ui::components
         else
         {
             select_row(*hit, event->modifiers());
+            // Clicking a hidden node's `...` row unhides it, the reference's
+            // click-to-reveal.
+            if (hit->row != nullptr && hit->row->hidden)
+            {
+                emit hiddenRowActivated(hit->row->node_id);
+            }
         }
         event->accept();
     }

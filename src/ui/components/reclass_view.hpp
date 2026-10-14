@@ -80,6 +80,10 @@ namespace slopkit::ui::components
         void rowExpansionChanged();
         void rowMenuRequested(const QPoint& position);
 
+        // The user clicked a hidden node's collapsed `...` row, asking for the
+        // node back.
+        void hiddenRowActivated(std::size_t node_id);
+
     protected:
         void resizeEvent(QResizeEvent* event) override;
         void changeEvent(QEvent* event) override;

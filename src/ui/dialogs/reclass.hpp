@@ -9,21 +9,25 @@
 #include <QDialog>
 #include <QString>
 
+#include "debug/breakpoints.hpp"
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "process/types.hpp"
 #include "reclass/node.hpp"
+#include "reclass/nodes/node.hpp"
 #include "reclass/project.hpp"
 #include "ui/live_values.hpp"
 
 class QAction;
 class QCloseEvent;
 class QLabel;
-class QListWidget;
 class QMenu;
+class QMenuBar;
 class QModelIndex;
 class QPoint;
 class QPushButton;
+class QStatusBar;
+class QToolBar;
 class QToolButton;
 
 namespace slopkit::ui
@@ -46,13 +50,16 @@ namespace slopkit::ui::widgets
 
 namespace slopkit::ui::components
 {
+    class ProjectView;
     class ReClassView;
 }
 
 namespace slopkit::ui::dialogs
 {
-    // The ReClass window: the project's classes on the left, the selected
-    // class's node grid on the right, refreshed on the shared live cadence.
+    // The ReClass window, shaped after the reference's MainForm: a menu strip and
+    // a toolbar over a splitter that puts the class/enum project tree beside the
+    // selected class's node grid, with a status strip below. The grid is
+    // refreshed on the shared live cadence.
     class ReClassDialog : public QDialog, public LiveSurface
     {
         Q_OBJECT
@@ -69,23 +76,33 @@ namespace slopkit::ui::dialogs
 
         [[nodiscard]] models::ReclassStructureModel* structure() const noexcept;
         [[nodiscard]] models::ReclassProxyModel*     proxy() const noexcept;
-        [[nodiscard]] QListWidget*                   class_list() const noexcept;
+        [[nodiscard]] components::ProjectView*       project_view() const noexcept;
         [[nodiscard]] components::ReClassView*       grid() const noexcept;
         [[nodiscard]] QLabel*                        header_label() const noexcept;
         [[nodiscard]] widgets::StatusLabel*          status_label() const noexcept;
-        [[nodiscard]] QPushButton*                   add_class_button() const noexcept;
-        [[nodiscard]] QPushButton*                   delete_class_button() const noexcept;
-        [[nodiscard]] QToolButton*                   add_node_button() const noexcept;
-        [[nodiscard]] QPushButton*                   delete_node_button() const noexcept;
+
+        [[nodiscard]] QMenuBar*   menu_bar() const noexcept;
+        [[nodiscard]] QToolBar*   tool_bar() const noexcept;
+        [[nodiscard]] QStatusBar* status_bar() const noexcept;
+
+        [[nodiscard]] QAction*     new_class_action() const noexcept;
+        [[nodiscard]] QAction*     delete_class_action() const noexcept;
+        [[nodiscard]] QToolButton* add_node_button() const noexcept;
+        [[nodiscard]] QAction*     delete_node_action() const noexcept;
+        [[nodiscard]] QAction*     dissect_action() const noexcept;
+        [[nodiscard]] QAction*     follow_action() const noexcept;
+        [[nodiscard]] QAction*     hierarchy_action() const noexcept;
 
         [[nodiscard]] std::vector<LiveRequest> next_live_request() override;
         void                                   apply_live_readings(std::span<const LiveReading> readings) override;
 
-        // The window's commands, shared by the toolbar, the menus and the tests.
+        // The window's commands, shared by the menu strip, the toolbar, the node
+        // menus and the tests.
         void add_class();
         void rename_class();
         void set_class_address();
         void delete_class();
+        void remove_unused_classes();
 
         // The class edits without their prompts, so a test can drive them
         // without opening a modal box; each reports on the status line.
@@ -103,15 +120,40 @@ namespace slopkit::ui::dialogs
         void follow_pointer();
         void set_followed_class(const QString& class_name);
 
-        [[nodiscard]] QPushButton* dissect_button() const noexcept;
-        [[nodiscard]] QPushButton* follow_button() const noexcept;
+        // Appends behind the selected node's container, or inserts in front of
+        // the selected node; the prompt-free overloads are the presets.
+        void               add_bytes();
+        void               insert_bytes();
+        [[nodiscard]] bool add_bytes(std::size_t count);
+        [[nodiscard]] bool insert_bytes(std::size_t count);
 
-        void add_bytes();
+        // Turns the selected nodes into a class of their own and leaves a class
+        // instance in their place, the reference's "Create Class from Nodes".
+        void create_class_from_nodes();
+
+        void copy_address();
+        void shrink_class();
+
         void edit_name();
         void edit_comment();
         void set_node_hex(bool hex);
         void copy_name();
         void remove_selected_nodes();
+
+        // Hide and unhide, the reference's five commands. A hidden node collapses
+        // to a single `...` row the grid unhides on click.
+        void hide_selected_nodes();
+        void unhide_selected_nodes();
+        void unhide_child_nodes();
+        void unhide_above_nodes();
+        void unhide_below_nodes();
+
+        void                      copy_selected_nodes();
+        void                      paste_nodes();
+        [[nodiscard]] std::size_t clipboard_size() const noexcept;
+
+        void               set_class_hierarchy_view(bool enabled);
+        [[nodiscard]] bool class_hierarchy_view() const noexcept;
 
         // The enum commands; the prompt-free ones let a test drive them without
         // opening a modal box.
@@ -129,6 +171,13 @@ namespace slopkit::ui::dialogs
         // Re-reads the project after the table that carries it was replaced.
         void refresh_project();
 
+    signals:
+        // The value of the selected node, for the scanner's equal-value search.
+        void searchRequested(const QString& text, int bytes);
+
+        // The selected node's address, for the Access Watch.
+        void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
+
     protected:
         void closeEvent(QCloseEvent* event) override;
 
@@ -136,21 +185,23 @@ namespace slopkit::ui::dialogs
         void build_layout();
         void connect_signals();
 
-        QWidget* build_class_pane();
+        void     build_menu_bar();
+        void     build_tool_bar();
+        void     build_status_bar();
         QWidget* build_grid_pane();
 
         void                 populate_node_kind_menu(QMenu& menu, bool change);
         [[nodiscard]] QMenu* build_add_node_menu();
+        [[nodiscard]] QMenu* build_add_bytes_menu(bool insert);
 
-        void show_class_menu(const QPoint& position);
         void show_row_menu(const QPoint& position);
 
-        void on_class_selected(int row);
+        void on_class_selected(std::size_t index);
 
-        // The project or the selected class changed: the list, the grid and the
+        // The project or the selected class changed: the tree, the grid and the
         // remembered cursor all follow.
         void refresh_all();
-        void refresh_class_list();
+        void refresh_project_tree();
         void refresh_header();
         void refresh_class_tooltips();
         void update_actions();
@@ -163,6 +214,33 @@ namespace slopkit::ui::dialogs
 
         [[nodiscard]] std::vector<const models::ReclassRow*> selected_rows() const;
         [[nodiscard]] reclass::Node*                         node_at(const models::ReclassRow* row) const;
+
+        // The container the byte commands work on and the index in it, taken from
+        // the selection: the selected container itself, or the container that
+        // holds the selected node.
+        struct ContainerTarget
+        {
+            std::vector<reclass::NodePtr>* nodes {};
+            std::size_t                    index {};
+        };
+
+        [[nodiscard]] std::optional<ContainerTarget> byte_target(bool insert);
+
+        // Appends `count` padding nodes at the target's index, each with a fresh
+        // id.
+        void insert_padding(const ContainerTarget& target, std::size_t count);
+
+        // The prompt the "… Bytes" menu entries open.
+        [[nodiscard]] std::optional<std::size_t> prompt_byte_count(const QString& title);
+
+        // Unhides the consecutive hidden nodes above or below the selected one,
+        // the reference's UnhideNodesAbove/UnhideNodesBelow.
+        void unhide_run(bool above);
+
+        // Hands the selected node's value to the scanner and its address to the
+        // Access Watch.
+        void search_equal_values();
+        void watch_address(bool writes);
 
         // One hex node the dissect command is guessing a kind for; the node is
         // named by its id, so a container's element can be dissected as well as
@@ -187,18 +265,29 @@ namespace slopkit::ui::dialogs
         models::ReclassValueModel*     values_ {};
         models::ReclassProxyModel*     proxy_ {};
 
-        QListWidget*             class_list_ {};
-        QPushButton*             add_class_ {};
-        QPushButton*             delete_class_ {};
-        QLabel*                  header_ {};
+        components::ProjectView* project_view_ {};
         components::ReClassView* grid_ {};
-        QToolButton*             add_node_ {};
-        QPushButton*             delete_node_ {};
-        QPushButton*             dissect_ {};
-        QPushButton*             follow_ {};
+        QLabel*                  header_ {};
         widgets::StatusLabel*    status_ {};
+        QLabel*                  process_label_ {};
         QPushButton*             close_ {};
-        QAction*                 delete_action_ {};
+
+        QMenuBar*   menu_bar_ {};
+        QToolBar*   tool_bar_ {};
+        QStatusBar* status_bar_ {};
+
+        QAction*     new_class_ {};
+        QAction*     delete_class_ {};
+        QAction*     delete_node_ {};
+        QAction*     delete_action_ {};
+        QAction*     dissect_ {};
+        QAction*     follow_ {};
+        QAction*     hierarchy_ {};
+        QToolButton* add_node_ {};
+
+        // The nodes Copy put on the clipboard, cloned so editing the project does
+        // not touch them.
+        std::vector<reclass::NodePtr> clipboard_;
 
         std::optional<process::JobId> dissect_job_;
         std::vector<DissectTarget>    dissect_targets_;

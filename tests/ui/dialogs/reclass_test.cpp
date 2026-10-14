@@ -2,13 +2,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QListWidget>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -17,6 +17,7 @@
 #include "support/reclass_helpers.hpp"
 #include "support/reclass_live_helpers.hpp"
 #include "support/ui_helpers.hpp"
+#include "ui/components/project_view.hpp"
 #include "ui/components/reclass_view.hpp"
 #include "ui/dialogs/reclass.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
@@ -66,7 +67,7 @@ namespace
 
     void select_player(Fixture& fixture)
     {
-        fixture.dialog->class_list()->setCurrentRow(1);
+        fixture.dialog->project_view()->select_class(1);
         QCoreApplication::processEvents();
         REQUIRE(fixture.dialog->structure()->selected_class() == 1);
     }
@@ -108,10 +109,10 @@ TEST_CASE("the ReClass window opens as a companion window", "[reclass][ui]")
     dialog.show();
     QCoreApplication::processEvents();
 
-    REQUIRE(dialog.class_list()->count() == 2);
-    CHECK(dialog.class_list()->item(0)->text() == QStringLiteral("Point"));
-    CHECK(dialog.class_list()->item(1)->text() == QStringLiteral("Player"));
-    CHECK(dialog.class_list()->currentRow() == 0);
+    REQUIRE(dialog.project_view()->class_count() == 2);
+    CHECK(dialog.project_view()->class_name(0) == QStringLiteral("Point"));
+    CHECK(dialog.project_view()->class_name(1) == QStringLiteral("Player"));
+    CHECK(dialog.project_view()->selected_class() == std::optional<std::size_t> {0});
     CHECK(dialog.structure()->valid_class());
     CHECK(dialog.structure()->rowCount() == 2);
     CHECK(dialog.grid()->model() == dialog.proxy());
@@ -141,7 +142,7 @@ TEST_CASE("the ReClass window opens as a companion window", "[reclass][ui]")
     dialog.show();
     QCoreApplication::processEvents();
 
-    CHECK(dialog.class_list()->count() == 2);
+    CHECK(dialog.project_view()->class_count() == 2);
     CHECK(dialog.structure()->rowCount() == 2);
 
     dialog.close();
@@ -159,8 +160,8 @@ TEST_CASE("the class commands add, rename, re-address and delete", "[reclass][ui
 
     REQUIRE(dialog.create_class(QStringLiteral("Enemy"), QStringLiteral("app+0x30")));
     CHECK(fixture.project.classes().size() == 3);
-    CHECK(dialog.class_list()->count() == 3);
-    CHECK(dialog.class_list()->item(2)->text() == QStringLiteral("Enemy"));
+    CHECK(dialog.project_view()->class_count() == 3);
+    CHECK(dialog.project_view()->class_name(2) == QStringLiteral("Enemy"));
     CHECK(dialog.structure()->selected_class() == 2);
     CHECK_FALSE(dialog.status_label()->text().isEmpty());
 
@@ -179,9 +180,9 @@ TEST_CASE("the class commands add, rename, re-address and delete", "[reclass][ui
     CHECK(fixture.project.classes().size() == 3);
 
     CHECK(dialog.rename_selected_class(QStringLiteral("Boss")));
-    CHECK(dialog.class_list()->item(2)->text() == QStringLiteral("Boss"));
+    CHECK(dialog.project_view()->class_name(2) == QStringLiteral("Boss"));
     CHECK_FALSE(dialog.rename_selected_class(QStringLiteral("Player")));
-    CHECK(dialog.class_list()->item(2)->text() == QStringLiteral("Boss"));
+    CHECK(dialog.project_view()->class_name(2) == QStringLiteral("Boss"));
 
     CHECK(dialog.set_selected_class_address(QStringLiteral("game.exe+0x99")));
     CHECK(fixture.project.classes()[2].address_expression == "game.exe+0x99");
@@ -190,7 +191,7 @@ TEST_CASE("the class commands add, rename, re-address and delete", "[reclass][ui
 
     dialog.delete_class();
     CHECK(fixture.project.classes().size() == 2);
-    CHECK(dialog.class_list()->count() == 2);
+    CHECK(dialog.project_view()->class_count() == 2);
 
     dialog.close();
 }
@@ -211,8 +212,8 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
 
     // Inserting with nothing selected appends to the end of the class.
     dialog.grid()->setCurrentIndex({});
-    CHECK_FALSE(dialog.delete_node_button()->isEnabled());
-    CHECK_FALSE(dialog.follow_button()->isEnabled());
+    CHECK_FALSE(dialog.delete_node_action()->isEnabled());
+    CHECK_FALSE(dialog.follow_action()->isEnabled());
     dialog.insert_node(NodeKind::int32);
     REQUIRE(player.nodes.size() == 3);
     CHECK(player.nodes[2]->kind() == NodeKind::int32);
@@ -221,8 +222,8 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     // Inserting with a row selected puts the node before it, and selecting a row
     // is what makes the commands that act on it available.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
-    CHECK(dialog.delete_node_button()->isEnabled());
-    CHECK(dialog.follow_button()->isEnabled());
+    CHECK(dialog.delete_node_action()->isEnabled());
+    CHECK(dialog.follow_action()->isEnabled());
     dialog.insert_node(NodeKind::float32);
     REQUIRE(player.nodes.size() == 4);
     CHECK(player.nodes[1]->kind() == NodeKind::float32);
@@ -279,14 +280,14 @@ TEST_CASE("the window redraws the project it is handed after a table load", "[re
     dialog.show();
     QCoreApplication::processEvents();
 
-    REQUIRE(dialog.class_list()->count() == 2);
+    REQUIRE(dialog.project_view()->class_count() == 2);
 
     fixture.project.clear();
     fixture.project.add_class("Only", "app+0x10");
     dialog.refresh_project();
 
-    REQUIRE(dialog.class_list()->count() == 1);
-    CHECK(dialog.class_list()->item(0)->text() == QStringLiteral("Only"));
+    REQUIRE(dialog.project_view()->class_count() == 1);
+    CHECK(dialog.project_view()->class_name(0) == QStringLiteral("Only"));
     CHECK(dialog.structure()->valid_class());
     CHECK(dialog.structure()->rowCount() == 0);
 
@@ -324,7 +325,7 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     // The header and the class tooltips spell a resolved address the way the
     // address column does: absolute, zero-padded to the pointer width.
     CHECK(dialog.header_label()->text() == QStringLiteral("Point · app+0x20 → 0x0000000000400020"));
-    CHECK(dialog.class_list()->item(0)->toolTip() == QStringLiteral("app+0x20 → 0x0000000000400020"));
+    CHECK(dialog.project_view()->class_item(0)->toolTip(0) == QStringLiteral("app+0x20 → 0x0000000000400020"));
 
     dialog.dissect();
     drain_until_idle(fixture.worker);
@@ -377,6 +378,232 @@ TEST_CASE("follow pointer references a class and inlines it", "[reclass][ui]")
     dialog.set_followed_class(QStringLiteral("Point"));
     CHECK(player.nodes[0]->kind() == NodeKind::int8);
     CHECK(dialog.status_label()->text() == QStringLiteral("Select a pointer node first."));
+
+    dialog.close();
+}
+
+TEST_CASE("the ReClass window carries the reference's shell", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+
+    REQUIRE(dialog.menu_bar() != nullptr);
+    REQUIRE(dialog.tool_bar() != nullptr);
+    REQUIRE(dialog.status_bar() != nullptr);
+
+    // The menu strip holds the reference's View, Node and Project menus, and the
+    // toolbar the reference's commands.
+    const QStringList menus = [&dialog]
+    {
+        QStringList titles;
+        for (QAction* action : dialog.menu_bar()->actions())
+        {
+            titles << action->text();
+        }
+        return titles;
+    }();
+    CHECK(menus.contains(QStringLiteral("View")));
+    CHECK(menus.contains(QStringLiteral("Node")));
+    CHECK(menus.contains(QStringLiteral("Project")));
+
+    CHECK(dialog.new_class_action() != nullptr);
+    CHECK(dialog.delete_class_action() != nullptr);
+    CHECK(dialog.delete_node_action() != nullptr);
+    CHECK(dialog.dissect_action() != nullptr);
+    CHECK(dialog.follow_action() != nullptr);
+    CHECK(dialog.hierarchy_action() != nullptr);
+
+    // The node-kind button and both byte buttons carry their grouped menus.
+    REQUIRE(dialog.add_node_button() != nullptr);
+    REQUIRE(dialog.add_node_button()->menu() != nullptr);
+    CHECK(dialog.add_node_button()->menu()->actions().size() > 3);
+
+    auto* add_bytes    = dialog.tool_bar()->findChild<QToolButton*>(QStringLiteral("reclass_add_bytes"));
+    auto* insert_bytes = dialog.tool_bar()->findChild<QToolButton*>(QStringLiteral("reclass_insert_bytes"));
+    REQUIRE(add_bytes != nullptr);
+    REQUIRE(insert_bytes != nullptr);
+    REQUIRE(add_bytes->menu() != nullptr);
+    REQUIRE(insert_bytes->menu() != nullptr);
+    // The reference's seven presets and the "X bytes…" prompt.
+    CHECK(add_bytes->menu()->actions().size() >= 8);
+
+    // The hierarchy view is the window's toggle, and the tree follows it.
+    CHECK_FALSE(dialog.class_hierarchy_view());
+    dialog.set_class_hierarchy_view(true);
+    CHECK(dialog.class_hierarchy_view());
+    CHECK(dialog.hierarchy_action()->isChecked());
+    dialog.set_class_hierarchy_view(false);
+    CHECK_FALSE(dialog.class_hierarchy_view());
+
+    dialog.close();
+}
+
+TEST_CASE("adding and inserting bytes keeps the offsets of the following nodes", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+
+    // Adding bytes appends behind the last node, so the nodes that were there
+    // keep their offsets.
+    CHECK(dialog.add_bytes(4));
+    REQUIRE(player.nodes.size() == 3);
+    CHECK(dialog.structure()->row_for(dialog.structure()->index(1, 0))->offset == 1);
+
+    // Inserting in front of the selection pushes the selection down.
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+    CHECK(dialog.insert_bytes(4));
+    REQUIRE(player.nodes.size() == 4);
+    CHECK(player.nodes[0]->kind() == NodeKind::hex32);
+    CHECK(player.nodes[1]->kind() == NodeKind::int8);
+    CHECK(dialog.structure()->row_for(dialog.structure()->index(2, 0))->offset == 5);
+
+    // A zero count changes nothing.
+    CHECK_FALSE(dialog.add_bytes(0));
+    CHECK_FALSE(dialog.insert_bytes(0));
+    CHECK(player.nodes.size() == 4);
+
+    dialog.close();
+}
+
+TEST_CASE("hiding a node collapses it without moving the following nodes", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+
+    // Player { int8 tag; pointer next; }: hiding the pointer keeps its bytes.
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
+    dialog.hide_selected_nodes();
+    CHECK(player.nodes[1]->hidden);
+    CHECK(dialog.status_label()->text() == QStringLiteral("1 node(s) hidden."));
+
+    const auto* hidden_row = dialog.structure()->row_for(dialog.structure()->index(1, 0));
+    REQUIRE(hidden_row != nullptr);
+    CHECK(hidden_row->hidden);
+    CHECK_FALSE(dialog.structure()->expandable(*hidden_row));
+
+    // Clicking the placeholder row asks for the node back.
+    emit dialog.grid()->hiddenRowActivated(player.nodes[1]->id);
+    CHECK_FALSE(player.nodes[1]->hidden);
+    CHECK(dialog.status_label()->text() == QStringLiteral("Node revealed."));
+
+    // Hide again, then reveal it through the menu command instead.
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
+    dialog.hide_selected_nodes();
+    CHECK(player.nodes[1]->hidden);
+    dialog.unhide_selected_nodes();
+    CHECK_FALSE(player.nodes[1]->hidden);
+
+    // Unhide above/below reveals the run of hidden siblings on one side.
+    player.nodes[0]->hidden = true;
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
+    dialog.unhide_below_nodes();
+    CHECK(player.nodes[1]->hidden == false);
+    dialog.unhide_above_nodes();
+    CHECK_FALSE(player.nodes[0]->hidden);
+
+    dialog.close();
+}
+
+TEST_CASE("a copied node is pasted with a fresh id", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+    const std::size_t tag_id = player.nodes[0]->id;
+
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+    dialog.copy_selected_nodes();
+    CHECK(dialog.clipboard_size() == 1);
+    CHECK(dialog.status_label()->text() == QStringLiteral("1 node(s) copied."));
+
+    // Pasting behind the class appends the clone, whose id is new.
+    CHECK_FALSE(dialog.grid()->currentIndex().isValid() == false);
+    dialog.paste_nodes();
+    REQUIRE(player.nodes.size() == 3);
+    CHECK(player.nodes[2]->kind() == NodeKind::int8);
+    CHECK(player.nodes[2]->id != tag_id);
+    CHECK(player.nodes[2]->name == "tag");
+
+    dialog.close();
+}
+
+TEST_CASE("create class from nodes moves the selection into a new class", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+    REQUIRE(fixture.project.classes().size() == 2);
+
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
+    dialog.create_class_from_nodes();
+
+    // The pointer moved into a class of its own and a class instance takes its
+    // place, so Player still covers the same bytes.
+    REQUIRE(fixture.project.classes().size() == 3);
+    const Class& created = fixture.project.classes()[2];
+    REQUIRE(created.nodes.size() == 1);
+    CHECK(created.nodes[0]->kind() == NodeKind::pointer);
+    REQUIRE(player.nodes.size() == 2);
+    CHECK(player.nodes[1]->kind() == NodeKind::class_instance);
+    CHECK(player.nodes[1]->class_name == created.name);
+
+    dialog.close();
+}
+
+TEST_CASE("shrink class trims the trailing padding", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+
+    CHECK(dialog.add_bytes(4));
+    REQUIRE(player.nodes.size() == 3);
+    CHECK(player.nodes[2]->kind() == NodeKind::hex32);
+
+    select_player(fixture);
+    dialog.shrink_class();
+    CHECK(player.nodes.size() == 2);
+    CHECK(dialog.status_label()->text() == QStringLiteral("1 padding node(s) removed."));
 
     dialog.close();
 }

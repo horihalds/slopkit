@@ -1306,6 +1306,10 @@ TEST_CASE("a class project rides along in the archive", "[table]")
     link->class_name = "Enemy";
     player.nodes.push_back(std::move(link));
 
+    auto* state = structures.add_enum("State", 4);
+    REQUIRE(state != nullptr);
+    state->values.push_back(slopkit::reclass::EnumValue {.name = "Idle", .value = 0, .comment = {}});
+
     const auto path = scratch_file("structures.skt");
     std::filesystem::remove(path);
     REQUIRE(slopkit::table::save(path, table).has_value());
@@ -1316,13 +1320,18 @@ TEST_CASE("a class project rides along in the archive", "[table]")
                                        "index.txt",
                                        "reclass/index.txt",
                                        "reclass/classes/Player.txt",
-                                       "reclass/classes/Enemy.txt"});
+                                       "reclass/classes/Enemy.txt",
+                                       "reclass/enums.txt"});
     CHECK(member_text(path, "reclass/index.txt")
-          == std::optional<std::string> {"reclass/classes/Player.txt\nreclass/classes/Enemy.txt\n"});
+          == std::optional<std::string> {"v2\nreclass/classes/Player.txt\nreclass/classes/Enemy.txt\n"});
     CHECK(member_text(path, "reclass/classes/Player.txt")
-          == std::optional<std::string> {"name=\"Player\" address=\"game.exe+0x1234\"\n"
-                                         "node kind=i32 name=\"health\" hex=0 comment=\"\"\n"
-                                         "node kind=class_pointer name=\"next\" hex=0 comment=\"\" class=\"Enemy\"\n"});
+          == std::optional<std::string> {"v2\n"
+                                         "name=\"Player\" address=\"game.exe+0x1234\"\n"
+                                         "node depth=0 kind=i32 flags=0 name=\"health\" comment=\"\"\n"
+                                         "node depth=0 kind=class_pointer flags=0 name=\"next\" comment=\"\""
+                                         " class=\"Enemy\"\n"});
+    CHECK(member_text(path, "reclass/enums.txt")
+          == std::optional<std::string> {"enum name=\"State\" size=4\nvalue name=\"Idle\" value=0 comment=\"\"\n"});
 
     AddressTable loaded;
     REQUIRE(slopkit::table::load(path, loaded).has_value());
@@ -1336,6 +1345,11 @@ TEST_CASE("a class project rides along in the archive", "[table]")
     REQUIRE(loaded.structures().classes()[0].nodes.size() == 2);
     CHECK(loaded.structures().classes()[0].nodes[1]->kind() == NodeKind::class_pointer);
     CHECK(loaded.structures().classes()[0].nodes[1]->class_name == "Enemy");
+    REQUIRE(loaded.structures().enums().size() == 1);
+    CHECK(loaded.structures().enums()[0].name == "State");
+    CHECK(loaded.structures().enums()[0].size == 4);
+    REQUIRE(loaded.structures().enums()[0].values.size() == 1);
+    CHECK(loaded.structures().enums()[0].values[0].name == "Idle");
 }
 
 TEST_CASE("clearing the table drops the classes too", "[table]")
@@ -1372,16 +1386,16 @@ TEST_CASE("a malformed class member fails the load naming it", "[table]")
 {
     const auto path = scratch_file("damaged_structures.skt");
     std::filesystem::remove(path);
-    REQUIRE(
-        write_archive(path,
-                      std::vector<ArchiveMember> {
-                          {               .name = "version.txt",.text = "slopkit-table 6\n"                                                                },
-                          {                 .name = "index.txt",                                        .text = ""},
-                          {         .name = "reclass/index.txt",            .text = "reclass/classes/Player.txt\n"},
-                          {.name = "reclass/classes/Player.txt",
-                           .text = "name=\"Player\" address=\"1\"\nnode kind=i128 name=\"a\" hex=0 comment=\"\"\n"}
+    REQUIRE(write_archive(path,
+                          std::vector<ArchiveMember> {
+                              {               .name = "version.txt",.text = "slopkit-table 6\n"                                                                    },
+                              {                 .name = "index.txt",                                 .text = ""},
+                              {         .name = "reclass/index.txt", .text = "v2\nreclass/classes/Player.txt\n"},
+                              {.name = "reclass/classes/Player.txt",
+                               .text = "v2\nname=\"Player\" address=\"1\"\n"
+                               "node depth=0 kind=i128 flags=0 name=\"a\" comment=\"\"\n"                      }
     })
-            .has_value());
+                .has_value());
 
     AddressTable table;
     const auto   result = slopkit::table::load(path, table);

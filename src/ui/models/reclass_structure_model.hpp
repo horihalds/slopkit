@@ -35,6 +35,9 @@ namespace slopkit::ui::models
         bool                 unknown_class {};
         bool                 cycle {};
         bool                 too_deep {};
+        // The node is hidden: the row is the collapsed `...` placeholder the
+        // grid draws, and it inlines nothing.
+        bool                 hidden {};
 
         ReclassRow*                              parent {};
         std::vector<std::unique_ptr<ReclassRow>> children;

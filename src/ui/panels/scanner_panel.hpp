@@ -47,6 +47,11 @@ namespace slopkit::ui::panels
 
         void focus_value_input();
 
+        // Primes the value field for a search started elsewhere: the text fills
+        // the value box, the byte count picks the value type and the focus lands
+        // on the box so the user can start the scan.
+        void prime_value(const QString& text, int bytes);
+
         void refresh();
 
         // Reports whether a debug session is running; while it is, pausing for a

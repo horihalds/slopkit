@@ -445,6 +445,8 @@ namespace slopkit::ui
         reclass_ = std::make_unique<dialogs::ReClassDialog>(address_table_.structures(), worker_, target_);
         new WindowGeometryKeeper(*reclass_, settings_, WindowId::reclass, reclass_.get());
         live_values_->add_surface(reclass_.get());
+        connect(reclass_.get(), &dialogs::ReClassDialog::searchRequested, this, &MainWindow::search_for_value);
+        connect(reclass_.get(), &dialogs::ReClassDialog::accessWatchRequested, this, &MainWindow::start_access_watch);
 
         connect(access_watch_.get(),
                 &dialogs::AccessWatchDialog::followRequested,
@@ -613,6 +615,15 @@ namespace slopkit::ui
             return;
         }
         access_watch_->arm_watch(address, kind, ui::watch_size(width));
+    }
+
+    void MainWindow::search_for_value(const QString& text, int bytes)
+    {
+        if (scanner_ == nullptr)
+        {
+            return;
+        }
+        scanner_->prime_value(text, bytes);
     }
 
     void MainWindow::show_instruction_accesses(std::uint64_t                   instruction,

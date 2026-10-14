@@ -160,6 +160,12 @@ namespace slopkit::ui
         void show_about();
 
         void start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind);
+
+        // Primes the scanner with a value another surface asked to search for
+        // (the ReClass window's node menu) and leaves the focus on the value
+        // field so the user can start the scan.
+        void search_for_value(const QString& text, int bytes);
+
         void show_instruction_accesses(std::uint64_t                   instruction,
                                        std::size_t                     instruction_length,
                                        std::vector<ui::ResolvedAccess> accesses);

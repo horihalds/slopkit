@@ -27,7 +27,7 @@ docs that hold the detail behind this map.
 | `src/script` | Lua scripting engine: a sol2 state, the `mem` API, the type-token codec, the process-wide symbol registry and the hook-script generator |
 | `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
 | `src/ui` | Qt main window and shared UI infrastructure |
-| `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, script editor, input boxes, message box, window geometry keeper, window centerer) |
+| `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, ReClass project tree, script editor, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
 | `src/ui/models` | Qt item models for tables and lists |
 | `src/ui/panels` | Docked panes (address list, found list, scanner, debugger), the one-line debug control bar, the Memory Viewer's menu bar and the shared debugger command enablement; the address list's and the found list's multi-row selection, the address list's shared `Del` action, its multi-row delete and the two surfaces' multi-value `Change value…` live here |
@@ -77,7 +77,7 @@ docs that hold the detail behind this map.
 | platform/linux | Linux primitives shared with plugins | `platform/linux/debug_session.hpp` (`DebugSession`), `ptrace.hpp`, `procfs.hpp`, `memory.hpp`, `process_control.hpp`, `module_entry.hpp`, `proc_text.hpp`, `desktop_entry.hpp`, `wine.hpp` | `tests/platform/linux/*` | core |
 | sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
 | ui | Main window, settings, live values, table file, theme/fonts | `ui/main_window.hpp` (`MainWindow`), `app.hpp`, `settings.hpp` (per-window geometries), `platform.hpp` (`preferred_platform_spec`), `text.hpp` (`to_qstring`), `live_values.hpp` (`LiveSurface`, `LiveTicker`), `script_updates.hpp` (`ScriptUpdates`), `debug_session.hpp`, `access_watch.hpp`, `completion_notifier.hpp`, `log_notifier.hpp`, `theme.hpp`, `fonts.hpp`, `table_file.hpp`, `address_format.hpp` | `tests/ui/*` | process, plugin, table, scan, debug |
-| ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `script_editor.hpp` (`ScriptEditor`), `script_highlighter.hpp` (`ScriptHighlighter`), `script_context.hpp` (`identifier_at`, `enclosing_call`, `document_names`), `script_completion.hpp` (`ScriptCompletionPopup`, `ScriptCompletionModel`), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`), `code_patch.hpp`, `address_table_view.hpp` (`AddressTableView`), `indent_delegate.hpp` (`IndentDelegate`, `kDepthRole`), `elided_tooltip_delegate.hpp`, `reclass_view.hpp` (`ReClassView`), `row_menu.hpp`, `referenced_strings.hpp` (`ReferencedStringTable`) | `tests/ui/components/*` | ui, disasm |
+| ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `script_editor.hpp` (`ScriptEditor`), `script_highlighter.hpp` (`ScriptHighlighter`), `script_context.hpp` (`identifier_at`, `enclosing_call`, `document_names`), `script_completion.hpp` (`ScriptCompletionPopup`, `ScriptCompletionModel`), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`), `code_patch.hpp`, `address_table_view.hpp` (`AddressTableView`), `indent_delegate.hpp` (`IndentDelegate`, `kDepthRole`), `elided_tooltip_delegate.hpp`, `reclass_view.hpp` (`ReClassView`), `project_view.hpp` (`ProjectView`), `row_menu.hpp`, `referenced_strings.hpp` (`ReferencedStringTable`) | `tests/ui/components/*` | ui, disasm |
 | ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `ReClassDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`, `ModuleChooserDialog`, `ReferencedStringsDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script, reclass |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `referenced_string_model.hpp`, `reclass_structure_model.hpp`, `reclass_value_model.hpp`, `reclass_proxy_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug, reclass, ui/components |
 | ui/panels | Docked panes (the address list's extended selection, its shared `Del` action and the multi-row delete included) | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
@@ -102,7 +102,11 @@ docs that hold the detail behind this map.
   selected class into rows and memory blocks, `ReclassValueModel` resolves the
   class addresses (keyed by class id) and submits one read per visible block
   through `AccessWorker`, and `ReclassProxyModel` fuses the two into the one
-  tree the view shows. The window is a registered `LiveSurface`, so it refreshes
+  tree the view shows. `ui::components::ProjectView` shows the project's classes
+  and enums and drives the selected class, and its node menu's `Search for Equal
+  Values` and `Find Out What Writes/Accesses This Address` hand the node's value
+  to the scanner panel and its address to the Access Watch rather than reading
+  the target itself. The window is a registered `LiveSurface`, so it refreshes
   on the shared cadence and creates no timer of its own; `table::AddressTable`
   owns the project and `table/serializer.cpp` writes it as the archive's
   `reclass/` members.
@@ -159,8 +163,11 @@ docs that hold the detail behind this map.
   `index.txt` lists both kinds in row order; a child's line appends
   ` parent="entries/<parent member>"` to name its parent, which must be listed
   before it. The class project rides in its own member group: `reclass/index.txt`
-  lists the classes in order and `reclass/classes/<stem>.txt` holds one class
-  each, so an archive written by versions 3–5 simply has none.
+  opens with the payload version `v2` and then lists the classes in order,
+  `reclass/classes/<stem>.txt` holds one class each (its own `v2`, its name and
+  address, then one line per node carrying the kind's parameters) and
+  `reclass/enums.txt` holds the project's enums. An archive written by versions
+  3–5 has none, and a class member without the `v2` line returns as padding.
 - `.skt` address tables are registered as `application/x-slopkit-table`, so a
   double-click opens slopkit with the slopkit icon; `tools/install.sh` finishes
   the MIME/desktop registration and the per-user default handler for a `$HOME`

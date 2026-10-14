@@ -3,10 +3,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
+#include <format>
 #include <functional>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <QAction>
 #include <QApplication>
@@ -17,12 +22,14 @@
 #include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QLabel>
-#include <QListWidget>
 #include <QMenu>
+#include <QMenuBar>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStatusBar>
 #include <QStyle>
+#include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -30,7 +37,9 @@
 #include "reclass/dissect.hpp"
 #include "reclass/edit.hpp"
 #include "reclass/node_menu.hpp"
+#include "reclass/nodes/container.hpp"
 #include "ui/components/input_box.hpp"
+#include "ui/components/project_view.hpp"
 #include "ui/components/reclass_view.hpp"
 #include "ui/components/row_menu.hpp"
 #include "ui/components/widgets.hpp"
@@ -76,50 +85,201 @@ namespace slopkit::ui::dialogs
     void ReClassDialog::build_layout()
     {
         auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(6, 6, 6, 6);
-        layout->setSpacing(6);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+
+        menu_bar_ = new QMenuBar(this);
+        menu_bar_->setObjectName(QStringLiteral("reclass_menu_bar"));
+        build_menu_bar();
+        layout->addWidget(menu_bar_);
+
+        tool_bar_ = new QToolBar(this);
+        tool_bar_->setObjectName(QStringLiteral("reclass_toolbar"));
+        tool_bar_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+        build_tool_bar();
+        layout->addWidget(tool_bar_);
 
         auto* splitter = new QSplitter(Qt::Horizontal, this);
-        splitter->addWidget(build_class_pane());
+        project_view_  = new components::ProjectView(splitter);
+        project_view_->set_project(project_);
+        splitter->addWidget(project_view_);
         splitter->addWidget(build_grid_pane());
         splitter->setStretchFactor(0, 0);
         splitter->setStretchFactor(1, 1);
+        splitter->setSizes({210, 660});
         layout->addWidget(splitter, 1);
 
-        auto* bottom = new QHBoxLayout();
-        bottom->setSpacing(6);
-        status_ = new widgets::StatusLabel(this);
-        status_->setObjectName(QStringLiteral("reclass_status"));
-        close_ = widgets::secondary_button(tr("Close"), this);
-        close_->setObjectName(QStringLiteral("reclass_close"));
-        bottom->addWidget(status_, 1);
-        bottom->addWidget(close_);
-        layout->addLayout(bottom);
+        status_bar_ = new QStatusBar(this);
+        status_bar_->setObjectName(QStringLiteral("reclass_status_bar"));
+        build_status_bar();
+        layout->addWidget(status_bar_);
     }
 
-    QWidget* ReClassDialog::build_class_pane()
+    void ReClassDialog::build_menu_bar()
     {
-        auto* pane   = new QWidget(this);
-        auto* layout = new QVBoxLayout(pane);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(4);
+        QMenu* view = menu_bar_->addMenu(tr("View"));
+        widgets::show_explanations(*view);
+        hierarchy_ =
+            widgets::described_action(*view, tr("Class Hierarchy View"), tr("Nest each class's references under it."));
+        hierarchy_->setCheckable(true);
+        connect(hierarchy_, &QAction::toggled, this, &ReClassDialog::set_class_hierarchy_view);
+        view->addSeparator();
+        QAction* expand = widgets::described_action(*view, tr("Expand All"), tr("Expand every class in the tree."));
+        connect(expand,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    project_view_->expand_all();
+                });
+        QAction* collapse =
+            widgets::described_action(*view, tr("Collapse All"), tr("Collapse every class in the tree."));
+        connect(collapse,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    project_view_->collapse_all();
+                });
 
-        class_list_ = new QListWidget(pane);
-        class_list_->setObjectName(QStringLiteral("reclass_class_list"));
-        class_list_->setContextMenuPolicy(Qt::CustomContextMenu);
-        layout->addWidget(class_list_, 1);
+        QMenu* node = menu_bar_->addMenu(tr("Node"));
+        widgets::show_explanations(*node);
+        const auto command =
+            [this, node](const QString& text, const QString& description, void (ReClassDialog::*slot)())
+        {
+            QAction* action = widgets::described_action(*node, text, description);
+            connect(action, &QAction::triggered, this, slot);
+            return action;
+        };
+        command(tr("Create Class from Nodes"),
+                tr("Move the selected nodes into a class of their own."),
+                &ReClassDialog::create_class_from_nodes);
+        command(
+            tr("Shrink Class"), tr("Drop the padding nodes at the end of the class."), &ReClassDialog::shrink_class);
+        command(tr("Copy Address"), tr("Copy the selected node's address."), &ReClassDialog::copy_address);
+        node->addSeparator();
+        command(tr("Copy Nodes"), tr("Copy the selected nodes."), &ReClassDialog::copy_selected_nodes);
+        command(tr("Paste Nodes"), tr("Paste the copied nodes into the selected class."), &ReClassDialog::paste_nodes);
+        node->addSeparator();
+        command(tr("Hide Nodes"),
+                tr("Collapse the selected nodes to a placeholder row."),
+                &ReClassDialog::hide_selected_nodes);
+        command(tr("Unhide Child Nodes"),
+                tr("Unhide the hidden children of the selection."),
+                &ReClassDialog::unhide_child_nodes);
+        command(tr("Unhide Nodes Above"),
+                tr("Unhide the hidden nodes above the selection."),
+                &ReClassDialog::unhide_above_nodes);
+        command(tr("Unhide Nodes Below"),
+                tr("Unhide the hidden nodes below the selection."),
+                &ReClassDialog::unhide_below_nodes);
+        command(tr("Unhide Nodes"), tr("Unhide the selected nodes."), &ReClassDialog::unhide_selected_nodes);
+        node->addSeparator();
+        command(tr("Search for Equal Values"),
+                tr("Search the target for the selected node's value."),
+                &ReClassDialog::search_equal_values);
+        QAction* writes = widgets::described_action(
+            *node, tr("Find Out What Writes This Address"), tr("Arm the Access Watch on writes."));
+        connect(writes,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    watch_address(true);
+                });
+        QAction* accesses = widgets::described_action(
+            *node, tr("Find Out What Accesses This Address"), tr("Arm the Access Watch on reads and writes."));
+        connect(accesses,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    watch_address(false);
+                });
 
-        auto* buttons = new QHBoxLayout();
-        buttons->setSpacing(4);
-        add_class_ = widgets::secondary_button(tr("Add Class…"), pane);
-        add_class_->setObjectName(QStringLiteral("reclass_add_class"));
-        delete_class_ = widgets::secondary_button(tr("Delete Class"), pane);
+        QMenu* project = menu_bar_->addMenu(tr("Project"));
+        widgets::show_explanations(*project);
+        QAction* add_class = widgets::described_action(*project, tr("Add Class…"), tr("Add a class to the project."));
+        connect(add_class, &QAction::triggered, this, &ReClassDialog::add_class);
+        QAction* delete_class =
+            widgets::described_action(*project, tr("Delete Class"), tr("Remove the selected class."));
+        connect(delete_class, &QAction::triggered, this, &ReClassDialog::delete_class);
+        QAction* unused = widgets::described_action(
+            *project, tr("Remove Unused Classes"), tr("Remove every class nothing refers to."));
+        connect(unused, &QAction::triggered, this, &ReClassDialog::remove_unused_classes);
+        project->addSeparator();
+        QAction* add_enum = widgets::described_action(*project, tr("Add Enum…"), tr("Add an enum to the project."));
+        connect(add_enum, &QAction::triggered, this, &ReClassDialog::add_enum);
+    }
+
+    void ReClassDialog::build_tool_bar()
+    {
+        new_class_ = tool_bar_->addAction(tr("New Class"));
+        new_class_->setObjectName(QStringLiteral("reclass_new_class"));
+        connect(new_class_, &QAction::triggered, this, &ReClassDialog::add_class);
+
+        auto add_bytes_button = new QToolButton(tool_bar_);
+        add_bytes_button->setObjectName(QStringLiteral("reclass_add_bytes"));
+        add_bytes_button->setText(tr("Add Bytes"));
+        add_bytes_button->setPopupMode(QToolButton::InstantPopup);
+        add_bytes_button->setMenu(build_add_bytes_menu(false));
+        tool_bar_->addWidget(add_bytes_button);
+
+        auto insert_bytes_button = new QToolButton(tool_bar_);
+        insert_bytes_button->setObjectName(QStringLiteral("reclass_insert_bytes"));
+        insert_bytes_button->setText(tr("Insert Bytes"));
+        insert_bytes_button->setPopupMode(QToolButton::InstantPopup);
+        insert_bytes_button->setMenu(build_add_bytes_menu(true));
+        tool_bar_->addWidget(insert_bytes_button);
+
+        tool_bar_->addSeparator();
+
+        // The reference gives every node kind its own button here. slopkit's
+        // table holds the reference's whole set, so they stay behind one button
+        // carrying the same grouped menu instead of widening the strip past the
+        // window.
+        add_node_ = new QToolButton(tool_bar_);
+        add_node_->setObjectName(QStringLiteral("reclass_add_node"));
+        add_node_->setText(tr("Add Node"));
+        add_node_->setPopupMode(QToolButton::InstantPopup);
+        add_node_->setMenu(build_add_node_menu());
+        tool_bar_->addWidget(add_node_);
+
+        tool_bar_->addSeparator();
+
+        delete_node_ = tool_bar_->addAction(tr("Delete Nodes"));
+        delete_node_->setObjectName(QStringLiteral("reclass_delete_node"));
+        connect(delete_node_, &QAction::triggered, this, &ReClassDialog::remove_selected_nodes);
+
+        dissect_ = tool_bar_->addAction(tr("Dissect"));
+        dissect_->setObjectName(QStringLiteral("reclass_dissect"));
+        connect(dissect_, &QAction::triggered, this, &ReClassDialog::dissect);
+
+        follow_ = tool_bar_->addAction(tr("Follow Pointer"));
+        follow_->setObjectName(QStringLiteral("reclass_follow"));
+        connect(follow_, &QAction::triggered, this, &ReClassDialog::follow_pointer);
+
+        tool_bar_->addSeparator();
+
+        delete_class_ = tool_bar_->addAction(tr("Delete Class"));
         delete_class_->setObjectName(QStringLiteral("reclass_delete_class"));
-        buttons->addWidget(add_class_);
-        buttons->addWidget(delete_class_);
-        layout->addLayout(buttons);
+        connect(delete_class_, &QAction::triggered, this, &ReClassDialog::delete_class);
+    }
 
-        return pane;
+    void ReClassDialog::build_status_bar()
+    {
+        status_ = new widgets::StatusLabel(status_bar_);
+        status_->setObjectName(QStringLiteral("reclass_status"));
+        status_bar_->addWidget(status_, 1);
+
+        process_label_ = new QLabel(status_bar_);
+        process_label_->setObjectName(QStringLiteral("reclass_process"));
+        process_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        status_bar_->addPermanentWidget(process_label_);
+
+        close_ = widgets::secondary_button(tr("Close"), status_bar_);
+        close_->setObjectName(QStringLiteral("reclass_close"));
+        status_bar_->addPermanentWidget(close_);
     }
 
     QWidget* ReClassDialog::build_grid_pane()
@@ -135,26 +295,6 @@ namespace slopkit::ui::dialogs
         header_->setTextInteractionFlags(Qt::TextSelectableByMouse);
         layout->addWidget(header_);
 
-        auto* controls = new QHBoxLayout();
-        controls->setSpacing(4);
-        add_node_ = new QToolButton(pane);
-        add_node_->setObjectName(QStringLiteral("reclass_add_node"));
-        add_node_->setText(tr("Add Node"));
-        add_node_->setPopupMode(QToolButton::InstantPopup);
-        add_node_->setMenu(build_add_node_menu());
-        delete_node_ = widgets::secondary_button(tr("Delete"), pane);
-        delete_node_->setObjectName(QStringLiteral("reclass_delete_node"));
-        dissect_ = widgets::secondary_button(tr("Dissect"), pane);
-        dissect_->setObjectName(QStringLiteral("reclass_dissect"));
-        follow_ = widgets::secondary_button(tr("Follow Pointer"), pane);
-        follow_->setObjectName(QStringLiteral("reclass_follow"));
-        controls->addWidget(add_node_);
-        controls->addWidget(delete_node_);
-        controls->addWidget(dissect_);
-        controls->addWidget(follow_);
-        controls->addStretch(1);
-        layout->addLayout(controls);
-
         grid_ = new components::ReClassView(*proxy_, *structure_, pane);
         grid_->setObjectName(QStringLiteral("reclass_grid"));
         layout->addWidget(grid_, 1);
@@ -166,6 +306,54 @@ namespace slopkit::ui::dialogs
     {
         auto* menu = new QMenu(this);
         populate_node_kind_menu(*menu, false);
+        return menu;
+    }
+
+    QMenu* ReClassDialog::build_add_bytes_menu(bool insert)
+    {
+        auto* menu = new QMenu(this);
+        widgets::show_explanations(*menu);
+
+        // The reference's presets, 4 to 4096 bytes, then its "… Bytes" prompt.
+        for (const std::size_t count : {4, 8, 64, 256, 1024, 2048, 4096})
+        {
+            const QString label  = insert ? tr("Insert %1 Bytes").arg(count) : tr("Add %1 Bytes").arg(count);
+            const QString detail = insert ? tr("Insert %1 padding bytes in front of the selection.").arg(count)
+                                          : tr("Append %1 padding bytes at the end of the container.").arg(count);
+            QAction*      action = widgets::described_action(*menu, label, detail);
+            connect(action,
+                    &QAction::triggered,
+                    this,
+                    [this, insert, count]
+                    {
+                        if (insert)
+                        {
+                            static_cast<void>(insert_bytes(count));
+                        }
+                        else
+                        {
+                            static_cast<void>(add_bytes(count));
+                        }
+                    });
+        }
+
+        menu->addSeparator();
+        QAction* custom = widgets::described_action(
+            *menu, insert ? tr("Insert … Bytes") : tr("Add … Bytes"), tr("Choose the number of bytes yourself."));
+        connect(custom,
+                &QAction::triggered,
+                this,
+                [this, insert]
+                {
+                    if (insert)
+                    {
+                        insert_bytes();
+                    }
+                    else
+                    {
+                        add_bytes();
+                    }
+                });
         return menu;
     }
 
@@ -209,27 +397,43 @@ namespace slopkit::ui::dialogs
 
     void ReClassDialog::connect_signals()
     {
-        connect(add_class_, &QPushButton::clicked, this, &ReClassDialog::add_class);
-        connect(delete_class_, &QPushButton::clicked, this, &ReClassDialog::delete_class);
         connect(close_, &QPushButton::clicked, this, &QDialog::close);
-        connect(class_list_, &QListWidget::currentRowChanged, this, &ReClassDialog::on_class_selected);
-        connect(class_list_,
-                &QWidget::customContextMenuRequested,
-                this,
-                [this](const QPoint& position)
-                {
-                    show_class_menu(position);
-                });
 
-        connect(delete_node_, &QPushButton::clicked, this, &ReClassDialog::remove_selected_nodes);
-        connect(dissect_, &QPushButton::clicked, this, &ReClassDialog::dissect);
-        connect(follow_, &QPushButton::clicked, this, &ReClassDialog::follow_pointer);
+        connect(project_view_, &components::ProjectView::classSelected, this, &ReClassDialog::on_class_selected);
+        connect(project_view_, &components::ProjectView::newClassRequested, this, &ReClassDialog::add_class);
+        connect(project_view_, &components::ProjectView::deleteClassRequested, this, &ReClassDialog::delete_class);
+        connect(project_view_,
+                &components::ProjectView::removeUnusedClassesRequested,
+                this,
+                &ReClassDialog::remove_unused_classes);
+        connect(project_view_, &components::ProjectView::renameClassRequested, this, &ReClassDialog::rename_class);
+        connect(
+            project_view_, &components::ProjectView::setClassAddressRequested, this, &ReClassDialog::set_class_address);
+        connect(project_view_, &components::ProjectView::newEnumRequested, this, &ReClassDialog::add_enum);
+        connect(project_view_, &components::ProjectView::editEnumRequested, this, &ReClassDialog::edit_enum);
+        connect(project_view_, &components::ProjectView::deleteEnumRequested, this, &ReClassDialog::delete_enum);
+
         connect(grid_,
                 &components::ReClassView::rowMenuRequested,
                 this,
                 [this](const QPoint& position)
                 {
                     show_row_menu(position);
+                });
+
+        connect(grid_,
+                &components::ReClassView::hiddenRowActivated,
+                this,
+                [this](std::size_t node_id)
+                {
+                    const auto ref = reclass::node_ref(project_, node_id);
+                    if (!ref.has_value())
+                    {
+                        return;
+                    }
+                    (*ref->owner)[ref->index]->hidden = false;
+                    refresh_all();
+                    report(tr("Node revealed."), false);
                 });
 
         connect(grid_, &components::ReClassView::selectionChanged, this, &ReClassDialog::update_actions);
@@ -274,7 +478,7 @@ namespace slopkit::ui::dialogs
         addAction(delete_action_);
         connect(delete_action_, &QAction::triggered, this, &ReClassDialog::remove_selected_nodes);
 
-        widgets::chain_tab_order({class_list_, add_class_, delete_class_, grid_, delete_node_, close_});
+        widgets::chain_tab_order({project_view_, grid_, close_});
     }
 
     models::ReclassStructureModel* ReClassDialog::structure() const noexcept
@@ -287,9 +491,9 @@ namespace slopkit::ui::dialogs
         return proxy_;
     }
 
-    QListWidget* ReClassDialog::class_list() const noexcept
+    components::ProjectView* ReClassDialog::project_view() const noexcept
     {
-        return class_list_;
+        return project_view_;
     }
 
     components::ReClassView* ReClassDialog::grid() const noexcept
@@ -307,12 +511,27 @@ namespace slopkit::ui::dialogs
         return status_;
     }
 
-    QPushButton* ReClassDialog::add_class_button() const noexcept
+    QMenuBar* ReClassDialog::menu_bar() const noexcept
     {
-        return add_class_;
+        return menu_bar_;
     }
 
-    QPushButton* ReClassDialog::delete_class_button() const noexcept
+    QToolBar* ReClassDialog::tool_bar() const noexcept
+    {
+        return tool_bar_;
+    }
+
+    QStatusBar* ReClassDialog::status_bar() const noexcept
+    {
+        return status_bar_;
+    }
+
+    QAction* ReClassDialog::new_class_action() const noexcept
+    {
+        return new_class_;
+    }
+
+    QAction* ReClassDialog::delete_class_action() const noexcept
     {
         return delete_class_;
     }
@@ -322,19 +541,24 @@ namespace slopkit::ui::dialogs
         return add_node_;
     }
 
-    QPushButton* ReClassDialog::delete_node_button() const noexcept
+    QAction* ReClassDialog::delete_node_action() const noexcept
     {
         return delete_node_;
     }
 
-    QPushButton* ReClassDialog::dissect_button() const noexcept
+    QAction* ReClassDialog::dissect_action() const noexcept
     {
         return dissect_;
     }
 
-    QPushButton* ReClassDialog::follow_button() const noexcept
+    QAction* ReClassDialog::follow_action() const noexcept
     {
         return follow_;
+    }
+
+    QAction* ReClassDialog::hierarchy_action() const noexcept
+    {
+        return hierarchy_;
     }
 
     std::vector<LiveRequest> ReClassDialog::next_live_request()
@@ -363,6 +587,7 @@ namespace slopkit::ui::dialogs
     void ReClassDialog::refresh_project()
     {
         structure_->set_project(project_);
+        project_view_->set_project(project_);
         refresh_all();
     }
 
@@ -445,7 +670,7 @@ namespace slopkit::ui::dialogs
     {
         const std::optional<std::size_t> current = current_node_id();
 
-        refresh_class_list();
+        refresh_project_tree();
         values_->invalidate();
 
         if (current.has_value())
@@ -460,25 +685,14 @@ namespace slopkit::ui::dialogs
         update_actions();
     }
 
-    void ReClassDialog::refresh_class_list()
+    void ReClassDialog::refresh_project_tree()
     {
         const std::size_t size     = project_.classes().size();
         const std::size_t selected = size == 0 ? 0 : std::min(structure_->selected_class(), size - 1);
 
-        {
-            const QSignalBlocker blocker(class_list_);
-            class_list_->clear();
-            for (const reclass::Class& type : project_.classes())
-            {
-                new QListWidgetItem(to_qstring(type.name), class_list_);
-            }
-            if (size > 0)
-            {
-                class_list_->setCurrentRow(static_cast<int>(selected));
-            }
-        }
-
         structure_->set_class(selected);
+        project_view_->refresh();
+        project_view_->select_class(selected);
         refresh_header();
         refresh_class_tooltips();
     }
@@ -502,18 +716,14 @@ namespace slopkit::ui::dialogs
 
     void ReClassDialog::refresh_class_tooltips()
     {
-        for (int row = 0; row < class_list_->count(); ++row)
+        for (std::size_t index = 0; index < project_.classes().size(); ++index)
         {
-            QListWidgetItem*      item = class_list_->item(row);
-            const reclass::Class* type = project_.class_at(static_cast<std::size_t>(row));
-            if (item == nullptr || type == nullptr)
-            {
-                continue;
-            }
-
-            const QString                      expression = to_qstring(type->address_expression);
-            const std::optional<std::uint64_t> address    = values_->class_address(static_cast<std::size_t>(row));
-            item->setToolTip(address.has_value() ? tr("%1 → %2").arg(expression, values_->format_address(*address))
+            const reclass::Class&              type       = project_.classes()[index];
+            const QString                      expression = to_qstring(type.address_expression);
+            const std::optional<std::uint64_t> address    = values_->class_address(index);
+            project_view_->set_class_tooltip(index,
+                                             address.has_value()
+                                                 ? tr("%1 → %2").arg(expression, values_->format_address(*address))
                                                  : tr("%1 → not resolved yet").arg(expression));
         }
     }
@@ -523,21 +733,19 @@ namespace slopkit::ui::dialogs
         const bool has_class = selected_class_exists();
         const bool has_node  = grid_->currentIndex().isValid();
 
-        add_node_->setEnabled(has_class);
         delete_class_->setEnabled(has_class);
+        add_node_->setEnabled(has_class);
         delete_node_->setEnabled(has_node);
         delete_action_->setEnabled(has_node);
         dissect_->setEnabled(has_node && values_->attached());
         follow_->setEnabled(has_node);
+
+        process_label_->setText(to_qstring(target_->label()));
     }
 
-    void ReClassDialog::on_class_selected(int row)
+    void ReClassDialog::on_class_selected(std::size_t index)
     {
-        if (row < 0)
-        {
-            return;
-        }
-        structure_->set_class(static_cast<std::size_t>(row));
+        structure_->set_class(index);
         refresh_all();
     }
 
@@ -733,28 +941,23 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        const models::ReclassRow* row = structure_->row_for(grid_->currentIndex());
-
-        reclass::Class* type =
-            row == nullptr ? project_.class_at(structure_->selected_class()) : project_.class_at(row->class_index);
-        if (type == nullptr)
-        {
-            return;
-        }
-
-        std::size_t index = type->nodes.size();
-        if (row != nullptr)
+        // A node nested in a container goes into that container beside its
+        // element; a node of the class itself goes in front of the selection.
+        std::vector<reclass::NodePtr>* owner = &project_.class_at(structure_->selected_class())->nodes;
+        std::size_t                    index = owner->size();
+        if (const models::ReclassRow* row = structure_->row_for(grid_->currentIndex()); row != nullptr)
         {
             const auto ref = reclass::node_ref(project_, row->node_id);
-            if (ref.has_value() && ref->owner == &type->nodes)
+            if (ref.has_value())
             {
+                owner = ref->owner;
                 index = ref->index;
             }
         }
 
         reclass::NodePtr node = reclass::make_node(kind);
         node->id              = project_.next_node_id();
-        type->nodes.insert(type->nodes.begin() + static_cast<std::ptrdiff_t>(index), std::move(node));
+        owner->insert(owner->begin() + static_cast<std::ptrdiff_t>(index), std::move(node));
 
         refresh_all();
         report(tr("%1 node added.").arg(kind_label(kind)), false);
@@ -780,16 +983,10 @@ namespace slopkit::ui::dialogs
         report(tr("Type changed to %1.").arg(kind_label(kind)), false);
     }
 
-    void ReClassDialog::add_bytes()
+    std::optional<std::size_t> ReClassDialog::prompt_byte_count(const QString& title)
     {
-        if (!selected_class_exists())
-        {
-            report(tr("Select a class first."), true);
-            return;
-        }
-
         widgets::InputBoxOptions options;
-        options.title    = tr("Add Bytes");
+        options.title    = title;
         options.label    = tr("Byte count");
         options.initial  = QStringLiteral("1");
         options.validate = [this](const QString& text)
@@ -804,15 +1001,106 @@ namespace slopkit::ui::dialogs
         };
 
         const std::optional<QString> text = widgets::get_text(options, this);
-        if (!text.has_value())
+        return text.has_value() ? std::optional<std::size_t> {text->trimmed().toULongLong()} : std::nullopt;
+    }
+
+    void ReClassDialog::add_bytes()
+    {
+        const std::optional<std::size_t> count = prompt_byte_count(tr("Add Bytes"));
+        if (count.has_value())
         {
-            return;
+            static_cast<void>(add_bytes(*count));
+        }
+    }
+
+    void ReClassDialog::insert_bytes()
+    {
+        const std::optional<std::size_t> count = prompt_byte_count(tr("Insert Bytes"));
+        if (count.has_value())
+        {
+            static_cast<void>(insert_bytes(*count));
+        }
+    }
+
+    std::optional<ReClassDialog::ContainerTarget> ReClassDialog::byte_target(bool insert)
+    {
+        const models::ReclassRow* row =
+            grid_->currentIndex().isValid() ? structure_->row_for(grid_->currentIndex()) : nullptr;
+        if (row == nullptr)
+        {
+            if (!selected_class_exists())
+            {
+                return std::nullopt;
+            }
+            reclass::Class* type = project_.class_at(structure_->selected_class());
+            return ContainerTarget {.nodes = &type->nodes, .index = insert ? 0 : type->nodes.size()};
         }
 
-        const std::size_t bytes = text->trimmed().toULongLong();
-        reclass::append_bytes(project_, project_.classes()[structure_->selected_class()].nodes, bytes);
+        const auto ref = reclass::node_ref(project_, row->node_id);
+        if (!ref)
+        {
+            return std::nullopt;
+        }
+
+        // A container takes the bytes itself, another node's parent container
+        // takes them at the node's position; the reference reaches the nodes the
+        // same way.
+        if (auto* container = dynamic_cast<reclass::ContainerNode*>(ref->owner->at(ref->index).get());
+            container != nullptr)
+        {
+            std::vector<reclass::NodePtr>& children = container->children_mutable();
+            return ContainerTarget {.nodes = &children, .index = insert ? 0 : children.size()};
+        }
+        return ContainerTarget {.nodes = ref->owner, .index = insert ? ref->index : ref->owner->size()};
+    }
+
+    void ReClassDialog::insert_padding(const ContainerTarget& target, std::size_t count)
+    {
+        std::vector<reclass::NodePtr> padding = reclass::pad_nodes(count);
+        for (reclass::NodePtr& node : padding)
+        {
+            node->id = project_.next_node_id();
+        }
+        auto& nodes = *target.nodes;
+        nodes.insert(nodes.begin() + static_cast<std::ptrdiff_t>(std::min(target.index, nodes.size())),
+                     std::make_move_iterator(padding.begin()),
+                     std::make_move_iterator(padding.end()));
+    }
+
+    bool ReClassDialog::add_bytes(std::size_t count)
+    {
+        if (count == 0)
+        {
+            return false;
+        }
+        const auto target = byte_target(false);
+        if (!target.has_value())
+        {
+            report(tr("Select a class first."), true);
+            return false;
+        }
+        insert_padding(*target, count);
         refresh_all();
-        report(tr("%1 byte(s) added.").arg(bytes), false);
+        report(tr("%1 byte(s) added.").arg(count), false);
+        return true;
+    }
+
+    bool ReClassDialog::insert_bytes(std::size_t count)
+    {
+        if (count == 0)
+        {
+            return false;
+        }
+        const auto target = byte_target(true);
+        if (!target.has_value())
+        {
+            report(tr("Select a class first."), true);
+            return false;
+        }
+        insert_padding(*target, count);
+        refresh_all();
+        report(tr("%1 byte(s) inserted.").arg(count), false);
+        return true;
     }
 
     void ReClassDialog::edit_name()
@@ -1099,7 +1387,7 @@ namespace slopkit::ui::dialogs
                     });
         }
 
-        menu.exec(follow_->mapToGlobal(follow_->rect().bottomLeft()));
+        menu.exec(tool_bar_->mapToGlobal(tool_bar_->rect().bottomLeft()));
     }
 
     void ReClassDialog::set_followed_class(const QString& class_name)
@@ -1175,35 +1463,6 @@ namespace slopkit::ui::dialogs
         return const_cast<reclass::Node*>(row->node);
     }
 
-    void ReClassDialog::show_class_menu(const QPoint& position)
-    {
-        QMenu menu(this);
-        widgets::show_explanations(menu);
-
-        if (selected_class_exists())
-        {
-            QAction* rename = widgets::described_action(menu, tr("Rename Class…"), tr("Change the class's name."));
-            connect(rename, &QAction::triggered, this, &ReClassDialog::rename_class);
-
-            QAction* address = widgets::described_action(
-                menu, tr("Set Class Address…"), tr("Change the expression the class is pinned to."));
-            connect(address, &QAction::triggered, this, &ReClassDialog::set_class_address);
-
-            menu.addSeparator();
-            QAction* remove = widgets::described_action(
-                menu,
-                tr("Delete Class"),
-                tr("Remove the class; nodes that reference it stay and read 'unknown class'."));
-            connect(remove, &QAction::triggered, this, &ReClassDialog::delete_class);
-        }
-        else
-        {
-            (void)widgets::disabled_action(menu, tr("Rename Class…"), tr("Select a class first."));
-        }
-
-        menu.exec(class_list_->viewport()->mapToGlobal(position));
-    }
-
     void ReClassDialog::show_row_menu(const QPoint& position)
     {
         QMenu menu(this);
@@ -1217,7 +1476,13 @@ namespace slopkit::ui::dialogs
 
         QAction* bytes =
             widgets::described_action(menu, tr("Add Bytes…"), tr("Append padding bytes at the end of the class."));
-        connect(bytes, &QAction::triggered, this, &ReClassDialog::add_bytes);
+        connect(bytes,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    add_bytes();
+                });
 
         menu.addSeparator();
 
@@ -1266,6 +1531,389 @@ namespace slopkit::ui::dialogs
         connect(remove, &QAction::triggered, this, &ReClassDialog::remove_selected_nodes);
 
         menu.exec(position);
+    }
+
+    void ReClassDialog::create_class_from_nodes()
+    {
+        const models::ReclassRow* row =
+            grid_->currentIndex().isValid() ? structure_->row_for(grid_->currentIndex()) : nullptr;
+        if (row == nullptr)
+        {
+            report(tr("Select node(s) first."), true);
+            return;
+        }
+        const auto anchor = reclass::node_ref(project_, row->node_id);
+        if (!anchor.has_value())
+        {
+            return;
+        }
+
+        std::vector<std::size_t> indexes;
+        for (const std::size_t id : selected_node_ids())
+        {
+            const auto selected = reclass::node_ref(project_, id);
+            if (!selected.has_value() || selected->owner != anchor->owner)
+            {
+                report(tr("Select the nodes of one container."), true);
+                return;
+            }
+            indexes.push_back(selected->index);
+        }
+        std::ranges::sort(indexes);
+        indexes.erase(std::unique(indexes.begin(), indexes.end()), indexes.end());
+
+        const std::string name = std::format("Class{}", project_.classes().size() + 1);
+        if (project_.add_class(name, std::string {}) == 0)
+        {
+            report(tr("The class was not created."), true);
+            return;
+        }
+
+        reclass::Class&               created = project_.classes().back();
+        std::vector<reclass::NodePtr> moved;
+        moved.reserve(indexes.size());
+        for (const std::size_t index : indexes)
+        {
+            moved.push_back(std::move((*anchor->owner)[index]));
+        }
+        for (auto it = indexes.rbegin(); it != indexes.rend(); ++it)
+        {
+            anchor->owner->erase(anchor->owner->begin() + static_cast<std::ptrdiff_t>(*it));
+        }
+        for (reclass::NodePtr& node : moved)
+        {
+            node->id = project_.next_node_id();
+            created.nodes.push_back(std::move(node));
+        }
+
+        // The bytes the nodes covered stay covered: one class instance, as large
+        // as the fields that moved, takes their place.
+        reclass::NodePtr instance = reclass::make_node(reclass::NodeKind::class_instance);
+        instance->id              = project_.next_node_id();
+        instance->name            = name;
+        instance->class_name      = name;
+        const std::size_t at      = std::min(indexes.front(), anchor->owner->size());
+        anchor->owner->insert(anchor->owner->begin() + static_cast<std::ptrdiff_t>(at), std::move(instance));
+
+        refresh_all();
+        report(tr("Class '%1' created from %2 node(s).").arg(to_qstring(name)).arg(moved.size()), false);
+    }
+
+    void ReClassDialog::copy_address()
+    {
+        const models::ReclassRow* row =
+            grid_->currentIndex().isValid() ? structure_->row_for(grid_->currentIndex()) : nullptr;
+        if (row == nullptr)
+        {
+            report(tr("Select a node first."), true);
+            return;
+        }
+        const std::optional<std::uint64_t> address = values_->node_address(*row);
+        if (!address.has_value())
+        {
+            report(tr("The node's address is not resolved yet."), true);
+            return;
+        }
+        QApplication::clipboard()->setText(values_->format_address(*address));
+        report(tr("Address copied."), false);
+    }
+
+    void ReClassDialog::shrink_class()
+    {
+        if (!selected_class_exists())
+        {
+            report(tr("Select a class first."), true);
+            return;
+        }
+
+        // The reference cuts the padding hex nodes off the class's end.
+        reclass::Class* type    = project_.class_at(structure_->selected_class());
+        std::size_t     removed = 0;
+        while (!type->nodes.empty() && reclass::is_hex_kind(type->nodes.back()->kind()))
+        {
+            type->nodes.pop_back();
+            ++removed;
+        }
+
+        refresh_all();
+        report(tr("%1 padding node(s) removed.").arg(removed), false);
+    }
+
+    void ReClassDialog::remove_unused_classes()
+    {
+        std::vector<bool> used(project_.classes().size(), false);
+        for (const reclass::Class& type : project_.classes())
+        {
+            for (const reclass::NodePtr& node : type.nodes)
+            {
+                if (node->class_name.empty())
+                {
+                    continue;
+                }
+                const reclass::Class* target = project_.find_class(node->class_name);
+                if (target != nullptr)
+                {
+                    used[static_cast<std::size_t>(target - project_.classes().data())] = true;
+                }
+            }
+        }
+
+        std::size_t removed = 0;
+        for (std::size_t index = project_.classes().size(); index-- > 0;)
+        {
+            if (!used[index])
+            {
+                project_.remove_class(index);
+                ++removed;
+            }
+        }
+
+        refresh_all();
+        report(tr("%1 unused class(es) removed.").arg(removed), false);
+    }
+
+    void ReClassDialog::hide_selected_nodes()
+    {
+        std::size_t hidden = 0;
+        for (const models::ReclassRow* row : selected_rows())
+        {
+            reclass::Node* node = node_at(row);
+            if (node == nullptr || node->hidden)
+            {
+                continue;
+            }
+            node->hidden = true;
+            ++hidden;
+        }
+        if (hidden == 0)
+        {
+            report(tr("Select node(s) first."), true);
+            return;
+        }
+
+        refresh_all();
+        report(tr("%1 node(s) hidden.").arg(hidden), false);
+    }
+
+    void ReClassDialog::unhide_selected_nodes()
+    {
+        std::size_t revealed = 0;
+        for (const models::ReclassRow* row : selected_rows())
+        {
+            reclass::Node* node = node_at(row);
+            if (node == nullptr || !node->hidden)
+            {
+                continue;
+            }
+            node->hidden = false;
+            ++revealed;
+        }
+        if (revealed == 0)
+        {
+            report(tr("Select hidden node(s) first."), true);
+            return;
+        }
+
+        refresh_all();
+        report(tr("%1 node(s) revealed.").arg(revealed), false);
+    }
+
+    void ReClassDialog::unhide_child_nodes()
+    {
+        std::size_t revealed = 0;
+        for (const models::ReclassRow* row : selected_rows())
+        {
+            const reclass::Node* node = node_at(row);
+            if (node == nullptr)
+            {
+                continue;
+            }
+            for (const reclass::NodePtr& child : node->children())
+            {
+                if (child->hidden)
+                {
+                    child->hidden = false;
+                    ++revealed;
+                }
+            }
+        }
+        if (revealed == 0)
+        {
+            report(tr("No hidden child nodes."), true);
+            return;
+        }
+
+        refresh_all();
+        report(tr("%1 node(s) revealed.").arg(revealed), false);
+    }
+
+    void ReClassDialog::unhide_above_nodes()
+    {
+        unhide_run(true);
+    }
+
+    void ReClassDialog::unhide_below_nodes()
+    {
+        unhide_run(false);
+    }
+
+    void ReClassDialog::unhide_run(bool above)
+    {
+        const models::ReclassRow* row =
+            grid_->currentIndex().isValid() ? structure_->row_for(grid_->currentIndex()) : nullptr;
+        if (row == nullptr)
+        {
+            report(tr("Select a node first."), true);
+            return;
+        }
+        const auto ref = reclass::node_ref(project_, row->node_id);
+        if (!ref.has_value())
+        {
+            return;
+        }
+
+        // The reference reveals the unbroken run of hidden siblings on one side.
+        std::size_t revealed = 0;
+        if (above)
+        {
+            for (std::size_t index = ref->index; index-- > 0 && (*ref->owner)[index]->hidden;)
+            {
+                (*ref->owner)[index]->hidden = false;
+                ++revealed;
+            }
+        }
+        else
+        {
+            for (std::size_t index = ref->index + 1; index < ref->owner->size() && (*ref->owner)[index]->hidden;
+                 ++index)
+            {
+                (*ref->owner)[index]->hidden = false;
+                ++revealed;
+            }
+        }
+
+        refresh_all();
+        report(tr("%1 node(s) revealed.").arg(revealed), false);
+    }
+
+    void ReClassDialog::copy_selected_nodes()
+    {
+        clipboard_.clear();
+        for (const models::ReclassRow* row : selected_rows())
+        {
+            const reclass::Node* node = node_at(row);
+            if (node != nullptr)
+            {
+                clipboard_.push_back(node->clone());
+            }
+        }
+        if (clipboard_.empty())
+        {
+            report(tr("Select node(s) first."), true);
+            return;
+        }
+        report(tr("%1 node(s) copied.").arg(clipboard_.size()), false);
+    }
+
+    void ReClassDialog::paste_nodes()
+    {
+        if (clipboard_.empty())
+        {
+            report(tr("Copy node(s) first."), true);
+            return;
+        }
+        const auto target = byte_target(false);
+        if (!target.has_value())
+        {
+            report(tr("Select a class first."), true);
+            return;
+        }
+
+        // A clone keeps its shape but not its ids, so a pasted sub-tree is a
+        // fresh set of nodes.
+        const auto assign_ids = [this](auto&& self, reclass::Node& node) -> void
+        {
+            node.id = project_.next_node_id();
+            if (auto* container = dynamic_cast<reclass::ContainerNode*>(&node); container != nullptr)
+            {
+                for (reclass::NodePtr& child : container->children_mutable())
+                {
+                    self(self, *child);
+                }
+            }
+        };
+
+        std::vector<reclass::NodePtr> clones;
+        clones.reserve(clipboard_.size());
+        for (const reclass::NodePtr& node : clipboard_)
+        {
+            reclass::NodePtr clone = node->clone();
+            assign_ids(assign_ids, *clone);
+            clones.push_back(std::move(clone));
+        }
+
+        auto& nodes = *target->nodes;
+        nodes.insert(nodes.begin() + static_cast<std::ptrdiff_t>(std::min(target->index, nodes.size())),
+                     std::make_move_iterator(clones.begin()),
+                     std::make_move_iterator(clones.end()));
+        refresh_all();
+        report(tr("%1 node(s) pasted.").arg(clones.size()), false);
+    }
+
+    std::size_t ReClassDialog::clipboard_size() const noexcept
+    {
+        return clipboard_.size();
+    }
+
+    void ReClassDialog::set_class_hierarchy_view(bool enabled)
+    {
+        if (hierarchy_ != nullptr && hierarchy_->isChecked() != enabled)
+        {
+            hierarchy_->setChecked(enabled);
+        }
+        project_view_->set_hierarchy_view(enabled);
+    }
+
+    bool ReClassDialog::class_hierarchy_view() const noexcept
+    {
+        return project_view_->hierarchy_view();
+    }
+
+    void ReClassDialog::search_equal_values()
+    {
+        const models::ReclassRow* row =
+            grid_->currentIndex().isValid() ? structure_->row_for(grid_->currentIndex()) : nullptr;
+        if (row == nullptr || row->node == nullptr)
+        {
+            report(tr("Select a node first."), true);
+            return;
+        }
+
+        const int bytes = static_cast<int>(std::max<std::size_t>(row->node->value_size(), 1));
+        emit      searchRequested(values_->edit_text(*row), bytes);
+        report(tr("Searching for the node's value."), false);
+    }
+
+    void ReClassDialog::watch_address(bool writes)
+    {
+        const models::ReclassRow* row =
+            grid_->currentIndex().isValid() ? structure_->row_for(grid_->currentIndex()) : nullptr;
+        if (row == nullptr)
+        {
+            report(tr("Select a node first."), true);
+            return;
+        }
+        const std::optional<std::uint64_t> address = values_->node_address(*row);
+        if (!address.has_value())
+        {
+            report(tr("The node's address is not resolved yet."), true);
+            return;
+        }
+
+        const std::size_t width = std::max<std::size_t>(row->node->value_size(), 1);
+        emit              accessWatchRequested(
+            *address, width, writes ? debug::Kind::hardware_write : debug::Kind::hardware_read_write);
+        report(writes ? tr("Arming the Access Watch on writes.") : tr("Arming the Access Watch on accesses."), false);
     }
 
     std::vector<QString> ReClassDialog::enum_names() const

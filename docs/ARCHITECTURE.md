@@ -660,13 +660,24 @@ menus; the grid renders each kind's value through `format_node_value_text`
 (`src/reclass/value.cpp`), so a text node decodes its characters, a bitfield its
 bits, an enum the name of the value it reads, and a vector or matrix its floats.
 
-The kinds added here are not persisted with their parameters yet: the
-`reclass/classes/<stem>.txt` payload still stores one line per node carrying the
-kind, name and comment only, so a saved container comes back as an array or union
-with a single default element, a bitfield with one bit, a text node with its
-default length and an enum node without its enum, and the project enums are not
-written at all. A versioned class-project payload covering every kind and the
-enums is the outstanding piece of this work.
+The class project is written into the `.skt` archive as the `reclass/` member
+group. `reclass/index.txt` opens with the payload version `v2` and then lists the
+class members in order, `reclass/classes/<stem>.txt` holds one class each, and
+`reclass/enums.txt` holds the project's enums. A class member opens with `v2` too,
+then `name="…" address="…"`, then one `node depth=… kind=… flags=… name="…"
+comment="…"` line per node carrying the per-kind extras that kind needs: an array
+or union nests its children one `depth` deeper, a class node its `class`, a
+bitfield its `bits` and `signed`, an enum node its `enum` and `size`, a text node
+its `length`, a class array its `count`; `flags` carries the hex and hidden bits.
+Every kind and its parameters therefore survive a round trip.
+
+The payload is not read-compatible with the one the flat node struct wrote: a
+class member whose first line is not `v2` is still named but comes back as a page
+of default padding, and an index written the same way lists its classes the same
+way. An archive saved by an earlier build therefore loses its classes' contents,
+which is deliberate — the alternative was a second codec for a grammar that could
+not express the new kinds. A malformed or unknown-token `v2` member fails the load
+naming the member.
 
 The `View > ReClass` window splits the model over three pieces. The structure
 model turns the *selected* class into rows and **blocks** — one block for the class
@@ -711,6 +722,29 @@ and re-types the node with the padding rule that keeps the following offsets
 where they were, while `Follow Pointer` sets a pointer node's referenced class and
 inlines it. A class project rides in the `.skt` archive as its own member group
 (see the map's `.skt` gotcha).
+
+The window itself is shaped after the reference's `MainForm`: a menu strip, a
+toolbar, a horizontal splitter and a status strip, with
+`ui::components::ProjectView` (a `QTreeWidget` of the `Classes` and `Enums`
+groups) on the left and the node pane on the right. Selecting a class in the tree
+drives the grid; the tree's `Class Hierarchy View` nests the classes a class
+refers to behind the reference's cycle guard, and its context menus add, rename,
+delete and clean up classes and edit the enums. The `Node` menu and the grid's row
+menu carry the reference's node commands — `Add Bytes`/`Insert Bytes` at the
+4/8/64/256/1024/2048/4096 presets or an `X bytes…` prompt, `Change Type`,
+`Dissect`, `Follow Pointer`, `Create Class from Nodes`, `Shrink Class`,
+`Copy Nodes`/`Paste Nodes`, the five hide/unhide commands and `Copy Address` — all
+on the prompt-free `ReClassDialog` methods the tests drive. A paste clones each
+copied sub-tree through `Node::clone()` and re-ids every node, so a container's
+children come with it, and a `Create Class from Nodes` moves the selection into a
+new class and leaves a same-sized class instance in its place. A hidden node
+collapses to one `...` row the grid paints in the `Name` column; the row inlines
+nothing and a click unhides the node, while the bytes a hidden node covers stay
+where they are. Two commands hand off rather than read the target: `Search for
+Equal Values` gives the node's shown value to the scanner panel (filling its value
+field and picking the value type that fits) and the `Find Out What Writes This
+Address` / `Find Out What Accesses This Address` pair gives the node's address and
+width to the Access Watch, whose dialog the main window opens.
 
 The proxy model answers the two live columns from the value model and leaves the
 other four to the structure model, and a pass repaints a cell only when its text

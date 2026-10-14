@@ -149,7 +149,9 @@ namespace slopkit::ui::models
 
     bool ReclassStructureModel::expandable(const ReclassRow& row) const
     {
-        if (is_marked(row) || project_ == nullptr)
+        // A hidden row is the collapsed `...` placeholder: it inlines nothing, so
+        // it carries no expander.
+        if (row.hidden || is_marked(row) || project_ == nullptr)
         {
             return false;
         }
@@ -250,10 +252,11 @@ namespace slopkit::ui::models
             row->class_index = class_index;
             row->offset      = base_offset + offset;
             row->block       = block;
+            row->hidden      = child.hidden;
 
             ReclassRow* created = append_row(parent, std::move(row));
 
-            if (child.is_container() && is_expanded(child.id))
+            if (!child.hidden && child.is_container() && is_expanded(child.id))
             {
                 build_container(child, class_index, block, created->offset, created);
             }
@@ -284,10 +287,11 @@ namespace slopkit::ui::models
             row->node_index  = node_index;
             row->offset      = base_offset + offset;
             row->block       = block;
+            row->hidden      = node.hidden;
 
             ReclassRow* created = append_row(parent, std::move(row));
 
-            if (reclass::is_class_kind(node.kind()))
+            if (!node.hidden && reclass::is_class_kind(node.kind()))
             {
                 const reclass::Class* target       = project_->find_class(node.class_name);
                 const std::size_t     target_index = target == nullptr ? 0 : class_index_of(target);
@@ -321,7 +325,7 @@ namespace slopkit::ui::models
                     ancestors.pop_back();
                 }
             }
-            else if (node.is_container() && is_expanded(node.id))
+            else if (!node.hidden && node.is_container() && is_expanded(node.id))
             {
                 build_container(node, class_index, block, created->offset, created);
             }
