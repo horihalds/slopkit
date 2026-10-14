@@ -102,6 +102,20 @@ namespace slopkit::ui::models
         return expanded_.contains(node_id);
     }
 
+    bool ReclassStructureModel::expandable(const ReclassRow& row) const
+    {
+        if (is_marked(row) || project_ == nullptr)
+        {
+            return false;
+        }
+        const reclass::Class* definition = project_->class_at(row.class_index);
+        if (definition == nullptr || row.node_index >= definition->nodes.size())
+        {
+            return false;
+        }
+        return reclass::is_class_kind(definition->nodes[row.node_index].kind);
+    }
+
     const std::set<std::size_t>& ReclassStructureModel::expanded_nodes() const noexcept
     {
         return expanded_;

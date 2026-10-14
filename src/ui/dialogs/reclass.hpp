@@ -25,7 +25,6 @@ class QModelIndex;
 class QPoint;
 class QPushButton;
 class QToolButton;
-class QTreeView;
 
 namespace slopkit::ui
 {
@@ -43,6 +42,11 @@ namespace slopkit::ui::models
 namespace slopkit::ui::widgets
 {
     class StatusLabel;
+}
+
+namespace slopkit::ui::components
+{
+    class ReClassView;
 }
 
 namespace slopkit::ui::dialogs
@@ -66,7 +70,7 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] models::ReclassStructureModel* structure() const noexcept;
         [[nodiscard]] models::ReclassProxyModel*     proxy() const noexcept;
         [[nodiscard]] QListWidget*                   class_list() const noexcept;
-        [[nodiscard]] QTreeView*                     grid() const noexcept;
+        [[nodiscard]] components::ReClassView*       grid() const noexcept;
         [[nodiscard]] QLabel*                        header_label() const noexcept;
         [[nodiscard]] widgets::StatusLabel*          status_label() const noexcept;
         [[nodiscard]] QPushButton*                   add_class_button() const noexcept;
@@ -132,8 +136,6 @@ namespace slopkit::ui::dialogs
         void show_row_menu(const QPoint& position);
 
         void on_class_selected(int row);
-        void on_grid_expanded(const QModelIndex& index);
-        void on_grid_collapsed(const QModelIndex& index);
 
         // The project or the selected class changed: the list, the grid and the
         // remembered cursor all follow.
@@ -141,7 +143,6 @@ namespace slopkit::ui::dialogs
         void refresh_class_list();
         void refresh_header();
         void refresh_class_tooltips();
-        void sync_expansion();
         void update_actions();
 
         void report(const QString& message, bool error = false);
@@ -175,25 +176,21 @@ namespace slopkit::ui::dialogs
         models::ReclassValueModel*     values_ {};
         models::ReclassProxyModel*     proxy_ {};
 
-        QListWidget*          class_list_ {};
-        QPushButton*          add_class_ {};
-        QPushButton*          delete_class_ {};
-        QLabel*               header_ {};
-        QTreeView*            grid_ {};
-        QToolButton*          add_node_ {};
-        QPushButton*          delete_node_ {};
-        QPushButton*          dissect_ {};
-        QPushButton*          follow_ {};
-        widgets::StatusLabel* status_ {};
-        QPushButton*          close_ {};
-        QAction*              delete_action_ {};
+        QListWidget*             class_list_ {};
+        QPushButton*             add_class_ {};
+        QPushButton*             delete_class_ {};
+        QLabel*                  header_ {};
+        components::ReClassView* grid_ {};
+        QToolButton*             add_node_ {};
+        QPushButton*             delete_node_ {};
+        QPushButton*             dissect_ {};
+        QPushButton*             follow_ {};
+        widgets::StatusLabel*    status_ {};
+        QPushButton*             close_ {};
+        QAction*                 delete_action_ {};
 
         std::optional<process::JobId> dissect_job_;
         std::vector<DissectTarget>    dissect_targets_;
-
-        // Guards the view's expansion signals against the model reset an inline
-        // or an outline performs.
-        bool syncing_ {};
     };
 
 }

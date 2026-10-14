@@ -8,9 +8,7 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QHeaderView>
 #include <QListWidget>
-#include <QTreeView>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -19,6 +17,7 @@
 #include "support/reclass_helpers.hpp"
 #include "support/reclass_live_helpers.hpp"
 #include "support/ui_helpers.hpp"
+#include "ui/components/reclass_view.hpp"
 #include "ui/dialogs/reclass.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
 #include "ui/models/reclass_structure_model.hpp"
@@ -117,15 +116,24 @@ TEST_CASE("the ReClass window opens as a companion window", "[reclass][ui]")
     CHECK(dialog.structure()->rowCount() == 2);
     CHECK(dialog.grid()->model() == dialog.proxy());
 
-    // The header may not measure the model: a ResizeToContents column re-reads
-    // every row on each pass a reading moves, which is what made the grid
-    // stutter on the live cadence. Only the value column stretches; the rest
-    // hold the width their own text needs.
-    CHECK(dialog.grid()->header()->sectionResizeMode(slopkit::ui::models::ReclassStructureModel::value)
-          == QHeaderView::Stretch);
-    CHECK(dialog.grid()->header()->sectionResizeMode(slopkit::ui::models::ReclassStructureModel::address)
-          == QHeaderView::Interactive);
-    CHECK(dialog.grid()->alternatingRowColors());
+    // The grid is painted by its own component rather than assembled out of a
+    // tree view: the six columns hold widths it measured once from the fonts, no
+    // header band sits above them, and nothing about the layout can be dragged.
+    // Only the value column answers a resize, so a reading keeps fitting while
+    // the columns the user reads by eye stay where they are.
+    using slopkit::ui::models::ReclassStructureModel;
+    CHECK(dialog.grid()->row_count() == 2);
+    CHECK(dialog.grid()->column_x(ReclassStructureModel::comment)
+          == dialog.grid()->column_x(ReclassStructureModel::value)
+                 + dialog.grid()->column_width(ReclassStructureModel::value));
+
+    const int address_width = dialog.grid()->column_width(ReclassStructureModel::address);
+    const int value_width   = dialog.grid()->column_width(ReclassStructureModel::value);
+    dialog.resize(dialog.width() + 160, dialog.height());
+    QCoreApplication::processEvents();
+
+    CHECK(dialog.grid()->column_width(ReclassStructureModel::address) == address_width);
+    CHECK(dialog.grid()->column_width(ReclassStructureModel::value) > value_width);
 
     // Re-opening brings the same window and the same project back.
     dialog.hide();
@@ -202,13 +210,18 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
 
     // Inserting with nothing selected appends to the end of the class.
     dialog.grid()->setCurrentIndex({});
+    CHECK_FALSE(dialog.delete_node_button()->isEnabled());
+    CHECK_FALSE(dialog.follow_button()->isEnabled());
     dialog.insert_node(NodeKind::int32);
     REQUIRE(player.nodes.size() == 3);
     CHECK(player.nodes[2].kind == NodeKind::int32);
     CHECK(player.nodes[2].name == "field_9");
 
-    // Inserting with a row selected puts the node before it.
+    // Inserting with a row selected puts the node before it, and selecting a row
+    // is what makes the commands that act on it available.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
+    CHECK(dialog.delete_node_button()->isEnabled());
+    CHECK(dialog.follow_button()->isEnabled());
     dialog.insert_node(NodeKind::float32);
     REQUIRE(player.nodes.size() == 4);
     CHECK(player.nodes[1].kind == NodeKind::float32);

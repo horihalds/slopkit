@@ -652,7 +652,7 @@ module map changes — and submits **one read per visible block** through
 node's own offset. A block that cannot be read paints `?` for all of its nodes, an
 unresolved class address `not resolved yet` and a detached target
 `Attach to a target first.`; the proxy model fuses the two models into the
-six-column tree the view shows.
+six-column tree the painted grid shows.
 
 A `class_instance` shares its parent's bytes, so it costs no read of its own, and
 a `class_pointer`'s target is read out of the pointer's own bytes in the parent
@@ -682,6 +682,10 @@ The proxy model answers the two live columns from the value model and leaves the
 other four to the structure model, and a pass repaints a cell only when its text
 moved: it remembers what each row last showed, emits `dataChanged` for that one
 cell, and skips the first pass after a rebuild because the reset has already
-repainted the grid. The header keeps the static columns at a width measured once
-from the font instead of measuring the model, so a pass that moves a value never
-walks the rows to re-lay-out the view.
+repainted the grid. The grid itself is `ui::components::ReClassView`, a
+custom-painted scroll area: it flattens the model's rows in pre-order, keeps the
+cursor and the selection as node ids so a rebuild never drops them, paints no
+header band, and holds its five narrow columns at a width measured once from the
+fonts - nothing can resize or drag them, the value column takes the pane's slack
+and the comment column stays against the right edge - so a pass that moves a value
+never walks the rows to re-lay-out the view.

@@ -13,7 +13,6 @@
 #include <QCloseEvent>
 #include <QFontMetrics>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QLabel>
@@ -24,14 +23,13 @@
 #include <QSplitter>
 #include <QStyle>
 #include <QToolButton>
-#include <QTreeView>
 #include <QVBoxLayout>
 
 #include "expr/expression.hpp"
 #include "reclass/dissect.hpp"
 #include "reclass/edit.hpp"
-#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/components/input_box.hpp"
+#include "ui/components/reclass_view.hpp"
 #include "ui/components/row_menu.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
@@ -58,17 +56,6 @@ namespace slopkit::ui::dialogs
         QString kind_label(reclass::NodeKind kind)
         {
             return to_qstring(reclass::describe(kind));
-        }
-
-        // A column is as wide as the widest text it usually holds, measured once
-        // from the font. Letting the header measure the model instead would make
-        // it walk every row again on each pass a scroll or a resize lays out,
-        // which is the one thing a grid that repaints on a live cadence cannot
-        // afford.
-        int content_width(const QWidget& widget, const QFont& font, const QString& sample)
-        {
-            const int margin = 2 * widget.style()->pixelMetric(QStyle::PM_HeaderMargin, nullptr, &widget);
-            return QFontMetrics(font).horizontalAdvance(sample) + margin;
         }
     }
 
@@ -177,35 +164,8 @@ namespace slopkit::ui::dialogs
         controls->addStretch(1);
         layout->addLayout(controls);
 
-        grid_ = new QTreeView(pane);
+        grid_ = new components::ReClassView(*proxy_, *structure_, pane);
         grid_->setObjectName(QStringLiteral("reclass_grid"));
-        grid_->setModel(proxy_);
-        grid_->setEditTriggers(QAbstractItemView::DoubleClicked);
-        grid_->setSelectionBehavior(QAbstractItemView::SelectRows);
-        grid_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-        grid_->setAllColumnsShowFocus(true);
-        grid_->setUniformRowHeights(true);
-        grid_->setContextMenuPolicy(Qt::CustomContextMenu);
-        grid_->setAlternatingRowColors(true);
-        grid_->setItemDelegate(new widgets::ElidedTooltipDelegate(grid_));
-
-        // The address, offset, type, name and comment columns take a fixed width
-        // derived from their widest text, while the value column - the widest of
-        // them and the one a live pass rewrites - owns the slack.
-        QHeaderView* header = grid_->header();
-        header->setSectionResizeMode(QHeaderView::Interactive);
-        header->setSectionResizeMode(models::ReclassStructureModel::value, QHeaderView::Stretch);
-        header->resizeSection(models::ReclassStructureModel::address,
-                              content_width(*grid_, mono_font(), ui::format_absolute(0)));
-        header->resizeSection(models::ReclassStructureModel::offset,
-                              content_width(*grid_, mono_font(), QStringLiteral("FFFFFFFF")));
-        header->resizeSection(
-            models::ReclassStructureModel::type,
-            content_width(*grid_, pane->font(), to_qstring(reclass::describe(reclass::NodeKind::class_pointer))));
-        header->resizeSection(models::ReclassStructureModel::name,
-                              content_width(*grid_, pane->font(), QStringLiteral("field_00000000")));
-        header->resizeSection(models::ReclassStructureModel::comment,
-                              content_width(*grid_, pane->font(), tr("Comment")));
         layout->addWidget(grid_, 1);
 
         return pane;
@@ -262,14 +222,14 @@ namespace slopkit::ui::dialogs
         connect(dissect_, &QPushButton::clicked, this, &ReClassDialog::dissect);
         connect(follow_, &QPushButton::clicked, this, &ReClassDialog::follow_pointer);
         connect(grid_,
-                &QWidget::customContextMenuRequested,
+                &components::ReClassView::rowMenuRequested,
                 this,
                 [this](const QPoint& position)
                 {
                     show_row_menu(position);
                 });
-        connect(grid_, &QTreeView::expanded, this, &ReClassDialog::on_grid_expanded);
-        connect(grid_, &QTreeView::collapsed, this, &ReClassDialog::on_grid_collapsed);
+
+        connect(grid_, &components::ReClassView::selectionChanged, this, &ReClassDialog::update_actions);
 
         connect(values_,
                 &models::ReclassValueModel::valuesChanged,
@@ -319,7 +279,7 @@ namespace slopkit::ui::dialogs
         return class_list_;
     }
 
-    QTreeView* ReClassDialog::grid() const noexcept
+    components::ReClassView* ReClassDialog::grid() const noexcept
     {
         return grid_;
     }
@@ -423,7 +383,7 @@ namespace slopkit::ui::dialogs
     std::vector<const models::ReclassRow*> ReClassDialog::selected_rows() const
     {
         std::vector<const models::ReclassRow*> rows;
-        for (const QModelIndex& index : grid_->selectionModel()->selectedRows(models::ReclassStructureModel::name))
+        for (const QModelIndex& index : grid_->selected_rows())
         {
             if (const models::ReclassRow* row = structure_->row_for(index); row != nullptr)
             {
@@ -474,7 +434,6 @@ namespace slopkit::ui::dialogs
 
         refresh_class_list();
         values_->invalidate();
-        sync_expansion();
 
         if (current.has_value())
         {
@@ -546,24 +505,6 @@ namespace slopkit::ui::dialogs
         }
     }
 
-    void ReClassDialog::sync_expansion()
-    {
-        if (syncing_)
-        {
-            return;
-        }
-        syncing_ = true;
-        for (const std::size_t node_id : structure_->expanded_nodes())
-        {
-            const QModelIndex index = structure_->index_for_node(node_id);
-            if (index.isValid() && !grid_->isExpanded(index))
-            {
-                grid_->expand(index);
-            }
-        }
-        syncing_ = false;
-    }
-
     void ReClassDialog::update_actions()
     {
         const bool has_class = selected_class_exists();
@@ -585,26 +526,6 @@ namespace slopkit::ui::dialogs
         }
         structure_->set_class(static_cast<std::size_t>(row));
         refresh_all();
-    }
-
-    void ReClassDialog::on_grid_expanded(const QModelIndex& index)
-    {
-        if (const models::ReclassRow* row = structure_->row_for(index); row != nullptr)
-        {
-            structure_->set_expanded(row->node_id, true);
-            sync_expansion();
-            update_actions();
-        }
-    }
-
-    void ReClassDialog::on_grid_collapsed(const QModelIndex& index)
-    {
-        if (const models::ReclassRow* row = structure_->row_for(index); row != nullptr)
-        {
-            structure_->set_expanded(row->node_id, false);
-            sync_expansion();
-            update_actions();
-        }
     }
 
     void ReClassDialog::add_class()
@@ -1338,7 +1259,7 @@ namespace slopkit::ui::dialogs
         widgets::show_shortcut_hint(*remove, *delete_action_);
         connect(remove, &QAction::triggered, this, &ReClassDialog::remove_selected_nodes);
 
-        menu.exec(grid_->viewport()->mapToGlobal(position));
+        menu.exec(position);
     }
 
 }

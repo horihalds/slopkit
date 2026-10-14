@@ -89,6 +89,10 @@ namespace slopkit::ui::models
         // Whether the reference node with this id is inlined in the grid.
         [[nodiscard]] bool is_expanded(std::size_t node_id) const;
 
+        // Whether the row names a class the grid could inline. A marked row - an
+        // unknown class, a cycle or a chain past the depth cap - cannot.
+        [[nodiscard]] bool expandable(const ReclassRow& row) const;
+
         // The reference nodes the grid currently inlines.
         [[nodiscard]] const std::set<std::size_t>& expanded_nodes() const noexcept;
 
