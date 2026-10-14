@@ -117,8 +117,9 @@ TEST_CASE("the ReClass window opens as a companion window", "[reclass][ui]")
     CHECK(dialog.grid()->model() == dialog.proxy());
 
     // The grid is painted by its own component rather than assembled out of a
-    // tree view: the six columns hold widths it measured once from the fonts, no
-    // header band sits above them, and nothing about the layout can be dragged.
+    // tree view: the six columns are sized by the component to the text the class
+    // draws, no header band sits above them, and nothing about the layout can be
+    // dragged.
     // Only the value column answers a resize, so a reading keeps fitting while
     // the columns the user reads by eye stay where they are.
     using slopkit::ui::models::ReclassStructureModel;

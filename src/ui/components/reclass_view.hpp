@@ -30,10 +30,10 @@ namespace slopkit::ui::models
 namespace slopkit::ui::components
 {
     // The node grid, painted rather than assembled out of a tree view: the six
-    // columns hold widths measured once from the fonts, no header band is drawn
-    // and nothing about the layout can be dragged or measured again on a pass.
-    // The rows come from the structure model through the fused proxy, so the
-    // widget itself only lays out, paints and handles input.
+    // columns are sized to the text the class draws, no header band is drawn and
+    // nothing about the layout can be dragged or measured again on a pass. The
+    // rows come from the structure model through the fused proxy, so the widget
+    // itself only lays out, paints and handles input.
     class ReClassView : public QAbstractScrollArea
     {
         Q_OBJECT
@@ -116,6 +116,9 @@ namespace slopkit::ui::components
 
         void update_layout();
         void update_rows();
+        // Sizes the offset, type and name columns to the text the flattened rows
+        // draw; a structure change, never a live pass.
+        void update_content_widths();
         void update_view();
         // Places the measured columns for the current viewport width; the value
         // column owns the slack, so this follows a resize as well.

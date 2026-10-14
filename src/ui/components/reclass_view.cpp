@@ -15,17 +15,14 @@
 #include <QPainter>
 #include <QPolygon>
 #include <QResizeEvent>
-#include <QStyle>
 #include <QToolTip>
 #include <QVariant>
 #include <QWheelEvent>
 
-#include "reclass/node.hpp"
 #include "ui/address_format.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
-#include "ui/text.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::components
@@ -33,7 +30,11 @@ namespace slopkit::ui::components
     namespace
     {
         constexpr int kMargin         = 4;
-        constexpr int kTextPadding    = 6;
+        constexpr int kTextPadding    = 4;
+        // The room the widest text a column was measured for leaves before the
+        // next column's text: a grid whose columns are sized once should not
+        // spend more than a few pixels between them.
+        constexpr int kColumnGap      = 12;
         constexpr int kIndentStep     = 12;
         constexpr int kTriangleWidth  = 8;
         constexpr int kMinColumnWidth = 24;
@@ -152,33 +153,61 @@ namespace slopkit::ui::components
         const QFontMetrics prose(ui_font());
         row_height_ = std::max(1, std::max(mono.height(), prose.height()) + 4);
 
-        // Every column is as wide as the widest text it usually holds, measured
-        // once here and never again: a header that measured the model on each
-        // layout pass is exactly what a grid on a live cadence cannot afford.
-        const int  margin   = 2 * style()->pixelMetric(QStyle::PM_HeaderMargin, nullptr, this);
-        const auto measured = [margin](const QFontMetrics& metrics, const QString& sample)
+        // The address is always the padded form and the comment column holds the
+        // pane's right edge, so both keep a width measured from the font once
+        // here and never again; the three columns between them are sized to the
+        // text the class draws (see update_content_widths).
+        const auto measured = [](const QFontMetrics& metrics, const QString& sample)
         {
-            return metrics.horizontalAdvance(sample) + margin + kTextPadding;
+            return metrics.horizontalAdvance(sample) + kColumnGap;
         };
 
         using models::ReclassStructureModel;
         column_width_[ReclassStructureModel::address] = measured(mono, format_padded_hex(0));
-        column_width_[ReclassStructureModel::offset]  = measured(mono, QStringLiteral("FFFFFFFF"));
-        column_width_[ReclassStructureModel::type] =
-            measured(prose, to_qstring(reclass::describe(reclass::NodeKind::class_pointer))) + kTriangleWidth
-            + kIndentStep;
-        column_width_[ReclassStructureModel::name]    = measured(prose, QStringLiteral("field_00000000"));
         column_width_[ReclassStructureModel::comment] = measured(prose, tr("Comment"));
         column_width_[ReclassStructureModel::value]   = 0;
+    }
 
-        update_columns();
+    void ReClassView::update_content_widths()
+    {
+        using models::ReclassStructureModel;
+
+        const QFontMetrics mono(mono_font());
+        const QFontMetrics prose(ui_font());
+        const auto         display = [this](const VisualRow& entry, int column)
+        {
+            return model_->data(index_for(*entry.row, column), Qt::DisplayRole).toString();
+        };
+
+        // A narrow column is only as wide as the text this class really draws,
+        // so a list of small nodes does not sit in a grid sized for the widest
+        // kind in the language. This follows the flattened rows, which a live
+        // pass never rebuilds.
+        int offset_width = kMinColumnWidth;
+        int type_width   = kMinColumnWidth;
+        int name_width   = kMinColumnWidth;
+        for (const VisualRow& entry : rows_)
+        {
+            const int indent = static_cast<int>(entry.depth) * kIndentStep;
+            offset_width = std::max(offset_width,
+                                    mono.horizontalAdvance(display(entry, ReclassStructureModel::offset)) + kColumnGap);
+            type_width   = std::max(type_width,
+                                    prose.horizontalAdvance(display(entry, ReclassStructureModel::type)) + kColumnGap
+                                        + indent + (expandable(*entry.row) ? kTriangleWidth : 0));
+            name_width   = std::max(
+                name_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::name)) + kColumnGap + indent);
+        }
+
+        column_width_[ReclassStructureModel::offset] = offset_width;
+        column_width_[ReclassStructureModel::type]   = type_width;
+        column_width_[ReclassStructureModel::name]   = name_width;
     }
 
     void ReClassView::update_columns()
     {
         using models::ReclassStructureModel;
 
-        // The first four columns keep the widths measured from the fonts; the
+        // The first four columns keep the widths they were measured for; the
         // value column takes whatever the pane has left, and the comment column
         // keeps its own width pinned to the right edge.
         int x = kMargin;
@@ -200,6 +229,7 @@ namespace slopkit::ui::components
         rows_.clear();
         flatten({}, 0);
         resolve_identity();
+        update_content_widths();
         update_view();
     }
 

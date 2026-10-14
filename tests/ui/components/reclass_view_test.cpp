@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFontMetrics>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -26,6 +27,7 @@
 #include "support/reclass_live_helpers.hpp"
 #include "support/ui_helpers.hpp"
 #include "ui/components/reclass_view.hpp"
+#include "ui/fonts.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
 #include "ui/models/reclass_structure_model.hpp"
 #include "ui/models/reclass_value_model.hpp"
@@ -225,8 +227,7 @@ TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][
     CHECK(view.structure() == &fixture.structure);
     CHECK(view.row_count() == 2);
 
-    // The columns run left to right and none of them is resizable: the first
-    // four keep the widths measured from the fonts.
+    // The columns run left to right and none of them is resizable.
     for (int column = 1; column < ReclassStructureModel::column_count; ++column)
     {
         CHECK(view.column_x(column) > view.column_x(column - 1));
@@ -263,6 +264,55 @@ TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][
     // No header band: the first row starts at the view's own top margin.
     CHECK(view.cell_rect(name_cell).value().top() == first_top);
     CHECK(first_top <= 8);
+}
+
+TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture     fixture;
+    ReClassView view {fixture.proxy, fixture.structure};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    const QFontMetrics prose(slopkit::ui::ui_font());
+    // Player holds `tag` and a `Point` pointer: the offset, type and name
+    // columns must fit those texts and leave one column gap after them, not the
+    // room the widest kind in the language and a full-width name would need.
+    constexpr int      kAllowedGap = 24;
+
+    const int offset_widest = mono.horizontalAdvance(QStringLiteral("1"));
+    CHECK(view.column_width(ReclassStructureModel::offset) >= offset_widest);
+    CHECK(view.column_width(ReclassStructureModel::offset) <= offset_widest + kAllowedGap);
+
+    // The type column also carries the disclosure triangle of the pointer row.
+    const int type_widest = prose.horizontalAdvance(QStringLiteral("Pointer <Point>"));
+    CHECK(view.column_width(ReclassStructureModel::type) >= type_widest);
+    CHECK(view.column_width(ReclassStructureModel::type) <= type_widest + kAllowedGap);
+
+    const int name_widest = prose.horizontalAdvance(QStringLiteral("next"));
+    CHECK(view.column_width(ReclassStructureModel::name) >= name_widest);
+    CHECK(view.column_width(ReclassStructureModel::name) <= name_widest + kAllowedGap);
+
+    // The widths follow the rows the class draws: a longer name widens its
+    // column when the tree is rebuilt...
+    const int name_width                       = view.column_width(ReclassStructureModel::name);
+    fixture.project.classes()[1].nodes[0].name = "a_much_longer_field_name";
+    fixture.structure.rebuild();
+    QCoreApplication::processEvents();
+    CHECK(view.column_width(ReclassStructureModel::name) > name_width);
+
+    // ...while a live pass repaints without re-measuring anything.
+    const int settled = view.column_width(ReclassStructureModel::name);
+    fixture.resolve();
+    fixture.put(fixture.player_address(), {1, 0x20, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+    QCoreApplication::processEvents();
+    CHECK(view.column_width(ReclassStructureModel::name) == settled);
 }
 
 TEST_CASE("clicking a row selects it and shift extends the selection", "[reclass][ui][view]")

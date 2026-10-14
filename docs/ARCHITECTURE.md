@@ -685,7 +685,9 @@ cell, and skips the first pass after a rebuild because the reset has already
 repainted the grid. The grid itself is `ui::components::ReClassView`, a
 custom-painted scroll area: it flattens the model's rows in pre-order, keeps the
 cursor and the selection as node ids so a rebuild never drops them, paints no
-header band, and holds its five narrow columns at a width measured once from the
-fonts - nothing can resize or drag them, the value column takes the pane's slack
-and the comment column stays against the right edge - so a pass that moves a value
-never walks the rows to re-lay-out the view.
+header band, and sizes its five narrow columns to the text the class draws - the
+offset, type and name columns from the rendered rows when the tree is rebuilt, the
+address and comment columns from the font - so nothing can resize or drag anything,
+the value column takes the pane's slack and the comment column stays against the
+right edge, and a pass that moves a value never walks the rows to re-lay-out the
+view.
