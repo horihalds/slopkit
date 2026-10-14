@@ -88,6 +88,4 @@ namespace slopkit::reclass
 
     [[nodiscard]] bool is_hex_kind(NodeKind kind) noexcept;
 
-    [[nodiscard]] std::string default_node_name(NodeKind kind, std::size_t offset);
-
 }

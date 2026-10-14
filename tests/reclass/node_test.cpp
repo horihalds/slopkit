@@ -110,14 +110,3 @@ TEST_CASE("class and hex kinds are recognised", "[reclass]")
     REQUIRE(is_hex_kind(NodeKind::hex64));
     REQUIRE_FALSE(is_hex_kind(NodeKind::int32));
 }
-
-TEST_CASE("a new node gets a kind-based default name", "[reclass]")
-{
-    using slopkit::reclass::default_node_name;
-
-    REQUIRE(default_node_name(NodeKind::int32, 0x14) == "field_14");
-    REQUIRE(default_node_name(NodeKind::float32, 0x20) == "field_20");
-    REQUIRE(default_node_name(NodeKind::pointer, 8) == "ptr");
-    REQUIRE(default_node_name(NodeKind::class_pointer, 8) == "ptr");
-    REQUIRE(default_node_name(NodeKind::class_instance, 8) == "instance");
-}

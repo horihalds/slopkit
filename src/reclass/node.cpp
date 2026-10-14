@@ -1,7 +1,5 @@
 #include "reclass/node.hpp"
 
-#include <format>
-
 namespace slopkit::reclass
 {
     std::string_view type_token(NodeKind kind) noexcept
@@ -140,20 +138,6 @@ namespace slopkit::reclass
     bool is_hex_kind(NodeKind kind) noexcept
     {
         return kind == NodeKind::hex8 || kind == NodeKind::hex16 || kind == NodeKind::hex32 || kind == NodeKind::hex64;
-    }
-
-    std::string default_node_name(NodeKind kind, std::size_t offset)
-    {
-        switch (kind)
-        {
-        case NodeKind::pointer:
-        case NodeKind::class_pointer:
-            return "ptr";
-        case NodeKind::class_instance:
-            return "instance";
-        default:
-            return std::format("field_{:X}", offset);
-        }
     }
 
 }

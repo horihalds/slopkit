@@ -216,7 +216,7 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     dialog.insert_node(NodeKind::int32);
     REQUIRE(player.nodes.size() == 3);
     CHECK(player.nodes[2].kind == NodeKind::int32);
-    CHECK(player.nodes[2].name == "field_9");
+    CHECK(player.nodes[2].name.empty());
 
     // Inserting with a row selected puts the node before it, and selecting a row
     // is what makes the commands that act on it available.
@@ -226,7 +226,7 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     dialog.insert_node(NodeKind::float32);
     REQUIRE(player.nodes.size() == 4);
     CHECK(player.nodes[1].kind == NodeKind::float32);
-    CHECK(player.nodes[1].name == "field_1");
+    CHECK(player.nodes[1].name.empty());
 
     // Shrinking a node's type pads the freed bytes so offsets stay put.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));

@@ -729,24 +729,11 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        const auto        layout = reclass::layout_class(project_, *type);
-        const std::size_t index  = row == nullptr ? type->nodes.size() : row->node_index;
-
-        std::size_t offset = 0;
-        if (layout.has_value() && index < layout->offsets.size())
-        {
-            offset = layout->offsets[index];
-        }
-        else if (layout.has_value())
-        {
-            // A node appended at the end sits at the class's total size.
-            offset = layout->size;
-        }
+        const std::size_t index = row == nullptr ? type->nodes.size() : row->node_index;
 
         reclass::Node node;
         node.id   = project_.next_node_id();
         node.kind = kind;
-        node.name = reclass::default_node_name(kind, offset);
         type->nodes.insert(type->nodes.begin() + static_cast<std::ptrdiff_t>(index), std::move(node));
 
         refresh_all();
