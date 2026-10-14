@@ -36,6 +36,7 @@ namespace slopkit::ui::dialogs
     class LogDialog;
     class MemoryViewerDialog;
     class ProcessListDialog;
+    class ReClassDialog;
     class SettingsDialog;
     class TableSettingsDialog;
 }
@@ -111,6 +112,9 @@ namespace slopkit::ui
         [[nodiscard]] dialogs::BreakpointsDialog* breakpoints() const noexcept;
         [[nodiscard]] dialogs::AccessWatchDialog* access_watch() const noexcept;
 
+        // The detached ReClass window, or nullptr before build_dialogs().
+        [[nodiscard]] dialogs::ReClassDialog* reclass() const noexcept;
+
     protected:
         bool event(QEvent* event) override;
 
@@ -151,6 +155,7 @@ namespace slopkit::ui
         void show_log();
         void show_breakpoints();
         void show_access_watch();
+        void show_reclass();
         void show_settings();
         void show_about();
 
@@ -189,6 +194,7 @@ namespace slopkit::ui
         std::unique_ptr<dialogs::LogDialog>          log_;
         std::unique_ptr<dialogs::BreakpointsDialog>  breakpoints_;
         std::unique_ptr<dialogs::AccessWatchDialog>  access_watch_;
+        std::unique_ptr<dialogs::ReClassDialog>      reclass_;
         dialogs::SettingsDialog*                     settings_dialog_ {};
 
         QLabel*               process_label_ {};
@@ -205,6 +211,7 @@ namespace slopkit::ui
         QAction* settings_action_ {};
         QAction* breakpoints_action_ {};
         QAction* access_watch_action_ {};
+        QAction* reclass_action_ {};
         QAction* launch_sandbox_action_ {};
         QAction* about_action_ {};
 

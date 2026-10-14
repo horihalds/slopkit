@@ -14,7 +14,10 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "process/access_worker.hpp"
+#include "reclass/node.hpp"
+#include "reclass/project.hpp"
 #include "scan/types.hpp"
+#include "support/reclass_helpers.hpp"
 #include "table/address_table.hpp"
 #include "table/serializer.hpp"
 #include "table/table_zip.hpp"
@@ -23,6 +26,7 @@ namespace
 {
     using slopkit::process::AccessError;
     using slopkit::process::WriteItem;
+    using slopkit::reclass::NodeKind;
     using slopkit::scan::ValueType;
     using slopkit::table::AddressEntry;
     using slopkit::table::AddressTable;
@@ -30,6 +34,7 @@ namespace
     using slopkit::table::EntryKind;
     using slopkit::table::read_archive;
     using slopkit::table::write_archive;
+    using slopkit::test::node_of;
 
     constexpr std::uint64_t kBase = 0x1000;
 
@@ -287,7 +292,7 @@ TEST_CASE("the archive holds version, index and one member per entry", "[table]"
 
     CHECK(member_names(path)
           == std::vector<std::string> {"version.txt", "entries/health.txt", "entries/armor.txt", "index.txt"});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
     CHECK(member_text(path, "index.txt") == std::optional<std::string> {"entries/health.txt\nentries/armor.txt\n"});
     CHECK(member_text(path, "entries/health.txt")
           == std::optional<std::string> {"type=i32 hex=0 size=4 expr=\"1234\"\n"});
@@ -1147,7 +1152,7 @@ TEST_CASE("a script entry is stored as a lua member holding only the source", "[
     CHECK(member_text(path, "index.txt")
           == std::optional<std::string> {"entries/health.txt\nentries/greet.lua\nentries/armor.txt\n"});
     CHECK(member_text(path, "entries/greet.lua") == std::optional<std::string> {source});
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
 
     std::filesystem::remove(path);
 }
@@ -1216,7 +1221,7 @@ TEST_CASE("a nested table round-trips its hierarchy", "[table]")
     std::filesystem::remove(path);
     REQUIRE(slopkit::table::save(path, table).has_value());
 
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
     CHECK(member_text(path, "index.txt")
           == std::optional<std::string> {"entries/parent.txt\n"
                                          "entries/script-child.lua parent=\"entries/parent.txt\"\n"
@@ -1239,7 +1244,7 @@ TEST_CASE("a nested table round-trips its hierarchy", "[table]")
     CHECK(loaded.entries()[2].parent == loaded.entries()[1].id);
 }
 
-TEST_CASE("a version 3 archive still loads and is re-saved as version 5", "[table]")
+TEST_CASE("a version 3 archive still loads and is re-saved as version 6", "[table]")
 {
     const auto path = scratch_file("legacy.skt");
     std::filesystem::remove(path);
@@ -1258,7 +1263,7 @@ TEST_CASE("a version 3 archive still loads and is re-saved as version 5", "[tabl
     CHECK(table.entries()[0].description == "health");
 
     REQUIRE(slopkit::table::save(path, table).has_value());
-    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 5\n"});
+    CHECK(member_text(path, "version.txt") == std::optional<std::string> {"slopkit-table 6\n"});
     std::filesystem::remove(path);
 }
 
@@ -1281,6 +1286,109 @@ TEST_CASE("a legacy type=all member loads as a 4-byte scan", "[table]")
     REQUIRE(table.size() == 1);
     CHECK(table.entries()[0].type == ValueType::int32);
     CHECK(table.entries()[0].bytes.size() == 4);
+}
+
+TEST_CASE("a class project rides along in the archive", "[table]")
+{
+    AddressTable table;
+    auto         health = make_entry(0x1234, ValueType::int32, {1, 0, 0, 0});
+    health.description  = "health";
+    health.expression   = "1234";
+    table.add(health);
+
+    auto& structures = table.structures();
+    REQUIRE(structures.add_class("Player", "game.exe+0x1234") != 0);
+    REQUIRE(structures.add_class("Enemy", "game.exe+0x5678") != 0);
+
+    auto& player = structures.classes()[0];
+    player.nodes.push_back(node_of(structures, NodeKind::int32, "health"));
+    auto link       = node_of(structures, NodeKind::class_pointer, "next");
+    link.class_name = "Enemy";
+    player.nodes.push_back(std::move(link));
+
+    const auto path = scratch_file("structures.skt");
+    std::filesystem::remove(path);
+    REQUIRE(slopkit::table::save(path, table).has_value());
+
+    CHECK(member_names(path)
+          == std::vector<std::string> {"version.txt",
+                                       "entries/health.txt",
+                                       "index.txt",
+                                       "reclass/index.txt",
+                                       "reclass/classes/Player.txt",
+                                       "reclass/classes/Enemy.txt"});
+    CHECK(member_text(path, "reclass/index.txt")
+          == std::optional<std::string> {"reclass/classes/Player.txt\nreclass/classes/Enemy.txt\n"});
+    CHECK(member_text(path, "reclass/classes/Player.txt")
+          == std::optional<std::string> {"name=\"Player\" address=\"game.exe+0x1234\"\n"
+                                         "node kind=i32 name=\"health\" hex=0 comment=\"\"\n"
+                                         "node kind=class_pointer name=\"next\" hex=0 comment=\"\" class=\"Enemy\"\n"});
+
+    AddressTable loaded;
+    REQUIRE(slopkit::table::load(path, loaded).has_value());
+    std::filesystem::remove(path);
+
+    REQUIRE(loaded.size() == 1);
+    REQUIRE(loaded.structures().classes().size() == 2);
+    CHECK(loaded.structures().classes()[0].name == "Player");
+    CHECK(loaded.structures().classes()[0].address_expression == "game.exe+0x1234");
+    CHECK(loaded.structures().classes()[1].name == "Enemy");
+    REQUIRE(loaded.structures().classes()[0].nodes.size() == 2);
+    CHECK(loaded.structures().classes()[0].nodes[1].kind == NodeKind::class_pointer);
+    CHECK(loaded.structures().classes()[0].nodes[1].class_name == "Enemy");
+}
+
+TEST_CASE("clearing the table drops the classes too", "[table]")
+{
+    AddressTable table;
+    REQUIRE(table.structures().add_class("Player", "1234") != 0);
+
+    table.clear();
+
+    CHECK(table.structures().classes().empty());
+}
+
+TEST_CASE("an archive written without classes loads with none", "[table]")
+{
+    const auto path = scratch_file("no_structures.skt");
+    std::filesystem::remove(path);
+    REQUIRE(write_archive(path,
+                          std::vector<ArchiveMember> {
+                              {       .name = "version.txt",                     .text = "slopkit-table 5\n"},
+                              {.name = "entries/health.txt", .text = "type=i32 hex=0 size=4 expr=\"1234\"\n"},
+                              {         .name = "index.txt",                  .text = "entries/health.txt\n"}
+    })
+                .has_value());
+
+    AddressTable table;
+    REQUIRE(slopkit::table::load(path, table).has_value());
+    std::filesystem::remove(path);
+
+    CHECK(table.size() == 1);
+    CHECK(table.structures().classes().empty());
+}
+
+TEST_CASE("a malformed class member fails the load naming it", "[table]")
+{
+    const auto path = scratch_file("damaged_structures.skt");
+    std::filesystem::remove(path);
+    REQUIRE(
+        write_archive(path,
+                      std::vector<ArchiveMember> {
+                          {               .name = "version.txt",.text = "slopkit-table 6\n"                                                                },
+                          {                 .name = "index.txt",                                        .text = ""},
+                          {         .name = "reclass/index.txt",            .text = "reclass/classes/Player.txt\n"},
+                          {.name = "reclass/classes/Player.txt",
+                           .text = "name=\"Player\" address=\"1\"\nnode kind=i128 name=\"a\" hex=0 comment=\"\"\n"}
+    })
+            .has_value());
+
+    AddressTable table;
+    const auto   result = slopkit::table::load(path, table);
+    std::filesystem::remove(path);
+
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().find("reclass/classes/Player.txt") != std::string::npos);
 }
 
 TEST_CASE("script rows are edited through the table, not the value path", "[table]")

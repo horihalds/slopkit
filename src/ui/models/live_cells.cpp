@@ -37,7 +37,11 @@ namespace slopkit::ui::models
     {
         if (cells_.size() != rows)
         {
-            cells_.assign(rows, LiveCell {});
+            // Resizing keeps the readings of the rows that are still there: a
+            // surface that grows its row set (a block of a class being inlined)
+            // reads the rows it already knows this pass instead of waiting a
+            // whole interval for them.
+            cells_.resize(rows);
         }
         pending_.clear();
 

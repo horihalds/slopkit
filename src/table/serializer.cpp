@@ -19,6 +19,7 @@
 #include "core/log_categories.hpp"
 #include "expr/expression.hpp"
 #include "expr/resolver.hpp"
+#include "reclass/serialize.hpp"
 #include "table/entry_name.hpp"
 #include "table/table_zip.hpp"
 
@@ -26,9 +27,16 @@ namespace slopkit::table
 {
     namespace
     {
-        constexpr std::string_view kFormatToken         = "slopkit-table 5";
-        constexpr std::string_view kPreviousFormatToken = "slopkit-table 4";
+        constexpr std::string_view kFormatToken         = "slopkit-table 6";
+        constexpr std::string_view kPreviousFormatToken = "slopkit-table 5";
+        constexpr std::string_view kFourthFormatToken   = "slopkit-table 4";
         constexpr std::string_view kOldestFormatToken   = "slopkit-table 3";
+
+        bool accepted_version(std::string_view text)
+        {
+            return text == kFormatToken || text == kPreviousFormatToken || text == kFourthFormatToken
+                || text == kOldestFormatToken;
+        }
 
         constexpr std::string_view kParentSuffix = " parent=\"";
 
@@ -413,6 +421,11 @@ namespace slopkit::table
         }
         members.push_back(ArchiveMember {.name = "index.txt", .text = std::move(index)});
 
+        for (reclass::Member& member : reclass::to_members(table.structures()))
+        {
+            members.push_back(ArchiveMember {.name = std::move(member.name), .text = std::move(member.text)});
+        }
+
         const auto written = write_archive(path, members);
         if (!written)
         {
@@ -448,8 +461,7 @@ namespace slopkit::table
             log::warning(log::category::table, message);
             return std::unexpected(std::string {"version.txt: missing"});
         }
-        if (const std::string_view version_text = trim(*version);
-            version_text != kFormatToken && version_text != kPreviousFormatToken && version_text != kOldestFormatToken)
+        if (const std::string_view version_text = trim(*version); !accepted_version(version_text))
         {
             const std::string message =
                 std::format("{}: version.txt: unknown format '{}'", path.string(), version_text);
@@ -610,12 +622,28 @@ namespace slopkit::table
             parent_positions.emplace_back(child, parent_position);
         }
 
+        std::vector<reclass::Member> structures;
+        for (const ArchiveMember& member : members)
+        {
+            if (member.name.starts_with(reclass::kMemberPrefix))
+            {
+                structures.push_back(reclass::Member {.name = member.name, .text = member.text});
+            }
+        }
+        auto project = reclass::from_members(structures);
+        if (!project)
+        {
+            log::warning(log::category::table, std::format("{}: {}", path.string(), project.error()));
+            return std::unexpected(project.error());
+        }
+
         loaded.replace(std::move(entries));
         for (const auto& [child, parent_position] : parent_positions)
         {
             loaded.entries()[child].parent = loaded.entries()[parent_position].id;
         }
-        table = std::move(loaded);
+        loaded.structures() = std::move(*project);
+        table               = std::move(loaded);
         log::info(log::category::table, std::format("loaded {} entry/entries from {}", table.size(), path.string()));
         return {};
     }

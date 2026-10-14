@@ -623,3 +623,50 @@ entry exactly as it renames a value row and can never submit a write job.
 `Active` checkbox and the Add/Edit Script dialog's compile-only `Verify` button
 are the only new UI; `Add Script…` seeds the three hooks as a commented skeleton
 (the `update` stub commented out, since the hook is optional).
+
+## Structures (ReClass)
+
+`slopkit::reclass` (`src/reclass/`) is a target-free model of the C/C++ structs a
+user rebuilds from live memory: `Project` holds the `Class`es, each pinned to an
+address expression, and each class holds an ordered `Node` list of the kinds
+`i8..i64`, `u8..u64`, `f32`, `f64`, `bool`, `char`, `hex8..hex64`, `pointer`,
+`class_instance` and `class_pointer`. Offsets are never stored: `layout_class`
+accumulates them in node order exactly as the reference's
+`BaseContainerNode.UpdateOffsets` does (`offset += node_size(node)`), with no
+alignment, `class_instance` sized by the class it names and both pointer kinds
+taking a pointer. A class that contains itself by value is refused with an error
+naming the cycle instead of recursing, and an unknown reference takes no space.
+
+The `View > ReClass` window splits the model over three pieces. The structure
+model turns the *selected* class into rows and **blocks** — one block for the class
+itself and one for every expanded reference node — and inlines the target class's
+nodes beneath an expanded `class_instance`/`class_pointer`, with offsets
+continuing from the node's own offset. Inlining stops at a
+`kMaxReclassBlockDepth` of 8 levels and at a class that is already open on the
+row's own ancestor chain, which renders as a muted `cycle` marker, so a
+self-referential chain cannot explode the grid or the read batch. The value model
+resolves each class's expression — one batched `submit_resolve_expressions` job,
+keyed by class id, about once a second and immediately when an expression or the
+module map changes — and submits **one read per visible block** through
+`process::AccessWorker`, then slices every node's value out of its block at the
+node's own offset. A block that cannot be read paints `?` for all of its nodes, an
+unresolved class address `not resolved yet` and a detached target
+`Attach to a target first.`; the proxy model fuses the two models into the
+six-column tree the view shows.
+
+A `class_instance` shares its parent's bytes, so it costs no read of its own, and
+a `class_pointer`'s target is read out of the pointer's own bytes in the parent
+block — which means a pointer that changes value shows its children one interval
+later, the same lag the reference has. The window adds no timer: it is a
+registered `LiveSurface` that refreshes on the shared cadence, stays quiet while
+hidden, while live update is off, while no target is attached or while a job is in
+flight, and matches every completion against the job it was submitted for. A
+`Value` cell of an editable kind is edited in place: the text is parsed for the
+node's kind, one `submit_write` carries the node's address and bytes, and a
+refused write says why on the status line instead of writing a guessed address.
+`Dissect` guesses a better kind for a `hexN` node from its live bytes — a
+plausible pointer first, then a small `f32`, a small `i32` and an aligned `f64` —
+and re-types the node with the padding rule that keeps the following offsets
+where they were, while `Follow Pointer` sets a pointer node's referenced class and
+inlines it. A class project rides in the `.skt` archive as its own member group
+(see the map's `.skt` gotcha).

@@ -188,6 +188,7 @@ namespace slopkit::table
             log::info(log::category::table, std::format("table cleared ({} entry/entries)", entries_.size()));
         }
         entries_.clear();
+        structures_.clear();
         selected_ = -1;
         selected_rows_.clear();
     }
@@ -558,6 +559,16 @@ namespace slopkit::table
     const TableSettings& AddressTable::settings() const noexcept
     {
         return settings_;
+    }
+
+    reclass::Project& AddressTable::structures() noexcept
+    {
+        return structures_;
+    }
+
+    const reclass::Project& AddressTable::structures() const noexcept
+    {
+        return structures_;
     }
 
 }

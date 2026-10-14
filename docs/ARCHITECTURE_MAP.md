@@ -21,6 +21,7 @@ docs that hold the detail behind this map.
 | `src/plugin` | Plugin C ABI, host-side facade and loader/discovery |
 | `src/plugins/{support,linux_proc,wine_proton}` | Shared plugin ABI plumbing and the two bundled plugins; `wine_proton/agent/` holds the cross-compiled resident agent DLL, its injector and the shared protocol header |
 | `src/process` | Access seam, `AccessWorker`, plugin access, attachment metadata, shared types |
+| `src/reclass` | Target-free ReClass structure model: node kinds, the derived layout, the value codec, the dissect ladder and the `.skt` member text |
 | `src/sandbox` | Standalone practice-target binary (`slopkit-sandbox`) |
 | `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
 | `src/script` | Lua scripting engine: a sol2 state, the `mem` API, the type-token codec, the process-wide symbol registry and the hook-script generator |
@@ -40,10 +41,11 @@ docs that hold the detail behind this map.
 | `tests/platform/linux` | Tests for `src/platform/linux` |
 | `tests/plugin` | Plugin host + bundled plugin tests |
 | `tests/process` | Tests for `src/process` |
+| `tests/reclass` | Tests for `src/reclass` |
 | `tests/sandbox` | Tests for `src/sandbox` |
 | `tests/scan` | Tests for `src/scan` |
 | `tests/script` | Tests for `src/script` |
-| `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `script_helpers.hpp`, `memory_view_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
+| `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `script_helpers.hpp`, `memory_view_helpers.hpp`, `reclass_helpers.hpp`, `reclass_live_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
 | `tests/table` | Tests for `src/table` |
 | `tests/ui` | Window/flow tests (the four subdirectories have their own rows) |
 | `tests/ui/components` | Tests for `src/ui/components` |
@@ -65,8 +67,9 @@ docs that hold the detail behind this map.
 | plugin | Plugin C ABI, host facade, loader | `plugin/plugin_api.h`, `plugin.hpp` (`Plugin`), `plugin_host.hpp` (`PluginHost`) | `tests/plugin/*` | process, core |
 | process | Access seam, worker (incl. the referenced-string analysis job), attachment metadata | `process/access.hpp` (`ProcessAccess`), `access_worker.hpp` (`AccessWorker`, `StringRefsResult`), `attachment.hpp` (`AttachedTarget`), `plugin_access.hpp`, `types.hpp` | `tests/process/*` | plugin, analysis |
 | scan | Multithreaded value scanner and byte-pattern matcher | `scan/engine.hpp` (`ScanEngine`), `results.hpp` (`ScanHit`, `ScanResults`), `matcher.hpp`, `pattern.hpp` (`BytePattern`), `source.hpp`, `value.hpp`, `types.hpp` | `tests/scan/*` | process, expr |
-| table | Address table, `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, libzip |
+| table | Address table (it also owns the ReClass class project), `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, reclass, libzip |
 | expr | Address expression parsing (`base + offset...` and bracket pointer chains) and resolution with an injected per-level validator; a dependency-free leaf (it includes nothing outside `expr/`) | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | — |
+| reclass | ReClass structure model: node kinds and their sizes, the derived class layout, the value codec, the dissect ladder and the archive member text; a dependency-free leaf (it includes nothing outside `reclass/`) | `reclass/node.hpp`, `project.hpp`, `value.hpp`, `edit.hpp`, `dissect.hpp`, `serialize.hpp` | `tests/reclass/*` | — |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
 | analysis | Module string-reference sweep over an injected read seam | `analysis/string_references.hpp` (`find_string_references`, `StringReference`, `ModuleRange`, `StringScanResult`, `StringScanReport`, `describe`) | `tests/analysis/*` | disasm, process/types, core |
 | script | Lua scripting engine over the system Lua and sol2 | `script/engine.hpp` (`Engine`, `run_lifecycle`, `run_update`, `UpdateResult`, `check_syntax`), `script/types.hpp` (`RunResult`, `LifecycleResult`, `SymbolApi`), `script/symbols.hpp` (`SymbolTable`), `script/codec.hpp`, `script/hook_script.hpp` (`HookTarget`, `build_hook`, `render`), `script/hook.hpp` (`Spec`, `hook::install`, `hook::remove`), `script/api_catalog.hpp` (`api_catalog`, `ApiEntry`, `lua_standard_globals`, `lua_library_members`) | `tests/script/*` | Lua, sol2, scan, expr, disasm |
@@ -75,8 +78,8 @@ docs that hold the detail behind this map.
 | sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
 | ui | Main window, settings, live values, table file, theme/fonts | `ui/main_window.hpp` (`MainWindow`), `app.hpp`, `settings.hpp` (per-window geometries), `platform.hpp` (`preferred_platform_spec`), `text.hpp` (`to_qstring`), `live_values.hpp` (`LiveSurface`, `LiveTicker`), `script_updates.hpp` (`ScriptUpdates`), `debug_session.hpp`, `access_watch.hpp`, `completion_notifier.hpp`, `log_notifier.hpp`, `theme.hpp`, `fonts.hpp`, `table_file.hpp`, `address_format.hpp` | `tests/ui/*` | process, plugin, table, scan, debug |
 | ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `script_editor.hpp` (`ScriptEditor`), `script_highlighter.hpp` (`ScriptHighlighter`), `script_context.hpp` (`identifier_at`, `enclosing_call`, `document_names`), `script_completion.hpp` (`ScriptCompletionPopup`, `ScriptCompletionModel`), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`), `code_patch.hpp`, `address_table_view.hpp` (`AddressTableView`), `indent_delegate.hpp` (`IndentDelegate`, `kDepthRole`), `elided_tooltip_delegate.hpp`, `row_menu.hpp`, `referenced_strings.hpp` (`ReferencedStringTable`) | `tests/ui/components/*` | ui, disasm |
-| ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`, `ModuleChooserDialog`, `ReferencedStringsDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script |
-| ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `referenced_string_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug, ui/components |
+| ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `ReClassDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`, `ModuleChooserDialog`, `ReferencedStringsDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script, reclass |
+| ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `referenced_string_model.hpp`, `reclass_structure_model.hpp`, `reclass_value_model.hpp`, `reclass_proxy_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug, reclass, ui/components |
 | ui/panels | Docked panes (the address list's extended selection, its shared `Del` action and the multi-row delete included) | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
 | plugins/support | Shared bundled-plugin ABI plumbing, including the optional per-plugin `allocate`/`free`/`close_session` hooks, the `regions`/`modules`/`range_is_readable`/`read`/`write` introspection hooks and the optional `debug_excluded_threads` hook that keeps a plugin's own in-target threads running through a debug attach | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`), `validate.hpp` (ABI 1.7 chunked readability probe), `memory.hpp` (`AccessFault`, `MemoryResult`, the `MemAccess` error/method mapping) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
 | plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
@@ -93,6 +96,16 @@ docs that hold the detail behind this map.
 - Debug: `debug::Controller` → `debug::Worker` job thread → `debug::PluginBackend` → plugin `debug_*` → `platform::DebugSession`/`ptrace`; `drain()` applies results; start is gated by `ui::DebugSessionGate`.
 - Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; a drag nests or reorders rows through `AddressTable::move_row` (the model's `drop_row`, driven by `ui::components::AddressTableView`), and the nesting is written on each `index.txt` line; `.skt` is a ZIP archive (`table/serializer.cpp` over `table/table_zip.cpp`), opened via `MainWindow::open_table_request()`. The table keeps a single-row cursor and the sorted, unique multi-row selection the address list mirrors from its view; every mutation remaps the two together, and `remove_rows` erases a whole selection's subtrees in one pass under `table` with one aggregated record.
 - Scripts: the address list's `Run Script` and a script row's `Active` checkbox submit `AccessWorker::submit_script`; the checkbox passes the `activate`/`deactivate` hook name and the worker calls `script::Engine::run_lifecycle`. The worker's `script::Engine` (one per attached session) runs the chunk with `print` captured, logs the printed lines under the `script` category and reports the outcome in the status line. It also deactivates a still-active script — running its `deactivate` hook and ignoring the verdict — when it stops, before the session is released. While a script stays ticked, `AccessWorker::submit_script_updates` runs `script::Engine::run_update` for every remembered script in one job in activation order, leaving out a script whose own declared `update_interval` has not elapsed — a hook-less chunk is skipped silently and a failing tick deactivates that script in the same job — driven by `ui::LiveValues` after the read pass and skipped entirely while no script is ticked. The `rsymbol`/`ssymbol`/`usymbol` globals write a process-wide `script::SymbolTable` (owned by `ui::App`); the worker takes a snapshot in its resolve job and every typed-address parser resolves a base as module → symbol → literal, so a symbol survives a detach and is lost only when slopkit exits. The same engine also exposes the typed `read_*`/`write` one-liners, the `label`/`symbol`/`expression` resolvers, the target-allocation `alloc`/`dealloc` pair (backed by the plugin ABI 1.6 `allocate_memory`/`free_memory`) and the `validate(address[, size])` predicate (backed by the plugin ABI 1.7 `validate_memory` with a host probe-read fallback). The `assemble` global encodes the listing's own instructions with `disasm::assemble_block` — the CPU mode follows the target's pointer size — and writes the bytes in one `MemoryApi::write`, returning `true, size` or `false, reason`. The Add/Edit Script dialog's `Verify` button instead calls `script::check_syntax` on the UI thread — a target-free compile of the same `@script` chunk — so it needs no worker job and no session. The listing's `Hook Instruction...` command runs entirely on the UI thread from the decoded cache: `components::DisassemblyDocument::hook_analysis` gathers the window and pattern facts, `script::hook_script` renders the Lua, `MemoryViewerDialog::hookScriptRequested` is relayed by `MainWindow` to `AddressListPanel::add_hook_script`, which opens the Add Script window prefilled — no row is created until Add.
+
+- Structures (ReClass): the `View > ReClass` window keeps a `reclass::Project` of
+  classes pinned to address expressions. `ReclassStructureModel` turns the
+  selected class into rows and memory blocks, `ReclassValueModel` resolves the
+  class addresses (keyed by class id) and submits one read per visible block
+  through `AccessWorker`, and `ReclassProxyModel` fuses the two into the one
+  tree the view shows. The window is a registered `LiveSurface`, so it refreshes
+  on the shared cadence and creates no timer of its own; `table::AddressTable`
+  owns the project and `table/serializer.cpp` writes it as the archive's
+  `reclass/` members.
 
 ## 4. Conventions
 
@@ -138,13 +151,16 @@ docs that hold the detail behind this map.
   mingw-w64 agent and the Linux plugin, so a layout change bumps its
   `SLOPKIT_AGENT_PROTOCOL_VERSION` and both static-assert sets together.
 - A `.skt` archive is versioned by `version.txt`: the writer emits
-  `slopkit-table 5` (value and script entries, with nesting) and the reader also
-  accepts `slopkit-table 4` (no nesting) and `slopkit-table 3` (value entries
-  only). An entry's kind is its member extension: `entries/<stem>.txt` is a value
-  entry and a `entries/<stem>.lua` member's whole body is the script verbatim.
+  `slopkit-table 6` (value and script entries with nesting, plus the class
+  project); the reader also accepts `slopkit-table 5`, `slopkit-table 4` (no
+  nesting) and `slopkit-table 3` (value entries only). An entry's kind is its
+  member extension: `entries/<stem>.txt` is a value entry and a
+  `entries/<stem>.lua` member's whole body is the script verbatim.
   `index.txt` lists both kinds in row order; a child's line appends
   ` parent="entries/<parent member>"` to name its parent, which must be listed
-  before it.
+  before it. The class project rides in its own member group: `reclass/index.txt`
+  lists the classes in order and `reclass/classes/<stem>.txt` holds one class
+  each, so an archive written by versions 3–5 simply has none.
 - `.skt` address tables are registered as `application/x-slopkit-table`, so a
   double-click opens slopkit with the slopkit icon; `tools/install.sh` finishes
   the MIME/desktop registration and the per-user default handler for a `$HOME`

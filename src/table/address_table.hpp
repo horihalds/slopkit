@@ -11,6 +11,7 @@
 
 #include "process/access_worker.hpp"
 #include "process/types.hpp"
+#include "reclass/project.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 #include "table/entry_name.hpp"
@@ -93,6 +94,9 @@ namespace slopkit::table
         [[nodiscard]] TableSettings&       settings() noexcept;
         [[nodiscard]] const TableSettings& settings() const noexcept;
 
+        [[nodiscard]] reclass::Project&       structures() noexcept;
+        [[nodiscard]] const reclass::Project& structures() const noexcept;
+
     private:
         void erase_blocks(std::span<const std::pair<std::size_t, std::size_t>> blocks);
 
@@ -101,6 +105,7 @@ namespace slopkit::table
 
         std::vector<AddressEntry> entries_;
         TableSettings             settings_;
+        reclass::Project          structures_;
         int                       selected_ {-1};
         std::vector<std::size_t>  selected_rows_ {};
         double                    next_freeze_time_ {0.0};

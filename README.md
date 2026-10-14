@@ -10,9 +10,9 @@ The project is young: the plugin-first process-access ABI and host, two bundled
 plugins and the three-zone scanner shell (scan, address list, memory browser),
 including the Memory Viewer's live disassembler and its opt-in debugger, exist
 today. Address tables are `.skt` files — ZIP archives holding one readable
-text file per entry plus the row order — and double-clicking one opens slopkit
-with that table, while a running instance offers to cancel, overwrite the open
-table or merge the file.
+text file per entry, the row order and the ReClass classes the table carries —
+and double-clicking one opens slopkit with that table, while a running instance
+offers to cancel, overwrite the open table or merge the file.
 
 ## Tools
 
@@ -21,6 +21,7 @@ table or merge the file.
 | Process list | Browse running processes, see which plugin claims each one, inspect it and attach/detach. | Implemented |
 | Memory scanner | Search a target's memory for values and refine the result set with first/next/undo scans, keeping the shown hits up to date with live memory. | Implemented |
 | Address list | Track found addresses, edit and freeze their values, watch them refresh live, and save or reopen the table. | Implemented |
+| ReClass | Rebuild a target's C/C++ structs and classes: pin a class to an address expression, describe its fields as a typed node list, watch the values refresh live, type a corrected value back, dissect a hex field into the kind its bytes fit and follow pointers into other classes. The classes ride inside the same `.skt` table. | Implemented (ReClass window) |
 | Lua scripts | Keep one-off Lua scripts beside the table as script entries, edit them in a Lua-highlighting, line-numbered editor and verify the source before running it, run them against the attached target through a small memory API (`mem.read`, `mem.write`, byte and string reads), publish named 64-bit values with `rsymbol` / `ssymbol` / `usymbol` that any address field then resolves, keep script-local `rlabel` / `slabel` / `ulabel` labels and locate a wildcard byte pattern with `aobscan`, rename one inline from its `Description` cell, and see what they printed and what failed. | Implemented (Add Script / Run Script) |
 | Memory browser | Hex dump of live memory around a chosen address, refreshed automatically, beside a live disassembly listing and the Debugger pane. | Implemented |
 | Practice target | A separate `slopkit-sandbox` process exposing values of every scan type; launch it from `Help > Launch Practice Target` and attach to practise the scanner. | Implemented |

@@ -34,6 +34,7 @@
 #include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
+#include "ui/dialogs/reclass.hpp"
 #include "ui/dialogs/settings.hpp"
 #include "ui/dialogs/table_settings.hpp"
 #include "ui/live_values.hpp"
@@ -175,6 +176,11 @@ namespace slopkit::ui
         return access_watch_.get();
     }
 
+    dialogs::ReClassDialog* MainWindow::reclass() const noexcept
+    {
+        return reclass_.get();
+    }
+
     void MainWindow::on_open_table_requested()
     {
         const std::optional<QString> path = address_list_->choose_table_path();
@@ -228,6 +234,8 @@ namespace slopkit::ui
 
         access_watch_action_ = new QAction(tr("Access Watch"), this);
 
+        reclass_action_ = new QAction(tr("ReClass"), this);
+
         launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
 
         about_action_ = new QAction(tr("About slopkit"), this);
@@ -249,6 +257,7 @@ namespace slopkit::ui
         view_menu->addAction(settings_action_);
         view_menu->addAction(breakpoints_action_);
         view_menu->addAction(access_watch_action_);
+        view_menu->addAction(reclass_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
         help_menu->addAction(launch_sandbox_action_);
@@ -298,6 +307,7 @@ namespace slopkit::ui
                         add_address_->set_modules(modules);
                     }
                     debug_.set_modules(modules);
+                    reclass_->set_modules(modules);
                     memory_view_->set_modules(std::move(modules));
                 });
         connect(&debug_,
@@ -431,6 +441,11 @@ namespace slopkit::ui
 
         access_watch_ = std::make_unique<dialogs::AccessWatchDialog>(debug_, worker_, target_);
         new WindowGeometryKeeper(*access_watch_, settings_, WindowId::access_watch, access_watch_.get());
+
+        reclass_ = std::make_unique<dialogs::ReClassDialog>(address_table_.structures(), worker_, target_);
+        new WindowGeometryKeeper(*reclass_, settings_, WindowId::reclass, reclass_.get());
+        live_values_->add_surface(reclass_.get());
+
         connect(access_watch_.get(),
                 &dialogs::AccessWatchDialog::followRequested,
                 this,
@@ -493,6 +508,7 @@ namespace slopkit::ui
                     found_list_->set_address_mode(mode);
                     address_list_->set_address_mode(mode);
                     debug_.set_address_mode(mode);
+                    reclass_->set_address_mode(mode);
                     memory_view_->set_address_mode(mode);
                 });
 
@@ -501,11 +517,13 @@ namespace slopkit::ui
         address_list_->set_address_mode(persisted_mode);
         debug_.set_address_mode(persisted_mode);
         memory_view_->set_address_mode(persisted_mode);
+        reclass_->set_address_mode(persisted_mode);
 
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
         connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
         connect(breakpoints_action_, &QAction::triggered, this, &MainWindow::show_breakpoints);
         connect(access_watch_action_, &QAction::triggered, this, &MainWindow::show_access_watch);
+        connect(reclass_action_, &QAction::triggered, this, &MainWindow::show_reclass);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
 
@@ -577,6 +595,17 @@ namespace slopkit::ui
         access_watch_->show();
         access_watch_->raise();
         access_watch_->activateWindow();
+    }
+
+    void MainWindow::show_reclass()
+    {
+        if (reclass_ == nullptr)
+        {
+            return;
+        }
+        reclass_->show();
+        reclass_->raise();
+        reclass_->activateWindow();
     }
 
     void MainWindow::start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind)
@@ -769,6 +798,11 @@ namespace slopkit::ui
 
     void MainWindow::on_table_loaded()
     {
+        if (reclass_ != nullptr)
+        {
+            reclass_->refresh_project();
+        }
+
         const table::TableSettings& settings = address_table_.settings();
 
         const bool use_path = settings.match_exe_path && !settings.exe_path.empty();

@@ -6,6 +6,7 @@
 
 #include "support/ui_helpers.hpp"
 #include "ui/dialogs/add_script.hpp"
+#include "ui/dialogs/reclass.hpp"
 #include "ui/panels/debug_controls.hpp"
 
 TEST_CASE("the main window shell is built", "[ui]")
@@ -40,7 +41,8 @@ TEST_CASE("the main window shell is built", "[ui]")
           == QList<QString> {QStringLiteral("Log"),
                              QStringLiteral("Settings"),
                              QStringLiteral("Breakpoints"),
-                             QStringLiteral("Access Watch")});
+                             QStringLiteral("Access Watch"),
+                             QStringLiteral("ReClass")});
     CHECK(action_texts(menus[2]->menu()->actions())
           == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
 
@@ -124,6 +126,16 @@ TEST_CASE("the main window shell is built", "[ui]")
     access_watch_action->trigger();
     CHECK(window.access_watch() == access_watch_dialog);
     CHECK(window.findChildren<slopkit::ui::dialogs::AccessWatchDialog*>().isEmpty());
+
+    QAction* reclass_action = menus[1]->menu()->actions().at(4);
+    CHECK(reclass_action->text() == QStringLiteral("ReClass"));
+    reclass_action->trigger();
+    auto* reclass_dialog = window.reclass();
+    REQUIRE(reclass_dialog != nullptr);
+    CHECK(reclass_dialog->isVisible());
+    reclass_action->trigger();
+    CHECK(window.reclass() == reclass_dialog);
+    CHECK(window.findChildren<slopkit::ui::dialogs::ReClassDialog*>().isEmpty());
 
     slopkit::log::Logger::instance().set_minimum_level(slopkit::log::Level::info);
 
