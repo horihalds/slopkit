@@ -50,3 +50,5 @@ desktop.ini
 /core
 core.[0-9]*
 vgcore.*
+
+reference/
