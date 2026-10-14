@@ -224,33 +224,34 @@ namespace slopkit::reclass
                         return std::unexpected(std::format("{}: expected a node line, found '{}'", member, line));
                     }
 
-                    Node       node;
-                    bool       seen_kind = false;
-                    bool       seen_hex  = false;
-                    const auto visit     = [&](const std::string& key,
-                                               std::string        value) -> std::expected<void, std::string>
+                    std::optional<NodeKind> kind;
+                    std::string             node_name;
+                    std::string             node_comment;
+                    std::string             node_class;
+                    bool                    hex      = false;
+                    bool                    seen_hex = false;
+                    const auto              visit    = [&](const std::string& key,
+                                                           std::string        value) -> std::expected<void, std::string>
                     {
                         if (key == "kind")
                         {
-                            const auto kind = kind_from_token(value);
+                            kind = kind_from_token(value);
                             if (!kind)
                             {
                                 return std::unexpected(std::format("{}: unknown node kind '{}'", member, value));
                             }
-                            node.kind = *kind;
-                            seen_kind = true;
                         }
                         else if (key == "name")
                         {
-                            node.name = std::move(value);
+                            node_name = std::move(value);
                         }
                         else if (key == "comment")
                         {
-                            node.comment = std::move(value);
+                            node_comment = std::move(value);
                         }
                         else if (key == "class")
                         {
-                            node.class_name = std::move(value);
+                            node_class = std::move(value);
                         }
                         else if (key == "hex")
                         {
@@ -259,7 +260,7 @@ namespace slopkit::reclass
                             {
                                 return std::unexpected(std::format("{}: invalid boolean '{}'", member, value));
                             }
-                            node.hex = *flag;
+                            hex      = *flag;
                             seen_hex = true;
                         }
                         else
@@ -274,7 +275,7 @@ namespace slopkit::reclass
                     {
                         return std::unexpected(parsed.error());
                     }
-                    if (!seen_kind)
+                    if (!kind)
                     {
                         return std::unexpected(std::format("{}: node without 'kind'", member));
                     }
@@ -282,7 +283,13 @@ namespace slopkit::reclass
                     {
                         return std::unexpected(std::format("{}: node without 'hex'", member));
                     }
-                    type.nodes.push_back(std::move(node));
+
+                    NodePtr created     = make_node(*kind);
+                    created->name       = std::move(node_name);
+                    created->comment    = std::move(node_comment);
+                    created->class_name = std::move(node_class);
+                    created->hex        = hex;
+                    type.nodes.push_back(std::move(created));
                 }
 
                 if (newline == std::string_view::npos)
@@ -313,9 +320,9 @@ namespace slopkit::reclass
             {
                 return std::unexpected(std::format("{}: invalid class name '{}'", member, type.name));
             }
-            for (Node& node : type.nodes)
+            for (NodePtr& node : type.nodes)
             {
-                node.id = project.next_node_id();
+                node->id = project.next_node_id();
             }
             project.classes().back().nodes = std::move(type.nodes);
             return {};
@@ -345,16 +352,16 @@ namespace slopkit::reclass
 
             std::string text =
                 std::format("name=\"{}\" address=\"{}\"\n", escape(type.name), escape(type.address_expression));
-            for (const Node& node : type.nodes)
+            for (const NodePtr& node : type.nodes)
             {
                 text += std::format("node kind={} name=\"{}\" hex={} comment=\"{}\"",
-                                    type_token(node.kind),
-                                    escape(node.name),
-                                    node.hex ? 1 : 0,
-                                    escape(node.comment));
-                if (is_class_kind(node.kind))
+                                    type_token(node->kind()),
+                                    escape(node->name),
+                                    node->hex ? 1 : 0,
+                                    escape(node->comment));
+                if (is_class_kind(node->kind()))
                 {
-                    text += std::format(" class=\"{}\"", escape(node.class_name));
+                    text += std::format(" class=\"{}\"", escape(node->class_name));
                 }
                 text += '\n';
             }

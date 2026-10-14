@@ -167,7 +167,7 @@ TEST_CASE("the class commands add, rename, re-address and delete", "[reclass][ui
     // A new class arrives covering 1024 bytes, so the grid starts as a page of
     // the target the user retypes instead of an empty list.
     CHECK(fixture.project.classes()[2].nodes.size() == 128);
-    CHECK(fixture.project.classes()[2].nodes.front().kind == NodeKind::hex64);
+    CHECK(fixture.project.classes()[2].nodes.front()->kind() == NodeKind::hex64);
     CHECK(dialog.structure()->rowCount() == 128);
 
     // A duplicate name, an empty name and a malformed expression are refused.
@@ -215,8 +215,8 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     CHECK_FALSE(dialog.follow_button()->isEnabled());
     dialog.insert_node(NodeKind::int32);
     REQUIRE(player.nodes.size() == 3);
-    CHECK(player.nodes[2].kind == NodeKind::int32);
-    CHECK(player.nodes[2].name.empty());
+    CHECK(player.nodes[2]->kind() == NodeKind::int32);
+    CHECK(player.nodes[2]->name.empty());
 
     // Inserting with a row selected puts the node before it, and selecting a row
     // is what makes the commands that act on it available.
@@ -225,24 +225,24 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     CHECK(dialog.follow_button()->isEnabled());
     dialog.insert_node(NodeKind::float32);
     REQUIRE(player.nodes.size() == 4);
-    CHECK(player.nodes[1].kind == NodeKind::float32);
-    CHECK(player.nodes[1].name.empty());
+    CHECK(player.nodes[1]->kind() == NodeKind::float32);
+    CHECK(player.nodes[1]->name.empty());
 
     // Shrinking a node's type pads the freed bytes so offsets stay put.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
     dialog.change_node_kind(NodeKind::int8);
     REQUIRE(player.nodes.size() == 6);
-    CHECK(player.nodes[1].kind == NodeKind::int8);
-    CHECK(player.nodes[2].kind == NodeKind::hex16);
-    CHECK(player.nodes[3].kind == NodeKind::hex8);
-    CHECK(player.nodes[3].name.empty());
+    CHECK(player.nodes[1]->kind() == NodeKind::int8);
+    CHECK(player.nodes[2]->kind() == NodeKind::hex16);
+    CHECK(player.nodes[3]->kind() == NodeKind::hex8);
+    CHECK(player.nodes[3]->name.empty());
 
     // Show as hex acts on the selection, and Delete removes it.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
     dialog.set_node_hex(true);
-    CHECK(player.nodes[1].hex);
+    CHECK(player.nodes[1]->hex);
     dialog.set_node_hex(false);
-    CHECK_FALSE(player.nodes[1].hex);
+    CHECK_FALSE(player.nodes[1]->hex);
 
     dialog.copy_name();
     CHECK(dialog.status_label()->text() == QStringLiteral("Name copied."));
@@ -253,17 +253,17 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     const QModelIndex name_cell = dialog.proxy()->index(0, ReclassStructureModel::name);
     CHECK(dialog.proxy()->flags(name_cell).testFlag(Qt::ItemIsEditable));
     CHECK(dialog.proxy()->setData(name_cell, QStringLiteral("vitals"), Qt::EditRole));
-    CHECK(player.nodes[0].name == "vitals");
+    CHECK(player.nodes[0]->name == "vitals");
     CHECK(dialog.status_label()->text() == QStringLiteral("Node renamed."));
 
     CHECK_FALSE(dialog.proxy()->setData(name_cell, QStringLiteral("   "), Qt::EditRole));
-    CHECK(player.nodes[0].name == "vitals");
+    CHECK(player.nodes[0]->name == "vitals");
     CHECK(dialog.status_label()->text() == QStringLiteral("A node name is required."));
 
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
     dialog.remove_selected_nodes();
     CHECK(player.nodes.size() == 5);
-    CHECK(player.nodes[1].kind == NodeKind::hex16);
+    CHECK(player.nodes[1]->kind() == NodeKind::hex16);
 
     CHECK(dialog.structure()->rowCount() == 5);
     dialog.close();
@@ -319,7 +319,7 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     live_pass(fixture, dialog);
     live_pass(fixture, dialog);
 
-    REQUIRE(point.nodes[2].kind == NodeKind::hex64);
+    REQUIRE(point.nodes[2]->kind() == NodeKind::hex64);
 
     // The header and the class tooltips spell a resolved address the way the
     // address column does: absolute, zero-padded to the pointer width.
@@ -329,7 +329,7 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     dialog.dissect();
     drain_until_idle(fixture.worker);
 
-    CHECK(point.nodes[2].kind == NodeKind::pointer);
+    CHECK(point.nodes[2]->kind() == NodeKind::pointer);
     CHECK(dialog.status_label()->text() == QStringLiteral("dissected 1 of 1 nodes"));
 
     // Without a selected hex node whose bytes were read there is nothing to do.
@@ -351,31 +351,31 @@ TEST_CASE("follow pointer references a class and inlines it", "[reclass][ui]")
     select_player(fixture);
 
     Class& player = fixture.project.classes()[1];
-    REQUIRE(player.nodes[1].kind == NodeKind::pointer);
+    REQUIRE(player.nodes[1]->kind() == NodeKind::pointer);
 
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
     dialog.set_followed_class(QStringLiteral("Point"));
 
-    CHECK(player.nodes[1].kind == NodeKind::class_pointer);
-    CHECK(player.nodes[1].class_name == "Point");
-    CHECK(dialog.structure()->is_expanded(player.nodes[1].id));
+    CHECK(player.nodes[1]->kind() == NodeKind::class_pointer);
+    CHECK(player.nodes[1]->class_name == "Point");
+    CHECK(dialog.structure()->is_expanded(player.nodes[1]->id));
     CHECK(dialog.structure()->rowCount(dialog.structure()->index(1, 0)) == 2);
     CHECK(dialog.status_label()->text() == QStringLiteral("Following 'Point'."));
 
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
     dialog.set_followed_class(QString());
-    CHECK(player.nodes[1].kind == NodeKind::pointer);
-    CHECK(player.nodes[1].class_name.empty());
+    CHECK(player.nodes[1]->kind() == NodeKind::pointer);
+    CHECK(player.nodes[1]->class_name.empty());
     CHECK(dialog.structure()->rowCount(dialog.structure()->index(1, 0)) == 0);
 
     dialog.set_followed_class(QStringLiteral("Nobody"));
-    CHECK(player.nodes[1].kind == NodeKind::pointer);
+    CHECK(player.nodes[1]->kind() == NodeKind::pointer);
     CHECK(dialog.status_label()->text() == QStringLiteral("Unknown class 'Nobody'."));
 
     // A node that is not a pointer cannot be followed.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
     dialog.set_followed_class(QStringLiteral("Point"));
-    CHECK(player.nodes[0].kind == NodeKind::int8);
+    CHECK(player.nodes[0]->kind() == NodeKind::int8);
     CHECK(dialog.status_label()->text() == QStringLiteral("Select a pointer node first."));
 
     dialog.close();

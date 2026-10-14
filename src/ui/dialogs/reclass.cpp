@@ -1,4 +1,5 @@
 #include "ui/dialogs/reclass.hpp"
+#include "ui/dialogs/enums.hpp"
 
 #include <algorithm>
 #include <array>
@@ -28,6 +29,7 @@
 #include "expr/expression.hpp"
 #include "reclass/dissect.hpp"
 #include "reclass/edit.hpp"
+#include "reclass/node_menu.hpp"
 #include "ui/components/input_box.hpp"
 #include "ui/components/reclass_view.hpp"
 #include "ui/components/row_menu.hpp"
@@ -42,17 +44,6 @@ namespace slopkit::ui::dialogs
 {
     namespace
     {
-        // The node kinds this version builds, in the order the menus list them.
-        constexpr std::array<reclass::NodeKind, 19> kNodeKinds {
-            reclass::NodeKind::int8,          reclass::NodeKind::int16,   reclass::NodeKind::int32,
-            reclass::NodeKind::int64,         reclass::NodeKind::uint8,   reclass::NodeKind::uint16,
-            reclass::NodeKind::uint32,        reclass::NodeKind::uint64,  reclass::NodeKind::float32,
-            reclass::NodeKind::float64,       reclass::NodeKind::boolean, reclass::NodeKind::character,
-            reclass::NodeKind::hex8,          reclass::NodeKind::hex16,   reclass::NodeKind::hex32,
-            reclass::NodeKind::hex64,         reclass::NodeKind::pointer, reclass::NodeKind::class_instance,
-            reclass::NodeKind::class_pointer,
-        };
-
         QString kind_label(reclass::NodeKind kind)
         {
             return to_qstring(reclass::describe(kind));
@@ -181,26 +172,38 @@ namespace slopkit::ui::dialogs
     void ReClassDialog::populate_node_kind_menu(QMenu& menu, bool change)
     {
         widgets::show_explanations(menu);
-        for (const reclass::NodeKind kind : kNodeKinds)
+
+        // The reference's groups, in its order, with a separator between them.
+        bool first = true;
+        for (const reclass::NodeMenuGroup& group : reclass::node_menu_groups())
         {
-            const QString label  = kind_label(kind);
-            const QString detail = change ? tr("Replace the selected node's type with %1.").arg(label)
-                                          : tr("Insert a %1 node before the selection.").arg(label);
-            QAction*      action = widgets::described_action(menu, label, detail);
-            connect(action,
-                    &QAction::triggered,
-                    this,
-                    [this, kind, change]
-                    {
-                        if (change)
+            if (!first)
+            {
+                menu.addSeparator();
+            }
+            first = false;
+
+            for (const reclass::NodeMenuEntry& entry : group.entries)
+            {
+                const QString label  = to_qstring(entry.label);
+                const QString detail = change ? tr("Replace the selected node's type with %1.").arg(label)
+                                              : tr("Insert a %1 node before the selection.").arg(label);
+                QAction*      action = widgets::described_action(menu, label, detail);
+                connect(action,
+                        &QAction::triggered,
+                        this,
+                        [this, kind = entry.kind, change]
                         {
-                            change_node_kind(kind);
-                        }
-                        else
-                        {
-                            insert_node(kind);
-                        }
-                    });
+                            if (change)
+                            {
+                                change_node_kind(kind);
+                            }
+                            else
+                            {
+                                insert_node(kind);
+                            }
+                        });
+            }
         }
     }
 
@@ -739,11 +742,18 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        const std::size_t index = row == nullptr ? type->nodes.size() : row->node_index;
+        std::size_t index = type->nodes.size();
+        if (row != nullptr)
+        {
+            const auto ref = reclass::node_ref(project_, row->node_id);
+            if (ref.has_value() && ref->owner == &type->nodes)
+            {
+                index = ref->index;
+            }
+        }
 
-        reclass::Node node;
-        node.id   = project_.next_node_id();
-        node.kind = kind;
+        reclass::NodePtr node = reclass::make_node(kind);
+        node->id              = project_.next_node_id();
         type->nodes.insert(type->nodes.begin() + static_cast<std::ptrdiff_t>(index), std::move(node));
 
         refresh_all();
@@ -759,13 +769,13 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        reclass::Class* type = project_.class_at(row->class_index);
-        if (type == nullptr || row->node_index >= type->nodes.size())
+        const auto ref = reclass::node_ref(project_, row->node_id);
+        if (!ref)
         {
             return;
         }
 
-        reclass::change_node_kind(project_, type->nodes, row->node_index, kind);
+        reclass::change_node_kind(project_, *ref->owner, ref->index, kind);
         refresh_all();
         report(tr("Type changed to %1.").arg(kind_label(kind)), false);
     }
@@ -897,10 +907,10 @@ namespace slopkit::ui::dialogs
 
     void ReClassDialog::remove_selected_nodes()
     {
-        std::vector<std::pair<std::size_t, std::size_t>> targets;
+        std::vector<std::size_t> targets;
         for (const models::ReclassRow* row : selected_rows())
         {
-            targets.emplace_back(row->class_index, row->node_index);
+            targets.push_back(row->node_id);
         }
         if (targets.empty())
         {
@@ -908,14 +918,9 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        std::ranges::sort(targets, std::greater {});
-        for (const auto& [class_index, node_index] : targets)
+        for (const std::size_t node_id : targets)
         {
-            reclass::Class* type = project_.class_at(class_index);
-            if (type != nullptr && node_index < type->nodes.size())
-            {
-                type->nodes.erase(type->nodes.begin() + static_cast<std::ptrdiff_t>(node_index));
-            }
+            reclass::remove_node(project_, node_id);
         }
 
         refresh_all();
@@ -939,24 +944,23 @@ namespace slopkit::ui::dialogs
         for (const models::ReclassRow* row : selected_rows())
         {
             const reclass::Node* node = node_at(row);
-            if (node == nullptr || !reclass::is_hex_kind(node->kind))
+            if (node == nullptr || !reclass::is_hex_kind(node->kind()))
             {
                 continue;
             }
 
             const std::span<const std::byte>   bytes   = values_->node_bytes(*row);
             const std::optional<std::uint64_t> address = values_->node_address(*row);
-            if (!address.has_value() || bytes.size() < reclass::kind_size(node->kind))
+            if (!address.has_value() || bytes.size() < reclass::kind_size(node->kind()))
             {
                 continue;
             }
 
-            dissect_targets_.push_back(DissectTarget {.class_index = row->class_index,
-                                                      .node_index  = row->node_index,
-                                                      .kind        = node->kind,
-                                                      .offset      = row->offset,
-                                                      .address     = *address,
-                                                      .bytes = std::vector<std::byte>(bytes.begin(), bytes.end())});
+            dissect_targets_.push_back(DissectTarget {.node_id = row->node_id,
+                                                      .kind    = node->kind(),
+                                                      .offset  = row->offset,
+                                                      .address = *address,
+                                                      .bytes   = std::vector<std::byte>(bytes.begin(), bytes.end())});
         }
 
         if (dissect_targets_.empty())
@@ -1042,13 +1046,13 @@ namespace slopkit::ui::dialogs
                 reclass::DissectInput {
                     .current = target.kind, .bytes = target.bytes, .offset = target.offset, .address = target.address},
                 lookup);
-            reclass::Class* type = project_.class_at(target.class_index);
-            if (!guess.has_value() || type == nullptr || target.node_index >= type->nodes.size())
+            const auto ref = reclass::node_ref(project_, target.node_id);
+            if (!guess.has_value() || !ref)
             {
                 continue;
             }
 
-            reclass::change_node_kind(project_, type->nodes, target.node_index, *guess);
+            reclass::change_node_kind(project_, *ref->owner, ref->index, *guess);
             ++changed;
         }
 
@@ -1107,7 +1111,7 @@ namespace slopkit::ui::dialogs
             report(tr("Select a node first."), true);
             return;
         }
-        if (!reclass::is_class_kind(node->kind) && node->kind != reclass::NodeKind::pointer)
+        if (!reclass::is_class_kind(node->kind()) && node->kind() != reclass::NodeKind::pointer)
         {
             report(tr("Select a pointer node first."), true);
             return;
@@ -1117,13 +1121,17 @@ namespace slopkit::ui::dialogs
 
         if (class_name.isEmpty())
         {
-            if (node->kind == reclass::NodeKind::class_instance)
+            if (node->kind() == reclass::NodeKind::class_instance)
             {
                 report(tr("An instance needs a class; change its type to a pointer first."), true);
                 return;
             }
-            node->kind = reclass::NodeKind::pointer;
-            node->class_name.clear();
+            const auto ref = reclass::node_ref(project_, row->node_id);
+            if (!ref)
+            {
+                return;
+            }
+            reclass::change_node_kind(project_, *ref->owner, ref->index, reclass::NodeKind::pointer);
             refresh_all();
             report(tr("Pointer cleared."), false);
             return;
@@ -1136,11 +1144,17 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        node->class_name = target->name;
-        if (node->kind == reclass::NodeKind::pointer)
+        if (node->kind() == reclass::NodeKind::pointer)
         {
-            node->kind = reclass::NodeKind::class_pointer;
+            const auto ref = reclass::node_ref(project_, row->node_id);
+            if (!ref)
+            {
+                return;
+            }
+            reclass::change_node_kind(project_, *ref->owner, ref->index, reclass::NodeKind::class_pointer);
+            node = (*ref->owner)[ref->index].get();
         }
+        node->class_name = target->name;
 
         // Inline the class right away so the fields appear where the user asked.
         structure_->set_expanded(node_id, true);
@@ -1158,12 +1172,7 @@ namespace slopkit::ui::dialogs
         {
             return nullptr;
         }
-        reclass::Class* type = project_.class_at(row->class_index);
-        if (type == nullptr || row->node_index >= type->nodes.size())
-        {
-            return nullptr;
-        }
-        return &type->nodes[row->node_index];
+        return const_cast<reclass::Node*>(row->node);
     }
 
     void ReClassDialog::show_class_menu(const QPoint& position)
@@ -1257,6 +1266,76 @@ namespace slopkit::ui::dialogs
         connect(remove, &QAction::triggered, this, &ReClassDialog::remove_selected_nodes);
 
         menu.exec(position);
+    }
+
+    std::vector<QString> ReClassDialog::enum_names() const
+    {
+        std::vector<QString> names;
+        names.reserve(project_.enums().size());
+        for (const reclass::EnumDescription& description : project_.enums())
+        {
+            names.push_back(to_qstring(description.name));
+        }
+        return names;
+    }
+
+    bool ReClassDialog::create_enum(const QString& name, std::size_t size)
+    {
+        if (project_.add_enum(name.trimmed().toStdString(), size) == nullptr)
+        {
+            report(tr("An enum named '%1' already exists.").arg(name.trimmed()), true);
+            return false;
+        }
+        report(tr("Enum '%1' added.").arg(name.trimmed()), false);
+        return true;
+    }
+
+    bool ReClassDialog::remove_enum(const QString& name)
+    {
+        for (std::size_t index = 0; index < project_.enums().size(); ++index)
+        {
+            if (project_.enums()[index].name == name.toStdString())
+            {
+                project_.remove_enum(index);
+                report(tr("Enum '%1' removed.").arg(name), false);
+                return true;
+            }
+        }
+        report(tr("Unknown enum '%1'.").arg(name), true);
+        return false;
+    }
+
+    void ReClassDialog::add_enum()
+    {
+        EnumEditorDialog editor {project_, QString {}, this};
+        if (editor.exec() == QDialog::Accepted)
+        {
+            report(tr("Enum '%1' added.").arg(editor.applied_name()), false);
+        }
+    }
+
+    void ReClassDialog::edit_enum(std::size_t index)
+    {
+        if (index >= project_.enums().size())
+        {
+            return;
+        }
+        EnumEditorDialog editor {project_, to_qstring(project_.enums()[index].name), this};
+        if (editor.exec() == QDialog::Accepted)
+        {
+            report(tr("Enum '%1' saved.").arg(editor.applied_name()), false);
+        }
+    }
+
+    void ReClassDialog::delete_enum(std::size_t index)
+    {
+        if (index >= project_.enums().size())
+        {
+            return;
+        }
+        const QString name = to_qstring(project_.enums()[index].name);
+        project_.remove_enum(index);
+        report(tr("Enum '%1' removed.").arg(name), false);
     }
 
 }

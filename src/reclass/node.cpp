@@ -44,6 +44,54 @@ namespace slopkit::reclass
             return "class_instance";
         case NodeKind::class_pointer:
             return "class_pointer";
+        case NodeKind::array:
+            return "array";
+        case NodeKind::union_value:
+            return "union";
+        case NodeKind::class_instance_array:
+            return "class_instance_array";
+        case NodeKind::class_wrapper_array:
+            return "class_wrapper_array";
+        case NodeKind::nint:
+            return "nint";
+        case NodeKind::nuint:
+            return "nuint";
+        case NodeKind::bitfield:
+            return "bitfield";
+        case NodeKind::enum_node:
+            return "enum";
+        case NodeKind::utf8_text:
+            return "utf8_text";
+        case NodeKind::utf8_text_ptr:
+            return "utf8_text_ptr";
+        case NodeKind::utf16_text:
+            return "utf16_text";
+        case NodeKind::utf16_text_ptr:
+            return "utf16_text_ptr";
+        case NodeKind::utf32_text:
+            return "utf32_text";
+        case NodeKind::utf32_text_ptr:
+            return "utf32_text_ptr";
+        case NodeKind::vector2:
+            return "vector2";
+        case NodeKind::vector3:
+            return "vector3";
+        case NodeKind::vector4:
+            return "vector4";
+        case NodeKind::matrix3x3:
+            return "matrix3x3";
+        case NodeKind::matrix3x4:
+            return "matrix3x4";
+        case NodeKind::matrix4x4:
+            return "matrix4x4";
+        case NodeKind::virtual_method_table:
+            return "virtual_method_table";
+        case NodeKind::virtual_method:
+            return "virtual_method";
+        case NodeKind::function:
+            return "function";
+        case NodeKind::function_ptr:
+            return "function_ptr";
         }
         return {};
     }
@@ -68,7 +116,31 @@ namespace slopkit::reclass
                                     NodeKind::hex64,
                                     NodeKind::pointer,
                                     NodeKind::class_instance,
-                                    NodeKind::class_pointer})
+                                    NodeKind::class_pointer,
+                                    NodeKind::array,
+                                    NodeKind::union_value,
+                                    NodeKind::class_instance_array,
+                                    NodeKind::class_wrapper_array,
+                                    NodeKind::nint,
+                                    NodeKind::nuint,
+                                    NodeKind::bitfield,
+                                    NodeKind::enum_node,
+                                    NodeKind::utf8_text,
+                                    NodeKind::utf8_text_ptr,
+                                    NodeKind::utf16_text,
+                                    NodeKind::utf16_text_ptr,
+                                    NodeKind::utf32_text,
+                                    NodeKind::utf32_text_ptr,
+                                    NodeKind::vector2,
+                                    NodeKind::vector3,
+                                    NodeKind::vector4,
+                                    NodeKind::matrix3x3,
+                                    NodeKind::matrix3x4,
+                                    NodeKind::matrix4x4,
+                                    NodeKind::virtual_method_table,
+                                    NodeKind::virtual_method,
+                                    NodeKind::function,
+                                    NodeKind::function_ptr})
         {
             if (type_token(kind) == token)
             {
@@ -120,19 +192,101 @@ namespace slopkit::reclass
             return "Instance";
         case NodeKind::class_pointer:
             return "Class Pointer";
+        case NodeKind::array:
+            return "Array";
+        case NodeKind::union_value:
+            return "Union";
+        case NodeKind::class_instance_array:
+            return "Class Instance Array";
+        case NodeKind::class_wrapper_array:
+            return "Class Array";
+        case NodeKind::nint:
+            return "NInt";
+        case NodeKind::nuint:
+            return "NUInt";
+        case NodeKind::bitfield:
+            return "BitField";
+        case NodeKind::enum_node:
+            return "Enum";
+        case NodeKind::utf8_text:
+            return "Utf8Text";
+        case NodeKind::utf8_text_ptr:
+            return "Utf8TextPtr";
+        case NodeKind::utf16_text:
+            return "Utf16Text";
+        case NodeKind::utf16_text_ptr:
+            return "Utf16TextPtr";
+        case NodeKind::utf32_text:
+            return "Utf32Text";
+        case NodeKind::utf32_text_ptr:
+            return "Utf32TextPtr";
+        case NodeKind::vector2:
+            return "Vector2";
+        case NodeKind::vector3:
+            return "Vector3";
+        case NodeKind::vector4:
+            return "Vector4";
+        case NodeKind::matrix3x3:
+            return "Matrix3x3";
+        case NodeKind::matrix3x4:
+            return "Matrix3x4";
+        case NodeKind::matrix4x4:
+            return "Matrix4x4";
+        case NodeKind::virtual_method_table:
+            return "Virtual Method Table";
+        case NodeKind::virtual_method:
+            return "Virtual Method";
+        case NodeKind::function:
+            return "Function";
+        case NodeKind::function_ptr:
+            return "Function Ptr";
         }
         return {};
     }
 
     bool is_editable(NodeKind kind) noexcept
     {
-        return kind_size(kind) != 0 && !is_hex_kind(kind) && kind != NodeKind::pointer
-            && kind != NodeKind::class_pointer;
+        switch (kind)
+        {
+        case NodeKind::hex8:
+        case NodeKind::hex16:
+        case NodeKind::hex32:
+        case NodeKind::hex64:
+        case NodeKind::pointer:
+        case NodeKind::class_pointer:
+        case NodeKind::class_instance:
+        case NodeKind::class_instance_array:
+        case NodeKind::class_wrapper_array:
+        case NodeKind::array:
+        case NodeKind::union_value:
+        case NodeKind::virtual_method_table:
+        case NodeKind::virtual_method:
+        case NodeKind::function:
+        case NodeKind::function_ptr:
+        case NodeKind::utf8_text_ptr:
+        case NodeKind::utf16_text_ptr:
+        case NodeKind::utf32_text_ptr:
+        case NodeKind::bitfield:
+        case NodeKind::enum_node:
+        case NodeKind::utf8_text:
+        case NodeKind::utf16_text:
+        case NodeKind::utf32_text:
+        case NodeKind::vector2:
+        case NodeKind::vector3:
+        case NodeKind::vector4:
+        case NodeKind::matrix3x3:
+        case NodeKind::matrix3x4:
+        case NodeKind::matrix4x4:
+            return false;
+        default:
+            return true;
+        }
     }
 
     bool is_class_kind(NodeKind kind) noexcept
     {
-        return kind == NodeKind::class_instance || kind == NodeKind::class_pointer;
+        return kind == NodeKind::class_instance || kind == NodeKind::class_pointer
+            || kind == NodeKind::class_instance_array || kind == NodeKind::class_wrapper_array;
     }
 
     bool is_hex_kind(NodeKind kind) noexcept

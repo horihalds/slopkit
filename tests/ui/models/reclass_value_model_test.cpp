@@ -64,8 +64,8 @@ namespace
 
             Class& player = project.classes()[1];
             player.nodes.push_back(node_of(project, NodeKind::int8, "tag"));
-            slopkit::reclass::Node next = node_of(project, NodeKind::class_pointer, "next");
-            next.class_name             = "Point";
+            slopkit::reclass::NodePtr next = node_of(project, NodeKind::class_pointer, "next");
+            next->class_name               = "Point";
             player.nodes.push_back(std::move(next));
 
             structure.set_project(project);
@@ -269,7 +269,7 @@ TEST_CASE("an expanded class pointer is read one pass after its pointer changes"
     fixture.write(kHeapBase, {0x07, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00});
     fixture.pass();
 
-    fixture.structure.set_expanded(fixture.project.classes()[1].nodes[1].id, true);
+    fixture.structure.set_expanded(fixture.project.classes()[1].nodes[1]->id, true);
 
     // One pass later the pointer's target is known, read and shown.
     const std::vector<LiveRequest> requests = fixture.pass();

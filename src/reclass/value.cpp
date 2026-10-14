@@ -5,6 +5,10 @@
 #include <format>
 #include <limits>
 
+#include "reclass/enum.hpp"
+#include "reclass/nodes/number.hpp"
+#include "reclass/project.hpp"
+
 namespace slopkit::reclass
 {
     namespace
@@ -107,6 +111,90 @@ namespace slopkit::reclass
         std::size_t integer_bits(NodeKind kind) noexcept
         {
             return kind_size(kind) * 8;
+        }
+
+        // One code point as UTF-8, so a text node shows what the target holds.
+        void append_utf8(std::string& text, std::uint32_t code)
+        {
+            if (code < 0x80)
+            {
+                text.push_back(static_cast<char>(code));
+            }
+            else if (code < 0x800)
+            {
+                text.push_back(static_cast<char>(0xC0 | (code >> 6)));
+                text.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+            }
+            else if (code < 0x10000)
+            {
+                text.push_back(static_cast<char>(0xE0 | (code >> 12)));
+                text.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+                text.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+            }
+            else
+            {
+                text.push_back(static_cast<char>(0xF0 | (code >> 18)));
+                text.push_back(static_cast<char>(0x80 | ((code >> 12) & 0x3F)));
+                text.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+                text.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+            }
+        }
+
+        // A text node's bytes as text: `width` bytes per code unit, little
+        // endian, stopping at the first zero unit.
+        std::string decode_text(std::span<const std::byte> bytes, std::size_t width)
+        {
+            std::string text;
+            for (std::size_t index = 0; index + width <= bytes.size(); index += width)
+            {
+                std::uint32_t code = 0;
+                for (std::size_t part = 0; part < width; ++part)
+                {
+                    code |= static_cast<std::uint32_t>(std::to_integer<unsigned char>(bytes[index + part]))
+                         << (8 * part);
+                }
+                if (code == 0)
+                {
+                    break;
+                }
+                append_utf8(text, code);
+            }
+            return text;
+        }
+
+        float read_float_at(std::span<const std::byte> bytes, std::size_t offset)
+        {
+            std::uint32_t raw = 0;
+            std::memcpy(&raw, bytes.data() + offset, sizeof(raw));
+            float value {};
+            std::memcpy(&value, &raw, sizeof(value));
+            return value;
+        }
+
+        // A run of floats, broken into rows of `columns` (zero for one row).
+        std::string format_float_run(std::span<const std::byte> bytes, std::size_t count, std::size_t columns)
+        {
+            std::string text;
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                if (index != 0)
+                {
+                    text += columns != 0 && index % columns == 0 ? " | " : ", ";
+                }
+                text += std::format("{:.3f}", read_float_at(bytes, index * 4));
+            }
+            return text;
+        }
+
+        std::string hex_run(std::span<const std::byte> bytes)
+        {
+            std::string text;
+            text.reserve(bytes.size() * 2);
+            for (const std::byte value : bytes)
+            {
+                text += std::format("{:02X}", std::to_integer<unsigned char>(value));
+            }
+            return text;
         }
 
         float read_float(std::span<const std::byte> bytes)
@@ -247,8 +335,40 @@ namespace slopkit::reclass
         }
         case NodeKind::pointer:
         case NodeKind::class_pointer:
+        case NodeKind::class_instance_array:
             return std::format("0x{:X}", read_bytes(bytes, size));
+        case NodeKind::nint:
+            return std::format("{}", sign_extend(read_bytes(bytes, size), size * 8));
+        case NodeKind::nuint:
+            return std::format("{}", read_bytes(bytes, size));
+        case NodeKind::utf8_text_ptr:
+        case NodeKind::utf16_text_ptr:
+        case NodeKind::utf32_text_ptr:
+        case NodeKind::virtual_method_table:
+        case NodeKind::virtual_method:
+        case NodeKind::function_ptr:
+            return std::format("0x{:X}", read_bytes(bytes, size));
+        case NodeKind::vector2:
+        case NodeKind::vector3:
+        case NodeKind::vector4:
+            return format_float_run(bytes, size / 4, 0);
+        case NodeKind::matrix3x3:
+            return format_float_run(bytes, 9, 3);
+        case NodeKind::matrix3x4:
+            return format_float_run(bytes, 12, 3);
+        case NodeKind::matrix4x4:
+            return format_float_run(bytes, 16, 4);
+        case NodeKind::function:
+            return hex_run(bytes);
+        case NodeKind::bitfield:
+        case NodeKind::enum_node:
+        case NodeKind::utf8_text:
+        case NodeKind::utf16_text:
+        case NodeKind::utf32_text:
         case NodeKind::class_instance:
+        case NodeKind::array:
+        case NodeKind::union_value:
+        case NodeKind::class_wrapper_array:
             break;
         }
         return {};
@@ -262,6 +382,45 @@ namespace slopkit::reclass
             return 0;
         }
         return read_bytes(bytes, size);
+    }
+
+    std::string format_node_value_text(const Node& node, const Project& project, std::span<const std::byte> bytes)
+    {
+        switch (node.kind())
+        {
+        case NodeKind::bitfield:
+            if (const auto* field = dynamic_cast<const BitFieldNode*>(&node); field != nullptr)
+            {
+                return std::format("{}", field->read(bytes));
+            }
+            break;
+        case NodeKind::enum_node:
+        {
+            const std::uint64_t value = bytes.size() >= 8 ? read_bytes(bytes, 8) : read_bytes(bytes, bytes.size());
+            if (const auto* enum_node = dynamic_cast<const EnumNode*>(&node); enum_node != nullptr)
+            {
+                if (const EnumDescription* description = project.find_enum(enum_node->enum_name);
+                    description != nullptr)
+                {
+                    const std::string_view name = enum_value_name(*description, value);
+                    if (!name.empty())
+                    {
+                        return std::format("{} ({})", value, name);
+                    }
+                }
+            }
+            return std::format("{}", value);
+        }
+        case NodeKind::utf8_text:
+            return decode_text(bytes, 1);
+        case NodeKind::utf16_text:
+            return decode_text(bytes, 2);
+        case NodeKind::utf32_text:
+            return decode_text(bytes, 4);
+        default:
+            break;
+        }
+        return format_node_value_display(node.kind(), bytes, node.hex);
     }
 
     std::string format_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex)
@@ -311,12 +470,36 @@ namespace slopkit::reclass
         }
         case NodeKind::pointer:
         case NodeKind::class_pointer:
+        case NodeKind::class_instance_array:
             return std::format("-> 0x{:016X}", read_bytes(bytes, size));
         case NodeKind::boolean:
         case NodeKind::character:
         case NodeKind::hex8:
         case NodeKind::hex16:
         case NodeKind::class_instance:
+        case NodeKind::array:
+        case NodeKind::union_value:
+        case NodeKind::class_wrapper_array:
+        case NodeKind::nint:
+        case NodeKind::nuint:
+        case NodeKind::bitfield:
+        case NodeKind::enum_node:
+        case NodeKind::utf8_text:
+        case NodeKind::utf8_text_ptr:
+        case NodeKind::utf16_text:
+        case NodeKind::utf16_text_ptr:
+        case NodeKind::utf32_text:
+        case NodeKind::utf32_text_ptr:
+        case NodeKind::vector2:
+        case NodeKind::vector3:
+        case NodeKind::vector4:
+        case NodeKind::matrix3x3:
+        case NodeKind::matrix3x4:
+        case NodeKind::matrix4x4:
+        case NodeKind::virtual_method_table:
+        case NodeKind::virtual_method:
+        case NodeKind::function:
+        case NodeKind::function_ptr:
             break;
         }
         return format_node_value(kind, bytes, hex);
@@ -513,6 +696,7 @@ namespace slopkit::reclass
         }
         case NodeKind::pointer:
         case NodeKind::class_pointer:
+        case NodeKind::class_instance_array:
         {
             const auto literal = parse_literal(text, true);
             if (!literal)
@@ -525,7 +709,38 @@ namespace slopkit::reclass
             }
             return little_endian(literal->magnitude, 8);
         }
+        case NodeKind::nint:
+        case NodeKind::nuint:
+        {
+            const auto literal = parse_literal(text, hex);
+            if (!literal)
+            {
+                return std::unexpected(literal.error());
+            }
+            return little_endian(literal->magnitude, 8);
+        }
+        case NodeKind::bitfield:
+        case NodeKind::enum_node:
+        case NodeKind::utf8_text:
+        case NodeKind::utf8_text_ptr:
+        case NodeKind::utf16_text:
+        case NodeKind::utf16_text_ptr:
+        case NodeKind::utf32_text:
+        case NodeKind::utf32_text_ptr:
+        case NodeKind::vector2:
+        case NodeKind::vector3:
+        case NodeKind::vector4:
+        case NodeKind::matrix3x3:
+        case NodeKind::matrix3x4:
+        case NodeKind::matrix4x4:
+        case NodeKind::virtual_method_table:
+        case NodeKind::virtual_method:
+        case NodeKind::function:
+        case NodeKind::function_ptr:
         case NodeKind::class_instance:
+        case NodeKind::array:
+        case NodeKind::union_value:
+        case NodeKind::class_wrapper_array:
             break;
         }
         return std::unexpected(std::string {"a class instance has no value"});

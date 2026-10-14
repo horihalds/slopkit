@@ -104,7 +104,7 @@ namespace slopkit::ui::models
             return false;
         }
         const reclass::Node* node = node_of(row);
-        if (node == nullptr || !reclass::is_editable(node->kind))
+        if (node == nullptr || !reclass::is_editable(node->kind()))
         {
             return false;
         }
@@ -123,10 +123,11 @@ namespace slopkit::ui::models
             emit statusChanged(tr("Not attached; cannot write."), true);
             return false;
         }
-        if (!reclass::is_editable(node->kind))
+        if (!reclass::is_editable(node->kind()))
         {
             emit statusChanged(
-                tr("%1 values cannot be written from the grid.").arg(to_qstring(reclass::describe(node->kind))), true);
+                tr("%1 values cannot be written from the grid.").arg(to_qstring(reclass::describe(node->kind()))),
+                true);
             return false;
         }
         if (write_job_.has_value())
@@ -147,7 +148,7 @@ namespace slopkit::ui::models
             return false;
         }
 
-        const auto parsed = reclass::parse_node_value(node->kind, text.toStdString(), node->hex);
+        const auto parsed = reclass::parse_node_value(node->kind(), text.toStdString(), node->hex);
         if (!parsed)
         {
             emit statusChanged(tr("Value: %1").arg(to_qstring(parsed.error())), true);
@@ -456,12 +457,7 @@ namespace slopkit::ui::models
         {
             return nullptr;
         }
-        const reclass::Class* type = structure_->project().class_at(row.class_index);
-        if (type == nullptr || row.node_index >= type->nodes.size())
-        {
-            return nullptr;
-        }
-        return &type->nodes[row.node_index];
+        return row.node;
     }
 
     std::optional<std::uint64_t> ReclassValueModel::node_address(const ReclassRow& row) const
@@ -491,7 +487,7 @@ namespace slopkit::ui::models
             return {};
         }
 
-        const std::size_t size = reclass::kind_size(node->kind);
+        const std::size_t size = node->value_size();
         const BlockView   view = block_view(row.block);
         if (size == 0 || !view.readable)
         {
@@ -553,7 +549,7 @@ namespace slopkit::ui::models
         }
 
         const reclass::Node* node = node_of(row);
-        if (node == nullptr || reclass::kind_size(node->kind) == 0)
+        if (node == nullptr || node->value_size() == 0)
         {
             return {};
         }
@@ -564,13 +560,13 @@ namespace slopkit::ui::models
             return QStringLiteral("?");
         }
 
-        QString text = to_qstring(reclass::format_node_value_display(node->kind, bytes, node->hex));
+        QString text = to_qstring(reclass::format_node_value_text(*node, structure_->project(), bytes));
 
         // A hex node whose bytes land inside a loaded module is a potential
         // pointer; the reference names the address such a value would point at.
-        if (reclass::is_hex_kind(node->kind) && reclass::kind_size(node->kind) >= 4)
+        if (reclass::is_hex_kind(node->kind()) && reclass::kind_size(node->kind()) >= 4)
         {
-            const std::uint64_t value = reclass::read_node_value(node->kind, bytes);
+            const std::uint64_t value = reclass::read_node_value(node->kind(), bytes);
             if (inside_module(value))
             {
                 text += QStringLiteral("  -> ") + format_address(value);
@@ -592,7 +588,7 @@ namespace slopkit::ui::models
         {
             return {};
         }
-        return to_qstring(reclass::format_node_value(node->kind, bytes, node->hex));
+        return to_qstring(reclass::format_node_value(node->kind(), bytes, node->hex));
     }
 
     ReclassValueModel::LiveState ReclassValueModel::live_state(const ReclassRow& row) const

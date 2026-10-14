@@ -8,10 +8,17 @@
 #include <string_view>
 #include <vector>
 
-#include "reclass/node.hpp"
+#include "reclass/nodes/node.hpp"
 
 namespace slopkit::reclass
 {
+    class Project;
+
+    // The text the grid's Value column shows for a node whose kind carries its
+    // own parameters - a text node's length, a bitfield's width, an enum's name;
+    // every other kind defers to `format_node_value_display`.
+    [[nodiscard]] std::string
+    format_node_value_text(const Node& node, const Project& project, std::span<const std::byte> bytes);
     // The text the grid's Value column shows for the bytes read at the node's
     // address.
     [[nodiscard]] std::string format_node_value(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);

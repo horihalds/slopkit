@@ -6,16 +6,17 @@
 #include <string_view>
 #include <vector>
 
-#include "reclass/node.hpp"
+#include "reclass/enum.hpp"
+#include "reclass/nodes/node.hpp"
 
 namespace slopkit::reclass
 {
     struct Class
     {
-        std::size_t       id {};
-        std::string       name;
-        std::string       address_expression;
-        std::vector<Node> nodes;
+        std::size_t          id {};
+        std::string          name;
+        std::string          address_expression;
+        std::vector<NodePtr> nodes;
     };
 
     struct Layout
@@ -35,6 +36,16 @@ namespace slopkit::reclass
 
         [[nodiscard]] const Class* find_class(std::string_view name) const noexcept;
 
+        [[nodiscard]] const std::vector<EnumDescription>& enums() const noexcept;
+        [[nodiscard]] std::vector<EnumDescription>&       enums() noexcept;
+
+        [[nodiscard]] const EnumDescription* find_enum(std::string_view name) const noexcept;
+
+        // The new enum, or nullptr when the name is empty or already taken.
+        EnumDescription* add_enum(std::string name, std::size_t size);
+
+        void remove_enum(std::size_t index);
+
         // The new class's id, or zero when the name is empty or already taken.
         std::size_t add_class(std::string name, std::string expression);
 
@@ -45,9 +56,10 @@ namespace slopkit::reclass
         void clear() noexcept;
 
     private:
-        std::vector<Class> classes_;
-        std::size_t        next_class_id_ {1};
-        std::size_t        next_node_id_ {1};
+        std::vector<Class>           classes_;
+        std::vector<EnumDescription> enums_;
+        std::size_t                  next_class_id_ {1};
+        std::size_t                  next_node_id_ {1};
     };
 
     // Sequential offsets with no alignment, exactly like the reference's

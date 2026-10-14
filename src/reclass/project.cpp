@@ -24,9 +24,10 @@ namespace slopkit::reclass
         std::expected<std::size_t, std::string>
         storage_of_node(const Project& project, const Node& node, std::vector<const Class*>& chain)
         {
-            if (node.kind != NodeKind::class_instance)
+            const NodeKind kind = node.kind();
+            if (kind != NodeKind::class_instance && kind != NodeKind::class_wrapper_array)
             {
-                return kind_size(node.kind);
+                return node.size(project);
             }
 
             const Class* target = project.find_class(node.class_name);
@@ -38,7 +39,13 @@ namespace slopkit::reclass
             {
                 return std::unexpected(cycle_message(chain, *target));
             }
-            return storage_of(project, *target, chain);
+
+            const auto size = storage_of(project, *target, chain);
+            if (!size)
+            {
+                return size;
+            }
+            return *size * node.repeat();
         }
 
         std::expected<std::size_t, std::string>
@@ -47,9 +54,9 @@ namespace slopkit::reclass
             chain.push_back(&type);
 
             std::size_t total = 0;
-            for (const Node& node : type.nodes)
+            for (const NodePtr& node : type.nodes)
             {
-                const auto size = storage_of_node(project, node, chain);
+                const auto size = storage_of_node(project, *node, chain);
                 if (!size)
                 {
                     chain.pop_back();
@@ -126,6 +133,7 @@ namespace slopkit::reclass
     void Project::clear() noexcept
     {
         classes_.clear();
+        enums_.clear();
         next_class_id_ = 1;
         next_node_id_  = 1;
     }
@@ -138,11 +146,11 @@ namespace slopkit::reclass
         layout.offsets.reserve(type.nodes.size());
 
         std::size_t offset = 0;
-        for (const Node& node : type.nodes)
+        for (const NodePtr& node : type.nodes)
         {
             layout.offsets.push_back(offset);
 
-            const auto size = storage_of_node(project, node, chain);
+            const auto size = storage_of_node(project, *node, chain);
             if (!size)
             {
                 return std::unexpected(size.error());
@@ -158,6 +166,44 @@ namespace slopkit::reclass
     {
         std::vector<const Class*> chain;
         return storage_of_node(project, node, chain).value_or(0);
+    }
+
+    const std::vector<EnumDescription>& Project::enums() const noexcept
+    {
+        return enums_;
+    }
+
+    std::vector<EnumDescription>& Project::enums() noexcept
+    {
+        return enums_;
+    }
+
+    const EnumDescription* Project::find_enum(std::string_view name) const noexcept
+    {
+        const auto found = std::ranges::find_if(enums_,
+                                                [name](const EnumDescription& entry)
+                                                {
+                                                    return entry.name == name;
+                                                });
+        return found == enums_.end() ? nullptr : &*found;
+    }
+
+    EnumDescription* Project::add_enum(std::string name, std::size_t size)
+    {
+        if (name.empty() || find_enum(name) != nullptr || !is_enum_size(size))
+        {
+            return nullptr;
+        }
+        enums_.push_back(EnumDescription {.name = name, .size = size, .values = {}});
+        return &enums_.back();
+    }
+
+    void Project::remove_enum(std::size_t index)
+    {
+        if (index < enums_.size())
+        {
+            enums_.erase(enums_.begin() + static_cast<std::ptrdiff_t>(index));
+        }
     }
 
 }

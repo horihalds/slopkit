@@ -628,14 +628,45 @@ are the only new UI; `Add Script…` seeds the three hooks as a commented skelet
 
 `slopkit::reclass` (`src/reclass/`) is a target-free model of the C/C++ structs a
 user rebuilds from live memory: `Project` holds the `Class`es, each pinned to an
-address expression, and each class holds an ordered `Node` list of the kinds
-`i8..i64`, `u8..u64`, `f32`, `f64`, `bool`, `char`, `hex8..hex64`, `pointer`,
-`class_instance` and `class_pointer`. Offsets are never stored: `layout_class`
+address expression, and each class holds an ordered list of `NodePtr` nodes. A
+node is a polymorphic `Node` (`src/reclass/nodes/node.hpp`) with one class per
+kind (`make_node(kind)` builds one), and the kinds ported so far are `i8..i64`,
+`u8..u64`, `f32`, `f64`, `bool`, `char`, `hex8..hex64`, `pointer`,
+`class_instance` (a class's fields inlined where it sits), `class_pointer`
+(eight bytes that inline their target) and the container kinds in
+`src/reclass/nodes/container.hpp` — an `array` sums its elements, a `union` is as
+large as its widest member and shares one offset across its members, and
+`class_instance_array`/`class_wrapper_array` repeat their class `repeat()` times.
+Offsets are never stored: `layout_class`
 accumulates them in node order exactly as the reference's
 `BaseContainerNode.UpdateOffsets` does (`offset += node_size(node)`), with no
-alignment, `class_instance` sized by the class it names and both pointer kinds
-taking a pointer. A class that contains itself by value is refused with an error
+alignment and no pointer padding. A class that contains itself by value is
+refused with an error
 naming the cycle instead of recursing, and an unknown reference takes no space.
+A class project also carries its `EnumDescription` entries
+(`src/reclass/enum.hpp`): each has a name, a width of one, two, four or eight
+bytes and named values that an enum node and a bitfield node pick from, while the
+enum editor in `src/ui/dialogs/enums.hpp` creates and edits them without a
+prompt.
+
+The kinds beyond those are added on top: `nint`/`nuint`, `bitfield` (a bit width
+and a sign), `enum` (a value named by the project enum it points at), the
+`utf8`/`utf16`/`utf32` text kinds and their pointers, `vector2/3/4` and
+`matrix3x3/3x4/4x4`, `virtual_method_table`, `virtual_method`, `function` and
+`function_ptr` (`src/reclass/nodes/{number,text,vector,function}.hpp`). The
+reference's node-type table, in the reference's group order, lives in
+`src/reclass/node_menu.hpp` and drives both the add-node and the change-type
+menus; the grid renders each kind's value through `format_node_value_text`
+(`src/reclass/value.cpp`), so a text node decodes its characters, a bitfield its
+bits, an enum the name of the value it reads, and a vector or matrix its floats.
+
+The kinds added here are not persisted with their parameters yet: the
+`reclass/classes/<stem>.txt` payload still stores one line per node carrying the
+kind, name and comment only, so a saved container comes back as an array or union
+with a single default element, a bitfield with one bit, a text node with its
+default length and an enum node without its enum, and the project enums are not
+written at all. A versioned class-project payload covering every kind and the
+enums is the outstanding piece of this work.
 
 The `View > ReClass` window splits the model over three pieces. The structure
 model turns the *selected* class into rows and **blocks** — one block for the class

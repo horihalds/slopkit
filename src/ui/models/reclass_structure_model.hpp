@@ -24,15 +24,17 @@ namespace slopkit::ui::models
     // stretch of memory the row's value is read from.
     struct ReclassRow
     {
-        std::size_t node_id {};
-        std::size_t class_index {};
-        std::size_t node_index {};
-        std::size_t offset {};
-        std::size_t block {};
-        std::size_t position {};
-        bool        unknown_class {};
-        bool        cycle {};
-        bool        too_deep {};
+        // The node the row shows, so a container's child needs no class lookup.
+        const reclass::Node* node {};
+        std::size_t          node_id {};
+        std::size_t          class_index {};
+        std::size_t          node_index {};
+        std::size_t          offset {};
+        std::size_t          block {};
+        std::size_t          position {};
+        bool                 unknown_class {};
+        bool                 cycle {};
+        bool                 too_deep {};
 
         ReclassRow*                              parent {};
         std::vector<std::unique_ptr<ReclassRow>> children;
@@ -124,6 +126,14 @@ namespace slopkit::ui::models
                          std::size_t               base_offset,
                          std::vector<std::size_t>& ancestors,
                          ReclassRow*               parent);
+
+        // Appends the children of an expanded container: an array's elements
+        // follow one another while a union's members share the union's address.
+        void build_container(const reclass::Node& node,
+                             std::size_t          class_index,
+                             std::size_t          block,
+                             std::size_t          base_offset,
+                             ReclassRow*          parent);
 
         [[nodiscard]] ReclassRow* append_row(ReclassRow* parent, std::unique_ptr<ReclassRow> row);
         [[nodiscard]] std::size_t class_index_of(const reclass::Class* type) const;

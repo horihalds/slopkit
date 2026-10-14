@@ -104,8 +104,8 @@ TEST_CASE("a class instance is sized by the class it names", "[reclass]")
 
     auto& holder = project.classes()[1];
     holder.nodes.push_back(node_of(project, NodeKind::int8));
-    slopkit::reclass::Node instance = node_of(project, NodeKind::class_instance);
-    instance.class_name             = "Point";
+    slopkit::reclass::NodePtr instance = node_of(project, NodeKind::class_instance);
+    instance->class_name               = "Point";
     holder.nodes.push_back(std::move(instance));
     holder.nodes.push_back(node_of(project, NodeKind::int32));
 
@@ -114,7 +114,7 @@ TEST_CASE("a class instance is sized by the class it names", "[reclass]")
     REQUIRE(layout->offsets == std::vector<std::size_t> {0, 1, 9});
     REQUIRE(layout->size == 13);
 
-    REQUIRE(node_size(project, holder.nodes[1]) == 8);
+    REQUIRE(node_size(project, *holder.nodes[1]) == 8);
 }
 
 TEST_CASE("a class pointer and a plain pointer take a pointer each", "[reclass]")
@@ -125,8 +125,8 @@ TEST_CASE("a class pointer and a plain pointer take a pointer each", "[reclass]"
 
     project.classes()[0].nodes.push_back(node_of(project, NodeKind::int32));
 
-    slopkit::reclass::Node pointer = node_of(project, NodeKind::class_pointer);
-    pointer.class_name             = "Point";
+    slopkit::reclass::NodePtr pointer = node_of(project, NodeKind::class_pointer);
+    pointer->class_name               = "Point";
 
     auto& holder = project.classes()[1];
     holder.nodes.push_back(node_of(project, NodeKind::pointer));
@@ -145,8 +145,8 @@ TEST_CASE("an unknown class reference takes no space", "[reclass]")
     auto& holder = project.classes().front();
 
     holder.nodes.push_back(node_of(project, NodeKind::int8));
-    slopkit::reclass::Node instance = node_of(project, NodeKind::class_instance);
-    instance.class_name             = "Missing";
+    slopkit::reclass::NodePtr instance = node_of(project, NodeKind::class_instance);
+    instance->class_name               = "Missing";
     holder.nodes.push_back(std::move(instance));
     holder.nodes.push_back(node_of(project, NodeKind::int32));
 
@@ -155,7 +155,7 @@ TEST_CASE("an unknown class reference takes no space", "[reclass]")
     REQUIRE(layout->offsets == std::vector<std::size_t> {0, 1, 1});
     REQUIRE(layout->size == 5);
 
-    REQUIRE(node_size(project, holder.nodes[1]) == 0);
+    REQUIRE(node_size(project, *holder.nodes[1]) == 0);
 }
 
 TEST_CASE("a class that contains itself is refused", "[reclass]")
@@ -164,8 +164,8 @@ TEST_CASE("a class that contains itself is refused", "[reclass]")
     project.add_class("Self", "app+0x10");
     auto& self = project.classes().front();
 
-    slopkit::reclass::Node instance = node_of(project, NodeKind::class_instance);
-    instance.class_name             = "Self";
+    slopkit::reclass::NodePtr instance = node_of(project, NodeKind::class_instance);
+    instance->class_name               = "Self";
     self.nodes.push_back(std::move(instance));
 
     const auto layout = layout_class(project, self);
@@ -180,12 +180,12 @@ TEST_CASE("a cyclic chain of classes is refused and named", "[reclass]")
     project.add_class("A", "app+0x10");
     project.add_class("B", "app+0x20");
 
-    slopkit::reclass::Node to_b = node_of(project, NodeKind::class_instance);
-    to_b.class_name             = "B";
+    slopkit::reclass::NodePtr to_b = node_of(project, NodeKind::class_instance);
+    to_b->class_name               = "B";
     project.classes()[0].nodes.push_back(std::move(to_b));
 
-    slopkit::reclass::Node to_a = node_of(project, NodeKind::class_instance);
-    to_a.class_name             = "A";
+    slopkit::reclass::NodePtr to_a = node_of(project, NodeKind::class_instance);
+    to_a->class_name               = "A";
     project.classes()[1].nodes.push_back(std::move(to_a));
 
     const auto layout = layout_class(project, project.classes()[0]);
@@ -201,15 +201,15 @@ TEST_CASE("a cyclic reference is sized as zero outside the layout path", "[recla
     project.add_class("A", "app+0x10");
     project.add_class("B", "app+0x20");
 
-    slopkit::reclass::Node to_b = node_of(project, NodeKind::class_instance);
-    to_b.class_name             = "B";
+    slopkit::reclass::NodePtr to_b = node_of(project, NodeKind::class_instance);
+    to_b->class_name               = "B";
     project.classes()[0].nodes.push_back(std::move(to_b));
 
-    slopkit::reclass::Node to_a = node_of(project, NodeKind::class_instance);
-    to_a.class_name             = "A";
+    slopkit::reclass::NodePtr to_a = node_of(project, NodeKind::class_instance);
+    to_a->class_name               = "A";
     project.classes()[1].nodes.push_back(std::move(to_a));
 
-    REQUIRE(node_size(project, project.classes()[0].nodes[0]) == 0);
+    REQUIRE(node_size(project, *project.classes()[0].nodes[0]) == 0);
 }
 
 TEST_CASE("an empty class lays out as zero bytes", "[reclass]")
@@ -221,4 +221,80 @@ TEST_CASE("an empty class lays out as zero bytes", "[reclass]")
     REQUIRE(layout.has_value());
     REQUIRE(layout->offsets.empty());
     REQUIRE(layout->size == 0);
+}
+
+TEST_CASE("an array sums its elements and a union takes its widest member", "[reclass]")
+{
+    Project project;
+    project.add_class("Holder", "app+0x10");
+    auto& holder = project.classes().front();
+
+    holder.nodes.push_back(slopkit::test::array_of(project, 4, NodeKind::int32));
+    holder.nodes.push_back(slopkit::test::union_of(project, {NodeKind::int8, NodeKind::int64}));
+
+    const auto layout = layout_class(project, holder);
+    REQUIRE(layout.has_value());
+    REQUIRE(layout->offsets == std::vector<std::size_t> {0, 16});
+    REQUIRE(layout->size == 24);
+    REQUIRE(node_size(project, *holder.nodes[0]) == 16);
+    REQUIRE(node_size(project, *holder.nodes[1]) == 8);
+}
+
+TEST_CASE("a class array repeats its class and an instance array is a pointer", "[reclass]")
+{
+    Project project;
+    project.add_class("Point", "app+0x20");
+    project.add_class("Holder", "app+0x10");
+    project.classes()[0].nodes.push_back(node_of(project, NodeKind::int32));
+
+    auto& holder = project.classes()[1];
+    holder.nodes.push_back(node_of(project, NodeKind::int8));
+    holder.nodes.push_back(slopkit::test::wrapper_array_of(project, "Point", 3));
+    holder.nodes.push_back(slopkit::test::instance_array_of(project, "Point", 2));
+
+    const auto layout = layout_class(project, holder);
+    REQUIRE(layout.has_value());
+    REQUIRE(layout->offsets == std::vector<std::size_t> {0, 1, 13});
+    REQUIRE(layout->size == 21);
+}
+
+TEST_CASE("a class array that repeats the class it sits in is refused", "[reclass]")
+{
+    Project project;
+    project.add_class("Self", "app+0x10");
+    auto& self = project.classes().front();
+    self.nodes.push_back(slopkit::test::wrapper_array_of(project, "Self", 2));
+
+    const auto layout = layout_class(project, self);
+    REQUIRE_FALSE(layout.has_value());
+    REQUIRE(layout.error().find("cyclic") != std::string::npos);
+}
+
+TEST_CASE("the project holds enums and their named values", "[reclass]")
+{
+    Project project;
+
+    auto* colour = project.add_enum("Colour", 4);
+    REQUIRE(colour != nullptr);
+    CHECK(project.find_enum("Colour") == colour);
+    CHECK(project.enums().size() == 1);
+
+    // A duplicate name, an empty name and a width an enum cannot take are
+    // refused, so the project keeps exactly the enum it had.
+    CHECK(project.add_enum("Colour", 1) == nullptr);
+    CHECK(project.add_enum("", 4) == nullptr);
+    CHECK(project.add_enum("Width", 3) == nullptr);
+    CHECK(project.enums().size() == 1);
+
+    project.enums()[0].values.push_back({.name = "red", .value = 1, .comment = {}});
+    CHECK(slopkit::reclass::enum_value_name(project.enums()[0], 1) == "red");
+    CHECK(slopkit::reclass::enum_value_name(project.enums()[0], 2).empty());
+
+    project.remove_enum(0);
+    CHECK(project.enums().empty());
+    CHECK(project.find_enum("Colour") == nullptr);
+
+    project.add_enum("Flags", 1);
+    project.clear();
+    CHECK(project.enums().empty());
 }

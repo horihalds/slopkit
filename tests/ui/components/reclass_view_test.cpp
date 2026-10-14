@@ -78,8 +78,8 @@ namespace
 
             Class& player = project.classes()[1];
             player.nodes.push_back(node_of(project, NodeKind::int8, "tag"));
-            slopkit::reclass::Node next = node_of(project, NodeKind::class_pointer, "next");
-            next.class_name             = "Point";
+            slopkit::reclass::NodePtr next = node_of(project, NodeKind::class_pointer, "next");
+            next->class_name               = "Point";
             player.nodes.push_back(std::move(next));
 
             structure.set_project(project);
@@ -93,7 +93,7 @@ namespace
 
         [[nodiscard]] std::size_t node_id(std::size_t index) const
         {
-            return project.classes()[1].nodes[index].id;
+            return project.classes()[1].nodes[index]->id;
         }
 
         // The model rebuilds its rows whenever the structure changes, which
@@ -300,8 +300,8 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
 
     // The widths follow the rows the class draws: a longer name widens its
     // column when the tree is rebuilt...
-    const int name_width                       = view.column_width(ReclassStructureModel::name);
-    fixture.project.classes()[1].nodes[0].name = "a_much_longer_field_name";
+    const int name_width                        = view.column_width(ReclassStructureModel::name);
+    fixture.project.classes()[1].nodes[0]->name = "a_much_longer_field_name";
     fixture.structure.rebuild();
     QCoreApplication::processEvents();
     CHECK(view.column_width(ReclassStructureModel::name) > name_width);
@@ -505,7 +505,7 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     QCoreApplication::processEvents();
 
     CHECK_FALSE(editor->isVisible());
-    CHECK(player.nodes[0].name == "health");
+    CHECK(player.nodes[0]->name == "health");
     REQUIRE(messages.size() == 1);
     CHECK(messages.first().toStdString() == "Node renamed.");
     CHECK(view.cell_text(fixture.cell(fixture.node_id(0), ReclassStructureModel::name)).toStdString() == "health");
@@ -519,7 +519,7 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
     QApplication::sendEvent(editor, &escape);
     CHECK_FALSE(editor->isVisible());
-    CHECK(player.nodes[0].name == "health");
+    CHECK(player.nodes[0]->name == "health");
     CHECK(messages.size() == 1);
 
     // An empty name is refused with its reason, and the editor stays open for
@@ -529,7 +529,7 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     editor->setText(QStringLiteral("   "));
     QApplication::sendEvent(editor, &enter);
     CHECK(editor->isVisible());
-    CHECK(player.nodes[0].name == "health");
+    CHECK(player.nodes[0]->name == "health");
     REQUIRE(messages.size() == 2);
     CHECK(messages.last().toStdString() == "A node name is required.");
 

@@ -30,14 +30,14 @@ namespace
 
         auto& player = project.classes()[0];
         player.nodes.push_back(node_of(project, NodeKind::int32, "health"));
-        player.nodes.back().comment = "hit points";
-        auto link                   = node_of(project, NodeKind::class_pointer, "next");
-        link.class_name             = "Enemy";
+        player.nodes.back()->comment = "hit points";
+        auto link                    = node_of(project, NodeKind::class_pointer, "next");
+        link->class_name             = "Enemy";
         player.nodes.push_back(std::move(link));
 
         auto& enemy = project.classes()[1];
         enemy.nodes.push_back(node_of(project, NodeKind::float32, "x"));
-        enemy.nodes.back().hex = true;
+        enemy.nodes.back()->hex = true;
         return project;
     }
 
@@ -53,11 +53,11 @@ namespace
             REQUIRE(actual.nodes.size() == expected.nodes.size());
             for (std::size_t position = 0; position < expected.nodes.size(); ++position)
             {
-                REQUIRE(actual.nodes[position].kind == expected.nodes[position].kind);
-                REQUIRE(actual.nodes[position].name == expected.nodes[position].name);
-                REQUIRE(actual.nodes[position].comment == expected.nodes[position].comment);
-                REQUIRE(actual.nodes[position].class_name == expected.nodes[position].class_name);
-                REQUIRE(actual.nodes[position].hex == expected.nodes[position].hex);
+                REQUIRE(actual.nodes[position]->kind() == expected.nodes[position]->kind());
+                REQUIRE(actual.nodes[position]->name == expected.nodes[position]->name);
+                REQUIRE(actual.nodes[position]->comment == expected.nodes[position]->comment);
+                REQUIRE(actual.nodes[position]->class_name == expected.nodes[position]->class_name);
+                REQUIRE(actual.nodes[position]->hex == expected.nodes[position]->hex);
             }
         }
     }
@@ -74,8 +74,8 @@ TEST_CASE("a class project round-trips through its members", "[reclass]")
     const auto restored = from_members(members);
     REQUIRE(restored.has_value());
     require_same(original, *restored);
-    REQUIRE(restored->classes()[0].nodes[0].id != 0);
-    REQUIRE(restored->classes()[0].nodes[0].id != restored->classes()[1].nodes[0].id);
+    REQUIRE(restored->classes()[0].nodes[0]->id != 0);
+    REQUIRE(restored->classes()[0].nodes[0]->id != restored->classes()[1].nodes[0]->id);
 }
 
 TEST_CASE("the class member text is the documented layout", "[reclass]")
@@ -134,7 +134,7 @@ TEST_CASE("quotes, backslashes and newlines survive the member text", "[reclass]
 
     auto& player = project.classes().front();
     player.nodes.push_back(node_of(project, NodeKind::int32, "a\nb"));
-    player.nodes.back().comment = "say \"hi\"";
+    player.nodes.back()->comment = "say \"hi\"";
 
     const auto restored = from_members(to_members(project));
     REQUIRE(restored.has_value());

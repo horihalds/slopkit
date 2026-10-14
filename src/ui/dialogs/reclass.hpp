@@ -113,6 +113,16 @@ namespace slopkit::ui::dialogs
         void copy_name();
         void remove_selected_nodes();
 
+        // The enum commands; the prompt-free ones let a test drive them without
+        // opening a modal box.
+        void add_enum();
+        void edit_enum(std::size_t index);
+        void delete_enum(std::size_t index);
+
+        [[nodiscard]] bool                 create_enum(const QString& name, std::size_t size);
+        [[nodiscard]] bool                 remove_enum(const QString& name);
+        [[nodiscard]] std::vector<QString> enum_names() const;
+
         [[nodiscard]] std::optional<std::size_t> current_node_id() const;
         [[nodiscard]] std::vector<std::size_t>   selected_node_ids() const;
 
@@ -154,11 +164,12 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] std::vector<const models::ReclassRow*> selected_rows() const;
         [[nodiscard]] reclass::Node*                         node_at(const models::ReclassRow* row) const;
 
-        // One hex node the dissect command is guessing a kind for.
+        // One hex node the dissect command is guessing a kind for; the node is
+        // named by its id, so a container's element can be dissected as well as
+        // a class's own field.
         struct DissectTarget
         {
-            std::size_t            class_index {};
-            std::size_t            node_index {};
+            std::size_t            node_id {};
             reclass::NodeKind      kind {reclass::NodeKind::hex8};
             std::size_t            offset {};
             std::uint64_t          address {};

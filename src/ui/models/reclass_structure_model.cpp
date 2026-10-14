@@ -3,9 +3,12 @@
 #include <algorithm>
 #include <format>
 #include <string>
+#include <string_view>
 #include <utility>
 
+#include "reclass/edit.hpp"
 #include "reclass/node.hpp"
+#include "reclass/nodes/container.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
@@ -91,12 +94,16 @@ namespace slopkit::ui::models
             return false;
         }
 
-        reclass::Class* type = project_ == nullptr ? nullptr : project_->class_at(row.class_index);
-        if (type == nullptr || row.node_index >= type->nodes.size())
+        if (row.node == nullptr)
         {
             return false;
         }
-        type->nodes[row.node_index].name = trimmed.toStdString();
+        const auto ref = reclass::node_ref(*project_, row.node_id);
+        if (!ref)
+        {
+            return false;
+        }
+        (*ref->owner)[ref->index]->name = trimmed.toStdString();
 
         // A rename moves no offset, so the row objects stay and only the one
         // cell is announced; the grid re-measures that column on it.
@@ -146,12 +153,11 @@ namespace slopkit::ui::models
         {
             return false;
         }
-        const reclass::Class* definition = project_->class_at(row.class_index);
-        if (definition == nullptr || row.node_index >= definition->nodes.size())
+        if (row.node == nullptr)
         {
             return false;
         }
-        return reclass::is_class_kind(definition->nodes[row.node_index].kind);
+        return reclass::is_class_kind(row.node->kind()) || row.node->is_container();
     }
 
     const std::set<std::size_t>& ReclassStructureModel::expanded_nodes() const noexcept
@@ -220,6 +226,45 @@ namespace slopkit::ui::models
         build_class(*type, selected_class_, 0, 0, ancestors, nullptr);
     }
 
+    void ReclassStructureModel::build_container(const reclass::Node& node,
+                                                std::size_t          class_index,
+                                                std::size_t          block,
+                                                std::size_t          base_offset,
+                                                ReclassRow*          parent)
+    {
+        const auto* container = dynamic_cast<const reclass::ContainerNode*>(&node);
+        if (container == nullptr)
+        {
+            return;
+        }
+
+        const bool  shared = node.kind() == reclass::NodeKind::union_value;
+        std::size_t offset = 0;
+        for (std::size_t index = 0; index < container->children_mutable().size(); ++index)
+        {
+            const reclass::Node& child = *container->children_mutable()[index];
+
+            auto row         = std::make_unique<ReclassRow>();
+            row->node        = &child;
+            row->node_id     = child.id;
+            row->class_index = class_index;
+            row->offset      = base_offset + offset;
+            row->block       = block;
+
+            ReclassRow* created = append_row(parent, std::move(row));
+
+            if (child.is_container() && is_expanded(child.id))
+            {
+                build_container(child, class_index, block, created->offset, created);
+            }
+
+            if (!shared)
+            {
+                offset += reclass::node_size(*project_, child);
+            }
+        }
+    }
+
     void ReclassStructureModel::build_class(const reclass::Class&     type,
                                             std::size_t               class_index,
                                             std::size_t               block,
@@ -230,9 +275,10 @@ namespace slopkit::ui::models
         std::size_t offset = 0;
         for (std::size_t node_index = 0; node_index < type.nodes.size(); ++node_index)
         {
-            const reclass::Node& node = type.nodes[node_index];
+            const reclass::Node& node = *type.nodes[node_index];
 
             auto row         = std::make_unique<ReclassRow>();
+            row->node        = &node;
             row->node_id     = node.id;
             row->class_index = class_index;
             row->node_index  = node_index;
@@ -241,7 +287,7 @@ namespace slopkit::ui::models
 
             ReclassRow* created = append_row(parent, std::move(row));
 
-            if (reclass::is_class_kind(node.kind))
+            if (reclass::is_class_kind(node.kind()))
             {
                 const reclass::Class* target       = project_->find_class(node.class_name);
                 const std::size_t     target_index = target == nullptr ? 0 : class_index_of(target);
@@ -267,13 +313,17 @@ namespace slopkit::ui::models
                     child.parent_block = block;
                     child.base_offset  = created->offset;
                     child.size         = child_layout.has_value() ? child_layout->size : 0;
-                    child.via_pointer  = node.kind == reclass::NodeKind::class_pointer;
+                    child.via_pointer  = node.kind() == reclass::NodeKind::class_pointer;
                     blocks_.push_back(child);
 
                     ancestors.push_back(target_index);
                     build_class(*target, target_index, child.index, created->offset, ancestors, created);
                     ancestors.pop_back();
                 }
+            }
+            else if (node.is_container() && is_expanded(node.id))
+            {
+                build_container(node, class_index, block, created->offset, created);
             }
 
             offset += reclass::node_size(*project_, node);
@@ -322,15 +372,26 @@ namespace slopkit::ui::models
         {
             return tr("too deep");
         }
-        if (node.kind == reclass::NodeKind::class_instance)
+        if (node.kind() == reclass::NodeKind::class_instance)
         {
             return tr("Instance <%1>").arg(to_qstring(node.class_name));
         }
-        if (node.kind == reclass::NodeKind::class_pointer)
+        if (node.kind() == reclass::NodeKind::class_pointer)
         {
             return tr("Pointer <%1>").arg(to_qstring(node.class_name));
         }
-        return to_qstring(reclass::describe(node.kind));
+
+        QString label = to_qstring(reclass::describe(node.kind()));
+        if (!node.class_name.empty())
+        {
+            label += QStringLiteral(" <%1>").arg(to_qstring(node.class_name));
+        }
+        const std::string_view extra = node.extra_text();
+        if (!extra.empty())
+        {
+            label += QStringLiteral(" ") + to_qstring(extra);
+        }
+        return label;
     }
 
     QModelIndex ReclassStructureModel::index(int row, int column, const QModelIndex& parent) const
@@ -383,12 +444,11 @@ namespace slopkit::ui::models
         {
             return {};
         }
-        const reclass::Class* definition = project_->class_at(row->class_index);
-        if (definition == nullptr || row->node_index >= definition->nodes.size())
+        if (row->node == nullptr)
         {
             return {};
         }
-        const reclass::Node& node = definition->nodes[row->node_index];
+        const reclass::Node& node = *row->node;
 
         switch (role)
         {

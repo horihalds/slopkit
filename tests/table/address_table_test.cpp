@@ -1302,8 +1302,8 @@ TEST_CASE("a class project rides along in the archive", "[table]")
 
     auto& player = structures.classes()[0];
     player.nodes.push_back(node_of(structures, NodeKind::int32, "health"));
-    auto link       = node_of(structures, NodeKind::class_pointer, "next");
-    link.class_name = "Enemy";
+    auto link        = node_of(structures, NodeKind::class_pointer, "next");
+    link->class_name = "Enemy";
     player.nodes.push_back(std::move(link));
 
     const auto path = scratch_file("structures.skt");
@@ -1334,8 +1334,8 @@ TEST_CASE("a class project rides along in the archive", "[table]")
     CHECK(loaded.structures().classes()[0].address_expression == "game.exe+0x1234");
     CHECK(loaded.structures().classes()[1].name == "Enemy");
     REQUIRE(loaded.structures().classes()[0].nodes.size() == 2);
-    CHECK(loaded.structures().classes()[0].nodes[1].kind == NodeKind::class_pointer);
-    CHECK(loaded.structures().classes()[0].nodes[1].class_name == "Enemy");
+    CHECK(loaded.structures().classes()[0].nodes[1]->kind() == NodeKind::class_pointer);
+    CHECK(loaded.structures().classes()[0].nodes[1]->class_name == "Enemy");
 }
 
 TEST_CASE("clearing the table drops the classes too", "[table]")

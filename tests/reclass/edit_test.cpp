@@ -19,12 +19,12 @@ namespace
     using slopkit::reclass::Project;
     using slopkit::test::node_of;
 
-    std::vector<NodeKind> kinds_of(const std::vector<slopkit::reclass::Node>& nodes)
+    std::vector<NodeKind> kinds_of(const std::vector<slopkit::reclass::NodePtr>& nodes)
     {
         std::vector<NodeKind> kinds;
-        for (const slopkit::reclass::Node& node : nodes)
+        for (const slopkit::reclass::NodePtr& node : nodes)
         {
-            kinds.push_back(node.kind);
+            kinds.push_back(node->kind());
         }
         return kinds;
     }
@@ -60,9 +60,9 @@ TEST_CASE("appended bytes become uniquely identified pad nodes", "[reclass]")
     append_bytes(project, type.nodes, 6);
 
     REQUIRE(kinds_of(type.nodes) == std::vector<NodeKind> {NodeKind::int32, NodeKind::hex32, NodeKind::hex16});
-    REQUIRE(type.nodes[1].id != 0);
-    REQUIRE(type.nodes[2].id != 0);
-    REQUIRE(type.nodes[1].id != type.nodes[2].id);
+    REQUIRE(type.nodes[1]->id != 0);
+    REQUIRE(type.nodes[2]->id != 0);
+    REQUIRE(type.nodes[1]->id != type.nodes[2]->id);
     REQUIRE(offsets_of(project, 0) == std::vector<std::size_t> {0, 4, 8});
 }
 
@@ -79,8 +79,8 @@ TEST_CASE("shrinking a node's kind pads the freed bytes", "[reclass]")
     change_node_kind(project, type.nodes, 0, NodeKind::int32);
 
     REQUIRE(kinds_of(type.nodes) == std::vector<NodeKind> {NodeKind::int32, NodeKind::hex32, NodeKind::int32});
-    REQUIRE(type.nodes[0].name == "big");
-    REQUIRE(type.nodes[2].name == "small");
+    REQUIRE(type.nodes[0]->name == "big");
+    REQUIRE(type.nodes[2]->name == "small");
     REQUIRE(offsets_of(project, 0) == std::vector<std::size_t> {0, 4, 8});
 }
 
@@ -107,9 +107,9 @@ TEST_CASE("re-typing a class instance pads by the class it held", "[reclass]")
 
     project.classes()[0].nodes.push_back(node_of(project, NodeKind::int32));
 
-    auto&                  holder   = project.classes()[1];
-    slopkit::reclass::Node instance = node_of(project, NodeKind::class_instance, "p");
-    instance.class_name             = "Point";
+    auto&                     holder   = project.classes()[1];
+    slopkit::reclass::NodePtr instance = node_of(project, NodeKind::class_instance, "p");
+    instance->class_name               = "Point";
     holder.nodes.push_back(std::move(instance));
     holder.nodes.push_back(node_of(project, NodeKind::int32, "x"));
     REQUIRE(offsets_of(project, 1) == std::vector<std::size_t> {0, 4});
@@ -118,7 +118,7 @@ TEST_CASE("re-typing a class instance pads by the class it held", "[reclass]")
 
     REQUIRE(kinds_of(holder.nodes)
             == std::vector<NodeKind> {NodeKind::int8, NodeKind::hex16, NodeKind::hex8, NodeKind::int32});
-    REQUIRE(holder.nodes[0].class_name.empty());
+    REQUIRE(holder.nodes[0]->class_name.empty());
     REQUIRE(offsets_of(project, 1) == std::vector<std::size_t> {0, 1, 3, 4});
 }
 
@@ -130,16 +130,16 @@ TEST_CASE("a node that stops referring to a class drops the name", "[reclass]")
 
     project.classes()[0].nodes.push_back(node_of(project, NodeKind::int32));
 
-    auto&                  holder  = project.classes()[1];
-    slopkit::reclass::Node pointer = node_of(project, NodeKind::class_pointer, "next");
-    pointer.class_name             = "Point";
+    auto&                     holder  = project.classes()[1];
+    slopkit::reclass::NodePtr pointer = node_of(project, NodeKind::class_pointer, "next");
+    pointer->class_name               = "Point";
     holder.nodes.push_back(std::move(pointer));
 
     change_node_kind(project, holder.nodes, 0, NodeKind::uint64);
 
-    REQUIRE(holder.nodes[0].kind == NodeKind::uint64);
-    REQUIRE(holder.nodes[0].class_name.empty());
-    REQUIRE(holder.nodes[0].name == "next");
+    REQUIRE(holder.nodes[0]->kind() == NodeKind::uint64);
+    REQUIRE(holder.nodes[0]->class_name.empty());
+    REQUIRE(holder.nodes[0]->name == "next");
 }
 
 TEST_CASE("re-typing out of range is ignored", "[reclass]")
@@ -152,4 +152,22 @@ TEST_CASE("re-typing out of range is ignored", "[reclass]")
     change_node_kind(project, type.nodes, 4, NodeKind::int8);
 
     REQUIRE(kinds_of(type.nodes) == std::vector<NodeKind> {NodeKind::int32});
+}
+
+TEST_CASE("re-typing an array pads the bytes it freed", "[reclass]")
+{
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& type = project.classes().front();
+
+    type.nodes.push_back(slopkit::test::array_of(project, 4, NodeKind::int32));
+    type.nodes.push_back(node_of(project, NodeKind::int32, "x"));
+    REQUIRE(offsets_of(project, 0) == std::vector<std::size_t> {0, 16});
+
+    change_node_kind(project, type.nodes, 0, NodeKind::int8);
+
+    REQUIRE(kinds_of(type.nodes)
+            == std::vector<NodeKind> {
+                NodeKind::int8, NodeKind::hex64, NodeKind::hex32, NodeKind::hex16, NodeKind::hex8, NodeKind::int32});
+    REQUIRE(offsets_of(project, 0) == std::vector<std::size_t> {0, 1, 9, 13, 15, 16});
 }
