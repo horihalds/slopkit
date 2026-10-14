@@ -1,12 +1,17 @@
 #pragma once
 
+#include <unordered_map>
+#include <unordered_set>
+
 #include <QIdentityProxyModel>
+#include <QString>
 #include <QVariant>
 
 class QModelIndex;
 
 namespace slopkit::ui::models
 {
+    struct ReclassRow;
     class ReclassStructureModel;
     class ReclassValueModel;
 
@@ -24,14 +29,30 @@ namespace slopkit::ui::models
         [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
         bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole) override;
 
-        // Repaints the two live columns of every row after a read pass.
+        // Repaints the live columns after a read pass, one cell at a time: a
+        // row whose text did not move is left alone, so a target that is not
+        // changing costs no repaint at all.
         void refresh_values();
 
     private:
+        // What a row last showed, so a pass can tell what actually moved.
+        struct Shown
+        {
+            QString address;
+            QString value;
+        };
+
         void refresh(const QModelIndex& parent);
+
+        // A rebuild replaces every row the caches are keyed by.
+        void drop_cache();
 
         ReclassStructureModel& structure_;
         ReclassValueModel&     values_;
+
+        std::unordered_map<const ReclassRow*, Shown> shown_;
+        std::unordered_set<const ReclassRow*>        changed_;
+        bool                                         cache_valid_ {};
     };
 
 }

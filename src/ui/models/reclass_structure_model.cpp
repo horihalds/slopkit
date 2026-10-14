@@ -362,9 +362,13 @@ namespace slopkit::ui::models
             }
             return {};
         case Qt::ForegroundRole:
-            if (index.column() == comment || is_marked(*row))
+            if (is_marked(*row) || index.column() == comment || index.column() == offset)
             {
                 return active_theme().text_muted;
+            }
+            if (index.column() == type)
+            {
+                return active_theme().syntax_keyword;
             }
             return {};
         case widgets::kFullTextRole:

@@ -30,6 +30,16 @@ namespace slopkit::ui::models
         Q_OBJECT
 
     public:
+        // How a row's value reads right now, in the address list's vocabulary:
+        // a block the target answered, one it did not, and one it has not been
+        // asked about yet.
+        enum class LiveState
+        {
+            none,
+            readable,
+            unreadable,
+        };
+
         ReclassValueModel(process::AccessWorker& worker, process::AttachedTarget& target, QObject* parent = nullptr);
 
         void set_structure(ReclassStructureModel& structure);
@@ -53,6 +63,10 @@ namespace slopkit::ui::models
         [[nodiscard]] QString address_text(const ReclassRow& row) const;
 
         [[nodiscard]] QString value_text(const ReclassRow& row) const;
+
+        // How the row's value reads right now: the block that is actually read
+        // answered, did not answer, or has not been asked yet.
+        [[nodiscard]] LiveState live_state(const ReclassRow& row) const;
 
         // The node's address in the target, when its block is known.
         [[nodiscard]] std::optional<std::uint64_t> node_address(const ReclassRow& row) const;

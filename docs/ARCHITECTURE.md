@@ -670,3 +670,11 @@ and re-types the node with the padding rule that keeps the following offsets
 where they were, while `Follow Pointer` sets a pointer node's referenced class and
 inlines it. A class project rides in the `.skt` archive as its own member group
 (see the map's `.skt` gotcha).
+
+The proxy model answers the two live columns from the value model and leaves the
+other four to the structure model, and a pass repaints a cell only when its text
+moved: it remembers what each row last showed, emits `dataChanged` for that one
+cell, and skips the first pass after a rebuild because the reset has already
+repainted the grid. The header keeps the static columns at a width measured once
+from the font instead of measuring the model, so a pass that moves a value never
+walks the rows to re-lay-out the view.

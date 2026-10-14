@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
@@ -21,6 +22,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStyle>
 #include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -56,6 +58,17 @@ namespace slopkit::ui::dialogs
         QString kind_label(reclass::NodeKind kind)
         {
             return to_qstring(reclass::describe(kind));
+        }
+
+        // A column is as wide as the widest text it usually holds, measured once
+        // from the font. Letting the header measure the model instead would make
+        // it walk every row again on each pass a scroll or a resize lays out,
+        // which is the one thing a grid that repaints on a live cadence cannot
+        // afford.
+        int content_width(const QWidget& widget, const QFont& font, const QString& sample)
+        {
+            const int margin = 2 * widget.style()->pixelMetric(QStyle::PM_HeaderMargin, nullptr, &widget);
+            return QFontMetrics(font).horizontalAdvance(sample) + margin;
         }
     }
 
@@ -173,9 +186,26 @@ namespace slopkit::ui::dialogs
         grid_->setAllColumnsShowFocus(true);
         grid_->setUniformRowHeights(true);
         grid_->setContextMenuPolicy(Qt::CustomContextMenu);
+        grid_->setAlternatingRowColors(true);
         grid_->setItemDelegate(new widgets::ElidedTooltipDelegate(grid_));
-        grid_->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
-        grid_->header()->setStretchLastSection(true);
+
+        // The address, offset, type, name and comment columns take a fixed width
+        // derived from their widest text, while the value column - the widest of
+        // them and the one a live pass rewrites - owns the slack.
+        QHeaderView* header = grid_->header();
+        header->setSectionResizeMode(QHeaderView::Interactive);
+        header->setSectionResizeMode(models::ReclassStructureModel::value, QHeaderView::Stretch);
+        header->resizeSection(models::ReclassStructureModel::address,
+                              content_width(*grid_, mono_font(), ui::format_absolute(0)));
+        header->resizeSection(models::ReclassStructureModel::offset,
+                              content_width(*grid_, mono_font(), QStringLiteral("FFFFFFFF")));
+        header->resizeSection(
+            models::ReclassStructureModel::type,
+            content_width(*grid_, pane->font(), to_qstring(reclass::describe(reclass::NodeKind::class_pointer))));
+        header->resizeSection(models::ReclassStructureModel::name,
+                              content_width(*grid_, pane->font(), QStringLiteral("field_00000000")));
+        header->resizeSection(models::ReclassStructureModel::comment,
+                              content_width(*grid_, pane->font(), tr("Comment")));
         layout->addWidget(grid_, 1);
 
         return pane;
@@ -346,8 +376,10 @@ namespace slopkit::ui::dialogs
         {
             return;
         }
+        // The applied readings announce themselves; repainting is the value
+        // model's signal's job, and doing it here as well repainted every cell
+        // twice per pass.
         values_->apply_readings(readings);
-        proxy_->refresh_values();
     }
 
     void ReClassDialog::refresh_project()

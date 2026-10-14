@@ -572,4 +572,33 @@ namespace slopkit::ui::models
         return to_qstring(reclass::format_node_value(node->kind, bytes, node->hex));
     }
 
+    ReclassValueModel::LiveState ReclassValueModel::live_state(const ReclassRow& row) const
+    {
+        if (structure_ == nullptr || !attached())
+        {
+            return LiveState::none;
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (row.block >= blocks.size())
+        {
+            return LiveState::none;
+        }
+
+        // A nested class instance shares its parent's bytes, so the block that
+        // was actually read decides for the whole chain.
+        std::size_t block = row.block;
+        while (block != 0 && !blocks[block].via_pointer)
+        {
+            block = blocks[block].parent_block;
+        }
+
+        const LiveCell* cell = cells_.at(block);
+        if (cell == nullptr || !cell->has_reading)
+        {
+            return LiveState::none;
+        }
+        return cell->readable ? LiveState::readable : LiveState::unreadable;
+    }
+
 }

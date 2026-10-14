@@ -8,6 +8,7 @@
 
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QHeaderView>
 #include <QListWidget>
 #include <QTreeView>
 
@@ -115,6 +116,16 @@ TEST_CASE("the ReClass window opens as a companion window", "[reclass][ui]")
     CHECK(dialog.structure()->valid_class());
     CHECK(dialog.structure()->rowCount() == 2);
     CHECK(dialog.grid()->model() == dialog.proxy());
+
+    // The header may not measure the model: a ResizeToContents column re-reads
+    // every row on each pass a reading moves, which is what made the grid
+    // stutter on the live cadence. Only the value column stretches; the rest
+    // hold the width their own text needs.
+    CHECK(dialog.grid()->header()->sectionResizeMode(slopkit::ui::models::ReclassStructureModel::value)
+          == QHeaderView::Stretch);
+    CHECK(dialog.grid()->header()->sectionResizeMode(slopkit::ui::models::ReclassStructureModel::address)
+          == QHeaderView::Interactive);
+    CHECK(dialog.grid()->alternatingRowColors());
 
     // Re-opening brings the same window and the same project back.
     dialog.hide();
