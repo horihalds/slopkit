@@ -324,6 +324,11 @@ namespace slopkit::ui::dialogs
         return grid_;
     }
 
+    QLabel* ReClassDialog::header_label() const noexcept
+    {
+        return header_;
+    }
+
     widgets::StatusLabel* ReClassDialog::status_label() const noexcept
     {
         return status_;
@@ -391,11 +396,6 @@ namespace slopkit::ui::dialogs
     void ReClassDialog::set_modules(std::vector<process::ModuleInfo> modules)
     {
         values_->set_modules(std::move(modules));
-    }
-
-    void ReClassDialog::set_address_mode(AddressMode mode)
-    {
-        values_->set_address_mode(mode);
     }
 
     void ReClassDialog::closeEvent(QCloseEvent* event)
@@ -665,9 +665,13 @@ namespace slopkit::ui::dialogs
             return false;
         }
 
+        // A new class starts covering a page of memory, so the user retypes the
+        // fields they can see instead of adding bytes until the offsets reach.
+        reclass::append_bytes(project_, project_.classes().back().nodes, reclass::kDefaultClassBytes);
+
         structure_->set_class(project_.classes().size() - 1);
         refresh_all();
-        report(tr("Class '%1' added.").arg(trimmed), false);
+        report(tr("Class '%1' added with %2 bytes of padding.").arg(trimmed).arg(reclass::kDefaultClassBytes), false);
         return true;
     }
 

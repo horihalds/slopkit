@@ -664,6 +664,13 @@ flight, and matches every completion against the job it was submitted for. A
 `Value` cell of an editable kind is edited in place: the text is parsed for the
 node's kind, one `submit_write` carries the node's address and bytes, and a
 refused write says why on the status line instead of writing a guessed address.
+The cell's text and the text a write parses are deliberately two functions:
+`format_node_value_display` adds the readings the reference draws beside a value
+— an integer's hex form, a float at three decimals, a hex node's float and
+integer readings, a pointer's target, and the address a hex node's bytes would
+point at when they land in a module — while the editor and the parser keep
+`format_node_value`'s single value, so what the user types is what the write
+reads back.
 `Dissect` guesses a better kind for a `hexN` node from its live bytes — a
 plausible pointer first, then a small `f32`, a small `i32` and an aligned `f64` —
 and re-types the node with the padding rule that keeps the following offsets

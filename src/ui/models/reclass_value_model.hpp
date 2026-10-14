@@ -46,8 +46,6 @@ namespace slopkit::ui::models
 
         void set_modules(std::vector<process::ModuleInfo> modules);
 
-        void set_address_mode(AddressMode mode);
-
         // The rows changed shape: the readings belong to the old shape, while
         // the resolved addresses stay because they are keyed by class id.
         void invalidate();
@@ -63,6 +61,10 @@ namespace slopkit::ui::models
         [[nodiscard]] QString address_text(const ReclassRow& row) const;
 
         [[nodiscard]] QString value_text(const ReclassRow& row) const;
+
+        // The same value as the editor is prefilled with: the value a write
+        // parses, without the readings the cell draws beside it.
+        [[nodiscard]] QString edit_text(const ReclassRow& row) const;
 
         // How the row's value reads right now: the block that is actually read
         // answered, did not answer, or has not been asked yet.
@@ -82,8 +84,8 @@ namespace slopkit::ui::models
         // project's classes are re-read first.
         [[nodiscard]] std::optional<std::uint64_t> class_address(std::size_t class_index);
 
-        // An address spelled the way the address column and the tooltips spell
-        // it.
+        // An address spelled the way the class view spells it everywhere: the
+        // absolute form, zero-padded to the pointer width.
         [[nodiscard]] QString format_address(std::uint64_t address) const;
 
         // Whether a value can be typed into this node's cell.
@@ -143,7 +145,6 @@ namespace slopkit::ui::models
         process::AttachedTarget& target_;
         ReclassStructureModel*   structure_ {};
         ModuleSpans              modules_;
-        AddressMode              address_mode_ {AddressMode::module_relative};
 
         std::vector<ClassAddress> classes_;
         LiveCells                 cells_;

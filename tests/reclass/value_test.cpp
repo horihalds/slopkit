@@ -154,6 +154,60 @@ TEST_CASE("a value too short for its kind has no rendering", "[reclass]")
     REQUIRE_FALSE(parse_node_value(NodeKind::class_instance, "1").has_value());
 }
 
+TEST_CASE("the grid's reading of a value adds the reference's alternatives", "[reclass]")
+{
+    using slopkit::reclass::format_node_value_display;
+    using slopkit::reclass::read_node_value;
+
+    // An integer with the hex form beside it, and the other way round once the
+    // node is shown as hex.
+    REQUIRE(format_node_value_display(NodeKind::int32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false) == "42  0x0000002A");
+    REQUIRE(format_node_value_display(NodeKind::int32, bytes_of({0x2A, 0x00, 0x00, 0x00}), true) == "0x0000002A  42");
+    REQUIRE(format_node_value_display(NodeKind::int8, bytes_of({0xFF}), false) == "-1  0xFF");
+    REQUIRE(format_node_value_display(NodeKind::uint32, bytes_of({0xFF, 0xFF, 0xFF, 0xFF}), false)
+            == "4294967295  0xFFFFFFFF");
+    REQUIRE(format_node_value_display(NodeKind::uint16, bytes_of({0x10, 0x27}), true) == "0x2710  10000");
+
+    // A float reads at three decimals, or as its bits when shown as hex.
+    REQUIRE(format_node_value_display(NodeKind::float32, bytes_of({0xC3, 0xF5, 0x48, 0x40}), false) == "3.140");
+    REQUIRE(format_node_value_display(NodeKind::float32, bytes_of({0xC3, 0xF5, 0x48, 0x40}), true) == "4048F5C3");
+    REQUIRE(
+        format_node_value_display(NodeKind::float64, bytes_of({0x1F, 0x85, 0xEB, 0x51, 0xB8, 0x1E, 0x09, 0x40}), false)
+        == "3.140");
+
+    // A hex node shows what its bytes would read as: the float, then the signed
+    // value and the raw bits. A null one stops after the float.
+    REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false)
+            == "2A000000  0.000  42  0x2A");
+    REQUIRE(
+        format_node_value_display(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), false)
+        == "4000400000000000  0.000  4194368  0x400040");
+    REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00}), false)
+            == "00000000  0.000  0");
+
+    // The small kinds read as they always did.
+    REQUIRE(format_node_value_display(NodeKind::hex8, bytes_of({0x0F}), false) == "0F");
+    REQUIRE(format_node_value_display(NodeKind::hex16, bytes_of({0x0F, 0x10}), false) == "0F10");
+    REQUIRE(format_node_value_display(NodeKind::boolean, bytes_of({0x01}), false) == "true");
+    REQUIRE(format_node_value_display(NodeKind::character, bytes_of({0x41}), false) == "A");
+
+    // A pointer is drawn as the address it holds.
+    REQUIRE(format_node_value_display(NodeKind::pointer, bytes_of({0x40, 0x00, 0x40, 0x00, 0, 0, 0, 0}), false)
+            == "-> 0x0000000000400040");
+    REQUIRE(format_node_value_display(NodeKind::class_pointer, bytes_of({0, 0, 0, 0, 0, 0, 0, 0}), false)
+            == "-> 0x0000000000000000");
+
+    REQUIRE(format_node_value_display(NodeKind::int32, bytes_of({0x01, 0x02}), false).empty());
+    REQUIRE(format_node_value_display(NodeKind::class_instance, bytes_of({0x01}), false).empty());
+
+    // The value a hex node's bytes would read as, which the grid tests for an
+    // address; a span that does not cover the kind has none.
+    REQUIRE(read_node_value(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0, 0, 0, 0})) == 0x400040);
+    REQUIRE(read_node_value(NodeKind::hex8, bytes_of({0xFF})) == 0xFF);
+    REQUIRE(read_node_value(NodeKind::hex64, bytes_of({0x01, 0x02})) == 0);
+    REQUIRE(read_node_value(NodeKind::class_instance, bytes_of({0x01})) == 0);
+}
+
 TEST_CASE("malformed values are refused with a reason", "[reclass]")
 {
     REQUIRE_FALSE(parse_node_value(NodeKind::int32, "").has_value());

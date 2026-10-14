@@ -155,6 +155,12 @@ TEST_CASE("the class commands add, rename, re-address and delete", "[reclass][ui
     CHECK(dialog.structure()->selected_class() == 2);
     CHECK_FALSE(dialog.status_label()->text().isEmpty());
 
+    // A new class arrives covering 1024 bytes, so the grid starts as a page of
+    // the target the user retypes instead of an empty list.
+    CHECK(fixture.project.classes()[2].nodes.size() == 128);
+    CHECK(fixture.project.classes()[2].nodes.front().kind == NodeKind::hex64);
+    CHECK(dialog.structure()->rowCount() == 128);
+
     // A duplicate name, an empty name and a malformed expression are refused.
     CHECK_FALSE(dialog.create_class(QStringLiteral("Enemy"), QStringLiteral("app+0x40")));
     CHECK(fixture.project.classes().size() == 3);
@@ -270,7 +276,6 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     fixture.target = slopkit::test::fake_target();
     attach_session(fixture.worker);
     dialog.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)});
-    dialog.set_address_mode(slopkit::ui::AddressMode::absolute);
     dialog.show();
     QCoreApplication::processEvents();
 
@@ -288,6 +293,12 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     live_pass(fixture, dialog);
 
     REQUIRE(point.nodes[2].kind == NodeKind::hex64);
+
+    // The header and the class tooltips spell a resolved address the way the
+    // address column does: absolute, zero-padded to the pointer width.
+    CHECK(dialog.header_label()->text() == QStringLiteral("Point · app+0x20 → 0x0000000000400020"));
+    CHECK(dialog.class_list()->item(0)->toolTip() == QStringLiteral("app+0x20 → 0x0000000000400020"));
+
     dialog.dissect();
     drain_until_idle(fixture.worker);
 

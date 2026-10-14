@@ -508,7 +508,6 @@ namespace slopkit::ui
                     found_list_->set_address_mode(mode);
                     address_list_->set_address_mode(mode);
                     debug_.set_address_mode(mode);
-                    reclass_->set_address_mode(mode);
                     memory_view_->set_address_mode(mode);
                 });
 
@@ -517,7 +516,6 @@ namespace slopkit::ui
         address_list_->set_address_mode(persisted_mode);
         debug_.set_address_mode(persisted_mode);
         memory_view_->set_address_mode(persisted_mode);
-        reclass_->set_address_mode(persisted_mode);
 
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
         connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);

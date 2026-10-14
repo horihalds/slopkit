@@ -53,7 +53,6 @@ namespace
             attach_session(worker);
             values.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)});
             values.set_structure(structure);
-            values.set_address_mode(slopkit::ui::AddressMode::absolute);
 
             project.add_class("Player", "app+0x10");
 
@@ -148,7 +147,7 @@ TEST_CASE("a live pass repaints only the cells whose text moved", "[reclass][ui]
     CHECK(repainted[0].column() == ReclassStructureModel::value);
     CHECK(repainted[0].row() == 1);
     CHECK(fixture.proxy->data(fixture.index(1, ReclassStructureModel::value), Qt::DisplayRole).toString()
-          == QStringLiteral("3"));
+          == QStringLiteral("3  0x00000003"));
 }
 
 TEST_CASE("a rebuilt grid fills the repaint cache without repainting", "[reclass][ui]")
@@ -189,12 +188,16 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
 
     fixture.stage(fixture.player_address() + 1, {0x2A, 0, 0, 0});
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("42"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("42  0x0000002A"));
     CHECK(fixture.proxy->data(health, Qt::ForegroundRole).value<QColor>() == slopkit::ui::active_theme().warning);
+
+    // The cell draws the value beside its hex form, while the editor starts
+    // from the value alone, so what the user types is what a write parses.
+    CHECK(fixture.proxy->data(health, Qt::EditRole).toString() == QStringLiteral("42"));
 
     // The row keeps its value and drops the highlight on the next pass.
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("42"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("42  0x0000002A"));
     CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
 }
 

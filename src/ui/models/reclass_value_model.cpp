@@ -34,12 +34,6 @@ namespace slopkit::ui::models
         force_resolve_ = true;
     }
 
-    void ReclassValueModel::set_address_mode(AddressMode mode)
-    {
-        address_mode_ = mode;
-        emit valuesChanged();
-    }
-
     void ReclassValueModel::invalidate()
     {
         cells_.clear();
@@ -100,7 +94,7 @@ namespace slopkit::ui::models
 
     QString ReclassValueModel::format_address(std::uint64_t address) const
     {
-        return format_cell_address_full(address_mode_, modules_, address);
+        return format_padded_hex(address);
     }
 
     bool ReclassValueModel::editable(const ReclassRow& row) const
@@ -548,7 +542,7 @@ namespace slopkit::ui::models
         {
             return QStringLiteral("?");
         }
-        return format_cell_address(address_mode_, modules_, *address);
+        return format_address(*address);
     }
 
     QString ReclassValueModel::value_text(const ReclassRow& row) const
@@ -568,6 +562,35 @@ namespace slopkit::ui::models
         if (bytes.empty())
         {
             return QStringLiteral("?");
+        }
+
+        QString text = to_qstring(reclass::format_node_value_display(node->kind, bytes, node->hex));
+
+        // A hex node whose bytes land inside a loaded module is a potential
+        // pointer; the reference names the address such a value would point at.
+        if (reclass::is_hex_kind(node->kind) && reclass::kind_size(node->kind) >= 4)
+        {
+            const std::uint64_t value = reclass::read_node_value(node->kind, bytes);
+            if (inside_module(value))
+            {
+                text += QStringLiteral("  -> ") + format_address(value);
+            }
+        }
+        return text;
+    }
+
+    QString ReclassValueModel::edit_text(const ReclassRow& row) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || !attached())
+        {
+            return {};
+        }
+
+        const std::span<const std::byte> bytes = node_bytes(row);
+        if (bytes.empty())
+        {
+            return {};
         }
         return to_qstring(reclass::format_node_value(node->kind, bytes, node->hex));
     }

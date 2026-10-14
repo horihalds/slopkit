@@ -9,6 +9,10 @@ namespace slopkit::reclass
 {
     class Project;
 
+    // The padding a newly created class starts with, so a class is a page of
+    // the target the user retypes rather than an empty list.
+    inline constexpr std::size_t kDefaultClassBytes = 1024;
+
     // Covers `bytes` bytes with padding nodes: 8 -> hex64, >= 4 -> hex32,
     // >= 2 -> hex16, else hex8, the reference's CreateDefaultNodeForSize ladder.
     // The returned nodes carry no id; append_bytes and change_node_kind assign

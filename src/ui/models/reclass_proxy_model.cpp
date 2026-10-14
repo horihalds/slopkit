@@ -22,7 +22,7 @@ namespace slopkit::ui::models
             return QIdentityProxyModel::data(index, role);
         }
 
-        if (role == Qt::DisplayRole || role == Qt::EditRole || role == widgets::kFullTextRole)
+        if (role == Qt::DisplayRole || role == widgets::kFullTextRole)
         {
             if (index.column() == ReclassStructureModel::address)
             {
@@ -32,6 +32,12 @@ namespace slopkit::ui::models
             {
                 return values_.value_text(*row);
             }
+        }
+        // The editor starts from the value a write parses, not from the readings
+        // the cell draws beside it.
+        if (role == Qt::EditRole && index.column() == ReclassStructureModel::value)
+        {
+            return values_.edit_text(*row);
         }
 
         const QVariant base = QIdentityProxyModel::data(index, role);

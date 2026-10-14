@@ -109,6 +109,32 @@ namespace slopkit::reclass
             return kind_size(kind) * 8;
         }
 
+        float read_float(std::span<const std::byte> bytes)
+        {
+            float value {};
+            std::memcpy(&value, bytes.data(), sizeof(value));
+            return value;
+        }
+
+        double read_double(std::span<const std::byte> bytes)
+        {
+            double value {};
+            std::memcpy(&value, bytes.data(), sizeof(value));
+            return value;
+        }
+
+        // The float a hex node's bytes would read as: the reference draws it at
+        // three decimals, or as "#####" when the value is not a usable float.
+        std::string hex_float_comment(std::span<const std::byte> bytes)
+        {
+            const float value = read_float(bytes);
+            if (value > -999999.0F && value < 999999.0F)
+            {
+                return std::format("{:.3f}", value);
+            }
+            return std::string {"#####"};
+        }
+
         std::string out_of_range(NodeKind kind)
         {
             return std::format("out of range for {}", describe(kind));
@@ -226,6 +252,74 @@ namespace slopkit::reclass
             break;
         }
         return {};
+    }
+
+    std::uint64_t read_node_value(NodeKind kind, std::span<const std::byte> bytes)
+    {
+        const std::size_t size = kind_size(kind);
+        if (size == 0 || size > 8 || bytes.size() < size)
+        {
+            return 0;
+        }
+        return read_bytes(bytes, size);
+    }
+
+    std::string format_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex)
+    {
+        const std::size_t size = kind_size(kind);
+        if (size == 0 || bytes.size() < size)
+        {
+            return {};
+        }
+
+        switch (kind)
+        {
+        case NodeKind::int8:
+        case NodeKind::int16:
+        case NodeKind::int32:
+        case NodeKind::int64:
+        {
+            const std::string decimal = std::format("{}", sign_extend(read_bytes(bytes, size), integer_bits(kind)));
+            const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
+            return hex ? other + "  " + decimal : decimal + "  " + other;
+        }
+        case NodeKind::uint8:
+        case NodeKind::uint16:
+        case NodeKind::uint32:
+        case NodeKind::uint64:
+        {
+            const std::string decimal = std::format("{}", read_bytes(bytes, size));
+            const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
+            return hex ? other + "  " + decimal : decimal + "  " + other;
+        }
+        case NodeKind::float32:
+            return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_float(bytes));
+        case NodeKind::float64:
+            return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_double(bytes));
+        case NodeKind::hex32:
+        case NodeKind::hex64:
+        {
+            std::string text = format_node_value(kind, bytes, hex);
+            text += "  " + hex_float_comment(bytes);
+
+            const std::uint64_t raw = read_bytes(bytes, size);
+            if (raw == 0)
+            {
+                return text + "  0";
+            }
+            return text + std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
+        }
+        case NodeKind::pointer:
+        case NodeKind::class_pointer:
+            return std::format("-> 0x{:016X}", read_bytes(bytes, size));
+        case NodeKind::boolean:
+        case NodeKind::character:
+        case NodeKind::hex8:
+        case NodeKind::hex16:
+        case NodeKind::class_instance:
+            break;
+        }
+        return format_node_value(kind, bytes, hex);
     }
 
     std::expected<std::vector<std::byte>, std::string> parse_node_value(NodeKind kind, std::string_view text, bool hex)

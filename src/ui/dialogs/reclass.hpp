@@ -14,7 +14,6 @@
 #include "process/types.hpp"
 #include "reclass/node.hpp"
 #include "reclass/project.hpp"
-#include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
 
 class QAction;
@@ -60,15 +59,15 @@ namespace slopkit::ui::dialogs
                       process::AttachedTarget& target,
                       QWidget*                 parent = nullptr);
 
-        // The memory map the classes are addressed against, and the spelling the
-        // address column uses.
+        // The memory map the classes' expressions are resolved against, and the
+        // spans the dissect command tests a pointer value for.
         void set_modules(std::vector<process::ModuleInfo> modules);
-        void set_address_mode(AddressMode mode);
 
         [[nodiscard]] models::ReclassStructureModel* structure() const noexcept;
         [[nodiscard]] models::ReclassProxyModel*     proxy() const noexcept;
         [[nodiscard]] QListWidget*                   class_list() const noexcept;
         [[nodiscard]] QTreeView*                     grid() const noexcept;
+        [[nodiscard]] QLabel*                        header_label() const noexcept;
         [[nodiscard]] widgets::StatusLabel*          status_label() const noexcept;
         [[nodiscard]] QPushButton*                   add_class_button() const noexcept;
         [[nodiscard]] QPushButton*                   delete_class_button() const noexcept;
