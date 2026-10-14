@@ -255,6 +255,16 @@ namespace slopkit::ui::dialogs
                     report(message, error);
                 });
 
+        // A name is renamed by the structure model, so the cell and the menu
+        // report through the same signal.
+        connect(structure_,
+                &models::ReclassStructureModel::statusChanged,
+                this,
+                [this](const QString& message, bool error)
+                {
+                    report(message, error);
+                });
+
         delete_action_ = new QAction(tr("Delete Node"), this);
         delete_action_->setShortcut(QKeySequence(Qt::Key_Delete));
         delete_action_->setShortcutContext(Qt::WindowShortcut);
@@ -820,9 +830,9 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        node->name = name->trimmed().toStdString();
-        refresh_all();
-        report(tr("Node renamed."), false);
+        // The rename goes through the model the grid edits through, so the two
+        // paths cannot report different outcomes.
+        static_cast<void>(structure_->set_node_name(*row, *name));
     }
 
     void ReClassDialog::edit_comment()

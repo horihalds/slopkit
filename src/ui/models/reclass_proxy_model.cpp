@@ -82,12 +82,18 @@ namespace slopkit::ui::models
 
     bool ReclassProxyModel::setData(const QModelIndex& index, const QVariant& value, int role)
     {
-        if (role != Qt::EditRole || index.column() != ReclassStructureModel::value)
+        if (role != Qt::EditRole)
         {
             return false;
         }
-        const ReclassRow* row = structure_.row_for(mapToSource(index));
-        return row != nullptr && values_.write_value(*row, value.toString());
+        if (index.column() == ReclassStructureModel::value)
+        {
+            const ReclassRow* row = structure_.row_for(mapToSource(index));
+            return row != nullptr && values_.write_value(*row, value.toString());
+        }
+        // A name is the structure model's own field, so the identity base passes
+        // that edit - and only that one - on to it.
+        return QIdentityProxyModel::setData(index, value, role);
     }
 
     void ReclassProxyModel::refresh_values()

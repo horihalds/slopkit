@@ -663,7 +663,10 @@ hidden, while live update is off, while no target is attached or while a job is 
 flight, and matches every completion against the job it was submitted for. A
 `Value` cell of an editable kind is edited in place: the text is parsed for the
 node's kind, one `submit_write` carries the node's address and bytes, and a
-refused write says why on the status line instead of writing a guessed address.
+refused write says why on the status line instead of writing a guessed address. A
+node's `Name` cell is the structure model's own editable field on the same
+`setData` path, so a rename is validated in one place and reported on that same
+status line, touches no target and needs none.
 The cell's text and the text a write parses are deliberately two functions:
 `format_node_value_display` adds the readings the reference draws beside a value
 — an integer's hex form, a float at three decimals, a hex node's float and

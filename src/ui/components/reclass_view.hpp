@@ -67,7 +67,7 @@ namespace slopkit::ui::components
         [[nodiscard]] int                  column_x(int column) const noexcept;
         [[nodiscard]] int                  column_width(int column) const noexcept;
 
-        // The inline value editor, or nullptr until a cell was opened.
+        // The inline cell editor, or nullptr until a cell was opened.
         [[nodiscard]] QLineEdit* editor() const noexcept;
         void                     close_editor();
 
@@ -145,7 +145,7 @@ namespace slopkit::ui::components
         void select_row(const Hit& hit, Qt::KeyboardModifiers modifiers);
         void move_cursor(int row_index);
         void toggle_row(int row_index);
-        void open_editor_at(int row_index);
+        void open_editor_at(int row_index, int column);
         void open_editor(const Hit& hit);
         void commit_edit();
         void scroll_rows(long long delta);
@@ -168,7 +168,9 @@ namespace slopkit::ui::components
 
         QLineEdit*  editor_ {};
         bool        editing_ {false};
+        bool        commit_ran_ {false};
         std::size_t edit_node_id_ {};
+        int         edit_column_ {};
 
         NeutralScroller scroller_;
     };

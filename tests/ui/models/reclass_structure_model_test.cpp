@@ -247,3 +247,56 @@ TEST_CASE("selecting another class drops the inlined references", "[reclass][ui]
     model.set_class(1);
     CHECK(model.rowCount(model.index(1, 0)) == 0);
 }
+
+TEST_CASE("a node's name is edited in place through the model", "[reclass][ui]")
+{
+    application();
+
+    Project               project = two_classes();
+    ReclassStructureModel model {project};
+    model.set_class(1);
+
+    std::vector<QString> messages;
+    QObject::connect(&model,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    QModelIndex announced;
+    QObject::connect(&model,
+                     &QAbstractItemModel::dataChanged,
+                     [&announced](const QModelIndex& top_left, const QModelIndex&, const QList<int>&)
+                     {
+                         announced = top_left;
+                     });
+
+    // The name is the one cell the grid types into, and it offers the editor
+    // the same text the cell shows.
+    const QModelIndex name_cell = model.index(0, Model::name);
+    CHECK(model.flags(name_cell).testFlag(Qt::ItemIsEditable));
+    CHECK_FALSE(model.flags(model.index(0, Model::offset)).testFlag(Qt::ItemIsEditable));
+    CHECK(model.data(name_cell, Qt::EditRole).toString() == QStringLiteral("tag"));
+    CHECK_FALSE(model.data(model.index(0, Model::offset), Qt::EditRole).isValid());
+
+    CHECK(model.setData(name_cell, QStringLiteral("  health  "), Qt::EditRole));
+    CHECK(project.classes()[1].nodes[0].name == "health");
+    CHECK(cell(model, model.index(0, 0), Model::name) == QStringLiteral("health"));
+    // Only the one cell is announced, so the grid repaints nothing else.
+    CHECK(announced.row() == 0);
+    CHECK(announced.column() == Model::name);
+    REQUIRE(messages.size() == 1);
+    CHECK(messages.front() == QStringLiteral("Node renamed."));
+
+    // An empty name is refused and the node keeps the name it had.
+    CHECK_FALSE(model.setData(name_cell, QStringLiteral("   "), Qt::EditRole));
+    CHECK(project.classes()[1].nodes[0].name == "health");
+    REQUIRE(messages.size() == 2);
+    CHECK(messages.back() == QStringLiteral("A node name is required."));
+
+    // No other column and no other role takes an edit.
+    CHECK_FALSE(model.setData(model.index(0, Model::offset), QStringLiteral("9"), Qt::EditRole));
+    CHECK_FALSE(model.setData(name_cell, QStringLiteral("other"), Qt::DisplayRole));
+    CHECK(project.classes()[1].nodes[0].name == "health");
+}

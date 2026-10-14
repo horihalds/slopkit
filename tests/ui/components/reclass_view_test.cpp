@@ -392,8 +392,9 @@ TEST_CASE("toggling a reference row inlines its class and keeps the cursor", "[r
     const QModelIndex inlined = fixture.structure.index(0, ReclassStructureModel::name, fixture.structure.index(1, 0));
     CHECK(view.cell_text(inlined).toStdString() == "x");
 
-    // A double-click anywhere on the row collapses it again.
-    double_click(view, fixture.cell(fixture.node_id(1), ReclassStructureModel::name));
+    // A double-click on a cell that is not typed into collapses it again; the
+    // name cell of this row now belongs to the name editor.
+    double_click(view, fixture.cell(fixture.node_id(1), ReclassStructureModel::offset));
     QCoreApplication::processEvents();
 
     CHECK_FALSE(view.isExpanded(fixture.cell(fixture.node_id(1), ReclassStructureModel::name)));
@@ -429,9 +430,10 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
     REQUIRE(fixture.values.editable(*fixture.structure.row_for(value_cell)));
     CHECK(view.cell_text(value_cell).toStdString() == "42  0x2A");
 
-    // Only the value cell of an editable node offers itself to the editor.
+    // The value cell of an editable node offers itself to the editor, and so
+    // does the node's own name.
     CHECK(fixture.proxy.flags(fixture.proxy.index(0, ReclassStructureModel::value)).testFlag(Qt::ItemIsEditable));
-    CHECK_FALSE(fixture.proxy.flags(fixture.proxy.index(0, ReclassStructureModel::name)).testFlag(Qt::ItemIsEditable));
+    CHECK(fixture.proxy.flags(fixture.proxy.index(0, ReclassStructureModel::name)).testFlag(Qt::ItemIsEditable));
 
     double_click(view, value_cell);
     QCoreApplication::processEvents();
@@ -455,6 +457,91 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
 
     fixture.pass();
     CHECK(view.cell_text(value_cell).toStdString() == "-7  0xF9");
+}
+
+TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture     fixture;
+    ReClassView view {fixture.proxy, fixture.structure};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QStringList messages;
+    QObject::connect(&fixture.structure,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    Class& player = fixture.project.classes()[1];
+
+    // A name costs no target access, so the cell is typed into whether or not a
+    // target is attached; the row's other columns are not.
+    const QModelIndex name_cell   = fixture.cell(fixture.node_id(0), ReclassStructureModel::name);
+    const QModelIndex offset_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::offset);
+    CHECK(fixture.proxy.flags(name_cell).testFlag(Qt::ItemIsEditable));
+    CHECK_FALSE(fixture.proxy.flags(offset_cell).testFlag(Qt::ItemIsEditable));
+
+    const int name_width = view.column_width(ReclassStructureModel::name);
+
+    double_click(view, name_cell);
+    QCoreApplication::processEvents();
+
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    // The editor holds the name itself, not the readings a value cell draws.
+    CHECK(editor->text().toStdString() == "tag");
+
+    editor->setText(QStringLiteral("health"));
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(player.nodes[0].name == "health");
+    REQUIRE(messages.size() == 1);
+    CHECK(messages.first().toStdString() == "Node renamed.");
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(0), ReclassStructureModel::name)).toStdString() == "health");
+    // A longer name widens the column it draws in.
+    CHECK(view.column_width(ReclassStructureModel::name) > name_width);
+
+    // Escape leaves the node as it was.
+    double_click(view, fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
+    QCoreApplication::processEvents();
+    editor->setText(QStringLiteral("discarded"));
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+    CHECK(player.nodes[0].name == "health");
+    CHECK(messages.size() == 1);
+
+    // An empty name is refused with its reason, and the editor stays open for
+    // the correction.
+    double_click(view, fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
+    QCoreApplication::processEvents();
+    editor->setText(QStringLiteral("   "));
+    QApplication::sendEvent(editor, &enter);
+    CHECK(editor->isVisible());
+    CHECK(player.nodes[0].name == "health");
+    REQUIRE(messages.size() == 2);
+    CHECK(messages.last().toStdString() == "A node name is required.");
+
+    QApplication::sendEvent(editor, &escape);
+
+    // F2 opens the name of the cursor row, which needs no attached target.
+    view.setCurrentIndex(fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
+    QKeyEvent f2 {QEvent::KeyPress, Qt::Key_F2, Qt::NoModifier};
+    QApplication::sendEvent(&view, &f2);
+    QCoreApplication::processEvents();
+    CHECK(editor->isVisible());
+    CHECK(editor->text().toStdString() == "health");
 }
 
 TEST_CASE("a reading wider than its column is readable from the tooltip", "[reclass][ui][view]")

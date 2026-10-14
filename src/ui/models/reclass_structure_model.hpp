@@ -77,6 +77,10 @@ namespace slopkit::ui::models
         // Re-reads the project: the rows, their offsets and the block list.
         void rebuild();
 
+        // Renames the node the row shows; an empty name is refused with its
+        // reason on statusChanged, the way the value model refuses a write.
+        bool set_node_name(const ReclassRow& row, const QString& name);
+
         [[nodiscard]] reclass::Project& project() noexcept;
         [[nodiscard]] std::size_t       selected_class() const noexcept;
         [[nodiscard]] bool              valid_class() const noexcept;
@@ -103,9 +107,13 @@ namespace slopkit::ui::models
         [[nodiscard]] QVariant      data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
         [[nodiscard]] QVariant      headerData(int section, Qt::Orientation orientation, int role) const override;
         [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
+        bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole) override;
 
     signals:
         void blocksChanged();
+
+        // A command's outcome, reported on the window's status line.
+        void statusChanged(const QString& message, bool error);
 
     private:
         void build_rows();

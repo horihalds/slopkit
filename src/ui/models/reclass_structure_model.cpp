@@ -82,6 +82,44 @@ namespace slopkit::ui::models
         emit blocksChanged();
     }
 
+    bool ReclassStructureModel::set_node_name(const ReclassRow& row, const QString& name)
+    {
+        const QString trimmed = name.trimmed();
+        if (trimmed.isEmpty())
+        {
+            emit statusChanged(tr("A node name is required."), true);
+            return false;
+        }
+
+        reclass::Class* type = project_ == nullptr ? nullptr : project_->class_at(row.class_index);
+        if (type == nullptr || row.node_index >= type->nodes.size())
+        {
+            return false;
+        }
+        type->nodes[row.node_index].name = trimmed.toStdString();
+
+        // A rename moves no offset, so the row objects stay and only the one
+        // cell is announced; the grid re-measures that column on it.
+        const QModelIndex base = index_for_node(row.node_id);
+        if (base.isValid())
+        {
+            const QModelIndex changed = index(base.row(), ReclassStructureModel::name, base.parent());
+            emit              dataChanged(changed, changed);
+        }
+        emit statusChanged(tr("Node renamed."), false);
+        return true;
+    }
+
+    bool ReclassStructureModel::setData(const QModelIndex& index, const QVariant& value, int role)
+    {
+        const ReclassRow* row = row_for(index);
+        if (role != Qt::EditRole || index.column() != ReclassStructureModel::name || row == nullptr)
+        {
+            return false;
+        }
+        return set_node_name(*row, value.toString());
+    }
+
     reclass::Project& ReclassStructureModel::project() noexcept
     {
         return *project_;
@@ -369,6 +407,10 @@ namespace slopkit::ui::models
                 // The address and value columns are answered by the value model.
                 return {};
             }
+        case Qt::EditRole:
+            // The name cell is typed into, so the editor starts from the same
+            // text the cell shows; no other cell takes an edit.
+            return index.column() == name ? to_qstring(node.name) : QVariant {};
         case Qt::FontRole:
             if (index.column() == address || index.column() == offset || index.column() == value)
             {
@@ -429,7 +471,18 @@ namespace slopkit::ui::models
 
     Qt::ItemFlags ReclassStructureModel::flags(const QModelIndex& index) const
     {
-        return index.isValid() ? Qt::ItemIsEnabled | Qt::ItemIsSelectable : Qt::NoItemFlags;
+        if (!index.isValid())
+        {
+            return Qt::NoItemFlags;
+        }
+        Qt::ItemFlags result = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+        if (index.column() == name)
+        {
+            // A node's name is the user's own label and costs no target access,
+            // so it is typed straight into the cell.
+            result |= Qt::ItemIsEditable;
+        }
+        return result;
     }
 
 }

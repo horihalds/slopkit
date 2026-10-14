@@ -247,6 +247,19 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     dialog.copy_name();
     CHECK(dialog.status_label()->text() == QStringLiteral("Name copied."));
 
+    // A name typed into the grid's own cell goes through the structure model,
+    // and the window reports the outcome on the same status line as a write.
+    using slopkit::ui::models::ReclassStructureModel;
+    const QModelIndex name_cell = dialog.proxy()->index(0, ReclassStructureModel::name);
+    CHECK(dialog.proxy()->flags(name_cell).testFlag(Qt::ItemIsEditable));
+    CHECK(dialog.proxy()->setData(name_cell, QStringLiteral("vitals"), Qt::EditRole));
+    CHECK(player.nodes[0].name == "vitals");
+    CHECK(dialog.status_label()->text() == QStringLiteral("Node renamed."));
+
+    CHECK_FALSE(dialog.proxy()->setData(name_cell, QStringLiteral("   "), Qt::EditRole));
+    CHECK(player.nodes[0].name == "vitals");
+    CHECK(dialog.status_label()->text() == QStringLiteral("A node name is required."));
+
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
     dialog.remove_selected_nodes();
     CHECK(player.nodes.size() == 5);

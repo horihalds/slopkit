@@ -91,8 +91,16 @@ namespace slopkit::ui::components
         connect(model_,
                 &QAbstractItemModel::dataChanged,
                 this,
-                [this](const QModelIndex&, const QModelIndex&, const QList<int>&)
+                [this](const QModelIndex& top_left, const QModelIndex& bottom_right, const QList<int>&)
                 {
+                    // A rename is the one live change that can move a column
+                    // boundary; a value pass never re-measures.
+                    if (top_left.column() == models::ReclassStructureModel::name
+                        && bottom_right.column() == models::ReclassStructureModel::name)
+                    {
+                        update_content_widths();
+                        update_columns();
+                    }
                     viewport()->update();
                 });
     }
@@ -590,7 +598,7 @@ namespace slopkit::ui::components
         emit rowExpansionChanged();
     }
 
-    void ReClassView::open_editor_at(int row_index)
+    void ReClassView::open_editor_at(int row_index, int column)
     {
         if (row_index < 0 || row_index >= static_cast<int>(rows_.size()))
         {
@@ -601,8 +609,8 @@ namespace slopkit::ui::components
         Hit              hit;
         hit.row       = entry.row;
         hit.row_index = row_index;
-        hit.column    = models::ReclassStructureModel::value;
-        hit.rect      = cell_rect_at(row_index, hit.column);
+        hit.column    = column;
+        hit.rect      = cell_rect_at(row_index, column);
         open_editor(hit);
     }
 
@@ -612,13 +620,14 @@ namespace slopkit::ui::components
         {
             return;
         }
+        commit_ran_                   = true;
         const models::ReclassRow* row = row_for_node(edit_node_id_);
         if (row == nullptr)
         {
             close_editor();
             return;
         }
-        const QModelIndex index = index_for(*row, models::ReclassStructureModel::value);
+        const QModelIndex index = index_for(*row, edit_column_);
         if (model_->setData(index, editor_->text(), Qt::EditRole))
         {
             close_editor();
@@ -637,6 +646,7 @@ namespace slopkit::ui::components
         }
         editing_      = false;
         edit_node_id_ = 0;
+        commit_ran_   = false;
         if (editor_ != nullptr)
         {
             editor_->hide();
@@ -863,11 +873,9 @@ namespace slopkit::ui::components
             return;
         }
 
-        if (hit->column == models::ReclassStructureModel::value
-            && model_->flags(index_for(*hit->row, hit->column)).testFlag(Qt::ItemIsEditable))
+        if (model_->flags(index_for(*hit->row, hit->column)).testFlag(Qt::ItemIsEditable))
         {
-            // The editor shows the plain value a write parses, not the readings
-            // the cell draws beside it.
+            // Either a value the write path accepts or the node's own name.
             open_editor(*hit);
             event->accept();
             return;
@@ -885,12 +893,12 @@ namespace slopkit::ui::components
 
     void ReClassView::open_editor(const Hit& hit)
     {
-        if (hit.row == nullptr)
+        if (hit.row == nullptr || hit.column < 0)
         {
             return;
         }
 
-        const QModelIndex index = index_for(*hit.row, models::ReclassStructureModel::value);
+        const QModelIndex index = index_for(*hit.row, hit.column);
         if (editor_ == nullptr)
         {
             editor_ = new QLineEdit(viewport());
@@ -903,6 +911,14 @@ namespace slopkit::ui::components
                     this,
                     [this]
                     {
+                        // Return emits this right after returnPressed, so a
+                        // commit that was refused keeps the editor open for the
+                        // correction; a focus loss discards the text instead.
+                        if (commit_ran_)
+                        {
+                            commit_ran_ = false;
+                            return;
+                        }
                         if (editing_)
                         {
                             close_editor();
@@ -912,6 +928,10 @@ namespace slopkit::ui::components
 
         editing_      = true;
         edit_node_id_ = hit.row->node_id;
+        edit_column_  = hit.column;
+        // The editor shows the plain text the model answers for the cell, not the
+        // readings a value cell draws beside it.
+        editor_->setFont(cell_font(index, *model_));
         editor_->setText(model_->data(index, Qt::EditRole).toString());
         editor_->setGeometry(hit.rect);
         editor_->show();
@@ -985,14 +1005,21 @@ namespace slopkit::ui::components
             break;
         case Qt::Key_Return:
         case Qt::Key_Enter:
-        case Qt::Key_F2:
             if (current >= 0
                 && model_
                        ->flags(index_for(*rows_[static_cast<std::size_t>(current)].row,
                                          models::ReclassStructureModel::value))
                        .testFlag(Qt::ItemIsEditable))
             {
-                open_editor_at(current);
+                open_editor_at(current, models::ReclassStructureModel::value);
+            }
+            break;
+        case Qt::Key_F2:
+            // A name is typed into without a target, so it opens even when the
+            // value cell of the same row is read-only.
+            if (current >= 0)
+            {
+                open_editor_at(current, models::ReclassStructureModel::name);
             }
             break;
         default:
