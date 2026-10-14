@@ -224,3 +224,111 @@ TEST_CASE("live cells record an unreadable address without a change", "[ui][mode
     CHECK_FALSE(cells.at(0)->changed);
     CHECK_FALSE(cells.at(0)->bytes.has_value());
 }
+
+TEST_CASE("live cells flag only the bytes that moved", "[ui][models]")
+{
+    slopkit::ui::models::LiveCells cells;
+    const auto                     valid = [](std::size_t, std::uint64_t)
+    {
+        return true;
+    };
+    const auto pass = [&cells, &valid](unsigned first, unsigned second, unsigned third, unsigned fourth)
+    {
+        (void)cells.request(1,
+                            [](std::size_t row)
+                            {
+                                return candidate(row, 100 + row);
+                            });
+        cells.apply(std::vector<slopkit::ui::LiveReading> {readable(0, bytes({first, second, third, fourth}))},
+                    valid,
+                    [](std::size_t, std::size_t) {});
+    };
+
+    pass(0x1A, 0x2B, 0x3C, 0x4D);
+    CHECK(cells.at(0)->changed_bytes == std::vector<std::uint8_t> {0, 0, 0, 0});
+    CHECK_FALSE(cells.at(0)->changed);
+
+    pass(0x1A, 0x00, 0x3C, 0x4D);
+    CHECK(cells.at(0)->changed_bytes == std::vector<std::uint8_t> {0, 1, 0, 0});
+    CHECK(cells.at(0)->changed);
+
+    pass(0x1A, 0x00, 0x3C, 0x4D);
+    CHECK(cells.at(0)->changed_bytes == std::vector<std::uint8_t> {0, 0, 0, 0});
+    CHECK_FALSE(cells.at(0)->changed);
+}
+
+TEST_CASE("live cells drop the byte mask when a block becomes unreadable", "[ui][models]")
+{
+    slopkit::ui::models::LiveCells cells;
+    const auto                     valid = [](std::size_t, std::uint64_t)
+    {
+        return true;
+    };
+
+    (void)cells.request(1,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 100 + row);
+                        });
+    cells.apply(std::vector<slopkit::ui::LiveReading> {readable(0, bytes({0x1A, 0x2B, 0x3C, 0x4D}))},
+                valid,
+                [](std::size_t, std::size_t) {});
+
+    (void)cells.request(1,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 100 + row);
+                        });
+    cells.apply(std::vector<slopkit::ui::LiveReading> {readable(0, bytes({0x1A, 0x00, 0x3C, 0x4D}))},
+                valid,
+                [](std::size_t, std::size_t) {});
+    REQUIRE(cells.at(0)->changed);
+
+    (void)cells.request(1,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 100 + row);
+                        });
+    cells.apply(
+        std::vector<slopkit::ui::LiveReading> {
+            slopkit::ui::LiveReading {.id = 0, .readable = false, .bytes = {}}
+    },
+        valid,
+        [](std::size_t, std::size_t) {});
+    CHECK(cells.at(0)->changed_bytes.empty());
+    CHECK_FALSE(cells.at(0)->changed);
+}
+
+TEST_CASE("live cells forget the byte mask when the row set is reset", "[ui][models]")
+{
+    slopkit::ui::models::LiveCells cells;
+    const auto                     valid = [](std::size_t, std::uint64_t)
+    {
+        return true;
+    };
+
+    (void)cells.request(2,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 100 + row);
+                        });
+    cells.apply(
+        std::vector<slopkit::ui::LiveReading> {readable(0, bytes({1, 2, 3, 4})), readable(1, bytes({5, 6, 7, 8}))},
+        valid,
+        [](std::size_t, std::size_t) {});
+
+    (void)cells.request(2,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 100 + row);
+                        });
+    cells.apply(
+        std::vector<slopkit::ui::LiveReading> {readable(0, bytes({1, 9, 3, 4})), readable(1, bytes({5, 6, 7, 8}))},
+        valid,
+        [](std::size_t, std::size_t) {});
+    REQUIRE(cells.at(0)->changed);
+
+    cells.reset(2);
+    CHECK(cells.at(0)->changed_bytes.empty());
+    CHECK_FALSE(cells.at(0)->changed);
+}

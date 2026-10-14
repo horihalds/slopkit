@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,8 +29,11 @@ namespace slopkit::reclass
     // apart; `format_node_value_display` folds them back into one string.
     struct ValuePart
     {
-        std::string text;
-        bool        reading {};
+        std::string                text;
+        bool                       reading {};
+        // The byte this run draws for a hex cell's per-byte dump; absent for a
+        // reading and for a kind whose text is not a byte dump.
+        std::optional<std::size_t> byte {};
     };
 
     // The display text split into runs: the node's own bytes as the first, one

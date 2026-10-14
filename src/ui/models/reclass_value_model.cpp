@@ -308,6 +308,16 @@ namespace slopkit::ui::models
         return *cell->bytes;
     }
 
+    std::span<const std::uint8_t> ReclassValueModel::block_changed(std::size_t block) const
+    {
+        const LiveCell* cell = cells_.at(block);
+        if (cell == nullptr || !cell->has_reading || !cell->readable)
+        {
+            return {};
+        }
+        return cell->changed_bytes;
+    }
+
     std::optional<std::uint64_t> ReclassValueModel::block_base(std::size_t index) const
     {
         if (structure_ == nullptr)
@@ -362,7 +372,8 @@ namespace slopkit::ui::models
         if (index == 0)
         {
             const std::span<const std::byte> bytes = block_bytes(0);
-            return BlockView {.bytes = bytes, .start = 0, .base = *base, .readable = !bytes.empty()};
+            return BlockView {
+                .bytes = bytes, .changed = block_changed(0), .start = 0, .base = *base, .readable = !bytes.empty()};
         }
 
         const ReclassBlock& block = blocks[index];
@@ -371,16 +382,21 @@ namespace slopkit::ui::models
         if (block.via_pointer)
         {
             const std::span<const std::byte> bytes = block_bytes(index);
-            return BlockView {.bytes = bytes, .start = 0, .base = *base, .readable = !bytes.empty()};
+            return BlockView {
+                .bytes = bytes, .changed = block_changed(index), .start = 0, .base = *base, .readable = !bytes.empty()};
         }
 
         // A class instance lives inside its parent's memory.
         const BlockView parent = block_view(block.parent_block);
         if (!parent.readable || parent.start + start >= parent.bytes.size())
         {
-            return BlockView {.bytes = {}, .start = 0, .base = *base, .readable = false};
+            return BlockView {.bytes = {}, .changed = {}, .start = 0, .base = *base, .readable = false};
         }
-        return BlockView {.bytes = parent.bytes, .start = parent.start + start, .base = *base, .readable = true};
+        return BlockView {.bytes    = parent.bytes,
+                          .changed  = parent.changed,
+                          .start    = parent.start + start,
+                          .base     = *base,
+                          .readable = true};
     }
 
     std::vector<LiveRequest> ReclassValueModel::requests()
@@ -501,6 +517,30 @@ namespace slopkit::ui::models
             return {};
         }
         return view.bytes.subspan(index, size);
+    }
+
+    std::span<const std::uint8_t> ReclassValueModel::node_changed_bytes(const ReclassRow& row) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || structure_ == nullptr)
+        {
+            return {};
+        }
+
+        const std::size_t size = node->value_size();
+        const BlockView   view = block_view(row.block);
+        if (size == 0 || !view.readable || view.changed.size() != view.bytes.size())
+        {
+            return {};
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        const std::size_t                index  = view.start + row.offset - blocks[row.block].base_offset;
+        if (index + size > view.changed.size())
+        {
+            return {};
+        }
+        return view.changed.subspan(index, size);
     }
 
     bool ReclassValueModel::inside_module(std::uint64_t address) const

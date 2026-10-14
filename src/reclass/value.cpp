@@ -197,6 +197,21 @@ namespace slopkit::reclass
             return text;
         }
 
+        // A hex cell's dump as one run per byte, the separator carried by the
+        // byte that follows it so each run stands on its own.
+        std::vector<ValuePart> hex_byte_parts(std::span<const std::byte> bytes, std::size_t size)
+        {
+            std::vector<ValuePart> parts;
+            parts.reserve(size);
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                std::string text = index == 0 ? std::string {} : std::string {" "};
+                text += std::format("{:02X}", std::to_integer<unsigned char>(bytes[index]));
+                parts.push_back(ValuePart {.text = std::move(text), .reading = false, .byte = index});
+            }
+            return parts;
+        }
+
         float read_float(std::span<const std::byte> bytes)
         {
             float value {};
@@ -329,13 +344,9 @@ namespace slopkit::reclass
             // by one space, so a hex32's four bytes are told apart at a glance.
             std::string text;
             text.reserve(size * 3);
-            for (std::size_t index = 0; index < size; ++index)
+            for (const ValuePart& part : hex_byte_parts(bytes, size))
             {
-                if (index != 0)
-                {
-                    text += ' ';
-                }
-                text += std::format("{:02X}", std::to_integer<unsigned char>(bytes[index]));
+                text += part.text;
             }
             return text;
         }
@@ -515,6 +526,9 @@ namespace slopkit::reclass
 
         switch (kind)
         {
+        case NodeKind::hex8:
+        case NodeKind::hex16:
+            return hex_byte_parts(bytes, size);
         case NodeKind::hex32:
         case NodeKind::hex64:
         {
@@ -528,10 +542,9 @@ namespace slopkit::reclass
             {
                 readouts += std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
             }
-            return {
-                {format_node_value(kind, bytes, hex), false},
-                {"  " + readouts, true},
-            };
+            std::vector<ValuePart> parts = hex_byte_parts(bytes, size);
+            parts.push_back(ValuePart {.text = "  " + readouts, .reading = true});
+            return parts;
         }
         default:
             break;

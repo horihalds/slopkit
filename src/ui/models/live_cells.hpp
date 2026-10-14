@@ -16,6 +16,9 @@ namespace slopkit::ui::models
         bool                                  has_reading {false};
         bool                                  readable {false};
         std::optional<std::vector<std::byte>> bytes;
+        // One flag per byte of `bytes`, empty while the cell is unreadable.
+        // `std::uint8_t` rather than `bool` so the value model can hand out a span.
+        std::vector<std::uint8_t>             changed_bytes;
         bool                                  changed {false};
     };
 

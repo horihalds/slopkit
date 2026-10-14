@@ -236,16 +236,72 @@ TEST_CASE("a hex node whose bytes land in a module hints at the pointer", "[recl
     // The cell's runs split the bytes from the readings; the module pointer is
     // one more reading run.
     const std::vector<slopkit::reclass::ValuePart> parts = fixture.values.value_parts(fixture.row(2));
-    REQUIRE(parts.size() == 3);
-    CHECK_FALSE(parts[0].reading);
-    CHECK(parts[1].reading);
-    CHECK(parts[2].reading);
-    CHECK(parts[2].text.find("-> 0x0000000000400040") != std::string::npos);
+    REQUIRE(parts.size() == 10);
+    for (std::size_t index = 0; index < 8; ++index)
+    {
+        CHECK_FALSE(parts[index].reading);
+        CHECK(parts[index].byte == index);
+    }
+    CHECK(parts[8].reading);
+    CHECK_FALSE(parts[8].byte.has_value());
+    CHECK(parts[9].reading);
+    CHECK(parts[9].text.find("-> 0x0000000000400040") != std::string::npos);
 
     // A value outside every module is only its own readings.
     fixture.write(fixture.player_address() + 9, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00});
     fixture.pass();
     CHECK_FALSE(fixture.values.value_text(fixture.row(2)).contains(QStringLiteral("->")));
+}
+
+TEST_CASE("a node reports which of its own bytes moved", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+
+    // A hex32 node after Player's own fields, so the class covers the bytes it
+    // reads.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex32, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+    fixture.resolve();
+
+    fixture.write(fixture.player_address(), {0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1A, 0x2B, 0x3C, 0x4D});
+    fixture.pass();
+
+    const ReclassRow& raw = fixture.row(2);
+    CHECK(fixture.values.node_bytes(raw).size() == 4);
+
+    // Nothing moved yet: the mask is there but no byte is lit.
+    const auto first = fixture.values.node_changed_bytes(raw);
+    REQUIRE(first.size() == 4);
+    CHECK(first[0] == 0);
+    CHECK(first[1] == 0);
+    CHECK(first[2] == 0);
+    CHECK(first[3] == 0);
+
+    // The second byte alone moves; only its own flag lights.
+    fixture.write(fixture.player_address() + 9, {0x1A, 0x00, 0x3C, 0x4D});
+    fixture.pass();
+    const auto moved = fixture.values.node_changed_bytes(raw);
+    REQUIRE(moved.size() == 4);
+    CHECK(moved[0] == 0);
+    CHECK(moved[1] == 1);
+    CHECK(moved[2] == 0);
+    CHECK(moved[3] == 0);
+
+    // The mask is dropped with the reading when the block goes unreadable.
+    static_cast<void>(fixture.values.requests());
+    fixture.values.apply_readings(std::vector<LiveReading> {
+        LiveReading {.id = 0, .readable = false, .bytes = {}}
+    });
+    CHECK(fixture.values.node_changed_bytes(raw).empty());
+
+    // And there is nothing to light while no target is attached.
+    fixture.target.clear();
+    static_cast<void>(fixture.values.requests());
+    CHECK(fixture.values.node_changed_bytes(raw).empty());
 }
 
 TEST_CASE("an unreadable block paints every one of its nodes with a question mark", "[reclass][ui]")

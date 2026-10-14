@@ -88,6 +88,11 @@ namespace slopkit::ui::models
         // read; the dissect command guesses a kind from them.
         [[nodiscard]] std::span<const std::byte> node_bytes(const ReclassRow& row) const;
 
+        // One flag per byte of `node_bytes(row)`: which of the bytes read at the
+        // last pass differ from the pass before; empty when the block was not
+        // read or there is nothing to compare the reading against.
+        [[nodiscard]] std::span<const std::uint8_t> node_changed_bytes(const ReclassRow& row) const;
+
         // Whether the address lies inside a loaded module image.
         [[nodiscard]] bool inside_module(std::uint64_t address) const;
 
@@ -128,14 +133,16 @@ namespace slopkit::ui::models
             bool operator==(const ClassAddress&) const = default;
         };
 
-        // The bytes a block is read from, where the block starts inside them and
-        // the address that start sits at.
+        // The bytes a block is read from, which of them moved since the last
+        // pass, where the block starts inside them and the address that start
+        // sits at.
         struct BlockView
         {
-            std::span<const std::byte> bytes;
-            std::size_t                start {};
-            std::uint64_t              base {};
-            bool                       readable {};
+            std::span<const std::byte>    bytes;
+            std::span<const std::uint8_t> changed;
+            std::size_t                   start {};
+            std::uint64_t                 base {};
+            bool                          readable {};
         };
 
         void sync_classes();
@@ -149,6 +156,8 @@ namespace slopkit::ui::models
         [[nodiscard]] BlockView block_view(std::size_t block) const;
 
         [[nodiscard]] std::span<const std::byte> block_bytes(std::size_t block) const;
+
+        [[nodiscard]] std::span<const std::uint8_t> block_changed(std::size_t block) const;
 
         [[nodiscard]] const reclass::Node* node_of(const ReclassRow& row) const;
 

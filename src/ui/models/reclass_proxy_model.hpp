@@ -1,7 +1,6 @@
 #pragma once
 
 #include <unordered_map>
-#include <unordered_set>
 
 #include <QIdentityProxyModel>
 #include <QString>
@@ -52,7 +51,6 @@ namespace slopkit::ui::models
         ReclassValueModel&     values_;
 
         std::unordered_map<const ReclassRow*, Shown> shown_;
-        std::unordered_set<const ReclassRow*>        changed_;
         bool                                         cache_valid_ {};
     };
 

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
 #include <optional>
 #include <string>
@@ -17,6 +18,7 @@
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QRect>
 #include <QStringList>
 
 #include "process/access_worker.hpp"
@@ -210,6 +212,49 @@ namespace
         }
         return ids;
     }
+
+    // Whether a painted band holds a pixel within `tolerance` of `ink`: a glyph's
+    // antialiased edge blends toward the surface, so only its core passes.
+    bool paints_ink(const QImage& image, const QRect& band, const QColor& ink, int tolerance = 12)
+    {
+        for (int y = band.top(); y <= band.bottom(); ++y)
+        {
+            for (int x = band.left(); x <= band.right(); ++x)
+            {
+                const QColor sample = image.pixelColor(x, y);
+                if (std::abs(sample.red() - ink.red()) <= tolerance
+                    && std::abs(sample.green() - ink.green()) <= tolerance
+                    && std::abs(sample.blue() - ink.blue()) <= tolerance)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // The x range a band's ink spans, ignoring the row's own tint (sampled at the
+    // band's corner); absent when the band holds only background.
+    std::optional<std::pair<int, int>> ink_span(const QImage& image, const QRect& band)
+    {
+        const QColor        background = image.pixelColor(band.left(), band.top());
+        std::pair<int, int> span {-1, -1};
+        for (int x = band.left(); x <= band.right(); ++x)
+        {
+            for (int y = band.top(); y <= band.bottom(); ++y)
+            {
+                if (image.pixelColor(x, y) != background)
+                {
+                    if (span.first < 0)
+                    {
+                        span.first = x;
+                    }
+                    span.second = x;
+                }
+            }
+        }
+        return span.first < 0 ? std::nullopt : std::optional<std::pair<int, int>> {span};
+    }
 }
 
 TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][ui][view]")
@@ -280,8 +325,17 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
 
     using slopkit::ui::models::ReclassStructureModel;
 
-    Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    Fixture fixture;
+
+    // `tail` sits at offset 0x11, so the class draws a two-digit offset beside
+    // `tag`'s one-digit one and the per-row gap can be compared.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex8, "tail"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(900, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -317,10 +371,57 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
     // ...while a live pass repaints without re-measuring anything.
     const int settled = view.column_width(ReclassStructureModel::name);
     fixture.resolve();
-    fixture.put(fixture.player_address(), {1, 0x20, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.put(
+        fixture.player_address(),
+        {1, 0x20, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
     fixture.pass();
     QCoreApplication::processEvents();
     CHECK(view.column_width(ReclassStructureModel::name) == settled);
+
+    // The offset and ascii columns sit on their content box, so the one-digit
+    // offset of `tag` and the two-digit one of `tail` leave the same gap before
+    // the address text - and the same holds for ascii before the type.
+    QImage image(view.viewport()->size(), QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+
+    const auto gap_after = [&](std::size_t node_id, int column, int next_column) -> std::optional<int>
+    {
+        const auto ink = ink_span(image, view.cell_rect(fixture.cell(node_id, column)).value());
+        if (!ink.has_value())
+        {
+            return std::nullopt;
+        }
+        // Measured to the next column's text origin (its padding), so a different
+        // first glyph there cannot move the gap.
+        return view.column_x(next_column) + 4 - ink->second;
+    };
+
+    const auto tag_offset =
+        gap_after(fixture.node_id(0), ReclassStructureModel::offset, ReclassStructureModel::address);
+    const auto tail_offset =
+        gap_after(fixture.node_id(3), ReclassStructureModel::offset, ReclassStructureModel::address);
+    REQUIRE(tag_offset.has_value());
+    REQUIRE(tail_offset.has_value());
+    CHECK(*tag_offset == *tail_offset);
+    CHECK(*tag_offset > 0);
+
+    const auto tag_ascii  = gap_after(fixture.node_id(0), ReclassStructureModel::ascii, ReclassStructureModel::type);
+    const auto tail_ascii = gap_after(fixture.node_id(3), ReclassStructureModel::ascii, ReclassStructureModel::type);
+    REQUIRE(tag_ascii.has_value());
+    REQUIRE(tail_ascii.has_value());
+    CHECK(*tag_ascii == *tail_ascii);
+    CHECK(*tag_ascii > 0);
+
+    // The wider offset starts further left, so the two right edges line up.
+    const auto tag_ink =
+        ink_span(image, view.cell_rect(fixture.cell(fixture.node_id(0), ReclassStructureModel::offset)).value());
+    const auto tail_ink =
+        ink_span(image, view.cell_rect(fixture.cell(fixture.node_id(3), ReclassStructureModel::offset)).value());
+    REQUIRE(tag_ink.has_value());
+    REQUIRE(tail_ink.has_value());
+    CHECK(tail_ink->first < tag_ink->first);
+    CHECK(tail_ink->second == tag_ink->second);
 }
 
 TEST_CASE("a note widens the comment column up to a share of the pane", "[reclass][ui][view]")
@@ -700,4 +801,146 @@ TEST_CASE("the grid stripes its rows and colours the cells the model colours", "
     CHECK(colour_of(fixture.node_id(0), ReclassStructureModel::type).value<QColor>()
           == slopkit::ui::active_theme().datatype_signed);
     CHECK_FALSE(colour_of(fixture.node_id(0), ReclassStructureModel::name).isValid());
+}
+
+TEST_CASE("a moved hex byte pair warns while its neighbour keeps the grid colour", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+
+    // A hex16 node after Player's own fields, so the pair sits on its own row.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex16, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    fixture.resolve();
+    fixture.put(fixture.player_address(), {0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0F, 0x10, 0});
+    fixture.pass();
+
+    // Only the second byte moves.
+    fixture.put(fixture.player_address() + 10, {0x00});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QModelIndex value_cell = fixture.cell(fixture.node_id(2), ReclassStructureModel::value);
+    const QRect       cell       = view.cell_rect(value_cell).value();
+
+    QImage image(view.viewport()->size(), QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    const int          first_w = mono.horizontalAdvance(QStringLiteral("0F"));
+    const QRect        first(cell.left() + 4, cell.top(), first_w, cell.height());
+    const QRect        second(
+        cell.left() + 4 + first_w, cell.top(), mono.horizontalAdvance(QStringLiteral(" 00")), cell.height());
+
+    const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
+    CHECK(paints_ink(image, second, theme.warning));
+    CHECK_FALSE(paints_ink(image, second, theme.text));
+    CHECK(paints_ink(image, first, theme.text));
+    CHECK_FALSE(paints_ink(image, first, theme.warning));
+
+    // A selected row paints its value whole in the on-accent colour instead.
+    click(view, value_cell);
+    QCoreApplication::processEvents();
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+    CHECK(paints_ink(image, second, theme.on_accent));
+    CHECK_FALSE(paints_ink(image, second, theme.warning));
+}
+
+TEST_CASE("the readings beside a moved hex value keep the readout colour", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex32, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(1400, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    fixture.resolve();
+    fixture.put(fixture.player_address(), {0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1A, 0x2B, 0x3C, 0x4D});
+    fixture.pass();
+    fixture.put(fixture.player_address() + 10, {0x00});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QModelIndex value_cell = fixture.cell(fixture.node_id(2), ReclassStructureModel::value);
+    const QRect       cell       = view.cell_rect(value_cell).value();
+
+    QImage image(view.viewport()->size(), QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    const int          left = cell.left() + 4;
+    const int          w0   = mono.horizontalAdvance(QStringLiteral("1A"));
+    const int          w1   = mono.horizontalAdvance(QStringLiteral(" 00"));
+    const int          w2   = mono.horizontalAdvance(QStringLiteral(" 3C"));
+    const int          w3   = mono.horizontalAdvance(QStringLiteral(" 4D"));
+
+    const QRect second(left + w0, cell.top(), w1, cell.height());
+    const int   reading_x = left + w0 + w1 + w2 + w3;
+    const QRect reading(reading_x, cell.top(), cell.left() + cell.width() - reading_x, cell.height());
+
+    const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
+    CHECK(paints_ink(image, second, theme.warning));
+    CHECK(paints_ink(image, reading, theme.datatype_readout));
+    CHECK_FALSE(paints_ink(image, reading, theme.warning));
+}
+
+TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    fixture.structure.set_class(0);
+
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const std::size_t x_node = fixture.project.classes()[0].nodes[0]->id;
+
+    // Point's int32 x moves, so the whole `43  0x0000002B` is a moved value.
+    fixture.resolve();
+    fixture.put(kAppBase + 0x20, {0x2A, 0, 0, 0, 0, 0, 0, 0});
+    fixture.pass();
+    fixture.put(kAppBase + 0x20, {0x2B, 0, 0, 0, 0, 0, 0, 0});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QModelIndex value_cell = fixture.cell(x_node, ReclassStructureModel::value);
+    CHECK(view.cell_text(value_cell).toStdString() == "43  0x0000002B");
+
+    const QRect cell = view.cell_rect(value_cell).value();
+    QImage      image(view.viewport()->size(), QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+
+    const QRect               band(cell.left() + 4, cell.top(), cell.width() - 4, cell.height());
+    const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
+    CHECK(paints_ink(image, band, theme.warning));
+    CHECK_FALSE(paints_ink(image, band, theme.text));
 }

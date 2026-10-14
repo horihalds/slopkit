@@ -213,29 +213,48 @@ TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]
 {
     using slopkit::reclass::format_node_value_parts;
 
-    // A hex32's bytes are one run; the float, the integer and the raw bits are
-    // the reading beside them.
+    // A hex32's dump is one run per byte, with the reading after them.
     const auto hex32 = format_node_value_parts(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false);
-    REQUIRE(hex32.size() == 2);
-    REQUIRE(hex32[0].text == "2A 00 00 00");
+    REQUIRE(hex32.size() == 5);
+    REQUIRE(hex32[0].text == "2A");
+    REQUIRE(hex32[0].byte == 0);
     REQUIRE_FALSE(hex32[0].reading);
-    REQUIRE(hex32[1].text == "  0.000  42  0x2A");
-    REQUIRE(hex32[1].reading);
+    REQUIRE(hex32[1].text == " 00");
+    REQUIRE(hex32[1].byte == 1);
+    REQUIRE(hex32[3].text == " 00");
+    REQUIRE(hex32[3].byte == 3);
+    REQUIRE(hex32[4].text == "  0.000  42  0x2A");
+    REQUIRE(hex32[4].reading);
+    REQUIRE_FALSE(hex32[4].byte.has_value());
 
-    // The smaller hex kinds and the non-hex kinds keep one default run.
+    // The smaller hex kinds are one run per byte with no reading.
     const auto hex8 = format_node_value_parts(NodeKind::hex8, bytes_of({0x1A}), false);
     REQUIRE(hex8.size() == 1);
     REQUIRE(hex8[0].text == "1A");
+    REQUIRE(hex8[0].byte == 0);
     REQUIRE_FALSE(hex8[0].reading);
 
+    const auto hex16 = format_node_value_parts(NodeKind::hex16, bytes_of({0x0F, 0x10}), false);
+    REQUIRE(hex16.size() == 2);
+    REQUIRE(hex16[0].text == "0F");
+    REQUIRE(hex16[0].byte == 0);
+    REQUIRE(hex16[1].text == " 10");
+    REQUIRE(hex16[1].byte == 1);
+
+    // A kind that draws no byte dump keeps one run with no byte.
     const auto integer = format_node_value_parts(NodeKind::int32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false);
     REQUIRE(integer.size() == 1);
     REQUIRE(integer[0].text == "42  0x0000002A");
     REQUIRE_FALSE(integer[0].reading);
+    REQUIRE_FALSE(integer[0].byte.has_value());
 
     // The fold is the display text.
-    REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false)
-            == hex32[0].text + hex32[1].text);
+    std::string folded;
+    for (const auto& part : hex32)
+    {
+        folded += part.text;
+    }
+    REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false) == folded);
 }
 
 TEST_CASE("malformed values are refused with a reason", "[reclass]")

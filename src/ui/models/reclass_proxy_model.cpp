@@ -46,7 +46,9 @@ namespace slopkit::ui::models
 
         const QVariant base = QIdentityProxyModel::data(index, role);
         // Whatever the structure model already says about the cell - a muted
-        // comment, a marked reference row - stands.
+        // comment, a marked reference row - stands. The value cell adds only its
+        // muted unreadable colour; the moved-byte warning is the view's own,
+        // painted from the value model's per-byte mask.
         if (role != Qt::ForegroundRole || base.isValid())
         {
             return base;
@@ -66,10 +68,6 @@ namespace slopkit::ui::models
             if (values_.live_state(*row) == ReclassValueModel::LiveState::unreadable)
             {
                 return active_theme().text_muted;
-            }
-            if (changed_.contains(row))
-            {
-                return active_theme().warning;
             }
         }
         return base;
@@ -107,7 +105,6 @@ namespace slopkit::ui::models
 
     void ReclassProxyModel::refresh_values()
     {
-        changed_.clear();
         refresh({});
         cache_valid_ = true;
     }
@@ -115,7 +112,6 @@ namespace slopkit::ui::models
     void ReclassProxyModel::drop_cache()
     {
         shown_.clear();
-        changed_.clear();
         cache_valid_ = false;
     }
 
@@ -150,7 +146,6 @@ namespace slopkit::ui::models
                     if (before->second.value != now.value)
                     {
                         emit dataChanged(value_index, value_index);
-                        changed_.insert(row);
                     }
                 }
                 shown_.insert_or_assign(row, now);

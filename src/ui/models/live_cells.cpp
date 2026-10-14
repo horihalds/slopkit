@@ -100,10 +100,30 @@ namespace slopkit::ui::models
             const auto was_bytes = cell.bytes;
 
             const bool readable = reading.readable && !reading.bytes.empty();
+            cell.changed_bytes.clear();
             if (readable)
             {
-                cell.changed = cell.bytes.has_value() && *cell.bytes != reading.bytes;
-                cell.bytes   = reading.bytes;
+                const bool had = cell.bytes.has_value();
+                cell.changed_bytes.assign(reading.bytes.size(), 0);
+                if (had)
+                {
+                    const bool same_size = cell.bytes->size() == reading.bytes.size();
+                    bool       moved     = false;
+                    for (std::size_t b = 0; b < cell.changed_bytes.size(); ++b)
+                    {
+                        if (!same_size || (*cell.bytes)[b] != reading.bytes[b])
+                        {
+                            cell.changed_bytes[b] = 1;
+                            moved                 = true;
+                        }
+                    }
+                    cell.changed = moved;
+                }
+                else
+                {
+                    cell.changed = false;
+                }
+                cell.bytes = reading.bytes;
             }
             else
             {

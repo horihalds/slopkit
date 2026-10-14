@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <span>
 #include <utility>
 
 #include <QContextMenuEvent>
@@ -31,19 +32,19 @@ namespace slopkit::ui::components
 {
     namespace
     {
-        constexpr int kMargin         = 4;
-        constexpr int kTextPadding    = 4;
+        constexpr int kMargin              = 4;
+        constexpr int kTextPadding         = 4;
         // The room the widest text a column was measured for leaves before the
         // next column's text: a grid whose columns are sized once should not
         // spend more than a few pixels between them.
-        constexpr int kColumnGap      = 12;
-        constexpr int kIndentStep     = 12;
-        constexpr int kTriangleWidth  = 8;
-        constexpr int kMinColumnWidth = 24;
-        constexpr int kWheelRows      = 3;
+        constexpr int kColumnGap           = 12;
+        constexpr int kIndentStep          = 12;
+        constexpr int kTriangleWidth       = 8;
+        constexpr int kValueColumnMinWidth = 24;
+        constexpr int kWheelRows           = 3;
         // The cursor and hover tints are drawn over the stripes rather than
         // beside them, so both kinds of row keep the same tint.
-        constexpr int kTintAlpha      = 36;
+        constexpr int kTintAlpha           = 36;
 
         // The value's own font and colour when the model states them, and the
         // grid's when the choice is left to us.
@@ -66,6 +67,27 @@ namespace slopkit::ui::components
             using models::ReclassStructureModel;
             return column != ReclassStructureModel::address && column != ReclassStructureModel::offset
                 && column != ReclassStructureModel::ascii;
+        }
+
+        // The colour a value run paints: the readout colour for a reading, the
+        // warning colour for a byte of its own that moved, and the grid's text
+        // otherwise. A run with no byte of its own - a kind that draws no byte
+        // pair - warns whole when any of the node's bytes moved.
+        QColor part_colour(const reclass::ValuePart&     part,
+                           std::span<const std::uint8_t> moved,
+                           bool                          any_moved,
+                           const QColor&                 primary)
+        {
+            if (part.reading)
+            {
+                return active_theme().datatype_readout;
+            }
+            if (part.byte.has_value())
+            {
+                const std::size_t index = *part.byte;
+                return index < moved.size() && moved[index] != 0 ? active_theme().warning : primary;
+            }
+            return any_moved ? active_theme().warning : primary;
         }
     }
 
@@ -178,7 +200,7 @@ namespace slopkit::ui::components
 
         using models::ReclassStructureModel;
         column_width_[ReclassStructureModel::address] = measured(mono, format_padded_hex(0));
-        column_width_[ReclassStructureModel::ascii]   = measured(mono, tr("Ascii"));
+        column_width_[ReclassStructureModel::ascii]   = 0;
         comment_content_                              = measured(prose, tr("Comment"));
         column_width_[ReclassStructureModel::comment] = comment_content_;
         column_width_[ReclassStructureModel::value]   = 0;
@@ -199,10 +221,10 @@ namespace slopkit::ui::components
         // so a list of small nodes does not sit in a grid sized for the widest
         // kind in the language. This follows the flattened rows, which a live
         // pass never rebuilds.
-        int offset_width  = kMinColumnWidth;
-        int ascii_width   = kMinColumnWidth;
-        int type_width    = kMinColumnWidth;
-        int name_width    = kMinColumnWidth;
+        int offset_width  = 0;
+        int ascii_width   = 0;
+        int type_width    = 0;
+        int name_width    = 0;
         int comment_width = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
         for (const VisualRow& entry : rows_)
         {
@@ -249,7 +271,7 @@ namespace slopkit::ui::components
         column_width_[ReclassStructureModel::comment] = comment_width;
 
         column_x_[ReclassStructureModel::value] = x;
-        const int comment = std::max(x + kMinColumnWidth, viewport()->width() - comment_width - kMargin);
+        const int comment = std::max(x + kValueColumnMinWidth, viewport()->width() - comment_width - kMargin);
         column_width_[ReclassStructureModel::value] = comment - x;
         column_x_[ReclassStructureModel::comment]   = comment;
     }
@@ -488,13 +510,27 @@ namespace slopkit::ui::components
 
     int ReClassView::content_x(const VisualRow& entry, int column) const noexcept
     {
-        int x = column_x_[column] + kTextPadding;
+        using models::ReclassStructureModel;
+        const int base = column_x_[column] + kTextPadding;
+
+        // The offset and ascii columns print text of a varying length, so they
+        // sit on the column's content box: a shorter row moves right, which
+        // leaves the same gap to the next column on every row while the widest
+        // row still starts where it always did.
+        if (column == ReclassStructureModel::offset || column == ReclassStructureModel::ascii)
+        {
+            const QModelIndex index   = index_for(*entry.row, column);
+            const int         advance = QFontMetrics(cell_font(index, *model_))
+                                            .horizontalAdvance(model_->data(index, Qt::DisplayRole).toString());
+            return base + std::max(0, column_width_[column] - kColumnGap - advance);
+        }
+
         if (!indents(column))
         {
-            return x;
+            return base;
         }
-        x += static_cast<int>(entry.depth) * kIndentStep;
-        if (column == models::ReclassStructureModel::type && expandable(*entry.row))
+        int x = base + static_cast<int>(entry.depth) * kIndentStep;
+        if (column == ReclassStructureModel::type && expandable(*entry.row))
         {
             x += kTriangleWidth;
         }
@@ -815,13 +851,21 @@ namespace slopkit::ui::components
         const QRect text_rect(x, rect.y(), available, rect.height());
 
         // The value cell paints in runs: the node's own bytes in the grid's text
-        // colour, then the readings beside them in the readout colour, so a hex
-        // cell's float and integer stay visibly apart from its bytes. A selected
-        // row, a stated colour (unreadable or changed) and a value too wide for
-        // its column all paint whole instead.
+        // colour except the pairs whose byte moved since the last pass, which
+        // light warning, and the readings beside them in the readout colour, so a
+        // hex cell's float and integer stay visibly apart from its bytes. A kind
+        // that draws no byte pair warns whole when any of its bytes moved. A
+        // selected row, a stated colour (an unreadable block) and a value too
+        // wide for its column all paint whole instead.
         if (column == models::ReclassStructureModel::value && !selected && !stated.has_value())
         {
             const std::vector<reclass::ValuePart> parts = values_->value_parts(*entry.row);
+            const std::span<const std::uint8_t>   moved = values_->node_changed_bytes(*entry.row);
+            const bool                            any   = std::ranges::any_of(moved,
+                                                                              [](std::uint8_t flag)
+                                                                              {
+                                                     return flag != 0;
+                                                                              });
             int                                   total = 0;
             for (const reclass::ValuePart& part : parts)
             {
@@ -834,14 +878,17 @@ namespace slopkit::ui::components
                 {
                     const QString run   = to_qstring(part.text);
                     const int     width = metrics.horizontalAdvance(run);
-                    painter.setPen(part.reading ? active_theme().datatype_readout : primary);
+                    painter.setPen(part_colour(part, moved, any, primary));
                     painter.drawText(
                         QRect(run_x, rect.y(), width, rect.height()), Qt::AlignLeft | Qt::AlignVCenter, run);
                     run_x += width;
                 }
                 return;
             }
-            painter.setPen(primary);
+
+            // The value does not fit the column; it elides whole, so its moved
+            // bytes cannot be singled out.
+            painter.setPen(any ? active_theme().warning : primary);
         }
 
         painter.drawText(

@@ -189,7 +189,9 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
     fixture.stage(fixture.player_address() + 1, {0x2A, 0, 0, 0});
     fixture.pass();
     CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("42  0x0000002A"));
-    CHECK(fixture.proxy->data(health, Qt::ForegroundRole).value<QColor>() == slopkit::ui::active_theme().warning);
+    // The value cell no longer states the warning itself: the view paints the
+    // moved bytes from the value model's per-byte mask.
+    CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
 
     // The cell draws the value beside its hex form, while the editor starts
     // from the value alone, so what the user types is what a write parses.
