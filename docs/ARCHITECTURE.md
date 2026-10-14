@@ -730,11 +730,13 @@ groups) on the left and the node pane on the right. Selecting a class in the tre
 drives the grid; the tree's `Class Hierarchy View` nests the classes a class
 refers to behind the reference's cycle guard, and its context menus add, rename,
 delete and clean up classes and edit the enums. The `Node` menu and the grid's row
-menu carry the reference's node commands — `Add Bytes`/`Insert Bytes` at the
-4/8/64/256/1024/2048/4096 presets or an `X bytes…` prompt, `Change Type`,
-`Dissect`, `Follow Pointer`, `Create Class from Nodes`, `Shrink Class`,
-`Copy Nodes`/`Paste Nodes`, the five hide/unhide commands and `Copy Address` — all
-on the prompt-free `ReClassDialog` methods the tests drive. A paste clones each
+menu carry the reference's node commands — `Change Type`, `Dissect`,
+`Follow Pointer`, `Create Class from Nodes`, `Shrink Class`,
+`Copy Nodes`/`Paste Nodes`, the five hide/unhide commands and `Copy Address` — and
+the row menu carries the reference's two byte submenus, `Add Bytes` and
+`Insert Bytes`, at the 4/8/64/256/1024/2048/4096 presets or an `X bytes…` prompt,
+the same two the toolbar's drop-down buttons offer, all on the prompt-free
+`ReClassDialog` methods the tests drive. A paste clones each
 copied sub-tree through `Node::clone()` and re-ids every node, so a container's
 children come with it, and a `Create Class from Nodes` moves the selection into a
 new class and leaves a same-sized class instance in its place. A hidden node

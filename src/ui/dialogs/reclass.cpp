@@ -312,7 +312,13 @@ namespace slopkit::ui::dialogs
     QMenu* ReClassDialog::build_add_bytes_menu(bool insert)
     {
         auto* menu = new QMenu(this);
-        widgets::show_explanations(*menu);
+        populate_add_bytes_menu(*menu, insert);
+        return menu;
+    }
+
+    void ReClassDialog::populate_add_bytes_menu(QMenu& menu, bool insert)
+    {
+        widgets::show_explanations(menu);
 
         // The reference's presets, 4 to 4096 bytes, then its "… Bytes" prompt.
         for (const std::size_t count : {4, 8, 64, 256, 1024, 2048, 4096})
@@ -320,7 +326,7 @@ namespace slopkit::ui::dialogs
             const QString label  = insert ? tr("Insert %1 Bytes").arg(count) : tr("Add %1 Bytes").arg(count);
             const QString detail = insert ? tr("Insert %1 padding bytes in front of the selection.").arg(count)
                                           : tr("Append %1 padding bytes at the end of the container.").arg(count);
-            QAction*      action = widgets::described_action(*menu, label, detail);
+            QAction*      action = widgets::described_action(menu, label, detail);
             connect(action,
                     &QAction::triggered,
                     this,
@@ -337,9 +343,9 @@ namespace slopkit::ui::dialogs
                     });
         }
 
-        menu->addSeparator();
+        menu.addSeparator();
         QAction* custom = widgets::described_action(
-            *menu, insert ? tr("Insert … Bytes") : tr("Add … Bytes"), tr("Choose the number of bytes yourself."));
+            menu, insert ? tr("Insert … Bytes") : tr("Add … Bytes"), tr("Choose the number of bytes yourself."));
         connect(custom,
                 &QAction::triggered,
                 this,
@@ -354,7 +360,6 @@ namespace slopkit::ui::dialogs
                         add_bytes();
                     }
                 });
-        return menu;
     }
 
     void ReClassDialog::populate_node_kind_menu(QMenu& menu, bool change)
@@ -1466,6 +1471,12 @@ namespace slopkit::ui::dialogs
     void ReClassDialog::show_row_menu(const QPoint& position)
     {
         QMenu menu(this);
+        populate_row_menu(menu);
+        menu.exec(position);
+    }
+
+    void ReClassDialog::populate_row_menu(QMenu& menu)
+    {
         widgets::show_explanations(menu);
 
         QMenu* insert = widgets::explained_submenu(menu, tr("Insert Node"));
@@ -1474,15 +1485,18 @@ namespace slopkit::ui::dialogs
         QMenu* change = widgets::explained_submenu(menu, tr("Change Type"));
         populate_node_kind_menu(*change, true);
 
-        QAction* bytes =
-            widgets::described_action(menu, tr("Add Bytes…"), tr("Append padding bytes at the end of the class."));
-        connect(bytes,
-                &QAction::triggered,
-                this,
-                [this]
-                {
-                    add_bytes();
-                });
+        // The reference puts both byte commands in the node menu as submenus of
+        // the same presets the toolbar offers and enables them only where they
+        // can act: adding needs a selection, inserting needs exactly one node
+        // because the padding goes in front of that node.
+        const std::size_t selected       = selected_rows().size();
+        QMenu*            add_bytes_menu = widgets::explained_submenu(menu, tr("Add Bytes"));
+        populate_add_bytes_menu(*add_bytes_menu, false);
+        add_bytes_menu->setEnabled(selected > 0);
+
+        QMenu* insert_bytes_menu = widgets::explained_submenu(menu, tr("Insert Bytes"));
+        populate_add_bytes_menu(*insert_bytes_menu, true);
+        insert_bytes_menu->setEnabled(selected == 1);
 
         menu.addSeparator();
 
@@ -1529,8 +1543,6 @@ namespace slopkit::ui::dialogs
         QAction* remove = widgets::described_action(menu, tr("Delete"), tr("Remove the selected node(s)."));
         widgets::show_shortcut_hint(*remove, *delete_action_);
         connect(remove, &QAction::triggered, this, &ReClassDialog::remove_selected_nodes);
-
-        menu.exec(position);
     }
 
     void ReClassDialog::create_class_from_nodes()

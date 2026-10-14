@@ -140,6 +140,10 @@ namespace slopkit::ui::dialogs
         void copy_name();
         void remove_selected_nodes();
 
+        // Fills the grid's row menu, so a test can inspect it without opening a
+        // modal box.
+        void populate_row_menu(QMenu& menu);
+
         // Hide and unhide, the reference's five commands. A hidden node collapses
         // to a single `...` row the grid unhides on click.
         void hide_selected_nodes();
@@ -191,6 +195,7 @@ namespace slopkit::ui::dialogs
         QWidget* build_grid_pane();
 
         void                 populate_node_kind_menu(QMenu& menu, bool change);
+        void                 populate_add_bytes_menu(QMenu& menu, bool insert);
         [[nodiscard]] QMenu* build_add_node_menu();
         [[nodiscard]] QMenu* build_add_bytes_menu(bool insert);
 

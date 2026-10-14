@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QFontMetrics>
 #include <QImage>
@@ -356,6 +357,48 @@ TEST_CASE("clicking a row selects it and shift extends the selection", "[reclass
 
     click(view, fixture.cell(fixture.node_id(0), tag_column), Qt::ControlModifier);
     CHECK(selected_nodes(view, fixture.structure) == std::vector<std::optional<std::size_t>> {fixture.node_id(1)});
+}
+
+TEST_CASE("a right-click selects the row it was opened over", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture     fixture;
+    ReClassView view {fixture.proxy, fixture.structure};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const int tag_column = slopkit::ui::models::ReclassStructureModel::name;
+
+    int menus = 0;
+    QObject::connect(&view,
+                     &ReClassView::rowMenuRequested,
+                     [&menus](const QPoint&)
+                     {
+                         ++menus;
+                     });
+
+    click(view, fixture.cell(fixture.node_id(1), tag_column));
+    CHECK(node_at(fixture.structure, view.currentIndex()) == fixture.node_id(1));
+
+    // The reference moves the selection to the node the menu was opened over, so
+    // the commands it carries act on that row rather than on a stale selection.
+    const QPoint      point = view.cell_rect(fixture.cell(fixture.node_id(0), tag_column)).value().center();
+    QContextMenuEvent menu {QContextMenuEvent::Mouse, point, view.viewport()->mapToGlobal(point)};
+    QApplication::sendEvent(view.viewport(), &menu);
+
+    CHECK(menus == 1);
+    CHECK(node_at(fixture.structure, view.currentIndex()) == fixture.node_id(0));
+    CHECK(selected_nodes(view, fixture.structure) == std::vector<std::optional<std::size_t>> {fixture.node_id(0)});
+
+    // A multiple selection is left alone, so a command can still act on all of it.
+    click(view, fixture.cell(fixture.node_id(1), tag_column), Qt::ControlModifier);
+    REQUIRE(selected_nodes(view, fixture.structure).size() == 2);
+    QApplication::sendEvent(view.viewport(), &menu);
+
+    CHECK(menus == 2);
+    CHECK(selected_nodes(view, fixture.structure).size() == 2);
 }
 
 TEST_CASE("toggling a reference row inlines its class and keeps the cursor", "[reclass][ui][view]")

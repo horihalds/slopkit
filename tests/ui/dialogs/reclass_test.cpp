@@ -7,8 +7,11 @@
 #include <utility>
 #include <vector>
 
+#include <QAction>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QMenu>
+#include <QMouseEvent>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -472,6 +475,105 @@ TEST_CASE("adding and inserting bytes keeps the offsets of the following nodes",
     CHECK_FALSE(dialog.add_bytes(0));
     CHECK_FALSE(dialog.insert_bytes(0));
     CHECK(player.nodes.size() == 4);
+
+    dialog.close();
+}
+
+TEST_CASE("the row menu offers both byte commands", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    const auto submenu = [](QMenu& menu, const QString& title) -> QMenu*
+    {
+        for (QAction* action : menu.actions())
+        {
+            if (action->text() == title)
+            {
+                return action->menu();
+            }
+        }
+        return nullptr;
+    };
+    const auto item = [](QMenu& menu, const QString& text) -> QAction*
+    {
+        for (QAction* action : menu.actions())
+        {
+            if (action->text() == text)
+            {
+                return action;
+            }
+        }
+        return nullptr;
+    };
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+
+    // Both byte commands sit in the node menu, each with the toolbar's seven
+    // presets and its prompt.
+    QMenu row_menu;
+    dialog.populate_row_menu(row_menu);
+
+    QMenu* add    = submenu(row_menu, QStringLiteral("Add Bytes"));
+    QMenu* insert = submenu(row_menu, QStringLiteral("Insert Bytes"));
+    REQUIRE(add != nullptr);
+    REQUIRE(insert != nullptr);
+    REQUIRE(add->actions().size() == 9);
+    REQUIRE(insert->actions().size() == 9);
+    CHECK(add->actions().front()->text() == QStringLiteral("Add 4 Bytes"));
+    CHECK(add->actions().back()->text() == QStringLiteral("Add … Bytes"));
+    CHECK(insert->actions().front()->text() == QStringLiteral("Insert 4 Bytes"));
+    CHECK(item(*insert, QStringLiteral("Insert 2048 Bytes")) != nullptr);
+
+    // The reference enables them only where they can act, which needs a node.
+    CHECK_FALSE(add->isEnabled());
+    CHECK_FALSE(insert->isEnabled());
+
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+
+    QMenu selected;
+    dialog.populate_row_menu(selected);
+    CHECK(submenu(selected, QStringLiteral("Add Bytes"))->isEnabled());
+    CHECK(submenu(selected, QStringLiteral("Insert Bytes"))->isEnabled());
+
+    // Inserting goes in front of the selected node, so it and the nodes after it
+    // keep their offsets.
+    item(*submenu(selected, QStringLiteral("Insert Bytes")), QStringLiteral("Insert 4 Bytes"))->trigger();
+    REQUIRE(player.nodes.size() == 3);
+    CHECK(player.nodes[0]->kind() == NodeKind::hex32);
+    CHECK(player.nodes[1]->kind() == NodeKind::int8);
+    CHECK(dialog.structure()->row_for(dialog.structure()->index(2, 0))->offset == 5);
+
+    // Adding appends behind the selection's container, so it lands at the end.
+    QMenu appended;
+    dialog.populate_row_menu(appended);
+    item(*submenu(appended, QStringLiteral("Add Bytes")), QStringLiteral("Add 8 Bytes"))->trigger();
+    REQUIRE(player.nodes.size() == 4);
+    CHECK(player.nodes.back()->kind() == NodeKind::hex64);
+
+    // A multiple selection offers no single insertion point, so only adding is
+    // left.
+    const QModelIndex          index = dialog.structure()->index(dialog.structure()->rowCount() - 1, 0);
+    const std::optional<QRect> rect  = dialog.grid()->cell_rect(index);
+    REQUIRE(rect.has_value());
+    const QPoint point  = rect->center();
+    const QPoint global = dialog.grid()->viewport()->mapToGlobal(point);
+    QMouseEvent  press {
+        QEvent::MouseButtonPress, QPointF(point), QPointF(global), Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier};
+    QApplication::sendEvent(dialog.grid()->viewport(), &press);
+    REQUIRE(dialog.grid()->selected_rows().size() == 2);
+
+    QMenu multiple;
+    dialog.populate_row_menu(multiple);
+    CHECK(submenu(multiple, QStringLiteral("Add Bytes"))->isEnabled());
+    CHECK_FALSE(submenu(multiple, QStringLiteral("Insert Bytes"))->isEnabled());
 
     dialog.close();
 }

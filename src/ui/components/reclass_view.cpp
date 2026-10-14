@@ -957,6 +957,14 @@ namespace slopkit::ui::components
 
     void ReClassView::contextMenuEvent(QContextMenuEvent* event)
     {
+        // The reference selects the node under the cursor before it opens the
+        // menu, as long as at most one node was selected, so the commands act on
+        // the row the menu was opened over rather than on a stale selection.
+        const std::optional<Hit> hit = hit_test(viewport()->mapFromGlobal(event->globalPos()));
+        if (hit.has_value() && selected_.size() <= 1)
+        {
+            select_row(*hit, Qt::NoModifier);
+        }
         emit rowMenuRequested(event->globalPos());
     }
 
