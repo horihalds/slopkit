@@ -424,6 +424,36 @@ TEST_CASE("the ReClass window carries the reference's shell", "[reclass][ui]")
     REQUIRE(dialog.add_node_button()->menu() != nullptr);
     CHECK(dialog.add_node_button()->menu()->actions().size() > 3);
 
+    // The Add Node button carries its datatype glyph beside its label, while the
+    // rest of the strip stays text-only.
+    CHECK_FALSE(dialog.add_node_button()->icon().isNull());
+    CHECK(dialog.add_node_button()->toolButtonStyle() == Qt::ToolButtonTextBesideIcon);
+
+    const auto node_item = [](QMenu& menu, const QString& text) -> QAction*
+    {
+        for (QAction* action : menu.actions())
+        {
+            if (action->text() == text)
+            {
+                return action;
+            }
+        }
+        return nullptr;
+    };
+
+    // A mapped kind's entry paints its glyph; an unmapped kind's stays bare.
+    QAction* int_entry = node_item(*dialog.add_node_button()->menu(), QStringLiteral("Int32"));
+    REQUIRE(int_entry != nullptr);
+    CHECK_FALSE(int_entry->icon().isNull());
+
+    QAction* class_entry = node_item(*dialog.add_node_button()->menu(), QStringLiteral("Class Instance"));
+    REQUIRE(class_entry != nullptr);
+    CHECK(class_entry->icon().isNull());
+
+    QAction* text_ptr_entry = node_item(*dialog.add_node_button()->menu(), QStringLiteral("Utf8TextPtr"));
+    REQUIRE(text_ptr_entry != nullptr);
+    CHECK_FALSE(text_ptr_entry->icon().isNull());
+
     auto* add_bytes    = dialog.tool_bar()->findChild<QToolButton*>(QStringLiteral("reclass_add_bytes"));
     auto* insert_bytes = dialog.tool_bar()->findChild<QToolButton*>(QStringLiteral("reclass_insert_bytes"));
     REQUIRE(add_bytes != nullptr);
@@ -520,6 +550,22 @@ TEST_CASE("the row menu offers both byte commands", "[reclass][ui]")
     // presets and its prompt.
     QMenu row_menu;
     dialog.populate_row_menu(row_menu);
+
+    // The Insert Node and Change Type submenus paint the same kind glyphs the
+    // Add Node menu does.
+    QMenu* insert_node = submenu(row_menu, QStringLiteral("Insert Node"));
+    QMenu* change_type = submenu(row_menu, QStringLiteral("Change Type"));
+    REQUIRE(insert_node != nullptr);
+    REQUIRE(change_type != nullptr);
+    QAction* insert_int = item(*insert_node, QStringLiteral("Int32"));
+    REQUIRE(insert_int != nullptr);
+    CHECK_FALSE(insert_int->icon().isNull());
+    QAction* change_int = item(*change_type, QStringLiteral("Int32"));
+    REQUIRE(change_int != nullptr);
+    CHECK_FALSE(change_int->icon().isNull());
+    QAction* insert_class = item(*insert_node, QStringLiteral("Class Instance"));
+    REQUIRE(insert_class != nullptr);
+    CHECK(insert_class->icon().isNull());
 
     QMenu* add    = submenu(row_menu, QStringLiteral("Add Bytes"));
     QMenu* insert = submenu(row_menu, QStringLiteral("Insert Bytes"));

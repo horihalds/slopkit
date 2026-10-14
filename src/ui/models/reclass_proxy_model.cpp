@@ -28,6 +28,10 @@ namespace slopkit::ui::models
             {
                 return values_.address_text(*row);
             }
+            if (index.column() == ReclassStructureModel::ascii)
+            {
+                return values_.ascii_text(*row);
+            }
             if (index.column() == ReclassStructureModel::value)
             {
                 return values_.value_text(*row);
@@ -50,7 +54,12 @@ namespace slopkit::ui::models
 
         if (index.column() == ReclassStructureModel::address)
         {
-            return values_.node_address(*row).has_value() ? active_theme().syntax_immediate : active_theme().text_muted;
+            return values_.node_address(*row).has_value() ? active_theme().grid_address : active_theme().text_muted;
+        }
+        if (index.column() == ReclassStructureModel::ascii)
+        {
+            return values_.live_state(*row) == ReclassValueModel::LiveState::unreadable ? active_theme().text_muted
+                                                                                        : active_theme().grid_ascii;
         }
         if (index.column() == ReclassStructureModel::value)
         {
@@ -116,12 +125,15 @@ namespace slopkit::ui::models
         for (int position = 0; position < rows; ++position)
         {
             const QModelIndex address_index = index(position, ReclassStructureModel::address, parent);
+            const QModelIndex ascii_index   = index(position, ReclassStructureModel::ascii, parent);
             const QModelIndex value_index   = index(position, ReclassStructureModel::value, parent);
             const ReclassRow* row           = structure_.row_for(mapToSource(address_index));
 
             if (row != nullptr && address_index.isValid() && value_index.isValid())
             {
-                const Shown now {.address = values_.address_text(*row), .value = values_.value_text(*row)};
+                const Shown now {.address = values_.address_text(*row),
+                                 .ascii   = values_.ascii_text(*row),
+                                 .value   = values_.value_text(*row)};
                 const auto  before = shown_.find(row);
                 // The first pass after a rebuild only fills the cache: the
                 // reset the rebuild performed has already repainted the view.
@@ -130,6 +142,10 @@ namespace slopkit::ui::models
                     if (before->second.address != now.address)
                     {
                         emit dataChanged(address_index, address_index);
+                    }
+                    if (before->second.ascii != now.ascii)
+                    {
+                        emit dataChanged(ascii_index, ascii_index);
                     }
                     if (before->second.value != now.value)
                     {

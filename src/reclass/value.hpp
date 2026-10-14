@@ -23,6 +23,20 @@ namespace slopkit::reclass
     // address.
     [[nodiscard]] std::string format_node_value(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
 
+    // One run of a value's display text: the node's own bytes, or a reading the
+    // cell draws beside them. A reader that paints the cell colours the runs
+    // apart; `format_node_value_display` folds them back into one string.
+    struct ValuePart
+    {
+        std::string text;
+        bool        reading {};
+    };
+
+    // The display text split into runs: the node's own bytes as the first, one
+    // reading run for a hex32/hex64 cell's float, integer and raw bits.
+    [[nodiscard]] std::vector<ValuePart>
+    format_node_value_parts(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
+
     // The same value as the grid draws it: the codec's text beside the readings
     // the reference shows next to it - an integer's hex form, a hex node's float
     // and integer readings, a pointer's target.

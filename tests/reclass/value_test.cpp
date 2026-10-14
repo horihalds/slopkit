@@ -105,11 +105,12 @@ TEST_CASE("a character renders as itself or as an escape", "[reclass]")
 
 TEST_CASE("hex nodes render and parse as bare upper-case hex", "[reclass]")
 {
-    REQUIRE(format_node_value(NodeKind::hex32, bytes_of({0x11, 0x22, 0x33, 0x44}), false) == "11223344");
+    REQUIRE(format_node_value(NodeKind::hex32, bytes_of({0x11, 0x22, 0x33, 0x44}), false) == "11 22 33 44");
     REQUIRE(format_node_value(NodeKind::hex8, bytes_of({0x0C}), false) == "0C");
 
     REQUIRE(parsed(NodeKind::hex32, "11223344") == bytes_of({0x11, 0x22, 0x33, 0x44}));
     REQUIRE(parsed(NodeKind::hex32, "0x11223344") == bytes_of({0x11, 0x22, 0x33, 0x44}));
+    REQUIRE(parsed(NodeKind::hex32, "11 22 33 44") == bytes_of({0x11, 0x22, 0x33, 0x44}));
     REQUIRE(parsed(NodeKind::hex16, "11 22") == bytes_of({0x11, 0x22}));
     REQUIRE(parsed(NodeKind::hex64, "0102030405060708") == bytes_of({0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}));
 
@@ -178,16 +179,16 @@ TEST_CASE("the grid's reading of a value adds the reference's alternatives", "[r
     // A hex node shows what its bytes would read as: the float, then the signed
     // value and the raw bits. A null one stops after the float.
     REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false)
-            == "2A000000  0.000  42  0x2A");
+            == "2A 00 00 00  0.000  42  0x2A");
     REQUIRE(
         format_node_value_display(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), false)
-        == "4000400000000000  0.000  4194368  0x400040");
+        == "40 00 40 00 00 00 00 00  0.000  4194368  0x400040");
     REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00}), false)
-            == "00000000  0.000  0");
+            == "00 00 00 00  0.000  0");
 
     // The small kinds read as they always did.
     REQUIRE(format_node_value_display(NodeKind::hex8, bytes_of({0x0F}), false) == "0F");
-    REQUIRE(format_node_value_display(NodeKind::hex16, bytes_of({0x0F, 0x10}), false) == "0F10");
+    REQUIRE(format_node_value_display(NodeKind::hex16, bytes_of({0x0F, 0x10}), false) == "0F 10");
     REQUIRE(format_node_value_display(NodeKind::boolean, bytes_of({0x01}), false) == "true");
     REQUIRE(format_node_value_display(NodeKind::character, bytes_of({0x41}), false) == "A");
 
@@ -206,6 +207,35 @@ TEST_CASE("the grid's reading of a value adds the reference's alternatives", "[r
     REQUIRE(read_node_value(NodeKind::hex8, bytes_of({0xFF})) == 0xFF);
     REQUIRE(read_node_value(NodeKind::hex64, bytes_of({0x01, 0x02})) == 0);
     REQUIRE(read_node_value(NodeKind::class_instance, bytes_of({0x01})) == 0);
+}
+
+TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]")
+{
+    using slopkit::reclass::format_node_value_parts;
+
+    // A hex32's bytes are one run; the float, the integer and the raw bits are
+    // the reading beside them.
+    const auto hex32 = format_node_value_parts(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false);
+    REQUIRE(hex32.size() == 2);
+    REQUIRE(hex32[0].text == "2A 00 00 00");
+    REQUIRE_FALSE(hex32[0].reading);
+    REQUIRE(hex32[1].text == "  0.000  42  0x2A");
+    REQUIRE(hex32[1].reading);
+
+    // The smaller hex kinds and the non-hex kinds keep one default run.
+    const auto hex8 = format_node_value_parts(NodeKind::hex8, bytes_of({0x1A}), false);
+    REQUIRE(hex8.size() == 1);
+    REQUIRE(hex8[0].text == "1A");
+    REQUIRE_FALSE(hex8[0].reading);
+
+    const auto integer = format_node_value_parts(NodeKind::int32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false);
+    REQUIRE(integer.size() == 1);
+    REQUIRE(integer[0].text == "42  0x0000002A");
+    REQUIRE_FALSE(integer[0].reading);
+
+    // The fold is the display text.
+    REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false)
+            == hex32[0].text + hex32[1].text);
 }
 
 TEST_CASE("malformed values are refused with a reason", "[reclass]")

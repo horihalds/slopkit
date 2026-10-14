@@ -217,7 +217,7 @@ TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][
     application();
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(700, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -236,6 +236,13 @@ TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][
     CHECK(view.column_width(ReclassStructureModel::address) > 0);
     CHECK(view.column_width(ReclassStructureModel::offset) > 0);
     CHECK(view.column_width(ReclassStructureModel::name) > 0);
+
+    // The offset is first and the ascii view sits between the address and the
+    // type, so the row reads as an offset, an address, its bytes and the kind.
+    CHECK(view.column_width(ReclassStructureModel::ascii) > 0);
+    CHECK(ReclassStructureModel::offset < ReclassStructureModel::address);
+    CHECK(ReclassStructureModel::address < ReclassStructureModel::ascii);
+    CHECK(ReclassStructureModel::ascii < ReclassStructureModel::type);
 
     // The value column owns the pane's slack with the comment column pinned
     // against the right edge, so a reading wider than its text still fits.
@@ -274,7 +281,7 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
     using slopkit::ui::models::ReclassStructureModel;
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(900, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -316,12 +323,51 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
     CHECK(view.column_width(ReclassStructureModel::name) == settled);
 }
 
+TEST_CASE("a note widens the comment column up to a share of the pane", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture     fixture;
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const QFontMetrics prose(slopkit::ui::ui_font());
+    const int          header = prose.horizontalAdvance(QStringLiteral("Comment"));
+
+    // With no notes the column is just its header word wide.
+    const int bare = view.column_width(ReclassStructureModel::comment);
+    CHECK(bare >= header);
+    CHECK(bare <= header + 24);
+
+    // A note widens it to fit the prefixed text.
+    fixture.project.classes()[1].nodes[0]->comment = "the health field";
+    fixture.structure.rebuild();
+    QCoreApplication::processEvents();
+
+    const int needed = prose.horizontalAdvance(QStringLiteral("// the health field"));
+    CHECK(view.column_width(ReclassStructureModel::comment) >= needed);
+
+    // A note longer than a third of the pane is clamped there, so the value
+    // column keeps the slack.
+    fixture.project.classes()[1].nodes[0]->comment =
+        "a note so long that it would otherwise swallow the whole value column and then some";
+    fixture.structure.rebuild();
+    QCoreApplication::processEvents();
+
+    CHECK(view.column_width(ReclassStructureModel::comment) <= view.viewport()->width() / 3 + 1);
+    CHECK(view.column_width(ReclassStructureModel::value) > 0);
+}
+
 TEST_CASE("clicking a row selects it and shift extends the selection", "[reclass][ui][view]")
 {
     application();
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(700, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -364,7 +410,7 @@ TEST_CASE("a right-click selects the row it was opened over", "[reclass][ui][vie
     application();
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(700, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -408,7 +454,7 @@ TEST_CASE("toggling a reference row inlines its class and keeps the cursor", "[r
     using slopkit::ui::models::ReclassStructureModel;
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(700, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -452,7 +498,7 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
     using slopkit::ui::models::ReclassStructureModel;
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(700, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -509,7 +555,7 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     using slopkit::ui::models::ReclassStructureModel;
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(700, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -594,7 +640,7 @@ TEST_CASE("a reading wider than its column is readable from the tooltip", "[recl
     using slopkit::ui::models::ReclassStructureModel;
 
     Fixture     fixture;
-    ReClassView view {fixture.proxy, fixture.structure};
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(900, 200);
     view.show();
     QCoreApplication::processEvents();
@@ -626,7 +672,7 @@ TEST_CASE("the grid stripes its rows and colours the cells the model colours", "
     using slopkit::ui::models::ReclassStructureModel;
 
     Fixture     fixture;
-    PaintedView view {fixture.proxy, fixture.structure};
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
     view.resize(500, 160);
     view.show();
     QCoreApplication::processEvents();
@@ -650,8 +696,8 @@ TEST_CASE("the grid stripes its rows and colours the cells the model colours", "
         return fixture.proxy.data(fixture.cell(node_id, column), Qt::ForegroundRole);
     };
     CHECK(colour_of(fixture.node_id(0), ReclassStructureModel::offset).value<QColor>()
-          == slopkit::ui::active_theme().text_muted);
+          == slopkit::ui::active_theme().grid_offset);
     CHECK(colour_of(fixture.node_id(0), ReclassStructureModel::type).value<QColor>()
-          == slopkit::ui::active_theme().syntax_keyword);
+          == slopkit::ui::active_theme().datatype_signed);
     CHECK_FALSE(colour_of(fixture.node_id(0), ReclassStructureModel::name).isValid());
 }

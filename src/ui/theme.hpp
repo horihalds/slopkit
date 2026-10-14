@@ -27,6 +27,18 @@ namespace slopkit::ui
         QColor syntax_string;
         QColor syntax_comment;
         QColor syntax_number;
+        QColor datatype_signed;
+        QColor datatype_unsigned;
+        QColor datatype_bits;
+        QColor datatype_float;
+        QColor datatype_vector;
+        QColor datatype_text;
+        QColor datatype_class;
+        QColor datatype_readout;
+        QColor grid_offset;
+        QColor grid_address;
+        QColor grid_ascii;
+        QColor grid_comment;
     };
 
     [[nodiscard]] Theme dark_theme();

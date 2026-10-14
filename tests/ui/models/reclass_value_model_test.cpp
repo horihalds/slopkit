@@ -176,6 +176,7 @@ TEST_CASE("nothing is submitted while no target is attached", "[reclass][ui]")
     CHECK(fixture.values.requests().empty());
     CHECK(fixture.values.address_text(fixture.row(0)) == QStringLiteral("Attach to a target first."));
     CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("?"));
+    CHECK(fixture.values.ascii_text(fixture.row(0)) == QStringLiteral("?"));
 }
 
 TEST_CASE("an unresolved class address reads not resolved yet and nothing more", "[reclass][ui]")
@@ -229,8 +230,17 @@ TEST_CASE("a hex node whose bytes land in a module hints at the pointer", "[recl
     fixture.pass();
 
     const QString text = fixture.values.value_text(fixture.row(2));
-    CHECK(text.startsWith(QStringLiteral("4000400000000000")));
+    CHECK(text.startsWith(QStringLiteral("40 00 40 00")));
     CHECK(text.endsWith(QStringLiteral("-> 0x0000000000400040")));
+
+    // The cell's runs split the bytes from the readings; the module pointer is
+    // one more reading run.
+    const std::vector<slopkit::reclass::ValuePart> parts = fixture.values.value_parts(fixture.row(2));
+    REQUIRE(parts.size() == 3);
+    CHECK_FALSE(parts[0].reading);
+    CHECK(parts[1].reading);
+    CHECK(parts[2].reading);
+    CHECK(parts[2].text.find("-> 0x0000000000400040") != std::string::npos);
 
     // A value outside every module is only its own readings.
     fixture.write(fixture.player_address() + 9, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00});
@@ -252,9 +262,31 @@ TEST_CASE("an unreadable block paints every one of its nodes with a question mar
     });
 
     CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("?"));
-    CHECK(fixture.values.value_text(fixture.row(1)) == QStringLiteral("?"));
+    CHECK(fixture.values.ascii_text(fixture.row(0)) == QStringLiteral("?"));
     // The address is known even when the page is not.
     CHECK(fixture.values.address_text(fixture.row(0)) == QStringLiteral("0x0000000000400010"));
+}
+
+TEST_CASE("the ascii view spells a row's bytes", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    // A printable byte as itself, every other byte as a dot.
+    fixture.write(fixture.player_address(), {0x41, 0x42, 0x43, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+    CHECK(fixture.values.ascii_text(fixture.row(0)) == QStringLiteral("A"));
+    CHECK(fixture.values.ascii_text(fixture.row(1)) == QStringLiteral("BCD....."));
+
+    // A node that carries no bytes of its own draws an empty cell.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::class_instance, "obj"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+    fixture.structure.rebuild();
+    CHECK(fixture.values.ascii_text(fixture.row(2)).isEmpty());
 }
 
 TEST_CASE("an expanded class pointer is read one pass after its pointer changes", "[reclass][ui]")

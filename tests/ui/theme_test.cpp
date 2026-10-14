@@ -36,6 +36,25 @@ TEST_CASE("the syntax roles are defined and distinct", "[ui]")
     CHECK(dark.syntax_module != light.syntax_module);
 }
 
+TEST_CASE("the datatype and grid roles are defined and theme-specific", "[ui]")
+{
+    const auto dark  = slopkit::ui::dark_theme();
+    const auto light = slopkit::ui::light_theme();
+
+    CHECK(dark.datatype_signed != light.datatype_signed);
+    CHECK(dark.datatype_unsigned != light.datatype_unsigned);
+    CHECK(dark.datatype_bits != light.datatype_bits);
+    CHECK(dark.datatype_float != light.datatype_float);
+    CHECK(dark.datatype_vector != light.datatype_vector);
+    CHECK(dark.datatype_text != light.datatype_text);
+    CHECK(dark.datatype_class != light.datatype_class);
+    CHECK(dark.datatype_readout != light.datatype_readout);
+    CHECK(dark.grid_offset != light.grid_offset);
+    CHECK(dark.grid_address != light.grid_address);
+    CHECK(dark.grid_ascii != light.grid_ascii);
+    CHECK(dark.grid_comment != light.grid_comment);
+}
+
 TEST_CASE("make_palette maps the colour roles onto the Qt palette", "[ui]")
 {
     const auto     theme   = slopkit::ui::light_theme();

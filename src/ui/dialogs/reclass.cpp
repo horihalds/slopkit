@@ -242,7 +242,22 @@ namespace slopkit::ui::dialogs
         add_node_->setObjectName(QStringLiteral("reclass_add_node"));
         add_node_->setText(tr("Add Node"));
         add_node_->setPopupMode(QToolButton::InstantPopup);
-        add_node_->setMenu(build_add_node_menu());
+        add_node_->setIcon(widgets::datatype_icon(reclass::NodeKind::array));
+        // The strip is text-only; this one button carries its glyph beside its
+        // label, so it overrides the toolbar's own style.
+        add_node_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        QMenu* add_node_menu = build_add_node_menu();
+        // The menu is built once, so its tints would freeze on a theme switch;
+        // rebuilding it when it is about to show keeps the glyph colours live.
+        connect(add_node_menu,
+                &QMenu::aboutToShow,
+                this,
+                [this, add_node_menu]
+                {
+                    add_node_menu->clear();
+                    populate_node_kind_menu(*add_node_menu, false);
+                });
+        add_node_->setMenu(add_node_menu);
         tool_bar_->addWidget(add_node_);
 
         tool_bar_->addSeparator();
@@ -295,7 +310,7 @@ namespace slopkit::ui::dialogs
         header_->setTextInteractionFlags(Qt::TextSelectableByMouse);
         layout->addWidget(header_);
 
-        grid_ = new components::ReClassView(*proxy_, *structure_, pane);
+        grid_ = new components::ReClassView(*proxy_, *structure_, *values_, pane);
         grid_->setObjectName(QStringLiteral("reclass_grid"));
         layout->addWidget(grid_, 1);
 
@@ -382,6 +397,11 @@ namespace slopkit::ui::dialogs
                 const QString detail = change ? tr("Replace the selected node's type with %1.").arg(label)
                                               : tr("Insert a %1 node before the selection.").arg(label);
                 QAction*      action = widgets::described_action(menu, label, detail);
+                const QIcon   icon   = widgets::datatype_icon(entry.kind);
+                if (!icon.isNull())
+                {
+                    action->setIcon(icon);
+                }
                 connect(action,
                         &QAction::triggered,
                         this,

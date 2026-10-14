@@ -15,6 +15,7 @@
 #include "process/attachment.hpp"
 #include "process/types.hpp"
 #include "reclass/node.hpp"
+#include "reclass/value.hpp"
 #include "ui/address_format.hpp"
 #include "ui/live_values.hpp"
 #include "ui/models/live_cells.hpp"
@@ -61,6 +62,16 @@ namespace slopkit::ui::models
         [[nodiscard]] QString address_text(const ReclassRow& row) const;
 
         [[nodiscard]] QString value_text(const ReclassRow& row) const;
+
+        // The value cell's text as the runs the grid paints: the node's own
+        // bytes and the readings drawn beside them, module-pointer form
+        // included. `value_text` is their concatenation.
+        [[nodiscard]] std::vector<reclass::ValuePart> value_parts(const ReclassRow& row) const;
+
+        // The row's own bytes as text: a printable byte as itself, every other
+        // byte as '.', an empty cell for a kind without bytes and '?' for a
+        // block that was not read or with no target attached.
+        [[nodiscard]] QString ascii_text(const ReclassRow& row) const;
 
         // The same value as the editor is prefilled with: the value a write
         // parses, without the readings the cell draws beside it.

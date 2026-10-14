@@ -64,8 +64,9 @@ namespace slopkit::ui::models
     public:
         enum Column
         {
-            address,
             offset,
+            address,
+            ascii,
             type,
             name,
             value,

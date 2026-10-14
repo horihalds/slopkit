@@ -325,10 +325,16 @@ namespace slopkit::reclass
         case NodeKind::hex32:
         case NodeKind::hex64:
         {
+            // A hex cell reads as a hex dump: every byte zero-padded and set off
+            // by one space, so a hex32's four bytes are told apart at a glance.
             std::string text;
-            text.reserve(size * 2);
+            text.reserve(size * 3);
             for (std::size_t index = 0; index < size; ++index)
             {
+                if (index != 0)
+                {
+                    text += ' ';
+                }
                 text += std::format("{:02X}", std::to_integer<unsigned char>(bytes[index]));
             }
             return text;
@@ -423,7 +429,83 @@ namespace slopkit::reclass
         return format_node_value_display(node.kind(), bytes, node.hex);
     }
 
-    std::string format_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex)
+    namespace
+    {
+        // The display text of every kind but the hex cells that split their
+        // bytes from their readings; `format_node_value_parts` owns that split.
+        std::string default_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex)
+        {
+            const std::size_t size = kind_size(kind);
+            if (size == 0 || bytes.size() < size)
+            {
+                return {};
+            }
+
+            switch (kind)
+            {
+            case NodeKind::int8:
+            case NodeKind::int16:
+            case NodeKind::int32:
+            case NodeKind::int64:
+            {
+                const std::string decimal = std::format("{}", sign_extend(read_bytes(bytes, size), integer_bits(kind)));
+                const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
+                return hex ? other + "  " + decimal : decimal + "  " + other;
+            }
+            case NodeKind::uint8:
+            case NodeKind::uint16:
+            case NodeKind::uint32:
+            case NodeKind::uint64:
+            {
+                const std::string decimal = std::format("{}", read_bytes(bytes, size));
+                const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
+                return hex ? other + "  " + decimal : decimal + "  " + other;
+            }
+            case NodeKind::float32:
+                return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_float(bytes));
+            case NodeKind::float64:
+                return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_double(bytes));
+            case NodeKind::pointer:
+            case NodeKind::class_pointer:
+            case NodeKind::class_instance_array:
+                return std::format("-> 0x{:016X}", read_bytes(bytes, size));
+            case NodeKind::boolean:
+            case NodeKind::character:
+            case NodeKind::hex8:
+            case NodeKind::hex16:
+            case NodeKind::class_instance:
+            case NodeKind::array:
+            case NodeKind::union_value:
+            case NodeKind::class_wrapper_array:
+            case NodeKind::nint:
+            case NodeKind::nuint:
+            case NodeKind::bitfield:
+            case NodeKind::enum_node:
+            case NodeKind::utf8_text:
+            case NodeKind::utf8_text_ptr:
+            case NodeKind::utf16_text:
+            case NodeKind::utf16_text_ptr:
+            case NodeKind::utf32_text:
+            case NodeKind::utf32_text_ptr:
+            case NodeKind::vector2:
+            case NodeKind::vector3:
+            case NodeKind::vector4:
+            case NodeKind::matrix3x3:
+            case NodeKind::matrix3x4:
+            case NodeKind::matrix4x4:
+            case NodeKind::virtual_method_table:
+            case NodeKind::virtual_method:
+            case NodeKind::function:
+            case NodeKind::function_ptr:
+            case NodeKind::hex32:
+            case NodeKind::hex64:
+                break;
+            }
+            return format_node_value(kind, bytes, hex);
+        }
+    }
+
+    std::vector<ValuePart> format_node_value_parts(NodeKind kind, std::span<const std::byte> bytes, bool hex)
     {
         const std::size_t size = kind_size(kind);
         if (size == 0 || bytes.size() < size)
@@ -433,76 +515,40 @@ namespace slopkit::reclass
 
         switch (kind)
         {
-        case NodeKind::int8:
-        case NodeKind::int16:
-        case NodeKind::int32:
-        case NodeKind::int64:
-        {
-            const std::string decimal = std::format("{}", sign_extend(read_bytes(bytes, size), integer_bits(kind)));
-            const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
-            return hex ? other + "  " + decimal : decimal + "  " + other;
-        }
-        case NodeKind::uint8:
-        case NodeKind::uint16:
-        case NodeKind::uint32:
-        case NodeKind::uint64:
-        {
-            const std::string decimal = std::format("{}", read_bytes(bytes, size));
-            const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
-            return hex ? other + "  " + decimal : decimal + "  " + other;
-        }
-        case NodeKind::float32:
-            return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_float(bytes));
-        case NodeKind::float64:
-            return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_double(bytes));
         case NodeKind::hex32:
         case NodeKind::hex64:
         {
-            std::string text = format_node_value(kind, bytes, hex);
-            text += "  " + hex_float_comment(bytes);
-
-            const std::uint64_t raw = read_bytes(bytes, size);
+            const std::uint64_t raw      = read_bytes(bytes, size);
+            std::string         readouts = hex_float_comment(bytes);
             if (raw == 0)
             {
-                return text + "  0";
+                readouts += "  0";
             }
-            return text + std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
+            else
+            {
+                readouts += std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
+            }
+            return {
+                {format_node_value(kind, bytes, hex), false},
+                {"  " + readouts, true},
+            };
         }
-        case NodeKind::pointer:
-        case NodeKind::class_pointer:
-        case NodeKind::class_instance_array:
-            return std::format("-> 0x{:016X}", read_bytes(bytes, size));
-        case NodeKind::boolean:
-        case NodeKind::character:
-        case NodeKind::hex8:
-        case NodeKind::hex16:
-        case NodeKind::class_instance:
-        case NodeKind::array:
-        case NodeKind::union_value:
-        case NodeKind::class_wrapper_array:
-        case NodeKind::nint:
-        case NodeKind::nuint:
-        case NodeKind::bitfield:
-        case NodeKind::enum_node:
-        case NodeKind::utf8_text:
-        case NodeKind::utf8_text_ptr:
-        case NodeKind::utf16_text:
-        case NodeKind::utf16_text_ptr:
-        case NodeKind::utf32_text:
-        case NodeKind::utf32_text_ptr:
-        case NodeKind::vector2:
-        case NodeKind::vector3:
-        case NodeKind::vector4:
-        case NodeKind::matrix3x3:
-        case NodeKind::matrix3x4:
-        case NodeKind::matrix4x4:
-        case NodeKind::virtual_method_table:
-        case NodeKind::virtual_method:
-        case NodeKind::function:
-        case NodeKind::function_ptr:
+        default:
             break;
         }
-        return format_node_value(kind, bytes, hex);
+        return {
+            {default_node_value_display(kind, bytes, hex), false}
+        };
+    }
+
+    std::string format_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex)
+    {
+        std::string text;
+        for (const ValuePart& part : format_node_value_parts(kind, bytes, hex))
+        {
+            text += part.text;
+        }
+        return text;
     }
 
     std::expected<std::vector<std::byte>, std::string> parse_node_value(NodeKind kind, std::string_view text, bool hex)

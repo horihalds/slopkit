@@ -10,6 +10,7 @@
 #include "reclass/node.hpp"
 #include "reclass/nodes/container.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/datatype_palette.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
 #include "ui/theme.hpp"
@@ -37,6 +38,13 @@ namespace slopkit::ui::models
         bool is_marked(const ReclassRow& row)
         {
             return row.unknown_class || row.cycle || row.too_deep;
+        }
+
+        // A note is drawn the way it would be written in source: prefixed and
+        // left empty when there is no note to draw.
+        QString comment_text(const std::string& comment)
+        {
+            return comment.empty() ? QString {} : QStringLiteral("// ") + to_qstring(comment);
         }
     }
 
@@ -466,9 +474,10 @@ namespace slopkit::ui::models
             case name:
                 return to_qstring(node.name);
             case comment:
-                return to_qstring(node.comment);
+                return comment_text(node.comment);
             default:
-                // The address and value columns are answered by the value model.
+                // The address, ascii and value columns are answered by the value
+                // model.
                 return {};
             }
         case Qt::EditRole:
@@ -476,21 +485,30 @@ namespace slopkit::ui::models
             // text the cell shows; no other cell takes an edit.
             return index.column() == name ? to_qstring(node.name) : QVariant {};
         case Qt::FontRole:
-            if (index.column() == address || index.column() == offset || index.column() == value)
+            if (index.column() == address || index.column() == offset || index.column() == ascii
+                || index.column() == value)
             {
                 return QVariant::fromValue(mono_font());
             }
             return {};
         case Qt::ForegroundRole:
-            if (is_marked(*row) || index.column() == comment || index.column() == offset)
+            // A marked reference row is muted whole; every other row spells its
+            // kind, its offset and its note in the theme's own roles.
+            if (is_marked(*row))
             {
                 return active_theme().text_muted;
             }
-            if (index.column() == type)
+            switch (index.column())
             {
-                return active_theme().syntax_keyword;
+            case offset:
+                return active_theme().grid_offset;
+            case comment:
+                return active_theme().grid_comment;
+            case type:
+                return datatype_colour(node.kind());
+            default:
+                return {};
             }
-            return {};
         case widgets::kFullTextRole:
             switch (index.column())
             {
@@ -499,7 +517,7 @@ namespace slopkit::ui::models
             case name:
                 return to_qstring(node.name);
             case comment:
-                return to_qstring(node.comment);
+                return comment_text(node.comment);
             default:
                 return {};
             }
@@ -520,6 +538,8 @@ namespace slopkit::ui::models
             return tr("Address");
         case offset:
             return tr("Offset");
+        case ascii:
+            return tr("Ascii");
         case type:
             return tr("Type");
         case name:

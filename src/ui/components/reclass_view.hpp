@@ -25,11 +25,12 @@ class QWheelEvent;
 namespace slopkit::ui::models
 {
     class ReclassProxyModel;
+    class ReclassValueModel;
 }
 
 namespace slopkit::ui::components
 {
-    // The node grid, painted rather than assembled out of a tree view: the six
+    // The node grid, painted rather than assembled out of a tree view: the seven
     // columns are sized to the text the class draws, no header band is drawn and
     // nothing about the layout can be dragged or measured again on a pass. The
     // rows come from the structure model through the fused proxy, so the widget
@@ -41,6 +42,7 @@ namespace slopkit::ui::components
     public:
         ReClassView(models::ReclassProxyModel&     model,
                     models::ReclassStructureModel& structure,
+                    models::ReclassValueModel&     values,
                     QWidget*                       parent = nullptr);
 
         [[nodiscard]] models::ReclassProxyModel*     model() const noexcept;
@@ -157,6 +159,7 @@ namespace slopkit::ui::components
 
         models::ReclassProxyModel*     model_ {};
         models::ReclassStructureModel* structure_ {};
+        models::ReclassValueModel*     values_ {};
 
         std::vector<VisualRow> rows_;
         int                    visible_rows_ {1};
@@ -164,6 +167,10 @@ namespace slopkit::ui::components
         int                    row_height_ {1};
         int                    column_x_[models::ReclassStructureModel::column_count] {};
         int                    column_width_[models::ReclassStructureModel::column_count] {};
+        // The widest `// …` note the shown class draws, before update_columns()
+        // clamps it to the viewport; kept between resizes like the other
+        // measured widths.
+        int                    comment_content_ {};
 
         std::vector<std::size_t> selected_;
         std::size_t              current_ {};

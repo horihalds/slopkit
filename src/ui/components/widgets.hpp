@@ -11,6 +11,8 @@
 #include <QString>
 #include <QWidget>
 
+#include "reclass/node.hpp"
+
 class QVBoxLayout;
 
 namespace slopkit::ui::widgets
@@ -116,5 +118,9 @@ namespace slopkit::ui::widgets
     };
 
     [[nodiscard]] QIcon action_icon(ActionIcon which);
+
+    // The kind's datatype glyph, tinted with its theme colour; a null icon when
+    // the folder has no glyph for the kind.
+    [[nodiscard]] QIcon datatype_icon(reclass::NodeKind kind);
 
 }

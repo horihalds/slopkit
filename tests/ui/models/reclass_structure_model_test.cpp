@@ -7,7 +7,9 @@
 #include "reclass/project.hpp"
 #include "support/reclass_helpers.hpp"
 #include "support/ui_helpers.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/models/reclass_structure_model.hpp"
+#include "ui/theme.hpp"
 
 namespace
 {
@@ -72,6 +74,16 @@ TEST_CASE("the grid lists the selected class's nodes with derived offsets", "[re
     CHECK(model.headerData(Model::name, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Name"));
     CHECK(model.headerData(Model::value, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Value"));
     CHECK(model.headerData(Model::comment, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Comment"));
+    CHECK(model.headerData(Model::ascii, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Ascii"));
+
+    // The order is the grid's: offset, address, ascii, type, name, value, comment.
+    CHECK(Model::column_count == 7);
+    CHECK(Model::offset < Model::address);
+    CHECK(Model::address < Model::ascii);
+    CHECK(Model::ascii < Model::type);
+    CHECK(Model::type < Model::name);
+    CHECK(Model::name < Model::value);
+    CHECK(Model::value < Model::comment);
 
     CHECK(cell(model, model.index(0, 0), Model::name) == QStringLiteral("flag"));
     CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Int8"));
@@ -341,4 +353,59 @@ TEST_CASE("a union's members all sit at the union's own offset", "[reclass][ui]"
     const QModelIndex first  = model.index(0, 0, model.index(0, 0));
     const QModelIndex second = model.index(1, 0, model.index(0, 0));
     CHECK(cell(model, first, Model::offset) == cell(model, second, Model::offset));
+}
+
+TEST_CASE("a note is drawn prefixed and each column takes the theme's role", "[reclass][ui]")
+{
+    application();
+
+    Project               project;
+    ReclassStructureModel model {project};
+    project.add_class("Player", "app+0x10");
+    Class&  player  = project.classes().front();
+    NodePtr tagged  = node_of(project, NodeKind::int32, "health");
+    tagged->comment = "the player's health";
+    player.nodes.push_back(std::move(tagged));
+    player.nodes.push_back(node_of(project, NodeKind::float32, "speed"));
+    model.set_project(project);
+
+    const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
+
+    // A note is prefixed in both the cell and its full text.
+    const QModelIndex note = model.index(0, Model::comment);
+    CHECK(model.data(note, Qt::DisplayRole).toString() == QStringLiteral("// the player's health"));
+    CHECK(model.data(note, slopkit::ui::widgets::kFullTextRole).toString() == QStringLiteral("// the player's health"));
+    CHECK(model.data(note, Qt::ForegroundRole).value<QColor>() == theme.grid_comment);
+
+    // An empty note stays empty in both roles.
+    const QModelIndex empty = model.index(1, Model::comment);
+    CHECK(model.data(empty, Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.data(empty, slopkit::ui::widgets::kFullTextRole).toString().isEmpty());
+
+    // The offset and the kind's name take their own roles; the name column is
+    // left to the view.
+    CHECK(model.data(model.index(0, Model::offset), Qt::ForegroundRole).value<QColor>() == theme.grid_offset);
+    CHECK(model.data(model.index(0, Model::type), Qt::ForegroundRole).value<QColor>() == theme.datatype_signed);
+    CHECK(model.data(model.index(1, Model::type), Qt::ForegroundRole).value<QColor>() == theme.datatype_float);
+    CHECK_FALSE(model.data(model.index(0, Model::name), Qt::ForegroundRole).isValid());
+}
+
+TEST_CASE("a marked reference row is muted in every column", "[reclass][ui]")
+{
+    application();
+
+    Project               project;
+    ReclassStructureModel model {project};
+    project.add_class("Holder", "app+0x10");
+    Class&  holder    = project.classes().front();
+    NodePtr ghost     = node_of(project, NodeKind::class_instance, "ghost");
+    ghost->class_name = "Missing";
+    holder.nodes.push_back(std::move(ghost));
+    model.set_project(project);
+
+    const QColor muted = slopkit::ui::active_theme().text_muted;
+    for (const int column : {Model::offset, Model::type, Model::comment})
+    {
+        CHECK(model.data(model.index(0, column), Qt::ForegroundRole).value<QColor>() == muted);
+    }
 }

@@ -6,9 +6,13 @@
 #include <QAbstractItemView>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QHash>
+#include <QPainter>
 #include <QPalette>
+#include <QPixmap>
 #include <QVBoxLayout>
 
+#include "ui/datatype_palette.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::widgets
@@ -257,6 +261,42 @@ namespace slopkit::ui::widgets
         {
             icon.addFile(QStringLiteral(":/icons/actions/%1x%1/%2.png").arg(size).arg(stem));
         }
+        return icon;
+    }
+
+    QIcon datatype_icon(reclass::NodeKind kind)
+    {
+        const std::string_view name = datatype_icon_name(kind);
+        if (name.empty())
+        {
+            return {};
+        }
+
+        const QColor  colour = datatype_colour(kind);
+        const QString stem   = QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size()));
+        const QString key    = stem + QLatin1Char('#') + QString::number(colour.rgba(), 16);
+
+        static QHash<QString, QIcon> cache;
+        if (const auto it = cache.constFind(key); it != cache.constEnd())
+        {
+            return *it;
+        }
+
+        QIcon icon;
+        for (const int size : kActionIconSizes)
+        {
+            QPixmap pixmap(QStringLiteral(":/icons/datatypes/%1x%1/%2.png").arg(size).arg(stem));
+            if (pixmap.isNull())
+            {
+                continue;
+            }
+            QPainter painter(&pixmap);
+            painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            painter.fillRect(pixmap.rect(), colour);
+            painter.end();
+            icon.addPixmap(pixmap);
+        }
+        cache.insert(key, icon);
         return icon;
     }
 

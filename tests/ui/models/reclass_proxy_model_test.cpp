@@ -235,13 +235,14 @@ TEST_CASE("the live columns take the theme's colours per role", "[reclass][ui]")
 
     const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
     CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::address), Qt::ForegroundRole).value<QColor>()
-          == theme.syntax_immediate);
+          == theme.grid_address);
     CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::value), Qt::ForegroundRole).isValid() == false);
-    // The static columns keep the structure model's own colouring.
+    // The static columns keep the structure model's own colouring: the offset
+    // red, the kind's name in its datatype colour, the name left to the view.
     CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::type), Qt::ForegroundRole).value<QColor>()
-          == theme.syntax_keyword);
+          == theme.datatype_signed);
     CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::offset), Qt::ForegroundRole).value<QColor>()
-          == theme.text_muted);
+          == theme.grid_offset);
     CHECK_FALSE(fixture.proxy->data(fixture.index(0, ReclassStructureModel::name), Qt::ForegroundRole).isValid());
 
     // An unresolved class address is muted rather than dressed as a real one.

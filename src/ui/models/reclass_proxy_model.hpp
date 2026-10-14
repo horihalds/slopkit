@@ -16,8 +16,8 @@ namespace slopkit::ui::models
     class ReclassValueModel;
 
     // Fuses the structure and the values into the one tree the view sees: the
-    // structure model answers the static columns, the value model the address
-    // and value columns of every row.
+    // structure model answers the static columns, the value model the address,
+    // ascii and value columns of every row.
     class ReclassProxyModel : public QIdentityProxyModel
     {
         Q_OBJECT
@@ -39,6 +39,7 @@ namespace slopkit::ui::models
         struct Shown
         {
             QString address;
+            QString ascii;
             QString value;
         };
 

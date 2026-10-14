@@ -199,6 +199,25 @@ foreach(name IN LISTS SLOPKIT_ACTION_ICON_NAMES)
     list(APPEND SLOPKIT_ACTION_ICON_PNGS ${pngs})
 endforeach()
 
+# Datatype glyphs: the node kinds' vectors, rendered with the same step and
+# embedded (never installed) under :/icons/datatypes/<N>x<N>/<name>.png. The
+# artwork uses currentColor and rasterises black; widgets::datatype_icon() tints
+# it from the active theme at runtime.
+set(SLOPKIT_DATATYPE_ICON_NAMES
+    array bits bool double enumeration float
+    hex8 hex16 hex32 hex64
+    int8 int16 int32 int64
+    matrix3x3 matrix3x4 matrix4x4
+    pointer pointer_to_text
+    uint8 uint16 uint32 uint64
+    utf8text utf16text utf32text
+    vector2 vector3 vector4)
+set(SLOPKIT_DATATYPE_ICON_PNGS "")
+foreach(name IN LISTS SLOPKIT_DATATYPE_ICON_NAMES)
+    slopkit_datatype_icon_pngs(${CMAKE_SOURCE_DIR}/assets/icons/datatypes/${name}.svg pngs SIZES ${SLOPKIT_ACTION_ICON_SIZES})
+    list(APPEND SLOPKIT_DATATYPE_ICON_PNGS ${pngs})
+endforeach()
+
 # Qt resources are registered per executable, so every binary that paints the
 # slopkit icons calls this on itself instead of receiving them through a
 # library.
@@ -206,7 +225,7 @@ function(slopkit_add_icon_resources target)
     qt_add_resources(${target} "slopkit_icons"
         PREFIX "/icons"
         BASE "${CMAKE_BINARY_DIR}/icons"
-        FILES ${SLOPKIT_ICON_PNGS} ${SLOPKIT_ACTION_ICON_PNGS})
+        FILES ${SLOPKIT_ICON_PNGS} ${SLOPKIT_ACTION_ICON_PNGS} ${SLOPKIT_DATATYPE_ICON_PNGS})
 endfunction()
 
 # --- shared UI library -----------------------------------------------------
@@ -220,6 +239,7 @@ set(SLOPKIT_UI_COMMON_SOURCES
     ${CMAKE_SOURCE_DIR}/src/core/log.cpp
     ${CMAKE_SOURCE_DIR}/src/core/version.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/datatype_palette.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/fonts.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/settings.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/platform.cpp

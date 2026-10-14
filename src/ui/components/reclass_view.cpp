@@ -23,6 +23,8 @@
 #include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
+#include "ui/models/reclass_value_model.hpp"
+#include "ui/text.hpp"
 #include "ui/theme.hpp"
 
 namespace slopkit::ui::components
@@ -62,18 +64,21 @@ namespace slopkit::ui::components
         constexpr bool indents(int column)
         {
             using models::ReclassStructureModel;
-            return column != ReclassStructureModel::address && column != ReclassStructureModel::offset;
+            return column != ReclassStructureModel::address && column != ReclassStructureModel::offset
+                && column != ReclassStructureModel::ascii;
         }
     }
 
     ReClassView::ReClassView(models::ReclassProxyModel&     model,
                              models::ReclassStructureModel& structure,
+                             models::ReclassValueModel&     values,
                              QWidget*                       parent)
-        : QAbstractScrollArea(parent), model_(&model), structure_(&structure), scroller_(*this,
-                                                                                         [this](long long delta)
-                                                                                         {
-                                                                                             scroll_rows(delta);
-                                                                                         })
+        : QAbstractScrollArea(parent), model_(&model), structure_(&structure), values_(&values),
+          scroller_(*this,
+                    [this](long long delta)
+                    {
+                        scroll_rows(delta);
+                    })
     {
         setFocusPolicy(Qt::StrongFocus);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -161,10 +166,11 @@ namespace slopkit::ui::components
         const QFontMetrics prose(ui_font());
         row_height_ = std::max(1, std::max(mono.height(), prose.height()) + 4);
 
-        // The address is always the padded form and the comment column holds the
-        // pane's right edge, so both keep a width measured from the font once
-        // here and never again; the three columns between them are sized to the
-        // text the class draws (see update_content_widths).
+        // The address is always the padded form, so it keeps a width measured
+        // from the font once here and never again; the comment column starts at
+        // its header word and is widened to the notes the class draws (see
+        // update_content_widths); the columns between them are sized to the
+        // text the class draws.
         const auto measured = [](const QFontMetrics& metrics, const QString& sample)
         {
             return metrics.horizontalAdvance(sample) + kColumnGap;
@@ -172,7 +178,9 @@ namespace slopkit::ui::components
 
         using models::ReclassStructureModel;
         column_width_[ReclassStructureModel::address] = measured(mono, format_padded_hex(0));
-        column_width_[ReclassStructureModel::comment] = measured(prose, tr("Comment"));
+        column_width_[ReclassStructureModel::ascii]   = measured(mono, tr("Ascii"));
+        comment_content_                              = measured(prose, tr("Comment"));
+        column_width_[ReclassStructureModel::comment] = comment_content_;
         column_width_[ReclassStructureModel::value]   = 0;
     }
 
@@ -191,24 +199,32 @@ namespace slopkit::ui::components
         // so a list of small nodes does not sit in a grid sized for the widest
         // kind in the language. This follows the flattened rows, which a live
         // pass never rebuilds.
-        int offset_width = kMinColumnWidth;
-        int type_width   = kMinColumnWidth;
-        int name_width   = kMinColumnWidth;
+        int offset_width  = kMinColumnWidth;
+        int ascii_width   = kMinColumnWidth;
+        int type_width    = kMinColumnWidth;
+        int name_width    = kMinColumnWidth;
+        int comment_width = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
         for (const VisualRow& entry : rows_)
         {
             const int indent = static_cast<int>(entry.depth) * kIndentStep;
             offset_width = std::max(offset_width,
                                     mono.horizontalAdvance(display(entry, ReclassStructureModel::offset)) + kColumnGap);
+            ascii_width  = std::max(ascii_width,
+                                    mono.horizontalAdvance(display(entry, ReclassStructureModel::ascii)) + kColumnGap);
             type_width   = std::max(type_width,
                                     prose.horizontalAdvance(display(entry, ReclassStructureModel::type)) + kColumnGap
                                         + indent + (expandable(*entry.row) ? kTriangleWidth : 0));
             name_width   = std::max(
                 name_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::name)) + kColumnGap + indent);
+            comment_width = std::max(
+                comment_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::comment)) + kColumnGap);
         }
 
         column_width_[ReclassStructureModel::offset] = offset_width;
+        column_width_[ReclassStructureModel::ascii]  = ascii_width;
         column_width_[ReclassStructureModel::type]   = type_width;
         column_width_[ReclassStructureModel::name]   = name_width;
+        comment_content_                             = comment_width;
     }
 
     void ReClassView::update_columns()
@@ -217,7 +233,8 @@ namespace slopkit::ui::components
 
         // The first four columns keep the widths they were measured for; the
         // value column takes whatever the pane has left, and the comment column
-        // keeps its own width pinned to the right edge.
+        // is pinned to the right edge, sized to the notes the class draws but
+        // clamped so it can never starve the value column.
         int x = kMargin;
         for (int column = 0; column <= ReclassStructureModel::name; ++column)
         {
@@ -225,9 +242,14 @@ namespace slopkit::ui::components
             x += column_width_[column];
         }
 
+        const QFontMetrics prose(ui_font());
+        const int          floor_width                = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
+        const int          cap                        = std::max(floor_width, viewport()->width() / 3);
+        const int          comment_width              = std::clamp(comment_content_, floor_width, cap);
+        column_width_[ReclassStructureModel::comment] = comment_width;
+
         column_x_[ReclassStructureModel::value] = x;
-        const int comment = std::max(x + kMinColumnWidth,
-                                     viewport()->width() - column_width_[ReclassStructureModel::comment] - kMargin);
+        const int comment = std::max(x + kMinColumnWidth, viewport()->width() - comment_width - kMargin);
         column_width_[ReclassStructureModel::value] = comment - x;
         column_x_[ReclassStructureModel::comment]   = comment;
     }
@@ -246,7 +268,9 @@ namespace slopkit::ui::components
         const int count = model_->rowCount(parent);
         for (int position = 0; position < count; ++position)
         {
-            const QModelIndex         index = model_->index(position, models::ReclassStructureModel::address, parent);
+            // Column 0 only: a Qt parent index exposes children in column 0
+            // alone, whatever column the cell being drawn sits in.
+            const QModelIndex         index = model_->index(position, 0, parent);
             const models::ReclassRow* row   = row_of(index);
             if (row == nullptr)
             {
@@ -767,7 +791,8 @@ namespace slopkit::ui::components
         // Whatever colour the row set on the cell stands; without one the grid
         // paints its own text colour, or the on-accent one when selected.
         const std::optional<QColor> stated = cell_colour(index, *model_);
-        painter.setPen(selected ? active_theme().on_accent : stated.value_or(active_theme().text));
+        const QColor primary               = selected ? active_theme().on_accent : stated.value_or(active_theme().text);
+        painter.setPen(primary);
 
         // A hidden node collapses to `...` in the name column and shows nothing
         // in the others, the reference's collapsed placeholder.
@@ -788,6 +813,37 @@ namespace slopkit::ui::components
         const int   x         = content_x(entry, column);
         const int   available = std::max(0, rect.x() + rect.width() - x);
         const QRect text_rect(x, rect.y(), available, rect.height());
+
+        // The value cell paints in runs: the node's own bytes in the grid's text
+        // colour, then the readings beside them in the readout colour, so a hex
+        // cell's float and integer stay visibly apart from its bytes. A selected
+        // row, a stated colour (unreadable or changed) and a value too wide for
+        // its column all paint whole instead.
+        if (column == models::ReclassStructureModel::value && !selected && !stated.has_value())
+        {
+            const std::vector<reclass::ValuePart> parts = values_->value_parts(*entry.row);
+            int                                   total = 0;
+            for (const reclass::ValuePart& part : parts)
+            {
+                total += metrics.horizontalAdvance(to_qstring(part.text));
+            }
+            if (!parts.empty() && total <= available)
+            {
+                int run_x = x;
+                for (const reclass::ValuePart& part : parts)
+                {
+                    const QString run   = to_qstring(part.text);
+                    const int     width = metrics.horizontalAdvance(run);
+                    painter.setPen(part.reading ? active_theme().datatype_readout : primary);
+                    painter.drawText(
+                        QRect(run_x, rect.y(), width, rect.height()), Qt::AlignLeft | Qt::AlignVCenter, run);
+                    run_x += width;
+                }
+                return;
+            }
+            painter.setPen(primary);
+        }
+
         painter.drawText(
             text_rect, Qt::AlignLeft | Qt::AlignVCenter, metrics.elidedText(text, Qt::ElideRight, available));
     }
