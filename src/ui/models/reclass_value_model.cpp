@@ -104,6 +104,11 @@ namespace slopkit::ui::models
         return type == nullptr ? std::nullopt : type->address;
     }
 
+    QString ReclassValueModel::short_address(std::uint64_t address) const
+    {
+        return QString::number(address, 16).toUpper();
+    }
+
     QString ReclassValueModel::format_address(std::uint64_t address) const
     {
         return format_padded_hex(address);
@@ -591,7 +596,7 @@ namespace slopkit::ui::models
         {
             return QStringLiteral("?");
         }
-        return format_address(*address);
+        return short_address(*address);
     }
 
     std::vector<reclass::ValuePart> ReclassValueModel::value_parts(const ReclassRow& row) const
@@ -705,7 +710,7 @@ namespace slopkit::ui::models
             return {};
         }
         return QStringLiteral("-> <") + to_qstring(region_label(*region)) + QStringLiteral(">")
-             + format_address(address);
+             + short_address(address);
     }
 
     QString ReclassValueModel::value_text(const ReclassRow& row) const

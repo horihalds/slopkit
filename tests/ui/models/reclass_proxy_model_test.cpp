@@ -151,7 +151,43 @@ TEST_CASE("a live pass repaints only the cells whose text moved", "[reclass][ui]
     CHECK(repainted[0].column() == ReclassStructureModel::value);
     CHECK(repainted[0].row() == 1);
     CHECK(fixture.proxy->data(fixture.index(1, ReclassStructureModel::value), Qt::DisplayRole).toString()
-          == QStringLiteral("= 3  0x00000003"));
+          == QStringLiteral("= 3  3"));
+}
+
+TEST_CASE("an address that resolves repaints the address cells alone", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+
+    std::vector<QModelIndex> repainted;
+    QObject::connect(fixture.proxy.get(),
+                     &QAbstractItemModel::dataChanged,
+                     [&repainted](const QModelIndex& first, const QModelIndex&, const QList<int>&)
+                     {
+                         repainted.push_back(first);
+                     });
+
+    // The class address is not resolved yet, so this pass only fills the cache
+    // with the model's own wording.
+    fixture.pass();
+    repainted.clear();
+    CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("not resolved yet"));
+
+    // The address lands a moment later: every row's address cell is repainted
+    // with its bare digits - and only the address cells are.
+    fixture.resolve();
+    fixture.proxy->refresh_values();
+    REQUIRE(repainted.size() == 2);
+    CHECK(repainted[0].column() == ReclassStructureModel::address);
+    CHECK(repainted[0].row() == 0);
+    CHECK(repainted[1].column() == ReclassStructureModel::address);
+    CHECK(repainted[1].row() == 1);
+    CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("400010"));
+    CHECK(fixture.proxy->data(fixture.index(1, ReclassStructureModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("400011"));
 }
 
 TEST_CASE("a rebuilt grid fills the repaint cache without repainting", "[reclass][ui]")
@@ -192,7 +228,7 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
 
     fixture.stage(fixture.player_address() + 1, {0x2A, 0, 0, 0});
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  0x0000002A"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  2A"));
     // The value cell no longer states the warning itself: the view paints the
     // moved bytes from the value model's per-byte mask.
     CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
@@ -203,7 +239,7 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
 
     // The row keeps its value and drops the highlight on the next pass.
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  0x0000002A"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  2A"));
     CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
 }
 
@@ -284,8 +320,8 @@ TEST_CASE("the hint and pointer fields draw the row's readings and its address",
     const QString hint_text = fixture.proxy->data(hints, Qt::DisplayRole).toString();
     CHECK(hint_text.startsWith(QStringLiteral("(")));
     CHECK(hint_text.endsWith(QStringLiteral(")")));
-    CHECK(hint_text.contains(QStringLiteral("0x400000")));
-    CHECK(fixture.proxy->data(pointer, Qt::DisplayRole).toString() == QStringLiteral("-> <CODE>0x0000000000400000"));
+    CHECK(hint_text.contains(QStringLiteral("400000")));
+    CHECK(fixture.proxy->data(pointer, Qt::DisplayRole).toString() == QStringLiteral("-> <CODE>400000"));
     CHECK(fixture.proxy->data(hints, Qt::ForegroundRole).value<QColor>() == theme.datatype_readout);
     CHECK(fixture.proxy->data(pointer, Qt::ForegroundRole).value<QColor>() == theme.grid_pointer);
 

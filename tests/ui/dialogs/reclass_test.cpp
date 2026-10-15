@@ -349,9 +349,9 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     REQUIRE(point.nodes[2]->kind() == NodeKind::hex64);
 
     // The header and the class tooltips spell a resolved address the way the
-    // address column does: absolute, zero-padded to the pointer width.
-    CHECK(dialog.header_label()->text() == QStringLiteral("Point · app+0x20 → 0x0000000000400020"));
-    CHECK(dialog.project_view()->class_item(0)->toolTip(0) == QStringLiteral("app+0x20 → 0x0000000000400020"));
+    // address column does: the shortest digits, with no `0x` and no padding.
+    CHECK(dialog.header_label()->text() == QStringLiteral("Point · app+0x20 → 400020"));
+    CHECK(dialog.project_view()->class_item(0)->toolTip(0) == QStringLiteral("app+0x20 → 400020"));
 
     dialog.dissect();
     drain_until_idle(fixture.worker);

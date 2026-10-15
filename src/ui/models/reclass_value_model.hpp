@@ -116,8 +116,12 @@ namespace slopkit::ui::models
         // project's classes are re-read first.
         [[nodiscard]] std::optional<std::uint64_t> class_address(std::size_t class_index);
 
-        // An address spelled the way the class view spells it everywhere: the
-        // absolute form, zero-padded to the pointer width.
+        // The address as the grid spells it: the shortest upper-case digits,
+        // with no `0x` and no zero padding.
+        [[nodiscard]] QString short_address(std::uint64_t address) const;
+
+        // The padded absolute form the window's Copy writes, and nothing in a
+        // row draws.
         [[nodiscard]] QString format_address(std::uint64_t address) const;
 
         // Whether a value can be typed into this node's cell.

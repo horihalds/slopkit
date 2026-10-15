@@ -442,6 +442,42 @@ namespace slopkit::reclass
 
     namespace
     {
+        // The shortest spelling of the hex a kind reads: the same width-masked
+        // magnitude `format_node_value` pads out, with neither zeros nor prefix.
+        std::string bare_hex(NodeKind kind, std::span<const std::byte> bytes)
+        {
+            const std::size_t size = kind_size(kind);
+            if (size == 0 || bytes.size() < size)
+            {
+                return {};
+            }
+
+            switch (kind)
+            {
+            case NodeKind::int8:
+            case NodeKind::int16:
+            case NodeKind::int32:
+            case NodeKind::int64:
+            {
+                std::uint64_t magnitude =
+                    static_cast<std::uint64_t>(sign_extend(read_bytes(bytes, size), integer_bits(kind)));
+                if (integer_bits(kind) < 64)
+                {
+                    magnitude &= (std::uint64_t {1} << integer_bits(kind)) - 1;
+                }
+                return std::format("{:X}", magnitude);
+            }
+            case NodeKind::uint8:
+            case NodeKind::uint16:
+            case NodeKind::uint32:
+            case NodeKind::uint64:
+                return std::format("{:X}", read_bytes(bytes, size));
+            default:
+                break;
+            }
+            return {};
+        }
+
         // The display text of every kind but the hex cells that split their
         // bytes from their readings; `format_node_value_parts` owns that split.
         std::string default_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex)
@@ -460,7 +496,7 @@ namespace slopkit::reclass
             case NodeKind::int64:
             {
                 const std::string decimal = std::format("{}", sign_extend(read_bytes(bytes, size), integer_bits(kind)));
-                const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
+                const std::string other   = bare_hex(kind, bytes);
                 return hex ? other + "  " + decimal : decimal + "  " + other;
             }
             case NodeKind::uint8:
@@ -469,7 +505,7 @@ namespace slopkit::reclass
             case NodeKind::uint64:
             {
                 const std::string decimal = std::format("{}", read_bytes(bytes, size));
-                const std::string other   = std::format("0x{}", format_node_value(kind, bytes, true));
+                const std::string other   = bare_hex(kind, bytes);
                 return hex ? other + "  " + decimal : decimal + "  " + other;
             }
             case NodeKind::float32:
@@ -479,7 +515,7 @@ namespace slopkit::reclass
             case NodeKind::pointer:
             case NodeKind::class_pointer:
             case NodeKind::class_instance_array:
-                return std::format("-> 0x{:016X}", read_bytes(bytes, size));
+                return std::format("-> {:X}", read_bytes(bytes, size));
             case NodeKind::boolean:
             case NodeKind::character:
             case NodeKind::hex8:
@@ -536,7 +572,7 @@ namespace slopkit::reclass
         }
         else
         {
-            readings += std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
+            readings += std::format("  {}  {:X}", sign_extend(raw, size * 8), raw);
         }
         return readings;
     }

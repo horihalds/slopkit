@@ -169,7 +169,20 @@ TEST_CASE("one read is submitted per visible block", "[reclass][ui]")
     CHECK(requests[0].address == fixture.player_address());
     CHECK(requests[0].size == 9);
 
-    CHECK(fixture.values.address_text(fixture.row(0)) == QStringLiteral("0x0000000000400010"));
+    CHECK(fixture.values.address_text(fixture.row(0)) == QStringLiteral("400010"));
+}
+
+TEST_CASE("an address is spelled as the shortest digits the grid shows", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    CHECK(fixture.values.short_address(0x400010) == QStringLiteral("400010"));
+    CHECK(fixture.values.short_address(0) == QStringLiteral("0"));
+    // The padded absolute form is still what the window's Copy writes.
+    CHECK(fixture.values.format_address(0x400010) == QStringLiteral("0x0000000000400010"));
 }
 
 TEST_CASE("nothing is submitted while no target is attached", "[reclass][ui]")
@@ -212,10 +225,10 @@ TEST_CASE("each node's value is sliced out of its block at its offset", "[reclas
 
     // Each cell draws the node's value: the integer beside its hex form, the
     // class pointer as the address it holds.
-    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 42  0x2A"));
+    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 42  2A"));
     // A pointer's address is the pointer field's; the value cell stays empty.
     CHECK(fixture.values.value_text(fixture.row(1)).isEmpty());
-    CHECK(fixture.values.pointer_text(fixture.row(1)) == QStringLiteral("-> <HEAP>0x0000000000600000"));
+    CHECK(fixture.values.pointer_text(fixture.row(1)) == QStringLiteral("-> <HEAP>600000"));
 
     // An address in no region at all is no pointer: the field stays empty.
     fixture.write(fixture.player_address(), {0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A});
@@ -223,7 +236,7 @@ TEST_CASE("each node's value is sliced out of its block at its offset", "[reclas
     CHECK(fixture.values.pointer_text(fixture.row(1)).isEmpty());
 
     // The address column follows the node's own offset inside the class.
-    CHECK(fixture.values.address_text(fixture.row(1)) == QStringLiteral("0x0000000000400011"));
+    CHECK(fixture.values.address_text(fixture.row(1)) == QStringLiteral("400011"));
     CHECK(fixture.values.node_address(fixture.row(1)) == fixture.player_address() + 1);
 }
 
@@ -255,8 +268,8 @@ TEST_CASE("a hex node whose bytes name a module address fills the pointer field"
     const QString hints = fixture.values.hint_text(fixture.row(2));
     CHECK(hints.startsWith(QStringLiteral("(")));
     CHECK(hints.endsWith(QStringLiteral(")")));
-    CHECK(hints.contains(QStringLiteral("0x400040")));
-    CHECK(fixture.values.pointer_text(fixture.row(2)) == QStringLiteral("-> <CODE>0x0000000000400040"));
+    CHECK(hints.contains(QStringLiteral("400040")));
+    CHECK(fixture.values.pointer_text(fixture.row(2)) == QStringLiteral("-> <CODE>400040"));
     CHECK(fixture.values.hint_text(fixture.row(1)).isEmpty());
     CHECK(fixture.values.pointer_text(fixture.row(0)).isEmpty());
 
@@ -272,7 +285,7 @@ TEST_CASE("a hex node whose bytes name a module address fills the pointer field"
     // with the readings still in the hints field.
     fixture.write(fixture.player_address() + 9, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00});
     fixture.pass();
-    CHECK(fixture.values.hint_text(fixture.row(2)).contains(QStringLiteral("0x77665544332211")));
+    CHECK(fixture.values.hint_text(fixture.row(2)).contains(QStringLiteral("77665544332211")));
     CHECK(fixture.values.pointer_text(fixture.row(2)).isEmpty());
     CHECK_FALSE(fixture.values.value_text(fixture.row(2)).contains(QStringLiteral("->")));
 }
@@ -344,7 +357,7 @@ TEST_CASE("an unreadable block paints every one of its nodes with a question mar
     CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("?"));
     CHECK(fixture.values.ascii_text(fixture.row(0)) == QStringLiteral("?"));
     // The address is known even when the page is not.
-    CHECK(fixture.values.address_text(fixture.row(0)) == QStringLiteral("0x0000000000400010"));
+    CHECK(fixture.values.address_text(fixture.row(0)) == QStringLiteral("400010"));
 }
 
 TEST_CASE("the ascii view spells a row's bytes", "[reclass][ui]")
@@ -390,10 +403,10 @@ TEST_CASE("an expanded class pointer is read one pass after its pointer changes"
     CHECK(requests[1].size == 8);
 
     REQUIRE(fixture.structure.rowCount(fixture.structure.index(1, 0)) == 2);
-    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 7  0x00000007"));
-    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 9  0x00000009"));
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 7  7"));
+    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 9  9"));
     CHECK(fixture.values.node_address(fixture.child(1, 1)) == kHeapBase + 4);
-    CHECK(fixture.values.address_text(fixture.child(1, 1)) == QStringLiteral("0x0000000000600004"));
+    CHECK(fixture.values.address_text(fixture.child(1, 1)) == QStringLiteral("600004"));
 }
 
 TEST_CASE("a live pass leaves the grid's rows alone", "[reclass][ui]")

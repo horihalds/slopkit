@@ -735,7 +735,7 @@ namespace slopkit::ui::dialogs
         const std::optional<std::uint64_t> address    = values_->class_address(structure_->selected_class());
         header_->setText(
             address.has_value()
-                ? tr("%1 · %2 → %3").arg(to_qstring(type->name), expression, values_->format_address(*address))
+                ? tr("%1 · %2 → %3").arg(to_qstring(type->name), expression, values_->short_address(*address))
                 : tr("%1 · %2 → not resolved yet").arg(to_qstring(type->name), expression));
     }
 
@@ -748,7 +748,7 @@ namespace slopkit::ui::dialogs
             const std::optional<std::uint64_t> address    = values_->class_address(index);
             project_view_->set_class_tooltip(index,
                                              address.has_value()
-                                                 ? tr("%1 → %2").arg(expression, values_->format_address(*address))
+                                                 ? tr("%1 → %2").arg(expression, values_->short_address(*address))
                                                  : tr("%1 → not resolved yet").arg(expression));
         }
     }

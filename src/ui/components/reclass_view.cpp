@@ -21,7 +21,6 @@
 #include <QVariant>
 #include <QWheelEvent>
 
-#include "ui/address_format.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
@@ -94,16 +93,16 @@ namespace slopkit::ui::components
         QString widest_readings(reclass::NodeKind kind)
         {
             const bool wide = reclass::kind_size(kind) == 8;
-            return QStringLiteral("(-999998.999  %1  0x%2)")
+            return QStringLiteral("(-999998.999  %1  %2)")
                 .arg(wide ? QStringLiteral("-9223372036854775808") : QStringLiteral("-2147483648"),
                      wide ? QStringLiteral("FFFFFFFFFFFFFFFF") : QStringLiteral("FFFFFFFF"));
         }
 
         // The widest pointer field a row can draw: the value model's longest
-        // region tag beside the padded address itself.
+        // region tag beside the address itself at full width.
         QString widest_pointer()
         {
-            return QStringLiteral("-> <STACK>") + format_padded_hex(0);
+            return QStringLiteral("-> <STACK>FFFFFFFFFFFFFFFF");
         }
 
         // The widest value text a row can draw, taken from the row's kind rather
@@ -191,13 +190,29 @@ namespace slopkit::ui::components
                 this,
                 [this](const QModelIndex& top_left, const QModelIndex& bottom_right, const QList<int>&)
                 {
-                    // A rename is the one live change that can move a column
-                    // boundary; a value pass never re-measures.
-                    if (top_left.column() == models::ReclassStructureModel::name
-                        && bottom_right.column() == models::ReclassStructureModel::name)
+                    using models::ReclassStructureModel;
+                    // A rename and an address that resolves or retargets are the
+                    // live changes that can move a column boundary; a value pass
+                    // never re-measures.
+                    const bool renamed = top_left.column() == ReclassStructureModel::name
+                                      && bottom_right.column() == ReclassStructureModel::name;
+                    if (renamed)
                     {
                         update_content_widths();
                         update_columns();
+                    }
+                    else if (top_left.column() <= ReclassStructureModel::address
+                             && bottom_right.column() >= ReclassStructureModel::address)
+                    {
+                        // The address column follows the addresses the class
+                        // draws, so re-measure it and re-lay the columns only
+                        // when the width actually moved.
+                        const int before = column_width_[ReclassStructureModel::address];
+                        update_content_widths();
+                        if (column_width_[ReclassStructureModel::address] != before)
+                        {
+                            update_columns();
+                        }
                     }
                     viewport()->update();
                 });
@@ -259,17 +274,10 @@ namespace slopkit::ui::components
         const QFontMetrics prose(ui_font());
         row_height_ = std::max(1, std::max(mono.height(), prose.height()) + 4);
 
-        // The address is always the padded form, so it keeps a width measured
-        // from the font once here and never again; the notes and the values the
-        // class draws are measured from the flattened rows (see
-        // update_content_widths).
-        const auto measured = [](const QFontMetrics& metrics, const QString& sample)
-        {
-            return metrics.horizontalAdvance(sample) + kColumnGap;
-        };
-
+        // Every column that varies by row starts at nothing here and is measured
+        // from the flattened rows the class draws (see update_content_widths).
         using models::ReclassStructureModel;
-        column_width_[ReclassStructureModel::address] = measured(mono, format_padded_hex(0));
+        column_width_[ReclassStructureModel::address] = 0;
         column_width_[ReclassStructureModel::ascii]   = 0;
         column_width_[ReclassStructureModel::comment] = 0;
         column_width_[ReclassStructureModel::value]   = 0;
@@ -294,15 +302,17 @@ namespace slopkit::ui::components
         // so a list of small nodes does not sit in a grid sized for the widest
         // kind in the language. This follows the flattened rows, which a live
         // pass never rebuilds.
+        int address_width = 0;
         int offset_width  = 0;
         int ascii_width   = 0;
         int type_width    = 0;
         int name_width    = 0;
         int value_width   = 0;
         int comment_width = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
-        // The hints and the pointer are sized for the widest text their field can
-        // ever be given, never for what the class reads right now: a reading only
-        // arrives on a live pass, and a live pass does not measure again.
+        // The hints, the pointer and the ascii field are sized for the widest
+        // text their field can ever be given, never for what the class reads
+        // right now: a reading only arrives on a live pass, and a live pass does
+        // not measure again.
         int hints_width   = 0;
         int pointer_width = 0;
         for (const VisualRow& entry : rows_)
@@ -314,14 +324,23 @@ namespace slopkit::ui::components
             }
 
             const int indent = static_cast<int>(entry.depth) * kIndentStep;
+            // The address column is only as wide as the longest address this
+            // class draws; a hidden row draws nothing there.
+            if (!entry.row->hidden)
+            {
+                address_width = std::max(
+                    address_width, mono.horizontalAdvance(display(entry, ReclassStructureModel::address)) + kColumnGap);
+            }
             offset_width = std::max(offset_width,
                                     mono.horizontalAdvance(display(entry, ReclassStructureModel::offset)) + kColumnGap);
-            ascii_width  = std::max(ascii_width,
-                                    mono.horizontalAdvance(display(entry, ReclassStructureModel::ascii)) + kColumnGap);
-            type_width   = std::max(type_width,
-                                    prose.horizontalAdvance(display(entry, ReclassStructureModel::type)) + kColumnGap
-                                        + indent + (expandable(*entry.row) ? kTriangleWidth : 0));
-            name_width   = std::max(
+            const std::size_t ascii_chars = entry.row->hidden ? 0 : node->value_size();
+            ascii_width                   = std::max(
+                ascii_width,
+                mono.horizontalAdvance(QString(static_cast<qsizetype>(ascii_chars), QLatin1Char('W'))) + kColumnGap);
+            type_width = std::max(type_width,
+                                  prose.horizontalAdvance(display(entry, ReclassStructureModel::type)) + kColumnGap
+                                      + indent + (expandable(*entry.row) ? kTriangleWidth : 0));
+            name_width = std::max(
                 name_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::name)) + kColumnGap + indent);
             value_width   = std::max(value_width,
                                      mono.horizontalAdvance(display(entry, ReclassStructureModel::value)) + kColumnGap);
@@ -348,6 +367,7 @@ namespace slopkit::ui::components
             }
         }
 
+        column_width_[ReclassStructureModel::address] = address_width;
         column_width_[ReclassStructureModel::offset]  = offset_width;
         column_width_[ReclassStructureModel::ascii]   = ascii_width;
         column_width_[ReclassStructureModel::type]    = type_width;
@@ -630,11 +650,12 @@ namespace slopkit::ui::components
         using models::ReclassStructureModel;
         const int base = column_x_[column] + kTextPadding;
 
-        // The offset and ascii columns print text of a varying length, so they
-        // sit on the column's content box: a shorter row moves right, which
-        // leaves the same gap to the next column on every row while the widest
-        // row still starts where it always did.
-        if (column == ReclassStructureModel::offset || column == ReclassStructureModel::ascii)
+        // The offset, address and ascii columns print text of a varying length,
+        // so they sit on the column's content box: a shorter row moves right,
+        // which leaves the same gap to the next column on every row while the
+        // widest row still starts where it always did.
+        if (column == ReclassStructureModel::offset || column == ReclassStructureModel::address
+            || column == ReclassStructureModel::ascii)
         {
             const QModelIndex index   = index_for(*entry.row, column);
             const int         advance = QFontMetrics(cell_font(index, *model_))

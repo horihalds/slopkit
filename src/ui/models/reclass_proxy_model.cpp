@@ -188,7 +188,9 @@ namespace slopkit::ui::models
                 shown_.insert_or_assign(row, now);
             }
 
-            refresh(address_index);
+            // The row's own index is what carries the children: a column-1
+            // index would be rejected by the structure model's rowCount guard.
+            refresh(index(position, 0, parent));
         }
     }
 

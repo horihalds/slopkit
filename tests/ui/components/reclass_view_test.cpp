@@ -25,6 +25,7 @@
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
 #include "reclass/node.hpp"
+#include "reclass/nodes/text.hpp"
 #include "reclass/project.hpp"
 #include "support/fake_process.hpp"
 #include "support/reclass_helpers.hpp"
@@ -454,6 +455,156 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
     CHECK(tail_ink->second == tag_ink->second);
 }
 
+TEST_CASE("the address column is sized to the class's addresses and right-aligned", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    // The window repaints the live fields through the proxy's cache, which the
+    // dialog wires up the same way.
+    QObject::connect(
+        &fixture.values, &ReclassValueModel::valuesChanged, &fixture.proxy, &ReclassProxyModel::refresh_values);
+
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    constexpr int      kAllowedGap = 24;
+
+    // While nothing is read the column holds the model's own wording, sized for
+    // it and not for the 16 padded digits the old form reserved.
+    const std::size_t tag    = fixture.node_id(0);
+    const std::size_t x_node = fixture.project.classes()[0].nodes[0]->id;
+    CHECK(view.cell_text(fixture.cell(tag, ReclassStructureModel::address)) == QStringLiteral("not resolved yet"));
+    const int placeholder = mono.horizontalAdvance(QStringLiteral("not resolved yet"));
+    const int unresolved  = view.column_width(ReclassStructureModel::address);
+    CHECK(unresolved >= placeholder);
+    CHECK(unresolved <= placeholder + kAllowedGap);
+    CHECK(unresolved < mono.horizontalAdvance(QStringLiteral("0000000000000000")) + kAllowedGap);
+
+    // The repaint cache is primed while the addresses are still unknown, the
+    // way the first pass after the class is shown primes it; the address that
+    // only resolves afterwards then re-measures the column.
+    fixture.proxy.refresh_values();
+    fixture.resolve();
+    QCoreApplication::processEvents();
+
+    const int widest  = mono.horizontalAdvance(QStringLiteral("400011"));
+    const int settled = view.column_width(ReclassStructureModel::address);
+    CHECK(view.cell_text(fixture.cell(tag, ReclassStructureModel::address)) == QStringLiteral("400010"));
+    CHECK(settled >= widest);
+    CHECK(settled <= widest + kAllowedGap);
+    CHECK(settled < unresolved);
+
+    // Point's own fields sit wherever `next` points, so a pointer block that
+    // retargets to a one-digit address makes the class draw rows of plainly
+    // different address lengths.
+    fixture.put(fixture.player_address(), {0x2A, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+    fixture.structure.set_expanded(fixture.node_id(1), true);
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    REQUIRE(fixture.cell(x_node, ReclassStructureModel::address).isValid());
+    CHECK(view.cell_text(fixture.cell(x_node, ReclassStructureModel::address)) == QStringLiteral("1"));
+    CHECK(view.column_width(ReclassStructureModel::address) == settled);
+
+    QImage image(view.viewport()->size(), QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+
+    const auto ink_of = [&](std::size_t node_id) -> std::optional<std::pair<int, int>>
+    {
+        return ink_span(image, view.cell_rect(fixture.cell(node_id, ReclassStructureModel::address)).value());
+    };
+    const auto gap_after = [&](const std::optional<std::pair<int, int>>& ink) -> std::optional<int>
+    {
+        if (!ink.has_value())
+        {
+            return std::nullopt;
+        }
+        // Measured to the next column's text origin (its padding).
+        return view.column_x(ReclassStructureModel::ascii) + 4 - ink->second;
+    };
+
+    const auto tag_ink   = ink_of(tag);
+    const auto child_ink = ink_of(x_node);
+    const auto tag_gap   = gap_after(tag_ink);
+    const auto child_gap = gap_after(child_ink);
+    REQUIRE(tag_gap.has_value());
+    REQUIRE(child_gap.has_value());
+    CHECK(*tag_gap == *child_gap);
+    CHECK(*tag_gap > 0);
+
+    // The shorter address starts further right, so the two low ends line up.
+    REQUIRE(tag_ink.has_value());
+    REQUIRE(child_ink.has_value());
+    CHECK(child_ink->first > tag_ink->first);
+    CHECK(child_ink->second == tag_ink->second);
+
+    // An address that resolves to a longer text than the measured one grows the
+    // column to fit it.
+    fixture.put(fixture.player_address(), {0x2A, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    CHECK(view.cell_text(fixture.cell(x_node, ReclassStructureModel::address)) == QStringLiteral("60000000"));
+    CHECK(view.column_width(ReclassStructureModel::address) >= mono.horizontalAdvance(QStringLiteral("60000000")));
+    CHECK(view.column_width(ReclassStructureModel::address) > settled);
+}
+
+TEST_CASE("the ascii column fits the bytes a class draws from the kinds alone", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+
+    // `raw`'s eight bytes are the widest ascii run the class draws, and the
+    // hidden string is far wider still: a row that draws nothing must not widen
+    // the column.
+    Class&                    player  = fixture.project.classes()[1];
+    slopkit::reclass::NodePtr skipped = node_of(fixture.project, NodeKind::utf8_text, "skipped");
+    static_cast<slopkit::reclass::UTF8TextNode*>(skipped.get())->length = 64;
+    skipped->hidden                                                     = true;
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    player.nodes.push_back(std::move(skipped));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    constexpr int      kAllowedGap = 24;
+
+    // The width comes from the kinds, not from what a row happens to draw right
+    // now, so the widest run already fits with nothing read yet.
+    const int widest = mono.horizontalAdvance(QStringLiteral("WWWWWWWW"));
+    CHECK(view.column_width(ReclassStructureModel::ascii) >= widest);
+    CHECK(view.column_width(ReclassStructureModel::ascii) <= widest + kAllowedGap);
+
+    // The bytes that arrive on the live pass are drawn whole rather than elided,
+    // and the hidden array never widened the column.
+    fixture.resolve();
+    fixture.put(fixture.player_address(),
+                {0x41, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QModelIndex raw_ascii = fixture.cell(fixture.node_id(2), ReclassStructureModel::ascii);
+    CHECK(view.cell_text(raw_ascii) == QStringLiteral("BCDEFGHI"));
+    CHECK(view.hover_full_text(view.cell_rect(raw_ascii).value().center()).isEmpty());
+    CHECK(view.column_width(ReclassStructureModel::ascii) <= widest + kAllowedGap);
+}
+
 TEST_CASE("a long note keeps its full width and the pane scrolls instead", "[reclass][ui][view]")
 {
     application();
@@ -652,7 +803,7 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
 
     const QModelIndex value_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::value);
     REQUIRE(fixture.values.editable(*fixture.structure.row_for(value_cell)));
-    CHECK(view.cell_text(value_cell).toStdString() == "= 42  0x2A");
+    CHECK(view.cell_text(value_cell).toStdString() == "= 42  2A");
 
     // The value cell of an editable node offers itself to the editor, and so
     // does the node's own name.
@@ -680,7 +831,7 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
     CHECK(fixture.holds(fixture.player_address(), {0xF9, 0xAA, 0xAA, 0xAA}));
 
     fixture.pass();
-    CHECK(view.cell_text(value_cell).toStdString() == "= -7  0xF9");
+    CHECK(view.cell_text(value_cell).toStdString() == "= -7  F9");
 }
 
 TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")
@@ -1068,7 +1219,7 @@ TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view
 
     const std::size_t x_node = fixture.project.classes()[0].nodes[0]->id;
 
-    // Point's int32 x moves, so the whole `= 43  0x0000002B` is a moved value.
+    // Point's int32 x moves, so the whole `= 43  2B` is a moved value.
     fixture.resolve();
     fixture.put(kAppBase + 0x20, {0x2A, 0, 0, 0, 0, 0, 0, 0});
     fixture.pass();
@@ -1077,7 +1228,7 @@ TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view
     QCoreApplication::processEvents();
 
     const QModelIndex value_cell = fixture.cell(x_node, ReclassStructureModel::value);
-    CHECK(view.cell_text(value_cell).toStdString() == "= 43  0x0000002B");
+    CHECK(view.cell_text(value_cell).toStdString() == "= 43  2B");
 
     const QRect cell = view.cell_rect(value_cell).value();
     QImage      image(view.viewport()->size(), QImage::Format_ARGB32);
