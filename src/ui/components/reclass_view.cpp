@@ -77,16 +77,20 @@ namespace slopkit::ui::components
         // The rect the `[N]` a Type cell brackets draws in, when the cell draws
         // its whole text: nothing when the run is absent or the cell elides the
         // text it sits in, which leaves the run no fixed place. An array draws
-        // its index control behind the run, so the run is the text's first
-        // stretch and not its last.
-        std::optional<QRect>
-        run_rect(const QRect& cell, const QFontMetrics& metrics, const QString& text, const QString& run)
+        // its index control behind the run, so the run is the one before the
+        // arrows and not the last bracket the text spells: a class the cell
+        // names may hold a bracket of its own.
+        std::optional<QRect> run_rect(const QRect&        cell,
+                                      const QFontMetrics& metrics,
+                                      const QString&      text,
+                                      const QString&      run,
+                                      int                 before_arrows = -1)
         {
             if (run.isEmpty() || cell.isEmpty())
             {
                 return std::nullopt;
             }
-            const int offset = text.indexOf(run);
+            const int offset = before_arrows < 0 ? text.indexOf(run) : text.lastIndexOf(run, before_arrows);
             if (offset < 0)
             {
                 return std::nullopt;
@@ -730,7 +734,8 @@ namespace slopkit::ui::components
         return run_rect(cell,
                         metrics,
                         model_->data(type, Qt::DisplayRole).toString(),
-                        model_->data(type, models::kExtentTextRole).toString());
+                        model_->data(type, models::kExtentTextRole).toString(),
+                        structure_->element_runs(row->node_id).previous);
     }
 
     std::optional<ReClassView::ElementRects> ReClassView::element_rects(const QModelIndex& index) const
@@ -821,7 +826,8 @@ namespace slopkit::ui::components
         const std::optional<QRect> run = run_rect(cell,
                                                   metrics,
                                                   model_->data(type, Qt::DisplayRole).toString(),
-                                                  model_->data(type, models::kExtentTextRole).toString());
+                                                  model_->data(type, models::kExtentTextRole).toString(),
+                                                  structure_->element_runs(entry.row->node_id).previous);
         // A point right of the run's start is on the run: the cell is exactly as
         // wide as the text it draws, so nothing else stands beside it. An
         // array's index control stands right behind the run, and the arrows own
