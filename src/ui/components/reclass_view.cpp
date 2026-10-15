@@ -76,21 +76,59 @@ namespace slopkit::ui::components
 
         // The rect the `[N]` a Type cell brackets draws in, when the cell draws
         // its whole text: nothing when the run is absent or the cell elides the
-        // text it sits in, which leaves the run no fixed place.
+        // text it sits in, which leaves the run no fixed place. An array draws
+        // its index control behind the run, so the run is the text's first
+        // stretch and not its last.
         std::optional<QRect>
         run_rect(const QRect& cell, const QFontMetrics& metrics, const QString& text, const QString& run)
         {
-            if (run.isEmpty() || !text.endsWith(run))
+            if (run.isEmpty() || cell.isEmpty())
             {
                 return std::nullopt;
             }
-            const int offset    = metrics.horizontalAdvance(text.first(text.size() - run.size()));
+            const int offset = text.indexOf(run);
+            if (offset < 0)
+            {
+                return std::nullopt;
+            }
+            const int x         = cell.x() + metrics.horizontalAdvance(text.left(offset));
             const int run_width = metrics.horizontalAdvance(run);
-            if (offset + run_width > cell.width())
+            if (run_width <= 0 || x + run_width > cell.x() + cell.width())
             {
                 return std::nullopt;
             }
-            return QRect(cell.x() + offset, cell.y(), run_width, cell.height());
+            return QRect(x, cell.y(), run_width, cell.height());
+        }
+
+        // The rects the three parts of an array's index control draw in, inside
+        // a Type cell that draws its whole text: nothing when the cell elides
+        // the text the control sits in, which leaves it no fixed place.
+        std::optional<ReClassView::ElementRects> control_rects(const QRect&               cell,
+                                                               const QFontMetrics&        metrics,
+                                                               const QString&             text,
+                                                               const models::ElementRuns& runs)
+        {
+            if (text.isEmpty() || runs.previous < 0 || runs.index < 0 || runs.next < 0)
+            {
+                return std::nullopt;
+            }
+            const auto run = [&cell, &metrics, &text](int offset, int length)
+            {
+                return QRect(cell.x() + metrics.horizontalAdvance(text.left(offset)),
+                             cell.y(),
+                             metrics.horizontalAdvance(text.mid(offset, length)),
+                             cell.height());
+            };
+
+            ReClassView::ElementRects rects;
+            rects.previous = run(runs.previous, 1);
+            rects.index    = run(runs.index, runs.index_length);
+            rects.next     = run(runs.next, 1);
+            if (rects.previous.x() < cell.x() || rects.next.x() + rects.next.width() > cell.x() + cell.width())
+            {
+                return std::nullopt;
+            }
+            return rects;
         }
 
         // The value's own font and colour when the model states them, and the
@@ -695,6 +733,22 @@ namespace slopkit::ui::components
                         model_->data(type, models::kExtentTextRole).toString());
     }
 
+    std::optional<ReClassView::ElementRects> ReClassView::element_rects(const QModelIndex& index) const
+    {
+        using models::ReclassStructureModel;
+        const models::ReclassRow* row = row_of(index);
+        if (row == nullptr || index.column() != ReclassStructureModel::type)
+        {
+            return std::nullopt;
+        }
+        const int visual = visual_index_of(row->node_id);
+        if (visual < 0)
+        {
+            return std::nullopt;
+        }
+        return element_rects_in(rows_[static_cast<std::size_t>(visual)], visual);
+    }
+
     std::optional<QRect>
     ReClassView::byte_rect_in(const VisualRow& entry, int row_index, int column, std::size_t byte_index) const
     {
@@ -769,12 +823,52 @@ namespace slopkit::ui::components
                                                   model_->data(type, Qt::DisplayRole).toString(),
                                                   model_->data(type, models::kExtentTextRole).toString());
         // A point right of the run's start is on the run: the cell is exactly as
-        // wide as the text it draws, so nothing else stands beside it.
+        // wide as the text it draws, so nothing else stands beside it. An
+        // array's index control stands right behind the run, and the arrows own
+        // the points from their own glyph on, so the two zones stay apart.
         if (!run.has_value() || position.x() < run->x())
         {
             return std::nullopt;
         }
+        const std::optional<ElementRects> control = element_rects_in(entry, row_index);
+        if (control.has_value() && position.x() >= control->previous.x())
+        {
+            return std::nullopt;
+        }
         return run;
+    }
+
+    std::optional<ReClassView::ElementRects> ReClassView::element_rects_in(const VisualRow& entry, int row_index) const
+    {
+        using models::ReclassStructureModel;
+        const QModelIndex  type = index_for(*entry.row, ReclassStructureModel::type);
+        const QRect        cell = cell_rect_at(row_index, ReclassStructureModel::type);
+        const QFontMetrics metrics(cell_font(type, *model_));
+        if (cell.isEmpty())
+        {
+            return std::nullopt;
+        }
+        return control_rects(cell,
+                             metrics,
+                             model_->data(type, Qt::DisplayRole).toString(),
+                             structure_->element_runs(entry.row->node_id));
+    }
+
+    QString ReClassView::element_tooltip(const models::ReclassRow& row, int delta) const
+    {
+        if (row.node == nullptr)
+        {
+            return {};
+        }
+        const std::size_t count = structure_->element_count(*row.node);
+        if (count == 0)
+        {
+            return {};
+        }
+        const auto      steps   = static_cast<long long>(count);
+        const auto      current = static_cast<long long>(structure_->element_index(row.node_id));
+        const long long shown   = ((current + delta) % steps + steps) % steps;
+        return tr("Show element %1 of %2").arg(shown + 1).arg(count);
     }
 
     int ReClassView::byte_at(const VisualRow& entry, int row_index, int column, const QPoint& position) const
@@ -990,6 +1084,24 @@ namespace slopkit::ui::components
         hit.column      = column;
         hit.rect        = layout.rects[column];
         hit.on_triangle = on_triangle;
+
+        // An array's arrows step the element on their own, so a click on one
+        // never reaches the field the layout would otherwise name.
+        if (!on_triangle && column == models::ReclassStructureModel::type)
+        {
+            const std::optional<ElementRects> control = element_rects_in(entry, row_index);
+            if (control.has_value())
+            {
+                if (control->previous.contains(position))
+                {
+                    hit.element_step = -1;
+                }
+                else if (control->next.contains(position))
+                {
+                    hit.element_step = 1;
+                }
+            }
+        }
         return hit;
     }
 
@@ -1092,7 +1204,11 @@ namespace slopkit::ui::components
         // number; one byte writes through the value model, the only path that
         // can address a part of a cell; a whole cell writes through the model.
         bool applied = false;
-        if (target_.extent)
+        if (target_.element)
+        {
+            applied = structure_->set_element_index(*row, editor_->text());
+        }
+        else if (target_.extent)
         {
             applied = structure_->set_node_extent(*row, editor_->text());
         }
@@ -1314,6 +1430,27 @@ namespace slopkit::ui::components
         }
 
         painter.drawText(text_rect, Qt::AlignLeft | Qt::AlignVCenter, fitted_run(metrics, text, available));
+
+        // An array's arrows and its bracketed index read as a control of their
+        // own rather than as the kind the cell names, so the three runs are
+        // painted over the text that was just drawn. A selected row keeps one
+        // colour over the whole cell, and an elided text leaves no fixed place
+        // for the runs.
+        if (column != models::ReclassStructureModel::type || selected || entry.row->hidden)
+        {
+            return;
+        }
+        const models::ElementRuns         runs    = structure_->element_runs(entry.row->node_id);
+        const std::optional<ElementRects> control = control_rects(rect, metrics, text, runs);
+        if (!control.has_value())
+        {
+            return;
+        }
+        painter.setPen(active_theme().grid_index);
+        painter.drawText(control->previous, Qt::AlignLeft | Qt::AlignVCenter, text.mid(runs.previous, 1));
+        painter.drawText(control->index, Qt::AlignLeft | Qt::AlignVCenter, text.mid(runs.index, runs.index_length));
+        painter.drawText(control->next, Qt::AlignLeft | Qt::AlignVCenter, text.mid(runs.next, 1));
+        painter.setPen(primary);
     }
 
     void ReClassView::paint_triangle(QPainter& painter, const VisualRow& entry, int row_index, bool selected) const
@@ -1366,9 +1503,15 @@ namespace slopkit::ui::components
         else
         {
             select_row(*hit, event->modifiers());
+            if (hit->element_step != 0 && hit->row != nullptr)
+            {
+                // An arrow walks the array's elements, so the row shows another
+                // one; the selection keeps its place.
+                structure_->step_element(hit->row->node_id, hit->element_step);
+            }
             // Clicking a hidden node's `...` row unhides it, the reference's
             // click-to-reveal.
-            if (hit->row != nullptr && hit->row->hidden)
+            else if (hit->row != nullptr && hit->row->hidden)
             {
                 emit hiddenRowActivated(hit->row->node_id);
             }
@@ -1378,13 +1521,25 @@ namespace slopkit::ui::components
 
     void ReClassView::mouseMoveEvent(QMouseEvent* event)
     {
-        const std::optional<Hit> hit     = hit_test(event->position().toPoint());
-        const int                hovered = hit.has_value() ? hit->row_index : -1;
+        const std::optional<Hit> hit      = hit_test(event->position().toPoint());
+        const bool               on_arrow = hit.has_value() && hit->element_step != 0;
+        const int                hovered  = hit.has_value() && !on_arrow ? hit->row_index : -1;
         if (hovered != hovered_)
         {
             hovered_ = hovered;
             viewport()->update();
         }
+
+        if (on_arrow)
+        {
+            // An arrow takes the pointing hand and explains the element it shows.
+            viewport()->setCursor(Qt::PointingHandCursor);
+            QToolTip::showText(
+                event->globalPosition().toPoint(), element_tooltip(*hit->row, hit->element_step), viewport());
+            event->accept();
+            return;
+        }
+        viewport()->unsetCursor();
 
         const QString full = hover_full_text(event->position().toPoint());
         if (full.isEmpty())
@@ -1430,9 +1585,24 @@ namespace slopkit::ui::components
             }
         }
 
-        // The Type cell's bracketed run is typed into on its own: a double-click
-        // on the run opens the editor over it, while a click elsewhere in the
-        // cell keeps the rules below.
+        // The Type cell's index control is typed into on its own: the two arrows
+        // walk the elements on a single click, while the bracketed index between
+        // them opens the editor over it.
+        if (hit->column == models::ReclassStructureModel::type)
+        {
+            const VisualRow&                  entry   = rows_[static_cast<std::size_t>(hit->row_index)];
+            const std::optional<ElementRects> control = element_rects_in(entry, hit->row_index);
+            if (control.has_value() && control->index.contains(event->position().toPoint()))
+            {
+                open_element_editor(hit->row_index, control->index);
+                event->accept();
+                return;
+            }
+        }
+
+        // The Type cell's bracketed count is typed into on its own: a
+        // double-click on the run opens the editor over it, while a click
+        // elsewhere in the cell keeps the rules below.
         if (hit->column == models::ReclassStructureModel::type)
         {
             const VisualRow&           entry = rows_[static_cast<std::size_t>(hit->row_index)];
@@ -1496,6 +1666,7 @@ namespace slopkit::ui::components
                                .column     = hit.column,
                                .byte_index = hit.byte_index,
                                .extent     = hit.extent,
+                               .element    = hit.element,
                                .rect       = hit.rect};
         editor_->setFont(cell_font(index, *model_));
         // The editor shows the plain text the model answers for the cell - the
@@ -1515,10 +1686,11 @@ namespace slopkit::ui::components
             const QFontMetrics metrics(cell_font(index, *model_));
             rect.setWidth(std::max(rect.width(), metrics.horizontalAdvance(QStringLiteral("0000"))));
         }
-        else if (hit.extent)
+        else if (hit.extent || hit.element)
         {
-            // The run's own box is as wide as its brackets; the number typed
-            // into it needs the room a hex pair is given.
+            // The run's own box is as wide as its brackets, and the index's as
+            // wide as its digits; a number needs the room a hex pair is given,
+            // so typing past a single digit is never clipped.
             const QFontMetrics metrics(cell_font(index, *model_));
             rect.setWidth(std::max(rect.width(), metrics.horizontalAdvance(QStringLiteral("0000"))));
         }
@@ -1530,6 +1702,10 @@ namespace slopkit::ui::components
 
     QString ReClassView::edit_text(const models::ReclassRow& row) const
     {
+        if (target_.element)
+        {
+            return QString::number(structure_->element_index(row.node_id));
+        }
         if (target_.byte_index >= 0)
         {
             const std::span<const std::byte> bytes  = values_->node_bytes(row);
@@ -1585,6 +1761,24 @@ namespace slopkit::ui::components
         open_editor(hit);
     }
 
+    void ReClassView::open_element_editor(int row_index, const QRect& run)
+    {
+        if (row_index < 0 || row_index >= static_cast<int>(rows_.size()))
+        {
+            return;
+        }
+        ensure_visible(row_index);
+        const VisualRow& entry = rows_[static_cast<std::size_t>(row_index)];
+
+        Hit hit;
+        hit.row       = entry.row;
+        hit.row_index = row_index;
+        hit.column    = models::ReclassStructureModel::type;
+        hit.rect      = run;
+        hit.element   = true;
+        open_editor(hit);
+    }
+
     void ReClassView::contextMenuEvent(QContextMenuEvent* event)
     {
         // The reference selects the node under the cursor before it opens the
@@ -1614,6 +1808,7 @@ namespace slopkit::ui::components
     {
         hovered_ = -1;
         QToolTip::hideText();
+        viewport()->unsetCursor();
         viewport()->update();
         QAbstractScrollArea::leaveEvent(event);
     }

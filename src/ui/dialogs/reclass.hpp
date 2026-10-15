@@ -140,6 +140,10 @@ namespace slopkit::ui::dialogs
         void copy_name();
         void remove_selected_nodes();
 
+        // Shows the element before or after the one the row currently shows,
+        // the row menu's two arrow commands.
+        void step_element(std::size_t node_id, int delta);
+
         // Fills the grid's row menu, so a test can inspect it without opening a
         // modal box.
         void populate_row_menu(QMenu& menu);

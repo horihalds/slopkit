@@ -1493,6 +1493,16 @@ namespace slopkit::ui::dialogs
         menu.exec(position);
     }
 
+    void ReClassDialog::step_element(std::size_t node_id, int delta)
+    {
+        // The structure model re-flattens the class around the element it now
+        // shows, and the grid re-measures and repaints on the reset.
+        if (!structure_->step_element(node_id, delta))
+        {
+            report(tr("This array holds a single element."), true);
+        }
+    }
+
     void ReClassDialog::populate_row_menu(QMenu& menu)
     {
         widgets::show_explanations(menu);
@@ -1557,6 +1567,41 @@ namespace slopkit::ui::dialogs
         QAction* follow =
             widgets::described_action(menu, tr("Follow Pointer"), tr("Inline the class a pointer node refers to."));
         connect(follow, &QAction::triggered, this, &ReClassDialog::follow_pointer);
+
+        // The two element commands walk the array the row's cursor is on one
+        // element at a time. An array that holds a single element has nowhere to
+        // step, so both entries are dead and say why in their tooltip.
+        const std::optional<std::size_t> array_node = current_node_id();
+        const std::size_t                elements = array_node.has_value() ? structure_->element_count(*array_node) : 0;
+        if (elements > 1)
+        {
+            QAction* previous = widgets::described_action(
+                menu, tr("Previous Element"), tr("Show the element before the one this row shows."));
+            connect(previous,
+                    &QAction::triggered,
+                    this,
+                    [this, node = *array_node]
+                    {
+                        step_element(node, -1);
+                    });
+
+            QAction* next = widgets::described_action(
+                menu, tr("Next Element"), tr("Show the element after the one this row shows."));
+            connect(next,
+                    &QAction::triggered,
+                    this,
+                    [this, node = *array_node]
+                    {
+                        step_element(node, 1);
+                    });
+        }
+        else
+        {
+            const QString reason =
+                elements == 1 ? tr("This array holds a single element.") : tr("Select an array row first.");
+            (void)widgets::disabled_action(menu, tr("Previous Element"), reason);
+            (void)widgets::disabled_action(menu, tr("Next Element"), reason);
+        }
 
         QAction* remove = widgets::described_action(menu, tr("Delete"), tr("Remove the selected node(s)."));
         widgets::show_shortcut_hint(*remove, *delete_action_);

@@ -30,11 +30,13 @@ namespace
     using slopkit::test::attach_session;
     using slopkit::test::drain_until_idle;
     using slopkit::test::FakeAccess;
+    using slopkit::test::instance_array_of;
     using slopkit::test::module_image;
     using slopkit::test::node_of;
     using slopkit::test::reading_for;
     using slopkit::test::region_of;
     using slopkit::test::stage_bytes;
+    using slopkit::test::wrapper_array_of;
     using slopkit::ui::LiveReading;
     using slopkit::ui::LiveRequest;
     using slopkit::ui::models::ReclassRow;
@@ -444,6 +446,117 @@ TEST_CASE("an expanded class pointer is read one pass after its pointer changes"
     CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 9 (0x9)"));
     CHECK(fixture.values.node_address(fixture.child(1, 1)) == kHeapBase + 4);
     CHECK(fixture.values.address_text(fixture.child(1, 1)) == QStringLiteral("600004"));
+}
+
+TEST_CASE("a wrapper array's element sits at the index's own stride", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+
+    // Holder { uint8 tag; Point points[3]; }: the class is inlined where the
+    // array sits, so element `n` starts eight bytes along from element zero.
+    fixture.project.add_class("Holder", "app+0x80");
+    Class& holder = fixture.project.classes().back();
+    holder.nodes.push_back(node_of(fixture.project, NodeKind::uint8, "tag"));
+    holder.nodes.push_back(wrapper_array_of(fixture.project, "Point", 3));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(2);
+    fixture.resolve();
+
+    const std::uint64_t holder_address = kAppBase + 0x80;
+    fixture.write(holder_address, {0x11, 1, 0, 0, 0, 2, 0, 0, 0, 12, 0, 0, 0, 13, 0, 0, 0, 22, 0, 0, 0, 23, 0, 0, 0});
+    fixture.pass();
+
+    const std::size_t array_id = fixture.row(1).node_id;
+    CHECK(fixture.values.address_text(fixture.row(1)) == QStringLiteral("400081"));
+    CHECK(fixture.values.value_text(fixture.row(1)).isEmpty());
+
+    fixture.structure.set_expanded(array_id, true);
+    fixture.pass();
+
+    // Element zero is the first Point the array covers.
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 1 (0x1)"));
+    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 2 (0x2)"));
+    CHECK(fixture.values.node_address(fixture.child(1, 0)) == holder_address + 1);
+
+    // Element one is one stride along, the index being what moves it there.
+    REQUIRE(fixture.structure.step_element(array_id, 1));
+    fixture.pass();
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 12 (0xC)"));
+    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 13 (0xD)"));
+    CHECK(fixture.values.address_text(fixture.child(1, 0)) == QStringLiteral("400089"));
+    CHECK(fixture.values.address_text(fixture.child(1, 1)) == QStringLiteral("40008D"));
+
+    // And the last element is the last stride.
+    REQUIRE(fixture.structure.step_element(array_id, 1));
+    fixture.pass();
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 22 (0x16)"));
+    CHECK(fixture.values.node_address(fixture.child(1, 0)) == holder_address + 17);
+}
+
+TEST_CASE("an instance array's element is read past the pointer's target", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+
+    // Pool { uint8 tag; ClassInstanceArray<Point>[3] points; }: the pointer's
+    // own eight bytes sit in the class, three Points sitting at its target.
+    fixture.project.add_class("Pool", "app+0x80");
+    Class& pool = fixture.project.classes().back();
+    pool.nodes.push_back(node_of(fixture.project, NodeKind::uint8, "tag"));
+    pool.nodes.push_back(instance_array_of(fixture.project, "Point", 3));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(2);
+    fixture.resolve();
+
+    const std::uint64_t pool_address = kAppBase + 0x80;
+    fixture.write(pool_address, {0x11, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.write(kHeapBase, {1, 0, 0, 0, 2, 0, 0, 0, 11, 0, 0, 0, 12, 0, 0, 0, 21, 0, 0, 0, 22, 0, 0, 0});
+    fixture.pass();
+
+    const std::size_t array_id = fixture.row(1).node_id;
+    // The pointer's own bytes stay where the pointer is.
+    CHECK(fixture.values.pointer_text(fixture.row(1)) == QStringLiteral("-> <HEAP>600000"));
+    CHECK(fixture.values.address_text(fixture.row(1)) == QStringLiteral("400081"));
+
+    fixture.structure.set_expanded(array_id, true);
+    const std::vector<LiveRequest> first = fixture.pass();
+    REQUIRE(first.size() == 2);
+    CHECK(first[1].address == kHeapBase);
+    CHECK(first[1].size == 8);
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 1 (0x1)"));
+
+    // Element two is two strides past the pointer's target, and that is the
+    // one read the grid now submits for the array.
+    REQUIRE(fixture.structure.set_element_index(array_id, 2));
+    const std::vector<LiveRequest> moved = fixture.pass();
+    REQUIRE(moved.size() == 2);
+    CHECK(moved[1].address == kHeapBase + 16);
+    CHECK(moved[1].size == 8);
+    CHECK(fixture.values.node_address(fixture.child(1, 0)) == kHeapBase + 16);
+    CHECK(fixture.values.address_text(fixture.child(1, 0)) == QStringLiteral("600010"));
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 21 (0x15)"));
+    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 22 (0x16)"));
+
+    // Stepping back to the first element reads the target again.
+    REQUIRE(fixture.structure.step_element(array_id, -2));
+    const std::vector<LiveRequest> back = fixture.pass();
+    REQUIRE(back.size() == 2);
+    CHECK(back[1].address == kHeapBase);
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 1 (0x1)"));
+
+    // A reading asked for before a jump belongs to the element that moved away,
+    // so the late answer must not land where the new element sits.
+    const std::vector<LiveRequest> stale = fixture.values.requests();
+    REQUIRE(stale.size() == 2);
+    REQUIRE(fixture.structure.step_element(array_id, 2));
+    fixture.write(kHeapBase, {0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE, 0xEE});
+    fixture.values.apply_readings(
+        std::vector<LiveReading> {fixture.reading(stale[0].id, stale[0].address, stale[0].size),
+                                  fixture.reading(stale[1].id, stale[1].address, stale[1].size)});
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 1 (0x1)"));
 }
 
 TEST_CASE("a live pass leaves the grid's rows alone", "[reclass][ui]")

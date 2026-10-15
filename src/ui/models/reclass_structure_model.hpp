@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -59,7 +61,23 @@ namespace slopkit::ui::models
         std::size_t parent_block {};
         std::size_t base_offset {};
         std::size_t size {};
+        // How many bytes past the dereferenced base a pointer block's own first
+        // byte sits: a class array shows one of its elements, so its block
+        // starts at the stride the index names.
+        std::size_t element_offset {};
         bool        via_pointer {};
+    };
+
+    // Where an array row's index control sits inside the Type cell's own text -
+    // `◀ (k) ▶` - as character offsets, so the paint and the hit test locate the
+    // two arrows and the digit run on the same string the cell draws. Every
+    // field is -1 when the row draws no control.
+    struct ElementRuns
+    {
+        int previous = -1;
+        int index    = -1;
+        int index_length {};
+        int next = -1;
     };
 
     class ReclassStructureModel : public QAbstractItemModel
@@ -123,6 +141,36 @@ namespace slopkit::ui::models
         // The reference nodes the grid currently inlines.
         [[nodiscard]] const std::set<std::size_t>& expanded_nodes() const noexcept;
 
+        // How many elements an array shows, and zero for every other kind: a
+        // plain array's own children, the count the class arrays carry.
+        [[nodiscard]] std::size_t element_count(const reclass::Node& node) const;
+
+        // The same count for a node named by id, which is how the grid's menu
+        // asks about the row the cursor is on; zero for a node the grid does not
+        // show.
+        [[nodiscard]] std::size_t element_count(std::size_t node_id) const;
+
+        // The index of the element this node shows, zero while it is unset; a
+        // node that is no longer an array answers zero.
+        [[nodiscard]] std::size_t element_index(std::size_t node_id) const;
+
+        // Shows the element at `index`, wrapping an out-of-range index around
+        // the count; false when the node is not an array the grid can walk.
+        bool set_element_index(std::size_t node_id, std::size_t index);
+
+        // Shows the element the typed text names, wrapping an index past either
+        // end around the count; false - with the reason on the status line's own
+        // signal - when the text is not a whole number.
+        bool set_element_index(const ReclassRow& row, const QString& text);
+
+        // Steps the shown element by `delta`, wrapping at both ends; false when
+        // the node holds a single element, so there is nowhere to step to.
+        bool step_element(std::size_t node_id, int delta);
+
+        // Where the index control sits in the Type cell's text, all -1 when the
+        // row draws no control.
+        [[nodiscard]] ElementRuns element_runs(std::size_t node_id) const;
+
         [[nodiscard]] QModelIndex   index(int row, int column, const QModelIndex& parent = {}) const override;
         [[nodiscard]] QModelIndex   parent(const QModelIndex& index) const override;
         [[nodiscard]] int           rowCount(const QModelIndex& parent = {}) const override;
@@ -158,12 +206,24 @@ namespace slopkit::ui::models
 
         [[nodiscard]] ReclassRow* append_row(ReclassRow* parent, std::unique_ptr<ReclassRow> row);
         [[nodiscard]] std::size_t class_index_of(const reclass::Class* type) const;
-        [[nodiscard]] QString     type_text(const ReclassRow& row, const reclass::Node& node) const;
+
+        // The index the node's own row stores, zero while it was never walked.
+        [[nodiscard]] std::size_t stored_element_index(std::size_t node_id) const;
+
+        // The element the row shows - its stored index clamped to the count the
+        // node really holds - or nothing when the row draws no index control.
+        [[nodiscard]] std::optional<std::size_t> shown_element(const ReclassRow& row, const reclass::Node& node) const;
+
+        // The Type cell's text without the index control: the kind, the class
+        // it names, an array's element kind and the node's own `[N]`.
+        [[nodiscard]] QString kind_text(const ReclassRow& row, const reclass::Node& node) const;
+        [[nodiscard]] QString type_text(const ReclassRow& row, const reclass::Node& node) const;
 
         reclass::Project*                        project_ {};
         std::size_t                              selected_class_ {};
         bool                                     valid_class_ {};
         std::set<std::size_t>                    expanded_;
+        std::map<std::size_t, std::size_t>       element_indices_;
         std::vector<std::unique_ptr<ReclassRow>> roots_;
         std::vector<ReclassBlock>                blocks_;
     };

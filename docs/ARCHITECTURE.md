@@ -683,7 +683,17 @@ The `View > ReClass` window splits the model over three pieces. The structure
 model turns the *selected* class into rows and **blocks** — one block for the class
 itself and one for every expanded reference node — and inlines the target class's
 nodes beneath an expanded `class_instance`/`class_pointer`, with offsets
-continuing from the node's own offset. Inlining stops at a
+continuing from the node's own offset. An array node is one row that shows a
+single element — the one the index the structure model stores for that node names,
+wrapping at both ends — so a long buffer never draws a row per element, and the
+index rides on the node like its expansion: it is clamped when the count shrinks,
+dropped when the node stops being an array and cleared wherever the rows are
+rebuilt for another class. The two class arrays build that one element behind
+their class's stride: a wrapper array's block starts at `node offset + index ×
+class size` inside the parent's bytes, so the value model can keep slicing its
+rows from the block's own base, and an instance array keeps its base at the node's
+own offset — the pointer's own bytes stay where the pointer is — so the stride is
+carried past the dereference instead. Inlining stops at a
 `kMaxReclassBlockDepth` of 8 levels and at a class that is already open on the
 row's own ancestor chain, which renders as a muted `cycle` marker, so a
 self-referential chain cannot explode the grid or the read batch. The value model
@@ -699,7 +709,12 @@ nine fields the painted grid flows.
 A `class_instance` shares its parent's bytes, so it costs no read of its own, and
 a `class_pointer`'s target is read out of the pointer's own bytes in the parent
 block — which means a pointer that changes value shows its children one interval
-later, the same lag the reference has. The window adds no timer: it is a
+later, the same lag the reference has. A class array carries that lag too and adds
+its own stride to the target after the dereference, so the pointer's own bytes are
+still read where the pointer sits. Walking an array's index is a structure change
+and nothing else: it submits no read of its own, and the existing
+one-read-per-visible-block pass picks the moved base up, dropping an answer that
+was asked for before the jump. The window adds no timer: it is a
 registered `LiveSurface` that refreshes on the shared cadence, stays quiet while
 hidden, while live update is off, while no target is attached or while a job is in
 flight, and matches every completion against the job it was submitted for. A
@@ -715,12 +730,17 @@ so the row's other bytes are never written. The run is the node's own number and
 writes through `ReclassStructureModel::set_node_extent`, which parses a whole
 number of at least one and hands it to the node's own `set_extent`, so it touches
 no target, and because it sizes the node the class re-flattens the way a kind
-change makes it. A write that is refused — a byte the node does not cover or a text
-the field cannot read (`Byte: expected one hex byte such as 1A.`), a length or
-count that is not a whole number of at least one (`Length:` / `Count: expected a
-whole number of at least 1.`) — says why on the status line instead of writing a
-guessed address, and the editor stays open
-with its text selected so the correction is one edit away. The grid paints the
+change makes it. An array's index has its own writer on the same model —
+`set_element_index`, which parses a whole number and wraps it modulo the count, so
+an index past an end is the element at the other end — and the row menu's
+`Previous Element`/`Next Element` step it with `step_element`, which wraps the same
+way and refuses an array of a single element. A write that is refused — a byte the
+node does not cover or a text the field cannot read (`Byte: expected one hex byte
+such as 1A.`), a length or count that is not a whole number of at least one
+(`Length:` / `Count: expected a whole number of at least 1.`) or an index that is
+not a whole number (`Index: expected a whole number.`) — says why on the status
+line instead of writing a guessed address, and the editor stays open with its text
+selected so the correction is one edit away. The grid paints the
 last reading, so a completion patches the bytes it wrote into the cached block and
 repaints that cell instead of leaving them invisible until the next pass, which
 still corrects the cell if the target took the write and said nothing.
@@ -756,7 +776,10 @@ drives the grid; the tree's `Class Hierarchy View` nests the classes a class
 refers to behind the reference's cycle guard, and its context menus add, rename,
 delete and clean up classes and edit the enums. The `Node` menu and the grid's row
 menu carry the reference's node commands — `Change Type`, `Dissect`,
-`Follow Pointer`, `Create Class from Nodes`, `Shrink Class`,
+`Follow Pointer`, `Previous Element`/`Next Element` (which show the element before
+or after the one an array row shows, and are dead with their reason on a row that
+is not an array and on an array of one element), `Create Class from Nodes`,
+`Shrink Class`,
 `Copy Nodes`/`Paste Nodes`, the five hide/unhide commands and `Copy Address` — and
 the row menu carries the reference's two byte submenus, `Add Bytes` and
 `Insert Bytes`, at the 4/8/64/256/1024/2048/4096 presets or an `X bytes…` prompt,

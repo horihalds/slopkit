@@ -39,6 +39,7 @@ namespace
     using slopkit::reclass::Class;
     using slopkit::reclass::NodeKind;
     using slopkit::reclass::Project;
+    using slopkit::test::array_of;
     using slopkit::test::attach_session;
     using slopkit::test::drain_until_idle;
     using slopkit::test::FakeAccess;
@@ -48,6 +49,7 @@ namespace
     using slopkit::test::region_of;
     using slopkit::test::stage_bytes;
     using slopkit::ui::dialogs::ReClassDialog;
+    using slopkit::ui::models::ReclassStructureModel;
 
     // Point { int32 x; int32 y; } and Player { int8 tag; pointer next; }, with a
     // worker that is never asked for anything in this step.
@@ -680,6 +682,99 @@ TEST_CASE("the row menu offers both byte commands", "[reclass][ui]")
     dialog.populate_row_menu(multiple);
     CHECK(submenu(multiple, QStringLiteral("Add Bytes"))->isEnabled());
     CHECK_FALSE(submenu(multiple, QStringLiteral("Insert Bytes"))->isEnabled());
+
+    dialog.close();
+}
+
+TEST_CASE("the row menu walks an array's elements", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(array_of(fixture.project, 3, NodeKind::uint8));
+    player.nodes.push_back(array_of(fixture.project, 1, NodeKind::uint8));
+    dialog.structure()->set_project(fixture.project);
+    select_player(fixture);
+
+    const auto item = [](QMenu& menu, const QString& text) -> QAction*
+    {
+        for (QAction* action : menu.actions())
+        {
+            if (action->text() == text)
+            {
+                return action;
+            }
+        }
+        return nullptr;
+    };
+    // The menu is rebuilt in place: an entry belongs to its menu, so the menu
+    // outlives every action the checks below hold on to, and an action is used
+    // before the menu is filled again.
+    QMenu      menu;
+    const auto show = [&dialog, &menu, &item](const QModelIndex& index, const QString& text)
+    {
+        menu.clear();
+        REQUIRE(index.isValid());
+        dialog.grid()->setCurrentIndex(index);
+        dialog.populate_row_menu(menu);
+        return item(menu, text);
+    };
+
+    const std::size_t list   = player.nodes[2]->id;
+    const std::size_t single = player.nodes[3]->id;
+
+    // The Type cell the array's own row draws.
+    const auto type_cell = [&dialog, list]
+    {
+        return dialog.structure()->index_for_node(list).siblingAtColumn(ReclassStructureModel::type);
+    };
+
+    // A row that is not an array has no elements to walk, so both entries are
+    // dead and explain that in their tooltip.
+    QAction* previous =
+        show(dialog.structure()->index_for_node(player.nodes[0]->id), QStringLiteral("Previous Element"));
+    QAction* next = item(menu, QStringLiteral("Next Element"));
+    REQUIRE(previous != nullptr);
+    REQUIRE(next != nullptr);
+    CHECK_FALSE(previous->isEnabled());
+    CHECK(previous->toolTip() == QStringLiteral("Select an array row first."));
+    CHECK_FALSE(next->isEnabled());
+
+    // An array of one element offers nowhere to step, and says so.
+    QAction* one = show(dialog.structure()->index_for_node(single), QStringLiteral("Next Element"));
+    REQUIRE(one != nullptr);
+    CHECK_FALSE(one->isEnabled());
+    CHECK(one->toolTip() == QStringLiteral("This array holds a single element."));
+
+    // The array row walks its elements from the cursor, both ways and round.
+    QAction* forward = show(dialog.structure()->index_for_node(list), QStringLiteral("Next Element"));
+    REQUIRE(forward != nullptr);
+    REQUIRE(forward->isEnabled());
+    forward->trigger();
+    QCoreApplication::processEvents();
+    CHECK(dialog.structure()->element_index(list) == 1);
+    CHECK(dialog.grid()->cell_text(type_cell()).toStdString() == "Array<UInt8> [3] ◀ (1) ▶");
+
+    QAction* back = show(dialog.structure()->index_for_node(list), QStringLiteral("Previous Element"));
+    REQUIRE(back != nullptr);
+    REQUIRE(back->isEnabled());
+    back->trigger();
+    QCoreApplication::processEvents();
+    CHECK(dialog.structure()->element_index(list) == 0);
+
+    // The step before the first element is the last.
+    QAction* wrap = show(dialog.structure()->index_for_node(list), QStringLiteral("Previous Element"));
+    REQUIRE(wrap != nullptr);
+    wrap->trigger();
+    QCoreApplication::processEvents();
+    CHECK(dialog.structure()->element_index(list) == 2);
+    CHECK(dialog.grid()->cell_text(type_cell()).toStdString() == "Array<UInt8> [3] ◀ (2) ▶");
 
     dialog.close();
 }

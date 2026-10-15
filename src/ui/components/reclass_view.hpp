@@ -71,9 +71,21 @@ namespace slopkit::ui::components
         // The rect the `[N]` run of a Type cell draws in, when the cell offers
         // one: a text node's length or an array's element count.
         [[nodiscard]] std::optional<QRect> extent_rect(const QModelIndex& index) const;
-        [[nodiscard]] QString              cell_text(const QModelIndex& index) const;
+
+        // The rects an array's Type cell draws its index control in: the arrow
+        // that steps back, the bracketed index the editor takes over and the
+        // arrow that steps on. Nothing when the row offers no control.
+        struct ElementRects
+        {
+            QRect previous;
+            QRect index;
+            QRect next;
+        };
+
+        [[nodiscard]] std::optional<ElementRects> element_rects(const QModelIndex& index) const;
+        [[nodiscard]] QString                     cell_text(const QModelIndex& index) const;
         // The full text of the cell under the cursor, when it does not fit.
-        [[nodiscard]] QString              hover_full_text(const QPoint& position) const;
+        [[nodiscard]] QString                     hover_full_text(const QPoint& position) const;
 
         // The inline cell editor, or nullptr until a cell was opened.
         [[nodiscard]] QLineEdit* editor() const noexcept;
@@ -130,6 +142,12 @@ namespace slopkit::ui::components
             // The point fell on the Type cell's bracketed run, which the editor
             // opens on and which the commit routes to the structure model.
             bool                      extent {false};
+            // The point fell on the array's bracketed index between the two
+            // arrows, which the editor opens on.
+            bool                      element {false};
+            // The step the arrow under the point takes - back or on - and zero
+            // when no arrow is under it.
+            int                       element_step {0};
         };
 
         // Where each of the row's nine fields stands once the row's own content
@@ -190,6 +208,9 @@ namespace slopkit::ui::components
         // Opens the one editor over the Type cell's bracketed run, anchored on
         // the rect the run draws in.
         void open_extent_editor(int row_index, const QRect& run);
+        // Opens the one editor over the array's bracketed index, anchored on the
+        // rect the number draws in.
+        void open_element_editor(int row_index, const QRect& run);
         // The rect the `byte_index`th byte of a value cell's hex dump draws in,
         // or of the character the Ascii column draws for it; nothing when the
         // cell elides its text, so no byte sits at a fixed place.
@@ -198,17 +219,24 @@ namespace slopkit::ui::components
         // The rect the Type cell's `[N]` run draws in, when the row offers one
         // and the text it sits in is drawn whole.
         [[nodiscard]] std::optional<QRect>
-                              extent_rect_in(const VisualRow& entry, int row_index, const QPoint& position) const;
+        extent_rect_in(const VisualRow& entry, int row_index, const QPoint& position) const;
+        // The rects the array's index control draws in, when the row offers one
+        // and the text it sits in is drawn whole: the arrow that steps back, the
+        // bracketed index the editor takes over and the arrow that steps on.
+        [[nodiscard]] std::optional<ElementRects> element_rects_in(const VisualRow& entry, int row_index) const;
+        // What a hover over an array's arrow says: the element that arrow shows,
+        // counted from one.
+        [[nodiscard]] QString                     element_tooltip(const models::ReclassRow& row, int delta) const;
         // The text the editor opens with: the byte the row draws, bare and upper
         // case, for a per-byte edit, and the model's own text for a whole cell.
-        [[nodiscard]] QString edit_text(const models::ReclassRow& row) const;
+        [[nodiscard]] QString                     edit_text(const models::ReclassRow& row) const;
         // The byte a point of a cell stands for - the dump pair or the Ascii
         // character under it - clamped to the bytes the cell covers; -1 when the
         // cell draws no byte there.
-        [[nodiscard]] int     byte_at(const VisualRow& entry, int row_index, int column, const QPoint& position) const;
-        void                  commit_edit();
-        void                  scroll_rows(long long delta);
-        void                  ensure_visible(int row_index);
+        [[nodiscard]] int byte_at(const VisualRow& entry, int row_index, int column, const QPoint& position) const;
+        void              commit_edit();
+        void              scroll_rows(long long delta);
+        void              ensure_visible(int row_index);
 
         models::ReclassProxyModel*     model_ {};
         models::ReclassStructureModel* structure_ {};
@@ -234,13 +262,15 @@ namespace slopkit::ui::components
 
         // What an open editor edits: one cell, or one byte of a hex dump or of
         // the Ascii column when `byte_index` is not -1, or the Type cell's
-        // bracketed run when `extent` is set.
+        // bracketed run when `extent` is set, or the array's bracketed index
+        // when `element` is set.
         struct EditTarget
         {
             std::size_t node_id {};
             int         column {};
             int         byte_index {-1};
             bool        extent {false};
+            bool        element {false};
             QRect       rect;
         };
 

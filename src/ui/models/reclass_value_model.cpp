@@ -570,7 +570,8 @@ namespace slopkit::ui::models
         }
 
         // A pointer block sits wherever the pointer's own bytes point, which
-        // are read from the parent's previous pass.
+        // are read from the parent's previous pass. A class array's element
+        // sits one stride further on for each element the index has walked.
         const std::span<const std::byte> bytes = block_bytes(block.parent_block);
         if (bytes.size() < start + 8)
         {
@@ -578,7 +579,7 @@ namespace slopkit::ui::models
         }
         std::uint64_t target = 0;
         std::memcpy(&target, bytes.data() + start, sizeof(target));
-        return target == 0 ? std::nullopt : std::optional<std::uint64_t> {target};
+        return target == 0 ? std::nullopt : std::optional<std::uint64_t> {target + block.element_offset};
     }
 
     ReclassValueModel::BlockView ReclassValueModel::block_view(std::size_t index) const

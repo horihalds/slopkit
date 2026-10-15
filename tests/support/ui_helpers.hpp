@@ -143,7 +143,9 @@ namespace
                                 theme.grid_offset,
                                 theme.grid_address,
                                 theme.grid_ascii,
-                                theme.grid_comment};
+                                theme.grid_comment,
+                                theme.grid_pointer,
+                                theme.grid_index};
         for (const QColor& role : roles)
         {
             CHECK(role.isValid());

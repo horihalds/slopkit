@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "reclass/edit.hpp"
 #include "reclass/node.hpp"
 #include "reclass/project.hpp"
 #include "support/reclass_helpers.hpp"
@@ -18,7 +19,10 @@ namespace
     using slopkit::reclass::NodePtr;
     using slopkit::reclass::Project;
     using slopkit::test::array_of;
+    using slopkit::test::instance_array_of;
     using slopkit::test::node_of;
+    using slopkit::test::wrapper_array_of;
+    using slopkit::ui::models::ElementRuns;
     using slopkit::ui::models::kExtentTextRole;
     using slopkit::ui::models::ReclassStructureModel;
     using Model = ReclassStructureModel;
@@ -413,7 +417,7 @@ TEST_CASE("a node's note is edited in place through the model", "[reclass][ui]")
     CHECK(project.classes()[1].nodes[0]->comment.empty());
 }
 
-TEST_CASE("a container inlines its children and shows its count", "[reclass][ui]")
+TEST_CASE("an array shows one element at a time and counts its elements", "[reclass][ui]")
 {
     application();
 
@@ -425,14 +429,22 @@ TEST_CASE("a container inlines its children and shows its count", "[reclass][ui]
 
     Model model {project};
     REQUIRE(model.rowCount() == 2);
-    CHECK(cell(model, model.index(1, 0), Model::type) == QStringLiteral("Array [2]"));
+    CHECK(cell(model, model.index(1, 0), Model::type) == QStringLiteral("Array<Int32> [2] ◀ (0) ▶"));
     REQUIRE(model.rowCount(model.index(1, 0)) == 0);
 
     model.set_expanded(player.nodes[1]->id, true);
 
-    REQUIRE(model.rowCount(model.index(1, 0)) == 2);
-    CHECK(cell(model, model.index(0, 0, model.index(1, 0)), Model::type) == QStringLiteral("Int32"));
-    CHECK(cell(model, model.index(1, 0, model.index(1, 0)), Model::type) == QStringLiteral("Int32"));
+    // One element row - the one the index names - rather than one per element.
+    REQUIRE(model.rowCount(model.index(1, 0)) == 1);
+    const QModelIndex element = model.index(0, 0, model.index(1, 0));
+    CHECK(cell(model, element, Model::type) == QStringLiteral("Int32"));
+    CHECK(cell(model, element, Model::offset) == QStringLiteral("1"));
+
+    // Stepping to the next element moves the one row along with it.
+    REQUIRE(model.step_element(player.nodes[1]->id, 1));
+    REQUIRE(model.rowCount(model.index(1, 0)) == 1);
+    CHECK(cell(model, model.index(0, 0, model.index(1, 0)), Model::offset) == QStringLiteral("5"));
+    CHECK(cell(model, model.index(1, 0), Model::type) == QStringLiteral("Array<Int32> [2] ◀ (1) ▶"));
 }
 
 TEST_CASE("a union's members all sit at the union's own offset", "[reclass][ui]")
@@ -533,7 +545,7 @@ TEST_CASE("the Type cell's bracketed run is answered for the kinds that own one"
     CHECK(model.data(text_run, Qt::EditRole).toString() == QStringLiteral("16"));
 
     const QModelIndex array_run = model.index(1, Model::type);
-    CHECK(model.data(array_run, Qt::DisplayRole).toString() == QStringLiteral("Array [3]"));
+    CHECK(model.data(array_run, Qt::DisplayRole).toString() == QStringLiteral("Array<Int32> [3] ◀ (0) ▶"));
     CHECK(model.data(array_run, kExtentTextRole).toString() == QStringLiteral("[3]"));
     CHECK(model.data(array_run, Qt::EditRole).toString() == QStringLiteral("3"));
 
@@ -633,14 +645,15 @@ TEST_CASE("an array's count is edited in place through the model", "[reclass][ui
                          messages.push_back(message);
                      });
 
-    // An expanded array grows its element rows with the count.
+    // An expanded array keeps its single element row as the count grows.
     model.set_expanded(player.nodes[0]->id, true);
-    REQUIRE(model.rowCount(model.index(0, 0)) == 2);
+    REQUIRE(model.rowCount(model.index(0, 0)) == 1);
+    CHECK(cell(model, model.index(0, 0, model.index(0, 0)), Model::offset) == QStringLiteral("0"));
     CHECK(cell(model, model.index(1, 0), Model::offset) == QStringLiteral("8"));
 
     CHECK(model.set_node_extent(*model.row_at({}, 0), QStringLiteral("4")));
-    REQUIRE(model.rowCount(model.index(0, 0)) == 4);
-    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Array [4]"));
+    REQUIRE(model.rowCount(model.index(0, 0)) == 1);
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Array<Int32> [4] ◀ (0) ▶"));
     CHECK(cell(model, model.index(1, 0), Model::offset) == QStringLiteral("10"));
     REQUIRE(messages.size() == 1);
     CHECK(messages.back() == QStringLiteral("Count set to 4."));
@@ -669,4 +682,214 @@ TEST_CASE("a row whose kind owns no number takes no edit", "[reclass][ui]")
         REQUIRE(row != nullptr);
         CHECK_FALSE(model.set_node_extent(*row, QStringLiteral("4")));
     }
+}
+
+TEST_CASE("an array's element is stepped round both ends", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(array_of(project, 8, NodeKind::uint8));
+
+    Model             model {project};
+    const std::size_t array_id = player.nodes[0]->id;
+
+    CHECK(model.element_count(*player.nodes[0]) == 8);
+    CHECK(model.element_index(array_id) == 0);
+
+    // The step before the first element is the last one.
+    REQUIRE(model.step_element(array_id, -1));
+    CHECK(model.element_index(array_id) == 7);
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Array<UInt8> [8] ◀ (7) ▶"));
+
+    // And the step past the last is the first.
+    REQUIRE(model.step_element(array_id, 1));
+    CHECK(model.element_index(array_id) == 0);
+
+    // A step longer than the array keeps wrapping, and so does an index handed
+    // over straight, which is what the inline editor does.
+    REQUIRE(model.step_element(array_id, -9));
+    CHECK(model.element_index(array_id) == 7);
+    REQUIRE(model.set_element_index(array_id, 10));
+    CHECK(model.element_index(array_id) == 2);
+
+    // Writing the index the row already shows moves nothing and is accepted.
+    CHECK(model.set_element_index(array_id, 2));
+
+    // A node that is not an array has no element to walk.
+    player.nodes.push_back(node_of(project, NodeKind::int32, "health"));
+    model.rebuild();
+    CHECK(model.element_count(*player.nodes[1]) == 0);
+    CHECK(model.element_index(player.nodes[1]->id) == 0);
+    CHECK_FALSE(model.step_element(player.nodes[1]->id, 1));
+    CHECK_FALSE(model.set_element_index(player.nodes[1]->id, 2));
+}
+
+TEST_CASE("an array's one element has nowhere to step", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(array_of(project, 1, NodeKind::uint8));
+
+    Model             model {project};
+    const std::size_t array_id = player.nodes[0]->id;
+
+    // The control is drawn for a single element, but an arrow click is a no-op.
+    CHECK(model.element_count(*player.nodes[0]) == 1);
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Array<UInt8> [1] ◀ (0) ▶"));
+    CHECK_FALSE(model.step_element(array_id, 1));
+    CHECK_FALSE(model.step_element(array_id, -1));
+    CHECK(model.element_index(array_id) == 0);
+
+    model.set_expanded(array_id, true);
+    REQUIRE(model.rowCount(model.index(0, 0)) == 1);
+}
+
+TEST_CASE("an array with no element draws no index control", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(array_of(project, 0, NodeKind::uint8));
+
+    Model             model {project};
+    const std::size_t array_id = player.nodes[0]->id;
+
+    CHECK(model.element_count(*player.nodes[0]) == 0);
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Array [0]"));
+    CHECK(model.element_runs(array_id).previous == -1);
+    CHECK_FALSE(model.step_element(array_id, 1));
+    CHECK_FALSE(model.set_element_index(array_id, 0));
+
+    model.set_expanded(array_id, true);
+    CHECK(model.rowCount(model.index(0, 0)) == 0);
+}
+
+TEST_CASE("an array's index control answers where its arrows and digits sit", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(array_of(project, 12, NodeKind::uint8));
+    player.nodes.push_back(node_of(project, NodeKind::uint32, "health"));
+
+    Model             model {project};
+    const std::size_t array_id = player.nodes[0]->id;
+
+    REQUIRE(model.set_element_index(array_id, 2));
+    const QString one_digit = cell(model, model.index(0, 0), Model::type);
+    REQUIRE(one_digit == QStringLiteral("Array<UInt8> [12] ◀ (2) ▶"));
+
+    // The control sits at the end of the text the cell draws: the arrow, the
+    // bracketed index the editor takes over, then the other arrow.
+    const ElementRuns runs = model.element_runs(array_id);
+    CHECK(runs.previous == one_digit.indexOf(QChar(0x25C0)));
+    CHECK(runs.index == one_digit.indexOf(QChar(u'(')) + 1);
+    CHECK(runs.index_length == 1);
+    CHECK(runs.next == one_digit.size() - 1);
+    CHECK(one_digit.mid(runs.previous, 1) == QStringLiteral("◀"));
+    CHECK(one_digit.mid(runs.index, runs.index_length) == QStringLiteral("2"));
+    CHECK(one_digit.mid(runs.next, 1) == QStringLiteral("▶"));
+
+    // A two-digit index widens the digit run the editor takes over.
+    REQUIRE(model.set_element_index(array_id, 10));
+    const QString two_digits = cell(model, model.index(0, 0), Model::type);
+    REQUIRE(two_digits == QStringLiteral("Array<UInt8> [12] ◀ (10) ▶"));
+    const ElementRuns wide = model.element_runs(array_id);
+    CHECK(wide.index_length == 2);
+    CHECK(two_digits.mid(wide.index, wide.index_length) == QStringLiteral("10"));
+    CHECK(two_digits.size() == one_digit.size() + 1);
+
+    // A column that draws no control answers no runs at all.
+    CHECK(model.element_runs(player.nodes[1]->id).previous == -1);
+    CHECK(model.element_runs(player.nodes[1]->id).index == -1);
+}
+
+TEST_CASE("a class array keeps its class and gains the index control", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Point", "app+0x20");
+    project.classes()[0].nodes.push_back(node_of(project, NodeKind::int32, "x"));
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes()[1];
+    player.nodes.push_back(wrapper_array_of(project, "Point", 3));
+    player.nodes.push_back(instance_array_of(project, "Point", 4));
+
+    Model model {project};
+    model.set_class(1);
+
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Class Array <Point> [3] ◀ (0) ▶"));
+    CHECK(cell(model, model.index(1, 0), Model::type) == QStringLiteral("Class Instance Array <Point> [4] ◀ (0) ▶"));
+    CHECK(model.element_count(*player.nodes[0]) == 3);
+    CHECK(model.element_count(*player.nodes[1]) == 4);
+
+    // The two class arrays are walked exactly like a plain array.
+    REQUIRE(model.step_element(player.nodes[1]->id, 1));
+    CHECK(cell(model, model.index(1, 0), Model::type) == QStringLiteral("Class Instance Array <Point> [4] ◀ (1) ▶"));
+}
+
+TEST_CASE("the index is clamped to a shrunk count and dropped with the kind", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(array_of(project, 8, NodeKind::uint8));
+
+    Model             model {project};
+    const std::size_t array_id = player.nodes[0]->id;
+
+    REQUIRE(model.set_element_index(array_id, 5));
+    CHECK(model.element_index(array_id) == 5);
+
+    // A count the user shrinks clamps the index to the new last element.
+    REQUIRE(model.set_node_extent(*model.row_at({}, 0), QStringLiteral("3")));
+    CHECK(model.element_count(*player.nodes[0]) == 3);
+    CHECK(model.element_index(array_id) == 2);
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Array<UInt8> [3] ◀ (2) ▶"));
+
+    // A node re-typed away from an array keeps no index at all.
+    slopkit::reclass::change_node_kind(project, player.nodes, 0, NodeKind::int32);
+    model.rebuild();
+    CHECK(model.element_count(*player.nodes[0]) == 0);
+    CHECK(model.element_index(array_id) == 0);
+}
+
+TEST_CASE("the index returns to the first element when the class changes", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Point", "app+0x20");
+    project.classes()[0].nodes.push_back(array_of(project, 4, NodeKind::uint8));
+    project.add_class("Player", "app+0x10");
+    project.classes()[1].nodes.push_back(array_of(project, 4, NodeKind::uint8));
+
+    Model             model {project};
+    const std::size_t point_array = project.classes()[0].nodes[0]->id;
+
+    model.set_class(1);
+    const std::size_t player_array = project.classes()[1].nodes[0]->id;
+    REQUIRE(model.set_element_index(player_array, 3));
+    CHECK(model.element_index(player_array) == 3);
+
+    // Switching the class and back drops both the walk and the chosen element,
+    // exactly as it drops a node's expansion.
+    model.set_class(0);
+    CHECK(model.element_index(point_array) == 0);
+    CHECK_FALSE(model.is_expanded(point_array));
+    model.set_class(1);
+    CHECK(model.element_index(player_array) == 0);
 }

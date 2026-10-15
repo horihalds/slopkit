@@ -208,6 +208,12 @@ namespace
         mouse_event(view, QEvent::MouseButtonDblClick, point, Qt::LeftButton, Qt::LeftButton);
     }
 
+    void click_at(ReClassView& view, const QPoint& point, Qt::KeyboardModifiers modifiers = Qt::NoModifier)
+    {
+        mouse_event(view, QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton, modifiers);
+        mouse_event(view, QEvent::MouseButtonRelease, point, Qt::LeftButton, Qt::NoButton, modifiers);
+    }
+
     std::optional<std::size_t> node_at(const ReclassStructureModel& structure, const QModelIndex& index)
     {
         const ReclassRow* row = structure.row_for(index);
@@ -1218,7 +1224,7 @@ TEST_CASE("a Type cell without a bracketed number keeps its own rules", "[reclas
     CHECK((editor == nullptr || !editor->isVisible()));
 
     // The array keeps the count it brackets and edits it in place.
-    CHECK(view.cell_text(list).toStdString() == "Array [2]");
+    CHECK(view.cell_text(list).toStdString() == "Array<Int32> [2] ◀ (0) ▶");
     const std::optional<QRect> run = view.extent_rect(list);
     REQUIRE(run.has_value());
     double_click_at(view, run->center());
@@ -1234,7 +1240,226 @@ TEST_CASE("a Type cell without a bracketed number keeps its own rules", "[reclas
     QCoreApplication::processEvents();
 
     CHECK_FALSE(editor->isVisible());
-    CHECK(view.cell_text(fixture.cell(fixture.node_id(3), ReclassStructureModel::type)).toStdString() == "Array [4]");
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(3), ReclassStructureModel::type)).toStdString()
+          == "Array<Int32> [4] ◀ (0) ▶");
+}
+
+TEST_CASE("an array row's arrows walk its elements", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(array_of(fixture.project, 4, NodeKind::uint8));
+    player.nodes.push_back(array_of(fixture.project, 1, NodeKind::uint8));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const std::size_t list = fixture.node_id(2);
+    const auto        type = [&fixture, list]
+    {
+        return fixture.cell(list, ReclassStructureModel::type);
+    };
+    const auto control = [&view, &type]
+    {
+        return view.element_rects(type());
+    };
+
+    // The control sits in the Type cell, its three parts in the order the text
+    // draws them, and the count it follows keeps its own run to the left.
+    const std::optional<QRect> count = view.extent_rect(type());
+    REQUIRE(count.has_value());
+    const std::optional<ReClassView::ElementRects> rects = control();
+    REQUIRE(rects.has_value());
+    const QRect cell = view.cell_rect(type()).value();
+    CHECK(cell.contains(rects->previous.center()));
+    CHECK(cell.contains(rects->index.center()));
+    CHECK(cell.contains(rects->next.center()));
+    CHECK(count->right() < rects->previous.left());
+    CHECK(rects->previous.right() < rects->index.left());
+    CHECK(rects->index.right() < rects->next.left());
+
+    // The forward arrow shows the next element, and the row it owns walks on
+    // with it while the rest of the grid stays put.
+    fixture.structure.set_expanded(list, true);
+    QCoreApplication::processEvents();
+    REQUIRE(view.row_count() == 5);
+    CHECK(view.cell_text(type()).toStdString() == "Array<UInt8> [4] ◀ (0) ▶");
+
+    click_at(view, control().value().next.center());
+    QCoreApplication::processEvents();
+    CHECK(fixture.structure.element_index(list) == 1);
+    CHECK(view.row_count() == 5);
+    CHECK(view.cell_text(type()).toStdString() == "Array<UInt8> [4] ◀ (1) ▶");
+
+    // The back arrow steps back, and the first element's back arrow wraps to
+    // the last.
+    click_at(view, control().value().previous.center());
+    QCoreApplication::processEvents();
+    CHECK(fixture.structure.element_index(list) == 0);
+    click_at(view, control().value().previous.center());
+    QCoreApplication::processEvents();
+    CHECK(fixture.structure.element_index(list) == 3);
+    CHECK(view.cell_text(type()).toStdString() == "Array<UInt8> [4] ◀ (3) ▶");
+
+    // A hover over an arrow explains the element it shows and takes the
+    // pointing hand.
+    const QPoint arrow = control().value().next.center();
+    mouse_event(view, QEvent::MouseMove, arrow, Qt::NoButton, Qt::NoButton);
+    QCoreApplication::processEvents();
+    CHECK(view.viewport()->cursor().shape() == Qt::PointingHandCursor);
+
+    // A one-element array draws its control and moves nowhere on a click.
+    const std::size_t single = fixture.node_id(3);
+    mouse_event(view,
+                QEvent::MouseMove,
+                view.cell_rect(fixture.cell(single, ReclassStructureModel::type)).value().center(),
+                Qt::NoButton,
+                Qt::NoButton);
+    QCoreApplication::processEvents();
+    CHECK(view.viewport()->cursor().shape() != Qt::PointingHandCursor);
+
+    const std::optional<ReClassView::ElementRects> one =
+        view.element_rects(fixture.cell(single, ReclassStructureModel::type));
+    REQUIRE(one.has_value());
+    CHECK(view.cell_text(fixture.cell(single, ReclassStructureModel::type)).toStdString()
+          == "Array<UInt8> [1] ◀ (0) ▶");
+    click_at(view, one->next.center());
+    QCoreApplication::processEvents();
+    CHECK(fixture.structure.element_index(single) == 0);
+    CHECK(view.cell_text(fixture.cell(single, ReclassStructureModel::type)).toStdString()
+          == "Array<UInt8> [1] ◀ (0) ▶");
+}
+
+TEST_CASE("an array row's index is edited in place", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(array_of(fixture.project, 8, NodeKind::uint8));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QStringList messages;
+    QObject::connect(&fixture.structure,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+
+    const std::size_t list = fixture.node_id(2);
+    const auto        type = [&fixture, list]
+    {
+        return fixture.cell(list, ReclassStructureModel::type);
+    };
+    const auto cell_text = [&view, &type]
+    {
+        return view.cell_text(type()).toStdString();
+    };
+    const auto index_rect = [&view, &type]
+    {
+        return view.element_rects(type()).value().index;
+    };
+    const auto count_rect = [&view, &type]
+    {
+        return view.extent_rect(type()).value();
+    };
+
+    // A double-click on the bracketed index opens the editor over it, holding
+    // the bare index and no brackets.
+    double_click_at(view, index_rect().center());
+    QCoreApplication::processEvents();
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text().toStdString() == "0");
+    CHECK(editor->width() < view.cell_rect(type()).value().width());
+
+    // The index typed in is applied, and one past the end wraps around.
+    editor->setText(QStringLiteral("9"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+    CHECK_FALSE(editor->isVisible());
+    CHECK(messages == QStringList {QStringLiteral("Element 2 of 8 shown.")});
+    CHECK(fixture.structure.element_index(list) == 1);
+    CHECK(cell_text() == "Array<UInt8> [8] ◀ (1) ▶");
+
+    // Esc discards what was typed and the row keeps its element.
+    double_click_at(view, index_rect().center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("5"));
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+    CHECK(fixture.structure.element_index(list) == 1);
+
+    // A text that is not a whole number is refused with its reason, the row
+    // keeps its element and the editor stays open with the text selected.
+    messages.clear();
+    double_click_at(view, index_rect().center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("next"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+    CHECK(editor->isVisible());
+    CHECK(editor->selectedText().toStdString() == "next");
+    CHECK(messages == QStringList {QStringLiteral("Index: expected a whole number.")});
+    CHECK(fixture.structure.element_index(list) == 1);
+    CHECK(cell_text() == "Array<UInt8> [8] ◀ (1) ▶");
+
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+
+    // The count's own run behind the arrows still edits the count.
+    double_click_at(view, count_rect().center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    CHECK(editor->text().toStdString() == "8");
+    editor->setText(QStringLiteral("2"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+    CHECK_FALSE(editor->isVisible());
+    CHECK(fixture.structure.element_count(*fixture.project.classes()[1].nodes[2]) == 2);
+    CHECK(cell_text() == "Array<UInt8> [2] ◀ (1) ▶");
+
+    // A two-digit index needs the room its own text takes, so the Type column
+    // is measured again and the control is never clipped.
+    double_click_at(view, count_rect().center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("12"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+    CHECK(cell_text() == "Array<UInt8> [12] ◀ (1) ▶");
+    const int narrow = view.cell_rect(type()).value().width();
+
+    double_click_at(view, index_rect().center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    CHECK(editor->text().toStdString() == "1");
+    editor->setText(QStringLiteral("10"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+    CHECK(cell_text() == "Array<UInt8> [12] ◀ (10) ▶");
+    CHECK(view.cell_rect(type()).value().width() > narrow);
 }
 
 TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")

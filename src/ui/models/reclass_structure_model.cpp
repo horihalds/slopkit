@@ -59,6 +59,40 @@ namespace slopkit::ui::models
         {
             return comment.empty() ? QStringLiteral("//") : QStringLiteral("// ") + to_qstring(comment);
         }
+
+        // The index control an array's Type cell draws - the two arrows around
+        // the bracketed index - which the grid locates and paints on the cell's
+        // own text.
+        QString index_control(std::size_t index)
+        {
+            return QStringLiteral("◀ (%1) ▶").arg(index);
+        }
+
+        // The character offsets of that control inside the text ending with it.
+        ElementRuns runs_of(const QString& label, std::size_t index)
+        {
+            const QString control = index_control(index);
+            ElementRuns   runs;
+            runs.previous     = static_cast<int>(label.size()) + 1;
+            // Past the `◀`, the space and the opening bracket.
+            runs.index        = runs.previous + 3;
+            runs.index_length = static_cast<int>(QString::number(index).size());
+            runs.next         = runs.previous + static_cast<int>(control.size()) - 1;
+            return runs;
+        }
+
+        // The kind name of one element of a plain array, empty when the array
+        // holds no element at that index.
+        QString element_kind(const reclass::Node& node, std::size_t index)
+        {
+            const auto* container = dynamic_cast<const reclass::ContainerNode*>(&node);
+            if (container == nullptr)
+            {
+                return {};
+            }
+            const std::vector<reclass::NodePtr>& children = container->children_mutable();
+            return index < children.size() ? to_qstring(reclass::describe(children[index]->kind())) : QString {};
+        }
     }
 
     ReclassStructureModel::ReclassStructureModel(reclass::Project& project, QObject* parent)
@@ -74,6 +108,7 @@ namespace slopkit::ui::models
         selected_class_ = 0;
         valid_class_    = project.class_at(0) != nullptr;
         expanded_.clear();
+        element_indices_.clear();
         rebuild();
     }
 
@@ -82,6 +117,7 @@ namespace slopkit::ui::models
         if (index != selected_class_)
         {
             expanded_.clear();
+            element_indices_.clear();
         }
         selected_class_ = index;
         valid_class_    = project_ != nullptr && project_->class_at(index) != nullptr;
@@ -100,6 +136,25 @@ namespace slopkit::ui::models
 
     void ReclassStructureModel::rebuild()
     {
+        // The index rides on a node's own row, so an index whose node stopped
+        // being an array - re-typed away, reduced to nothing - goes with it. The
+        // project is asked, never the rows about to be dropped: their nodes may
+        // already be freed.
+        if (project_ == nullptr)
+        {
+            element_indices_.clear();
+        }
+        else
+        {
+            std::erase_if(element_indices_,
+                          [this](const auto& entry)
+                          {
+                              const std::optional<reclass::NodeRef> ref = reclass::node_ref(*project_, entry.first);
+                              const reclass::Node* node = ref.has_value() ? (*ref->owner)[ref->index].get() : nullptr;
+                              return node == nullptr || element_count(*node) == 0;
+                          });
+        }
+
         beginResetModel();
         build_rows();
         endResetModel();
@@ -263,6 +318,152 @@ namespace slopkit::ui::models
         return expanded_;
     }
 
+    std::size_t ReclassStructureModel::element_count(const reclass::Node& node) const
+    {
+        switch (node.kind())
+        {
+        case reclass::NodeKind::array:
+        {
+            const auto* container = dynamic_cast<const reclass::ContainerNode*>(&node);
+            return container == nullptr ? 0 : container->children_mutable().size();
+        }
+        case reclass::NodeKind::class_instance_array:
+        case reclass::NodeKind::class_wrapper_array:
+            return node.extent().value_or(0);
+        default:
+            return 0;
+        }
+    }
+
+    std::size_t ReclassStructureModel::element_count(std::size_t node_id) const
+    {
+        const ReclassRow* row = find_row(roots_, node_id);
+        return row == nullptr || row->node == nullptr ? 0 : element_count(*row->node);
+    }
+
+    std::size_t ReclassStructureModel::stored_element_index(std::size_t node_id) const
+    {
+        const auto found = element_indices_.find(node_id);
+        return found == element_indices_.end() ? 0 : found->second;
+    }
+
+    std::optional<std::size_t> ReclassStructureModel::shown_element(const ReclassRow&    row,
+                                                                    const reclass::Node& node) const
+    {
+        // The collapsed `...` placeholder and a marked reference row draw no
+        // control, exactly as they bracketed no number before.
+        if (row.hidden || is_marked(row))
+        {
+            return std::nullopt;
+        }
+        const std::size_t count = element_count(node);
+        if (count == 0)
+        {
+            return std::nullopt;
+        }
+        // An index past the end - a count the user shrank - shows the last
+        // element rather than nothing.
+        return std::min(stored_element_index(row.node_id), count - 1);
+    }
+
+    std::size_t ReclassStructureModel::element_index(std::size_t node_id) const
+    {
+        const ReclassRow* row = find_row(roots_, node_id);
+        if (row == nullptr || row->node == nullptr)
+        {
+            return 0;
+        }
+        return shown_element(*row, *row->node).value_or(0);
+    }
+
+    bool ReclassStructureModel::set_element_index(std::size_t node_id, std::size_t index)
+    {
+        const ReclassRow* row = find_row(roots_, node_id);
+        if (row == nullptr || row->node == nullptr)
+        {
+            return false;
+        }
+        const std::size_t count = element_count(*row->node);
+        if (count == 0 || shown_element(*row, *row->node) == std::nullopt)
+        {
+            return false;
+        }
+        const std::size_t wrapped = index % count;
+        if (stored_element_index(node_id) == wrapped)
+        {
+            return true;
+        }
+        element_indices_[node_id] = wrapped;
+
+        // The row shows another element, so the class is flattened again; the
+        // grid re-flattens, re-measures and repaints on the reset.
+        rebuild();
+        return true;
+    }
+
+    bool ReclassStructureModel::set_element_index(const ReclassRow& row, const QString& text)
+    {
+        if (row.node == nullptr)
+        {
+            return false;
+        }
+        const std::size_t count = element_count(*row.node);
+        if (count == 0)
+        {
+            return false;
+        }
+
+        bool                     ok    = false;
+        const unsigned long long typed = text.trimmed().toULongLong(&ok);
+        if (!ok)
+        {
+            emit statusChanged(tr("Index: expected a whole number."), true);
+            return false;
+        }
+
+        // An index past either end wraps, so the element the user names is the
+        // one that shows: 0 ... count - 1.
+        const std::size_t wrapped     = static_cast<std::size_t>(typed % count);
+        const bool        moved       = stored_element_index(row.node_id) != wrapped;
+        element_indices_[row.node_id] = wrapped;
+        if (moved)
+        {
+            // The row shows another element, so the class is flattened again.
+            rebuild();
+        }
+        emit statusChanged(tr("Element %1 of %2 shown.").arg(wrapped + 1).arg(count), false);
+        return true;
+    }
+
+    bool ReclassStructureModel::step_element(std::size_t node_id, int delta)
+    {
+        const ReclassRow* row = find_row(roots_, node_id);
+        if (row == nullptr || row->node == nullptr)
+        {
+            return false;
+        }
+        const std::size_t count = element_count(*row->node);
+        if (count <= 1)
+        {
+            return false;
+        }
+        const auto      steps   = static_cast<long long>(count);
+        const auto      current = static_cast<long long>(element_index(node_id));
+        const long long moved   = ((current + delta) % steps + steps) % steps;
+        return set_element_index(node_id, static_cast<std::size_t>(moved));
+    }
+
+    ElementRuns ReclassStructureModel::element_runs(std::size_t node_id) const
+    {
+        const ReclassRow* row = find_row(roots_, node_id);
+        if (row == nullptr || row->node == nullptr)
+        {
+            return {};
+        }
+        const std::optional<std::size_t> shown = shown_element(*row, *row->node);
+        return shown.has_value() ? runs_of(kind_text(*row, *row->node), *shown) : ElementRuns {};
+    }
+
     const std::vector<ReclassBlock>& ReclassStructureModel::blocks() const noexcept
     {
         return blocks_;
@@ -336,25 +537,33 @@ namespace slopkit::ui::models
             return;
         }
 
-        const bool  shared = node.kind() == reclass::NodeKind::union_value;
+        const bool                       shared = node.kind() == reclass::NodeKind::union_value;
+        // An array shows one element at a time - the one the index names - so a
+        // long buffer never draws a row per element; a union keeps every member.
+        const std::optional<std::size_t> only =
+            node.kind() == reclass::NodeKind::array && parent != nullptr ? shown_element(*parent, node) : std::nullopt;
+
         std::size_t offset = 0;
         for (std::size_t index = 0; index < container->children_mutable().size(); ++index)
         {
             const reclass::Node& child = *container->children_mutable()[index];
 
-            auto row         = std::make_unique<ReclassRow>();
-            row->node        = &child;
-            row->node_id     = child.id;
-            row->class_index = class_index;
-            row->offset      = base_offset + offset;
-            row->block       = block;
-            row->hidden      = child.hidden;
-
-            ReclassRow* created = append_row(parent, std::move(row));
-
-            if (!child.hidden && child.is_container() && is_expanded(child.id))
+            if (!only.has_value() || *only == index)
             {
-                build_container(child, class_index, block, created->offset, created);
+                auto row         = std::make_unique<ReclassRow>();
+                row->node        = &child;
+                row->node_id     = child.id;
+                row->class_index = class_index;
+                row->offset      = base_offset + offset;
+                row->block       = block;
+                row->hidden      = child.hidden;
+
+                ReclassRow* created = append_row(parent, std::move(row));
+
+                if (!child.hidden && child.is_container() && is_expanded(child.id))
+                {
+                    build_container(child, class_index, block, created->offset, created);
+                }
             }
 
             if (!shared)
@@ -407,17 +616,43 @@ namespace slopkit::ui::models
                 {
                     const auto child_layout = reclass::layout_class(*project_, *target);
 
+                    const reclass::NodeKind kind   = node.kind();
+                    const bool              array  = kind == reclass::NodeKind::class_wrapper_array
+                                                  || kind == reclass::NodeKind::class_instance_array;
+                    const std::size_t       stride = child_layout.has_value() ? child_layout->size : 0;
+
+                    // Which element the class array shows, as a distance into
+                    // the class's own bytes. A class with no size has no stride
+                    // to shift by, so its element stays where the class starts.
+                    std::size_t shift = 0;
+                    if (array && stride != 0)
+                    {
+                        const std::size_t count = element_count(node);
+                        if (count != 0)
+                        {
+                            shift = std::min(stored_element_index(node.id), count - 1) * stride;
+                        }
+                    }
+
                     ReclassBlock child;
                     child.index        = blocks_.size();
                     child.class_index  = target_index;
                     child.parent_block = block;
-                    child.base_offset  = created->offset;
-                    child.size         = child_layout.has_value() ? child_layout->size : 0;
-                    child.via_pointer  = node.kind() == reclass::NodeKind::class_pointer;
+                    // A wrapper array's element lives inside the parent's own
+                    // bytes, so the block itself starts at the element's stride;
+                    // an instance array's element lives past the pointer's
+                    // target, where the value model adds the same stride after
+                    // the dereference.
+                    child.base_offset =
+                        kind == reclass::NodeKind::class_wrapper_array ? created->offset + shift : created->offset;
+                    child.size           = stride;
+                    child.element_offset = kind == reclass::NodeKind::class_instance_array ? shift : 0;
+                    child.via_pointer =
+                        kind == reclass::NodeKind::class_pointer || kind == reclass::NodeKind::class_instance_array;
                     blocks_.push_back(child);
 
                     ancestors.push_back(target_index);
-                    build_class(*target, target_index, child.index, created->offset, ancestors, created);
+                    build_class(*target, target_index, child.index, child.base_offset, ancestors, created);
                     ancestors.pop_back();
                 }
             }
@@ -458,7 +693,7 @@ namespace slopkit::ui::models
         return classes.size();
     }
 
-    QString ReclassStructureModel::type_text(const ReclassRow& row, const reclass::Node& node) const
+    QString ReclassStructureModel::kind_text(const ReclassRow& row, const reclass::Node& node) const
     {
         if (row.unknown_class)
         {
@@ -482,6 +717,19 @@ namespace slopkit::ui::models
         }
 
         QString label = to_qstring(reclass::describe(node.kind()));
+        if (node.kind() == reclass::NodeKind::array)
+        {
+            // The element the row shows names its own kind inside the angle
+            // brackets, so a long buffer spells out what one of its rows holds.
+            if (const std::optional<std::size_t> shown = shown_element(row, node))
+            {
+                const QString element = element_kind(node, *shown);
+                if (!element.isEmpty())
+                {
+                    label += QStringLiteral("<%1>").arg(element);
+                }
+            }
+        }
         if (!node.class_name.empty())
         {
             label += QStringLiteral(" <%1>").arg(to_qstring(node.class_name));
@@ -490,6 +738,16 @@ namespace slopkit::ui::models
         if (!extra.empty())
         {
             label += QStringLiteral(" ") + to_qstring(extra);
+        }
+        return label;
+    }
+
+    QString ReclassStructureModel::type_text(const ReclassRow& row, const reclass::Node& node) const
+    {
+        QString label = kind_text(row, node);
+        if (const std::optional<std::size_t> shown = shown_element(row, node))
+        {
+            label += QStringLiteral(" ") + index_control(*shown);
         }
         return label;
     }

@@ -53,6 +53,7 @@ TEST_CASE("the datatype and grid roles are defined and theme-specific", "[ui]")
     CHECK(dark.grid_address != light.grid_address);
     CHECK(dark.grid_ascii != light.grid_ascii);
     CHECK(dark.grid_comment != light.grid_comment);
+    CHECK(dark.grid_index != light.grid_index);
 }
 
 TEST_CASE("make_palette maps the colour roles onto the Qt palette", "[ui]")
