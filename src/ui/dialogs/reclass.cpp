@@ -1135,6 +1135,13 @@ namespace slopkit::ui::dialogs
             report(tr("Select a node first."), true);
             return;
         }
+        if (structure_->is_element_row(*row))
+        {
+            // The model refuses this rename, so the box that would lose its text
+            // to the refusal never opens.
+            report(tr("An array's element takes no name."), true);
+            return;
+        }
 
         widgets::InputBoxOptions options;
         options.title    = tr("Node Name");

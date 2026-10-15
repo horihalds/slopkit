@@ -11,6 +11,7 @@
 
 namespace
 {
+    using slopkit::reclass::ContainerNode;
     using slopkit::reclass::describe;
     using slopkit::reclass::is_class_kind;
     using slopkit::reclass::is_editable;
@@ -169,6 +170,11 @@ TEST_CASE("an array's element count is the number it brackets", "[reclass]")
     REQUIRE(array->children()[3]->id != array->children()[4]->id);
     REQUIRE(array->children()[3]->id != third);
 
+    // The elements a grown array appends take the last element's shape but no
+    // name: an array names its elements by their place in it.
+    REQUIRE(array->children()[3]->name.empty());
+    REQUIRE(array->children()[5]->name.empty());
+
     REQUIRE(array->set_extent(project, 1));
     REQUIRE(array->children().size() == 1);
     REQUIRE(array->children()[0]->id == first);
@@ -189,6 +195,23 @@ TEST_CASE("an array with no element grows into the default element", "[reclass]"
     REQUIRE(array->children()[0]->kind() == NodeKind::int8);
     REQUIRE(array->children()[0]->id != 0);
     REQUIRE(array->children()[0]->id != array->children()[1]->id);
+    REQUIRE(array->children()[0]->name.empty());
+    REQUIRE(array->children()[1]->name.empty());
+}
+
+TEST_CASE("a grown element drops the name it was cloned from", "[reclass]")
+{
+    Project project;
+
+    // An element of an array is named by its place in the array, so an element
+    // the array grows carries no name even when the one it clones has one.
+    const NodePtr array                                                 = array_of(project, 2, NodeKind::int32);
+    static_cast<ContainerNode&>(*array).children_mutable().back()->name = "typed";
+
+    REQUIRE(array->set_extent(project, 3));
+    REQUIRE(array->children().size() == 3);
+    REQUIRE(array->children().back()->kind() == NodeKind::int32);
+    REQUIRE(array->children().back()->name.empty());
 }
 
 TEST_CASE("the class arrays carry their element count", "[reclass]")

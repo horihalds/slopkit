@@ -202,6 +202,16 @@ namespace slopkit::ui::models
         {
             return false;
         }
+
+        // An array's element is identified by its place in the array rather than
+        // by a name of its own, so it takes none; the cell the grid draws for it
+        // is read-only for the same reason.
+        if (is_element_row(row))
+        {
+            emit statusChanged(tr("An array's element takes no name."), true);
+            return false;
+        }
+
         const auto ref = reclass::node_ref(*project_, row.node_id);
         if (!ref)
         {
@@ -316,6 +326,14 @@ namespace slopkit::ui::models
     const std::set<std::size_t>& ReclassStructureModel::expanded_nodes() const noexcept
     {
         return expanded_;
+    }
+
+    bool ReclassStructureModel::is_element_row(const ReclassRow& row) const
+    {
+        // The row an expanded array built for the element its index names: an
+        // array's own child, not a field a class array inlines.
+        return row.parent != nullptr && row.parent->node != nullptr
+            && row.parent->node->kind() == reclass::NodeKind::array;
     }
 
     std::size_t ReclassStructureModel::element_count(const reclass::Node& node) const
@@ -820,7 +838,9 @@ namespace slopkit::ui::models
                 // kind cell stays empty for it.
                 return reclass::is_hex_kind(node.kind()) ? QVariant {} : type_text(*row, node);
             case name:
-                return to_qstring(node.name);
+                // An array's element is identified by its place in the array,
+                // so its row draws no name even when the node carries one.
+                return is_element_row(*row) ? QVariant {} : to_qstring(node.name);
             case comment:
                 return comment_text(node.comment);
             default:
@@ -832,7 +852,7 @@ namespace slopkit::ui::models
             // The name, the note and the Type cell's bracketed number are typed
             // into, so the editor starts from the same text the cell shows; the
             // run alone prefills its bare number, without the brackets.
-            if (index.column() == name)
+            if (index.column() == name && !is_element_row(*row))
             {
                 return to_qstring(node.name);
             }
@@ -879,7 +899,7 @@ namespace slopkit::ui::models
             case type:
                 return type_text(*row, node);
             case name:
-                return to_qstring(node.name);
+                return is_element_row(*row) ? QVariant {} : to_qstring(node.name);
             case comment:
                 // The tooltip carries the note alone: the marker is the grid's
                 // own decoration.
@@ -940,14 +960,15 @@ namespace slopkit::ui::models
         {
             return Qt::NoItemFlags;
         }
-        Qt::ItemFlags result = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
-        if (index.column() == name)
+        Qt::ItemFlags     result = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+        const ReclassRow* row    = row_for(index);
+        if (index.column() == name && (row == nullptr || !is_element_row(*row)))
         {
             // A node's name is the user's own label and costs no target access,
-            // so it is typed straight into the cell.
+            // so it is typed straight into the cell; an array's element takes no
+            // name, so its cell stays read-only.
             result |= Qt::ItemIsEditable;
         }
-        const ReclassRow* row = row_for(index);
         if (index.column() == comment && row != nullptr && !row->hidden)
         {
             // A note costs no target access either, but the collapsed `...`

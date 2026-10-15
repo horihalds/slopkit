@@ -15,6 +15,7 @@
 namespace
 {
     using slopkit::reclass::Class;
+    using slopkit::reclass::ContainerNode;
     using slopkit::reclass::NodeKind;
     using slopkit::reclass::NodePtr;
     using slopkit::reclass::Project;
@@ -25,6 +26,7 @@ namespace
     using slopkit::ui::models::ElementRuns;
     using slopkit::ui::models::kExtentTextRole;
     using slopkit::ui::models::ReclassStructureModel;
+    using slopkit::ui::widgets::kFullTextRole;
     using Model = ReclassStructureModel;
 
     QString cell(const Model& model, const QModelIndex& index, int column)
@@ -892,4 +894,70 @@ TEST_CASE("the index returns to the first element when the class changes", "[rec
     CHECK_FALSE(model.is_expanded(point_array));
     model.set_class(1);
     CHECK(model.element_index(player_array) == 0);
+}
+
+TEST_CASE("an array's element row carries no name of its own", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Point", "app+0x20");
+    project.classes()[0].nodes.push_back(node_of(project, NodeKind::int32, "x"));
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes()[1];
+    player.nodes.push_back(array_of(project, 2, NodeKind::int32));
+    player.nodes.push_back(wrapper_array_of(project, "Point", 2));
+    player.nodes[0]->name = "scores";
+
+    // A project written before this rule existed can name an element; the row
+    // draws no name for it all the same.
+    auto& scores                       = static_cast<ContainerNode&>(*player.nodes[0]);
+    scores.children_mutable()[1]->name = "second";
+
+    Model model {project};
+    model.set_class(1);
+
+    // The array's own row keeps its name, and takes an edit.
+    CHECK(cell(model, model.index(0, 0), Model::name) == QStringLiteral("scores"));
+    CHECK(model.flags(model.index(0, Model::name)).testFlag(Qt::ItemIsEditable));
+
+    model.set_expanded(player.nodes[0]->id, true);
+    REQUIRE(model.rowCount(model.index(0, 0)) == 1);
+    const QModelIndex element = model.index(0, 0, model.index(0, 0));
+    const QModelIndex name    = element.sibling(element.row(), Model::name);
+
+    // The element draws no name in any role the grid reads the cell through and
+    // takes no edit: an element is identified by its place in the array.
+    CHECK(model.data(name, Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.data(name, Qt::EditRole).toString().isEmpty());
+    CHECK(model.data(name, kFullTextRole).toString().isEmpty());
+    CHECK_FALSE(model.flags(name).testFlag(Qt::ItemIsEditable));
+    CHECK(model.is_element_row(*model.row_at(model.index(0, 0), 0)));
+    CHECK_FALSE(model.is_element_row(*model.row_at({}, 0)));
+
+    std::vector<QString> messages;
+    QObject::connect(&model,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    // A rename is refused - through both ways into it - and the name the project
+    // still stores stays put.
+    CHECK_FALSE(model.set_node_name(*model.row_at(model.index(0, 0), 0), QStringLiteral("renamed")));
+    CHECK_FALSE(model.setData(name, QStringLiteral("renamed"), Qt::EditRole));
+    CHECK(scores.children()[1]->name == "second");
+    REQUIRE(messages.size() == 2);
+    CHECK(messages.back() == QStringLiteral("An array's element takes no name."));
+
+    // A class array's row keeps naming its class, and the fields that class
+    // brings keep the names of their own.
+    CHECK(cell(model, model.index(1, 0), Model::type) == QStringLiteral("Class Array <Point> [2] ◀ (0) ▶"));
+    model.set_expanded(player.nodes[1]->id, true);
+    REQUIRE(model.rowCount(model.index(1, 0)) == 1);
+    const QModelIndex field = model.index(0, 0, model.index(1, 0));
+    CHECK(cell(model, field, Model::name) == QStringLiteral("x"));
+    CHECK(model.flags(field.sibling(field.row(), Model::name)).testFlag(Qt::ItemIsEditable));
+    CHECK_FALSE(model.is_element_row(*model.row_at(model.index(1, 0), 0)));
 }

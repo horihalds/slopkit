@@ -2,7 +2,6 @@
 
 #include <algorithm>
 
-#include "reclass/edit.hpp"
 #include "reclass/project.hpp"
 
 namespace slopkit::reclass
@@ -18,21 +17,21 @@ namespace slopkit::reclass
         }
 
         // The element a grown array appends: the last element's shape, or the
-        // array's default element when it holds none, minted with an id and a
-        // name of its own exactly like create_node mints a node.
+        // array's default element when it holds none, minted with an id of its
+        // own like create_node mints a node - but with no name, because an
+        // element of an array is identified by its index and never by a name.
         NodePtr next_array_element(Project& project, const std::vector<NodePtr>& elements)
         {
             if (elements.empty())
             {
-                return create_node(project, NodeKind::int8);
+                NodePtr element = make_node(NodeKind::int8);
+                element->id     = project.next_node_id();
+                return element;
             }
 
             NodePtr element = elements.back()->clone();
             element->id     = project.next_node_id();
-            if (!is_hex_kind(element->kind()))
-            {
-                element->name = auto_node_name(element->id);
-            }
+            element->name.clear();
             return element;
         }
     }

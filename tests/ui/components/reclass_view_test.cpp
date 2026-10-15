@@ -1462,6 +1462,59 @@ TEST_CASE("an array row's index is edited in place", "[reclass][ui][view]")
     CHECK(view.cell_rect(type()).value().width() > narrow);
 }
 
+TEST_CASE("an array's element row takes no name in the grid", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(array_of(fixture.project, 2, NodeKind::uint8));
+    // An element can carry a name an earlier project gave it; the grid draws no
+    // name for it all the same.
+    static_cast<slopkit::reclass::ContainerNode&>(*player.nodes[2]).children_mutable()[0]->name = "second";
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const std::size_t list = fixture.node_id(2);
+    fixture.structure.set_expanded(list, true);
+    QCoreApplication::processEvents();
+    REQUIRE(view.row_count() == 4);
+
+    const QModelIndex array_row = fixture.cell(list, 0);
+    const QModelIndex name      = fixture.structure.index(0, ReclassStructureModel::name, array_row);
+    REQUIRE(name.isValid());
+
+    // The element's cell draws nothing and takes no edit, so a double-click on
+    // it opens no editor at all.
+    CHECK(view.cell_text(name).isEmpty());
+    CHECK_FALSE(fixture.proxy.flags(name).testFlag(Qt::ItemIsEditable));
+    double_click(view, name);
+    QCoreApplication::processEvents();
+    CHECK(view.editor() == nullptr);
+
+    // F2 opens nothing there either, while the array's own row keeps the name
+    // its cell shows.
+    view.setCurrentIndex(name);
+    QKeyEvent f2 {QEvent::KeyPress, Qt::Key_F2, Qt::NoModifier};
+    QApplication::sendEvent(&view, &f2);
+    QCoreApplication::processEvents();
+    CHECK(view.editor() == nullptr);
+
+    const QModelIndex array_name = fixture.cell(list, ReclassStructureModel::name);
+    CHECK(fixture.proxy.flags(array_name).testFlag(Qt::ItemIsEditable));
+    view.setCurrentIndex(array_name);
+    QApplication::sendEvent(&view, &f2);
+    QCoreApplication::processEvents();
+    REQUIRE(view.editor() != nullptr);
+    CHECK(view.editor()->isVisible());
+}
+
 TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")
 {
     application();

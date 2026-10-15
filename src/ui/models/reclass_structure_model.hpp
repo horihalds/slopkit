@@ -138,6 +138,11 @@ namespace slopkit::ui::models
         // unknown class, a cycle or a chain past the depth cap - cannot.
         [[nodiscard]] bool expandable(const ReclassRow& row) const;
 
+        // Whether the row shows an element of an array above it. An element is
+        // identified by its place in the array rather than by a name of its own,
+        // so the grid draws no name for it and takes none.
+        [[nodiscard]] bool is_element_row(const ReclassRow& row) const;
+
         // The reference nodes the grid currently inlines.
         [[nodiscard]] const std::set<std::size_t>& expanded_nodes() const noexcept;
 

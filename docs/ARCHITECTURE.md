@@ -688,7 +688,11 @@ single element — the one the index the structure model stores for that node na
 wrapping at both ends — so a long buffer never draws a row per element, and the
 index rides on the node like its expansion: it is clamped when the count shrinks,
 dropped when the node stops being an array and cleared wherever the rows are
-rebuilt for another class. The two class arrays build that one element behind
+rebuilt for another class. An element is identified by its place in the array
+rather than by a name of its own, so its row draws no name, takes no rename and
+says why on the status line, and an element a grown array appends is minted
+without one; the fields a class array inlines are the class's own nodes and keep
+their names. The two class arrays build that one element behind
 their class's stride: a wrapper array's block starts at `node offset + index ×
 class size` inside the parent's bytes, so the value model can keep slicing its
 rows from the block's own base, and an instance array keeps its base at the node's
@@ -750,7 +754,9 @@ empty one clears it, while the run takes a whole number of at least one the node
 own storage holds — so an inline rename, the row menu's `Edit Comment…` and a
 length or count edit are validated in one place and reported on that same status
 line, touch no target and need none. The `Name` and `Comment` cells take the
-structure model's `setData` path and the run its own writer. `F2`,
+structure model's `setData` path and the run its own writer; an array's element
+row is the one `Name` cell that is read-only, so a rename there reports itself
+instead of opening an editor. `F2`,
 `F3` and `Enter` open the cursor row's name, comment and value, and the `Return` an
 open editor would hand up to its parent is taken in the view's own filter, where a
 dialog would otherwise press its default button.

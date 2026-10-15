@@ -779,6 +779,41 @@ TEST_CASE("the row menu walks an array's elements", "[reclass][ui]")
     dialog.close();
 }
 
+TEST_CASE("an array's element takes no name in the window", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(array_of(fixture.project, 2, NodeKind::uint8));
+    dialog.structure()->set_project(fixture.project);
+    select_player(fixture);
+
+    const std::size_t list = player.nodes[2]->id;
+    dialog.structure()->set_expanded(list, true);
+    QCoreApplication::processEvents();
+
+    // The element row stands under the array's own row, which keeps the name
+    // its cell draws.
+    const QModelIndex array_row = dialog.structure()->index_for_node(list);
+    REQUIRE(array_row.isValid());
+    const QModelIndex element = dialog.structure()->index(0, ReclassStructureModel::name, array_row);
+    REQUIRE(element.isValid());
+    CHECK(dialog.grid()->cell_text(element).isEmpty());
+
+    // Renaming it - the row menu's own command - names nothing and says why.
+    dialog.grid()->setCurrentIndex(element);
+    dialog.edit_name();
+    CHECK(dialog.status_label()->text() == QStringLiteral("An array's element takes no name."));
+
+    dialog.close();
+}
+
 TEST_CASE("hiding a node collapses it without moving the following nodes", "[reclass][ui]")
 {
     application();

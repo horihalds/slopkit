@@ -1882,8 +1882,13 @@ namespace slopkit::ui::components
             break;
         case Qt::Key_F2:
             // A name is typed into without a target, so it opens even when the
-            // value cell of the same row is read-only.
-            if (current >= 0)
+            // value cell of the same row is read-only; an array's element takes
+            // no name, so its read-only cell opens nothing.
+            if (current >= 0
+                && model_
+                       ->flags(index_for(*rows_[static_cast<std::size_t>(current)].row,
+                                         models::ReclassStructureModel::name))
+                       .testFlag(Qt::ItemIsEditable))
             {
                 open_editor_at(current, models::ReclassStructureModel::name);
             }
