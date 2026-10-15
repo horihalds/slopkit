@@ -164,12 +164,18 @@ TEST_CASE("the main window shell is built", "[ui]")
     REQUIRE(vertical != nullptr);
     REQUIRE(vertical->count() == 2);
 
-    auto* middle = qobject_cast<QSplitter*>(vertical->widget(0));
+    // The vertical splitter's upper child carries the scan zone and, under it,
+    // the companion bar that spans the window.
+    auto* upper = vertical->widget(0);
+    REQUIRE(upper != nullptr);
+    auto* middle = upper->findChild<QSplitter*>();
     REQUIRE(middle != nullptr);
     CHECK(middle->orientation() == Qt::Horizontal);
     CHECK(middle->count() == 2);
+    auto* companions = upper->findChild<slopkit::ui::panels::CompanionBar*>();
+    REQUIRE(companions != nullptr);
 
-    CHECK(window.size() == QSize(880, 768));
+    CHECK(window.size() == QSize(748, 768));
 
     auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
     REQUIRE(found_list != nullptr);
@@ -224,6 +230,10 @@ TEST_CASE("the main window shell is built", "[ui]")
     const auto options_bottom = options_panel->mapTo(&window, QPoint(0, options_panel->height()));
     CHECK(hits_bottom.y() == options_bottom.y());
 
+    // The companion bar spans the window, so the found list is not as wide as
+    // the buttons under it.
+    CHECK(companions->width() > found_list->width());
+
     const int scan_zone_before = middle->height();
     const int address_before   = address_list->height();
     window.resize(window.width(), window.height() + 200);
@@ -261,6 +271,8 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
     REQUIRE(found_list != nullptr);
     auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
     REQUIRE(address_list != nullptr);
+    auto* companions = window.findChild<slopkit::ui::panels::CompanionBar*>();
+    REQUIRE(companions != nullptr);
 
     auto combo_showing = [](QWidget& root, const QString& text) -> QComboBox*
     {
@@ -293,12 +305,12 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
     auto* alignment       = address_field(*scanner, "Alignment");
     auto* pause           = checkbox_labelled(*scanner, QStringLiteral("Pause the game while scanning"));
     auto* hits            = found_list->findChild<QTableView*>();
-    auto* memory_view     = button_labelled(*found_list, QStringLiteral("Memory View"));
-    auto* reclass         = button_labelled(*found_list, QStringLiteral("ReClass"));
-    auto* breakpoints     = button_labelled(*found_list, QStringLiteral("Breakpoints"));
-    auto* access_watch    = button_labelled(*found_list, QStringLiteral("Access Watch"));
-    auto* log_button      = button_labelled(*found_list, QStringLiteral("Log"));
-    auto* settings_button = button_labelled(*found_list, QStringLiteral("Settings"));
+    auto* memory_view     = button_labelled(*companions, QStringLiteral("Memory View"));
+    auto* reclass         = button_labelled(*companions, QStringLiteral("ReClass"));
+    auto* breakpoints     = button_labelled(*companions, QStringLiteral("Breakpoints"));
+    auto* access_watch    = button_labelled(*companions, QStringLiteral("Access Watch"));
+    auto* log_button      = button_labelled(*companions, QStringLiteral("Log"));
+    auto* settings_button = button_labelled(*companions, QStringLiteral("Settings"));
     auto* addresses       = address_list->findChild<QTableView*>();
 
     const std::vector<QWidget*> order {
@@ -445,7 +457,7 @@ TEST_CASE("the debug control bar's Breakpoints button opens the window", "[ui]")
     CHECK(dialog->isVisible());
 }
 
-TEST_CASE("the found list bar's companion buttons open their windows", "[ui]")
+TEST_CASE("the companion bar's buttons open their windows", "[ui]")
 {
     application();
 
@@ -453,19 +465,19 @@ TEST_CASE("the found list bar's companion buttons open their windows", "[ui]")
     slopkit::process::PluginAccess   access {host};
     slopkit::process::AccessWorker   worker {access};
     slopkit::process::AttachedTarget target;
-    slopkit::ui::SettingsController  settings {scratch_settings_file("found_list_companions.ini")};
+    slopkit::ui::SettingsController  settings {scratch_settings_file("companion_bar.ini")};
     slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
     window.show();
     QCoreApplication::processEvents();
 
-    auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
-    REQUIRE(found_list != nullptr);
+    auto* companions = window.findChild<slopkit::ui::panels::CompanionBar*>();
+    REQUIRE(companions != nullptr);
 
     auto* settings_dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
     REQUIRE(settings_dialog != nullptr);
 
-    const std::pair<QString, QWidget*> companions[] = {
+    const std::pair<QString, QWidget*> dialogs[] = {
         {         QStringLiteral("Log"),          window.log()},
         {    QStringLiteral("Settings"),       settings_dialog},
         { QStringLiteral("Breakpoints"),  window.breakpoints()},
@@ -473,18 +485,19 @@ TEST_CASE("the found list bar's companion buttons open their windows", "[ui]")
         {     QStringLiteral("ReClass"),      window.reclass()}
     };
 
-    for (const auto& [label, companion] : companions)
+    for (const auto& [label, dialog] : dialogs)
     {
-        REQUIRE(companion != nullptr);
-        auto* button = button_labelled(*found_list, label);
+        REQUIRE(dialog != nullptr);
+        auto* button = button_labelled(*companions, label);
         REQUIRE(button != nullptr);
+        // The bar spans the window, so every label stays whole at the default
+        // size.
+        CHECK(button->width() >= button->sizeHint().width());
         button->click();
-        CHECK(companion->isVisible());
+        CHECK(dialog->isVisible());
         // A second click re-shows the same instance instead of creating another.
         button->click();
-        CHECK(companion->isVisible());
-        // The default window is wide enough for the full labels.
-        CHECK(button->width() >= button->sizeHint().width());
+        CHECK(dialog->isVisible());
     }
 
     CHECK(window.findChildren<slopkit::ui::dialogs::LogDialog*>().isEmpty());
@@ -545,10 +558,6 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         slopkit::ui::SettingsController  settings {path};
         slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
-        // The found-list bar gives the window a minimum width larger than the
-        // offscreen test screen, so let the window take the test's small size;
-        // the geometry keeper is what this test covers.
-        window.setMinimumWidth(1);
         window.resize(700, 700);
         window.show();
         QCoreApplication::processEvents();
@@ -556,7 +565,7 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         QCoreApplication::processEvents();
         saved_size     = window.size();
         saved_position = window.pos();
-        CHECK(saved_size != QSize(880, 768));
+        CHECK(saved_size != QSize(748, 768));
         window.hide();
         QCoreApplication::processEvents();
 
@@ -571,7 +580,6 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         slopkit::ui::SettingsController  settings {path};
         slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
-        window.setMinimumWidth(1);
         window.show();
         QCoreApplication::processEvents();
 
@@ -603,7 +611,7 @@ TEST_CASE("a corrupt main-window geometry leaves the default size", "[ui]")
     slopkit::ui::SettingsController  settings {path};
     slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
-    CHECK(window.size() == QSize(880, 768));
+    CHECK(window.size() == QSize(748, 768));
 
     int warnings = 0;
     for (const slopkit::log::Record& record : records)

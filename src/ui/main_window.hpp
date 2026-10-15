@@ -44,6 +44,7 @@ namespace slopkit::ui::dialogs
 namespace slopkit::ui::panels
 {
     class AddressListPanel;
+    class CompanionBar;
     class FoundListPanel;
     class ScannerPanel;
 }
@@ -190,6 +191,7 @@ namespace slopkit::ui
         table::AddressTable address_table_;
 
         panels::ScannerPanel*     scanner_ {};
+        panels::CompanionBar*     companion_bar_ {};
         panels::FoundListPanel*   found_list_ {};
         panels::AddressListPanel* address_list_ {};
 

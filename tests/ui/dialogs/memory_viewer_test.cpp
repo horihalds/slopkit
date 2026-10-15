@@ -18,6 +18,7 @@
 #include "ui/dialogs/module_chooser.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/register_model.hpp"
+#include "ui/panels/companion_bar.hpp"
 #include "ui/panels/debug_controls.hpp"
 #include "ui/panels/viewer_menu.hpp"
 
@@ -60,47 +61,41 @@ namespace
     }
 }
 
-TEST_CASE("the found-results entry row drives the viewer", "[ui]")
+TEST_CASE("the companion bar's Memory View button drives the viewer", "[ui]")
 {
     application();
 
-    slopkit::scan::ScanEngine           engine;
-    slopkit::table::AddressTable        table;
-    slopkit::ui::panels::FoundListPanel panel {engine, table};
+    slopkit::ui::panels::CompanionBar bar;
 
-    auto* memory_view = button_labelled(panel, QStringLiteral("Memory View"));
+    auto* memory_view = button_labelled(bar, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
-    CHECK(button_labelled(panel, QStringLiteral("Add Address Manually")) == nullptr);
+    CHECK(button_labelled(bar, QStringLiteral("Add Address Manually")) == nullptr);
 
     CHECK_FALSE(memory_view->isEnabled());
 
-    panel.resize(600, 400);
-    panel.show();
+    bar.resize(600, 40);
+    bar.show();
     QCoreApplication::processEvents();
 
-    auto* hits = panel.findChild<QTableView*>();
-    REQUIRE(hits != nullptr);
-    CHECK(memory_view->y() > hits->y());
-
     bool view_requested = false;
-    QObject::connect(&panel,
-                     &slopkit::ui::panels::FoundListPanel::memoryViewRequested,
-                     &panel,
+    QObject::connect(&bar,
+                     &slopkit::ui::panels::CompanionBar::memoryViewRequested,
+                     &bar,
                      [&]
                      {
                          view_requested = true;
                      });
 
-    panel.set_target_attached(true);
+    bar.set_target_attached(true);
     CHECK(memory_view->isEnabled());
     memory_view->click();
     CHECK(view_requested);
 
-    panel.set_target_attached(false);
+    bar.set_target_attached(false);
     CHECK_FALSE(memory_view->isEnabled());
 }
 
-TEST_CASE("the found-list entry row opens the viewer at the main module entry", "[ui]")
+TEST_CASE("the companion bar opens the viewer at the main module entry", "[ui]")
 {
     application();
 
@@ -128,7 +123,9 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     auto* scanner = window.findChild<slopkit::ui::panels::ScannerPanel*>();
     REQUIRE(scanner != nullptr);
 
-    auto* memory_view = button_labelled(*found_list, QStringLiteral("Memory View"));
+    auto* companions = window.findChild<slopkit::ui::panels::CompanionBar*>();
+    REQUIRE(companions != nullptr);
+    auto* memory_view = button_labelled(*companions, QStringLiteral("Memory View"));
     REQUIRE(memory_view != nullptr);
 
     CHECK(button_labelled(window, QStringLiteral("Add Address Manually")) == nullptr);
@@ -143,9 +140,8 @@ TEST_CASE("the found-list entry row opens the viewer at the main module entry", 
     window.show();
     QCoreApplication::processEvents();
 
-    // The Memory View row still sits directly below the hits table; the scanner's
-    // empty bottom band now mirrors its height instead of carrying the two
-    // removed buttons.
+    // The Memory View button sits in the companion bar under the scan zone, so it
+    // is below the hits table.
     auto* hits = found_list->findChild<QTableView*>();
     REQUIRE(hits != nullptr);
     CHECK(memory_view->mapTo(&window, QPoint(0, 0)).y() > hits->mapTo(&window, QPoint(0, 0)).y());

@@ -31,41 +31,6 @@ namespace slopkit::ui::panels
             const std::size_t size = scan::value_size(type);
             return size == 0 ? 4 : size;
         }
-
-        class BottomBand : public QWidget
-        {
-        public:
-            explicit BottomBand(QWidget* parent = nullptr) : QWidget(parent)
-            {
-                setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-            }
-
-            void set_source(QWidget* source)
-            {
-                source_ = source;
-                sync();
-            }
-
-            void sync()
-            {
-                const int height = source_ != nullptr ? source_->sizeHint().height() : 0;
-                if (height == height_)
-                {
-                    return;
-                }
-                height_ = height;
-                updateGeometry();
-            }
-
-            [[nodiscard]] QSize sizeHint() const override
-            {
-                return QSize(0, height_);
-            }
-
-        private:
-            QPointer<QWidget> source_;
-            int               height_ {0};
-        };
     }
 
     ScannerPanel::ScannerPanel(process::AccessWorker& worker, process::AttachedTarget& target, QWidget* parent)
@@ -152,15 +117,6 @@ namespace slopkit::ui::panels
     QWidget* ScannerPanel::tab_order_last() const noexcept
     {
         return pause_scanning_check_;
-    }
-
-    void ScannerPanel::set_bottom_row_source(QWidget& row)
-    {
-        bottom_row_source_ = &row;
-        if (auto* band = static_cast<BottomBand*>(bottom_band_))
-        {
-            band->set_source(bottom_row_source_.data());
-        }
     }
 
     void ScannerPanel::build_layout()
@@ -271,12 +227,6 @@ namespace slopkit::ui::panels
         options_body->addWidget(pause_scanning_check_);
 
         layout->addStretch(1);
-
-        auto* band_row = new QHBoxLayout();
-        bottom_band_   = new BottomBand(this);
-        band_row->addStretch(1);
-        band_row->addWidget(bottom_band_);
-        layout->addLayout(band_row);
 
         update_value_inputs();
         apply_tab_order();
@@ -1007,11 +957,6 @@ namespace slopkit::ui::panels
 
     void ScannerPanel::refresh()
     {
-        if (auto* band = static_cast<BottomBand*>(bottom_band_))
-        {
-            band->sync();
-        }
-
         request_scan_session();
         request_memory_map();
 

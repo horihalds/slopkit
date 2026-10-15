@@ -30,7 +30,7 @@ docs that hold the detail behind this map.
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, ReClass project tree, script editor, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
 | `src/ui/models` | Qt item models for tables and lists |
-| `src/ui/panels` | Docked panes (address list, found list, scanner, debugger), the one-line debug control bar, the Memory Viewer's menu bar and the shared debugger command enablement; the address list's and the found list's multi-row selection, the address list's shared `Del` action, its multi-row delete and the two surfaces' multi-value `Change value…` live here |
+| `src/ui/panels` | Docked panes (address list, found list, scanner, debugger), the window-wide companion bar, the one-line debug control bar, the Memory Viewer's menu bar and the shared debugger command enablement; the address list's and the found list's multi-row selection, the address list's shared `Del` action, its multi-row delete and the two surfaces' multi-value `Change value…` live here |
 | `tests/analysis` | Tests for `src/analysis` |
 | `tests/app` | Tests for `src/app` |
 | `tests/core` | Tests for `src/core` |

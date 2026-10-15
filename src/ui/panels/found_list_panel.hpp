@@ -16,7 +16,6 @@
 class QAction;
 class QLabel;
 class QMenu;
-class QPushButton;
 class QTableView;
 
 namespace slopkit::ui::models
@@ -51,19 +50,7 @@ namespace slopkit::ui::panels
         void apply_live_readings(std::span<const ui::LiveReading> readings) override;
 
     signals:
-        void memoryViewRequested();
-
         void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
-
-        void logRequested();
-
-        void settingsRequested();
-
-        void breakpointsRequested();
-
-        void accessWatchWindowRequested();
-
-        void reclassRequested();
 
         void browseRequested(quint64 address);
 
@@ -85,12 +72,6 @@ namespace slopkit::ui::panels
         QLabel*                    header_ {};
         QTableView*                table_view_ {};
         models::FoundResultsModel* model_ {};
-        QPushButton*               memory_view_button_ {};
-        QPushButton*               reclass_button_ {};
-        QPushButton*               breakpoints_button_ {};
-        QPushButton*               access_watch_button_ {};
-        QPushButton*               log_button_ {};
-        QPushButton*               settings_button_ {};
 
         QAction* edit_value_action_ {};
         QAction* browse_region_action_ {};

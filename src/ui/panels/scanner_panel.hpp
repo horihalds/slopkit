@@ -15,7 +15,6 @@
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 
-#include <QPointer>
 #include <QWidget>
 
 class QCheckBox;
@@ -65,8 +64,6 @@ namespace slopkit::ui::panels
 
         [[nodiscard]] QWidget* tab_order_last() const noexcept;
 
-        void set_bottom_row_source(QWidget& row);
-
     signals:
         void memoryMapApplied(std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions);
 
@@ -109,9 +106,6 @@ namespace slopkit::ui::panels
         QPushButton*                next_scan_button_ {};
         QPushButton*                undo_button_ {};
         QPushButton*                cancel_button_ {};
-
-        QWidget*          bottom_band_ {};
-        QPointer<QWidget> bottom_row_source_ {};
 
         QLineEdit*      start_edit_ {};
         QLineEdit*      stop_edit_ {};

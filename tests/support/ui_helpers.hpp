@@ -93,6 +93,7 @@
 #include "ui/models/address_table_model.hpp"
 #include "ui/models/found_results_model.hpp"
 #include "ui/panels/address_list_panel.hpp"
+#include "ui/panels/companion_bar.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
 #include "ui/settings.hpp"

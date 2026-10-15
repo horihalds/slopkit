@@ -39,6 +39,7 @@
 #include "ui/dialogs/table_settings.hpp"
 #include "ui/live_values.hpp"
 #include "ui/panels/address_list_panel.hpp"
+#include "ui/panels/companion_bar.hpp"
 #include "ui/panels/debug_controls.hpp"
 #include "ui/panels/found_list_panel.hpp"
 #include "ui/panels/scanner_panel.hpp"
@@ -83,9 +84,7 @@ namespace slopkit::ui
 
         setWindowTitle(QStringLiteral("slopkit"));
         setWindowIcon(widgets::application_icon());
-        // The found-list bar's six companion buttons set the window's minimum
-        // width, so the default is wide enough to show them all.
-        resize(880, 768);
+        resize(748, 768);
 
         build_actions();
         build_menus();
@@ -280,24 +279,24 @@ namespace slopkit::ui
 
     void MainWindow::build_central()
     {
-        scanner_    = new panels::ScannerPanel(worker_, target_, this);
-        found_list_ = new panels::FoundListPanel(scanner_->engine(), address_table_, this);
+        scanner_       = new panels::ScannerPanel(worker_, target_, this);
+        found_list_    = new panels::FoundListPanel(scanner_->engine(), address_table_, this);
+        companion_bar_ = new panels::CompanionBar(this);
 
-        scanner_->set_bottom_row_source(*found_list_->tab_order_last());
-
-        connect(found_list_,
-                &panels::FoundListPanel::memoryViewRequested,
+        connect(companion_bar_,
+                &panels::CompanionBar::memoryViewRequested,
                 this,
                 [this]
                 {
                     on_memory_view_requested(scanner_->main_module_address());
                 });
         connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
-        connect(found_list_, &panels::FoundListPanel::logRequested, this, &MainWindow::show_log);
-        connect(found_list_, &panels::FoundListPanel::settingsRequested, this, &MainWindow::show_settings);
-        connect(found_list_, &panels::FoundListPanel::breakpointsRequested, this, &MainWindow::show_breakpoints);
-        connect(found_list_, &panels::FoundListPanel::accessWatchWindowRequested, this, &MainWindow::show_access_watch);
-        connect(found_list_, &panels::FoundListPanel::reclassRequested, this, &MainWindow::show_reclass);
+        connect(companion_bar_, &panels::CompanionBar::logRequested, this, &MainWindow::show_log);
+        connect(companion_bar_, &panels::CompanionBar::settingsRequested, this, &MainWindow::show_settings);
+        connect(companion_bar_, &panels::CompanionBar::breakpointsRequested, this, &MainWindow::show_breakpoints);
+        connect(
+            companion_bar_, &panels::CompanionBar::accessWatchWindowRequested, this, &MainWindow::show_access_watch);
+        connect(companion_bar_, &panels::CompanionBar::reclassRequested, this, &MainWindow::show_reclass);
         connect(found_list_, &panels::FoundListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(
             found_list_, &panels::FoundListPanel::changeValuesRequested, this, &MainWindow::on_found_values_requested);
@@ -356,8 +355,17 @@ namespace slopkit::ui
         middle_splitter->setStretchFactor(0, 1);
         middle_splitter->setStretchFactor(1, 1);
 
+        // The companion bar spans the window, so it sits beside the scan zone in
+        // an upper column and the vertical splitter keeps two children.
+        auto* upper        = new QWidget(this);
+        auto* upper_layout = new QVBoxLayout(upper);
+        upper_layout->setContentsMargins(0, 0, 0, 0);
+        upper_layout->setSpacing(0);
+        upper_layout->addWidget(middle_splitter, 1);
+        upper_layout->addWidget(companion_bar_);
+
         auto* vertical_splitter = new QSplitter(Qt::Vertical, this);
-        vertical_splitter->addWidget(middle_splitter);
+        vertical_splitter->addWidget(upper);
         vertical_splitter->addWidget(address_list_);
         vertical_splitter->setStretchFactor(0, 0);
         vertical_splitter->setStretchFactor(1, 1);
@@ -379,11 +387,9 @@ namespace slopkit::ui
 
     void MainWindow::apply_tab_order()
     {
-        // Only the two boundaries are linked here: the panel chains its own
-        // widgets, so re-linking its last button after its first would collapse
-        // that chain.
         widgets::chain_tab_order({scanner_->tab_order_last(), found_list_->tab_order_first()});
-        widgets::chain_tab_order({found_list_->tab_order_last(), address_list_->tab_order_first()});
+        widgets::chain_tab_order({found_list_->tab_order_last(), companion_bar_->tab_order_first()});
+        widgets::chain_tab_order({companion_bar_->tab_order_last(), address_list_->tab_order_first()});
     }
 
     void MainWindow::build_dialogs()
@@ -988,6 +994,7 @@ namespace slopkit::ui
     {
         process_label_->setText(to_qstring(target_.label()));
         found_list_->set_target_attached(target_.valid());
+        companion_bar_->set_target_attached(target_.valid());
         table_settings_->refresh_target();
         memory_view_->refresh_target_state();
     }
