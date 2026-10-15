@@ -33,6 +33,7 @@ namespace
     using slopkit::test::module_image;
     using slopkit::test::node_of;
     using slopkit::test::reading_for;
+    using slopkit::test::region_of;
     using slopkit::test::stage_bytes;
     using slopkit::ui::LiveReading;
     using slopkit::ui::LiveRequest;
@@ -51,7 +52,10 @@ namespace
         {
             target = slopkit::test::fake_target();
             attach_session(worker);
-            values.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)});
+            values.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)},
+                               std::vector<slopkit::process::RegionInfo> {
+                                   region_of(kAppBase, 0x1000, "/app", true),
+                               });
             values.set_structure(structure);
 
             project.add_class("Player", "app+0x10");
@@ -147,7 +151,7 @@ TEST_CASE("a live pass repaints only the cells whose text moved", "[reclass][ui]
     CHECK(repainted[0].column() == ReclassStructureModel::value);
     CHECK(repainted[0].row() == 1);
     CHECK(fixture.proxy->data(fixture.index(1, ReclassStructureModel::value), Qt::DisplayRole).toString()
-          == QStringLiteral("3  0x00000003"));
+          == QStringLiteral("= 3  0x00000003"));
 }
 
 TEST_CASE("a rebuilt grid fills the repaint cache without repainting", "[reclass][ui]")
@@ -188,7 +192,7 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
 
     fixture.stage(fixture.player_address() + 1, {0x2A, 0, 0, 0});
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("42  0x0000002A"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  0x0000002A"));
     // The value cell no longer states the warning itself: the view paints the
     // moved bytes from the value model's per-byte mask.
     CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
@@ -199,7 +203,7 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
 
     // The row keeps its value and drops the highlight on the next pass.
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("42  0x0000002A"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  0x0000002A"));
     CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
 }
 
@@ -255,4 +259,79 @@ TEST_CASE("the live columns take the theme's colours per role", "[reclass][ui]")
     CHECK(
         unresolved.proxy->data(unresolved.index(0, ReclassStructureModel::address), Qt::ForegroundRole).value<QColor>()
         == theme.text_muted);
+}
+
+TEST_CASE("the hint and pointer fields draw the row's readings and its address", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    // A hex32 node after Player's own fields, its bytes naming the module.
+    Class& player = fixture.project.classes()[0];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex32, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(0);
+
+    fixture.stage(fixture.player_address(), {1, 2, 0, 0, 0, 0x00, 0x00, 0x40, 0x00});
+    fixture.pass();
+
+    const slopkit::ui::Theme& theme   = slopkit::ui::active_theme();
+    const QModelIndex         hints   = fixture.index(2, ReclassStructureModel::hints);
+    const QModelIndex         pointer = fixture.index(2, ReclassStructureModel::pointer);
+
+    const QString hint_text = fixture.proxy->data(hints, Qt::DisplayRole).toString();
+    CHECK(hint_text.startsWith(QStringLiteral("(")));
+    CHECK(hint_text.endsWith(QStringLiteral(")")));
+    CHECK(hint_text.contains(QStringLiteral("0x400000")));
+    CHECK(fixture.proxy->data(pointer, Qt::DisplayRole).toString() == QStringLiteral("-> <CODE>0x0000000000400000"));
+    CHECK(fixture.proxy->data(hints, Qt::ForegroundRole).value<QColor>() == theme.datatype_readout);
+    CHECK(fixture.proxy->data(pointer, Qt::ForegroundRole).value<QColor>() == theme.grid_pointer);
+
+    // A typed row draws neither, and the hex node's kind cell stays empty.
+    CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::hints), Qt::DisplayRole).toString().isEmpty());
+    CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::pointer), Qt::DisplayRole).toString().isEmpty());
+    CHECK(fixture.proxy->data(fixture.index(2, ReclassStructureModel::type), Qt::DisplayRole).toString().isEmpty());
+}
+
+TEST_CASE("a reading that moved repaints the hint field", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    Class& player = fixture.project.classes()[0];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex32, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(0);
+    fixture.stage(fixture.player_address(), {1, 2, 0, 0, 0, 0x00, 0x00, 0x40, 0x00});
+    fixture.pass();
+
+    std::vector<QModelIndex> repainted;
+    QObject::connect(fixture.proxy.get(),
+                     &QAbstractItemModel::dataChanged,
+                     [&repainted](const QModelIndex& first, const QModelIndex& last, const QList<int>&)
+                     {
+                         repainted.push_back(first);
+                         if (last != first)
+                         {
+                             repainted.push_back(last);
+                         }
+                     });
+
+    // The node's bytes now hold 10.0f; its hint field is repainted beside the
+    // value cell and the pointer field the same bytes feed.
+    fixture.stage(fixture.player_address() + 5, {0x00, 0x00, 0x20, 0x41});
+    fixture.pass();
+
+    const QModelIndex hints  = fixture.index(2, ReclassStructureModel::hints);
+    bool              hinted = false;
+    for (const QModelIndex& index : repainted)
+    {
+        hinted = hinted || index == hints;
+    }
+    CHECK(hinted);
+    CHECK(fixture.proxy->data(hints, Qt::DisplayRole).toString().contains(QStringLiteral("10")));
 }

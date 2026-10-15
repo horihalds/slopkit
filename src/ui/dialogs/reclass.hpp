@@ -70,9 +70,9 @@ namespace slopkit::ui::dialogs
                       process::AttachedTarget& target,
                       QWidget*                 parent = nullptr);
 
-        // The memory map the classes' expressions are resolved against, and the
-        // spans the dissect command tests a pointer value for.
-        void set_modules(std::vector<process::ModuleInfo> modules);
+        // The memory map the classes' expressions are resolved against and the
+        // regions the grid's pointer field tags an address with.
+        void set_modules(std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions);
 
         [[nodiscard]] models::ReclassStructureModel* structure() const noexcept;
         [[nodiscard]] models::ReclassProxyModel*     proxy() const noexcept;

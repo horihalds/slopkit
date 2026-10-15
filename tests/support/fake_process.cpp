@@ -44,6 +44,19 @@ namespace slopkit::test
         return module;
     }
 
+    process::RegionInfo
+    region_of(std::uint64_t base, std::uint64_t size, std::string path, bool executable, bool writable)
+    {
+        process::RegionInfo region;
+        region.start      = base;
+        region.end        = base + size;
+        region.readable   = true;
+        region.writable   = writable;
+        region.executable = executable;
+        region.path       = std::move(path);
+        return region;
+    }
+
     QString scratch_settings_file(std::string_view suite, std::string_view name)
     {
         const auto      directory = std::filesystem::path(SLOPKIT_TMP_DIR) / std::filesystem::path(suite);

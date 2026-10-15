@@ -13,6 +13,16 @@ namespace slopkit::ui::models
     namespace
     {
         constexpr auto kResolveInterval = std::chrono::seconds(1);
+
+        QString joined(const std::vector<reclass::ValuePart>& parts)
+        {
+            QString text;
+            for (const reclass::ValuePart& part : parts)
+            {
+                text += to_qstring(part.text);
+            }
+            return text;
+        }
     }
 
     ReclassValueModel::ReclassValueModel(process::AccessWorker&   worker,
@@ -28,9 +38,11 @@ namespace slopkit::ui::models
         invalidate();
     }
 
-    void ReclassValueModel::set_modules(std::vector<process::ModuleInfo> modules)
+    void ReclassValueModel::set_modules(std::vector<process::ModuleInfo> modules,
+                                        std::vector<process::RegionInfo> regions)
     {
         modules_.set_modules(modules);
+        regions_.set_regions(regions);
         force_resolve_ = true;
     }
 
@@ -543,9 +555,10 @@ namespace slopkit::ui::models
         return view.changed.subspan(index, size);
     }
 
-    bool ReclassValueModel::inside_module(std::uint64_t address) const
+    bool ReclassValueModel::inside_region(std::uint64_t address) const
     {
-        return modules_.containing(address) != nullptr;
+        const process::RegionInfo* region = regions_.containing(address);
+        return region != nullptr && region->readable;
     }
 
     QString ReclassValueModel::address_text(const ReclassRow& row) const
@@ -604,37 +617,100 @@ namespace slopkit::ui::models
             };
         }
 
-        std::vector<reclass::ValuePart> parts;
+        // A hex cell's readings are the hints field's, so its value cell draws
+        // its own bytes and nothing more.
         if (reclass::is_hex_kind(node->kind()))
         {
-            parts = reclass::format_node_value_parts(node->kind(), bytes, node->hex);
-        }
-        else
-        {
-            parts.push_back({reclass::format_node_value_text(*node, structure_->project(), bytes), false});
+            std::vector<reclass::ValuePart> parts = reclass::format_node_value_parts(node->kind(), bytes, node->hex);
+            std::erase_if(parts,
+                          [](const reclass::ValuePart& part)
+                          {
+                              return part.reading;
+                          });
+            return parts;
         }
 
-        // A hex node whose bytes land inside a loaded module is a potential
-        // pointer; the reference names the address such a value would point at.
-        if (reclass::is_hex_kind(node->kind()) && reclass::kind_size(node->kind()) >= 4)
+        // A pointer node's address is the pointer field's, and a container or a
+        // function draws no value of its own.
+        if (reclass::is_pointer_kind(node->kind()))
         {
-            const std::uint64_t value = reclass::read_node_value(node->kind(), bytes);
-            if (inside_module(value))
-            {
-                parts.push_back({"  -> " + format_address(value).toStdString(), true});
-            }
+            return {};
         }
-        return parts;
+        const std::string value = reclass::format_node_value_text(*node, structure_->project(), bytes);
+        if (value.empty())
+        {
+            return {};
+        }
+        return {
+            {"= " + value, false}
+        };
+    }
+
+    std::vector<reclass::ValuePart> ReclassValueModel::hint_parts(const ReclassRow& row) const
+    {
+        if (!attached())
+        {
+            return {};
+        }
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return {};
+        }
+
+        const std::string readings = reclass::format_node_readings(node->kind(), node_bytes(row));
+        if (readings.empty())
+        {
+            return {};
+        }
+        return {
+            {"(" + readings + ")", true}
+        };
+    }
+
+    QString ReclassValueModel::hint_text(const ReclassRow& row) const
+    {
+        return joined(hint_parts(row));
+    }
+
+    QString ReclassValueModel::pointer_text(const ReclassRow& row) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || !attached())
+        {
+            return {};
+        }
+
+        // Only a pointer or a wide enough hex cell can hold an address at all.
+        const reclass::NodeKind kind = node->kind();
+        const std::size_t       size = reclass::kind_size(kind);
+        if (size < 4 || (!reclass::is_pointer_kind(kind) && !reclass::is_hex_kind(kind)))
+        {
+            return {};
+        }
+
+        const std::span<const std::byte> bytes = node_bytes(row);
+        if (bytes.size() < size)
+        {
+            return {};
+        }
+
+        // The tag names the kind of memory the address lands in, so a heap byte
+        // reads differently from an image address; an address in no readable
+        // region is no pointer at all.
+        const std::uint64_t        address = reclass::read_node_value(kind, bytes);
+        const process::RegionInfo* region  = regions_.containing(address);
+        if (region == nullptr || !region->readable)
+        {
+            return {};
+        }
+        return QStringLiteral("-> <") + to_qstring(region_label(*region)) + QStringLiteral(">")
+             + format_address(address);
     }
 
     QString ReclassValueModel::value_text(const ReclassRow& row) const
     {
-        QString text;
-        for (const reclass::ValuePart& part : value_parts(row))
-        {
-            text += to_qstring(part.text);
-        }
-        return text;
+        return joined(value_parts(row));
     }
 
     QString ReclassValueModel::ascii_text(const ReclassRow& row) const

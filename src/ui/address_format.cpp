@@ -130,6 +130,50 @@ namespace slopkit::ui
         return address < candidate.end ? &candidate : nullptr;
     }
 
+    void RegionSpans::set_regions(std::span<const process::RegionInfo> regions)
+    {
+        regions_.assign(regions.begin(), regions.end());
+        std::ranges::sort(regions_, {}, &process::RegionInfo::start);
+    }
+
+    const process::RegionInfo* RegionSpans::containing(std::uint64_t address) const
+    {
+        const auto after = std::upper_bound(regions_.begin(),
+                                            regions_.end(),
+                                            address,
+                                            [](std::uint64_t value, const process::RegionInfo& region)
+                                            {
+                                                return value < region.start;
+                                            });
+        if (after == regions_.begin())
+        {
+            return nullptr;
+        }
+        const process::RegionInfo& candidate = *std::prev(after);
+        return address < candidate.end ? &candidate : nullptr;
+    }
+
+    std::string_view region_label(const process::RegionInfo& region)
+    {
+        if (region.executable)
+        {
+            return "CODE";
+        }
+        if (region.path == "[stack]")
+        {
+            return "STACK";
+        }
+        if (region.path == "[heap]")
+        {
+            return "HEAP";
+        }
+        if (!region.path.empty())
+        {
+            return "DATA";
+        }
+        return region.writable ? "HEAP" : "ETC";
+    }
+
     const ModuleSpan* ModuleSpans::find_by_name(std::string_view name) const
     {
         for (const ModuleSpan& span : spans_)

@@ -39,6 +39,7 @@ namespace slopkit::ui
         QColor grid_address;
         QColor grid_ascii;
         QColor grid_comment;
+        QColor grid_pointer;
     };
 
     [[nodiscard]] Theme dark_theme();

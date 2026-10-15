@@ -68,7 +68,7 @@ namespace slopkit::ui::panels
         void set_bottom_row_source(QWidget& row);
 
     signals:
-        void memoryMapApplied(std::vector<process::ModuleInfo> modules);
+        void memoryMapApplied(std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions);
 
     private:
         void build_layout();

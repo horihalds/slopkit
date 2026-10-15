@@ -516,6 +516,31 @@ namespace slopkit::reclass
         }
     }
 
+    std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes)
+    {
+        if (kind != NodeKind::hex32 && kind != NodeKind::hex64)
+        {
+            return {};
+        }
+        const std::size_t size = kind_size(kind);
+        if (bytes.size() < size)
+        {
+            return {};
+        }
+
+        const std::uint64_t raw      = read_bytes(bytes, size);
+        std::string         readings = hex_float_comment(bytes);
+        if (raw == 0)
+        {
+            readings += "  0";
+        }
+        else
+        {
+            readings += std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
+        }
+        return readings;
+    }
+
     std::vector<ValuePart> format_node_value_parts(NodeKind kind, std::span<const std::byte> bytes, bool hex)
     {
         const std::size_t size = kind_size(kind);
@@ -532,18 +557,8 @@ namespace slopkit::reclass
         case NodeKind::hex32:
         case NodeKind::hex64:
         {
-            const std::uint64_t raw      = read_bytes(bytes, size);
-            std::string         readouts = hex_float_comment(bytes);
-            if (raw == 0)
-            {
-                readouts += "  0";
-            }
-            else
-            {
-                readouts += std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
-            }
             std::vector<ValuePart> parts = hex_byte_parts(bytes, size);
-            parts.push_back(ValuePart {.text = "  " + readouts, .reading = true});
+            parts.push_back(ValuePart {.text = "  " + format_node_readings(kind, bytes), .reading = true});
             return parts;
         }
         default:

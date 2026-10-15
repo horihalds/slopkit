@@ -297,7 +297,7 @@ namespace slopkit::ui
         connect(scanner_,
                 &panels::ScannerPanel::memoryMapApplied,
                 this,
-                [this](std::vector<process::ModuleInfo> modules)
+                [this](std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions)
                 {
                     log::debug(log::category::ui, std::format("memory map applied: {} module(s)", modules.size()));
                     found_list_->set_modules(modules);
@@ -307,7 +307,7 @@ namespace slopkit::ui
                         add_address_->set_modules(modules);
                     }
                     debug_.set_modules(modules);
-                    reclass_->set_modules(modules);
+                    reclass_->set_modules(modules, std::move(regions));
                     memory_view_->set_modules(std::move(modules));
                 });
         connect(&debug_,

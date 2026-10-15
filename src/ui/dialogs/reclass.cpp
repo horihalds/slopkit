@@ -616,9 +616,9 @@ namespace slopkit::ui::dialogs
         refresh_all();
     }
 
-    void ReClassDialog::set_modules(std::vector<process::ModuleInfo> modules)
+    void ReClassDialog::set_modules(std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions)
     {
-        values_->set_modules(std::move(modules));
+        values_->set_modules(std::move(modules), std::move(regions));
     }
 
     void ReClassDialog::closeEvent(QCloseEvent* event)
@@ -980,9 +980,7 @@ namespace slopkit::ui::dialogs
             }
         }
 
-        reclass::NodePtr node = reclass::make_node(kind);
-        node->id              = project_.next_node_id();
-        owner->insert(owner->begin() + static_cast<std::ptrdiff_t>(index), std::move(node));
+        owner->insert(owner->begin() + static_cast<std::ptrdiff_t>(index), reclass::create_node(project_, kind));
 
         refresh_all();
         report(tr("%1 node added.").arg(kind_label(kind)), false);
@@ -1283,7 +1281,7 @@ namespace slopkit::ui::dialogs
         }
 
         // A pointer is only guessed for a value that can be dereferenced: a
-        // module image answers that on its own, anything else costs one byte.
+        // readable region answers that on its own, anything else costs one byte.
         std::vector<process::ReadManyItem> probes;
         for (const DissectTarget& target : dissect_targets_)
         {
@@ -1293,7 +1291,7 @@ namespace slopkit::ui::dialogs
             }
             std::uint64_t value = 0;
             std::memcpy(&value, target.bytes.data(), sizeof(value));
-            if (value != 0 && !values_->inside_module(value))
+            if (value != 0 && !values_->inside_region(value))
             {
                 probes.push_back(process::ReadManyItem {.address = value, .size = 1});
             }
@@ -1351,7 +1349,7 @@ namespace slopkit::ui::dialogs
         {
             const reclass::DissectLookup lookup {.readable = [this, &readable](std::uint64_t address, std::size_t)
                                                  {
-                                                     return values_->inside_module(address)
+                                                     return values_->inside_region(address)
                                                          || std::ranges::find(readable, address) != readable.end();
                                                  }};
 

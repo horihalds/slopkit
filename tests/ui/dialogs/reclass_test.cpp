@@ -15,6 +15,7 @@
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
+#include "reclass/edit.hpp"
 #include "reclass/node.hpp"
 #include "reclass/project.hpp"
 #include "support/reclass_helpers.hpp"
@@ -30,6 +31,7 @@ namespace
 {
     using slopkit::process::AccessWorker;
     using slopkit::process::AttachedTarget;
+    using slopkit::reclass::auto_node_name;
     using slopkit::reclass::Class;
     using slopkit::reclass::NodeKind;
     using slopkit::reclass::Project;
@@ -39,6 +41,7 @@ namespace
     using slopkit::test::module_image;
     using slopkit::test::node_of;
     using slopkit::test::reading_for;
+    using slopkit::test::region_of;
     using slopkit::test::stage_bytes;
     using slopkit::ui::dialogs::ReClassDialog;
 
@@ -121,24 +124,31 @@ TEST_CASE("the ReClass window opens as a companion window", "[reclass][ui]")
     CHECK(dialog.grid()->model() == dialog.proxy());
 
     // The grid is painted by its own component rather than assembled out of a
-    // tree view: the six columns are sized by the component to the text the class
-    // draws, no header band sits above them, and nothing about the layout can be
-    // dragged.
-    // Only the value column answers a resize, so a reading keeps fitting while
-    // the columns the user reads by eye stay where they are.
+    // tree view: the nine fields are sized by the component to the text the class
+    // draws - the hints and the pointer field from the class's kinds - no header
+    // band sits above them, and nothing about the layout can be dragged.
+    // The note follows the value, and the fields the user reads by eye keep the
+    // widths the class gave them when the window grows: only the slack moves.
     using slopkit::ui::models::ReclassStructureModel;
     CHECK(dialog.grid()->row_count() == 2);
     CHECK(dialog.grid()->column_x(ReclassStructureModel::comment)
           == dialog.grid()->column_x(ReclassStructureModel::value)
                  + dialog.grid()->column_width(ReclassStructureModel::value));
+    CHECK(dialog.grid()->column_x(ReclassStructureModel::pointer)
+          >= dialog.grid()->column_x(ReclassStructureModel::hints)
+                 + dialog.grid()->column_width(ReclassStructureModel::hints));
 
     const int address_width = dialog.grid()->column_width(ReclassStructureModel::address);
-    const int value_width   = dialog.grid()->column_width(ReclassStructureModel::value);
+    const int offset_width  = dialog.grid()->column_width(ReclassStructureModel::offset);
+    const int type_width    = dialog.grid()->column_width(ReclassStructureModel::type);
+    const int name_width    = dialog.grid()->column_width(ReclassStructureModel::name);
     dialog.resize(dialog.width() + 160, dialog.height());
     QCoreApplication::processEvents();
 
     CHECK(dialog.grid()->column_width(ReclassStructureModel::address) == address_width);
-    CHECK(dialog.grid()->column_width(ReclassStructureModel::value) > value_width);
+    CHECK(dialog.grid()->column_width(ReclassStructureModel::offset) == offset_width);
+    CHECK(dialog.grid()->column_width(ReclassStructureModel::type) == type_width);
+    CHECK(dialog.grid()->column_width(ReclassStructureModel::name) == name_width);
 
     // Re-opening brings the same window and the same project back.
     dialog.hide();
@@ -220,7 +230,16 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     dialog.insert_node(NodeKind::int32);
     REQUIRE(player.nodes.size() == 3);
     CHECK(player.nodes[2]->kind() == NodeKind::int32);
-    CHECK(player.nodes[2]->name.empty());
+    // A node inserted with a type is named after its own id, so the window never
+    // invents a `field_1C` for it...
+    CHECK(player.nodes[2]->name == auto_node_name(player.nodes[2]->id));
+
+    // ...and a name the user typed is kept when the node is retyped.
+    player.nodes[2]->name = "health";
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(2, 0));
+    dialog.change_node_kind(NodeKind::float32);
+    REQUIRE(player.nodes.size() == 3);
+    CHECK(player.nodes[2]->name == "health");
 
     // Inserting with a row selected puts the node before it, and selecting a row
     // is what makes the commands that act on it available.
@@ -230,7 +249,7 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     dialog.insert_node(NodeKind::float32);
     REQUIRE(player.nodes.size() == 4);
     CHECK(player.nodes[1]->kind() == NodeKind::float32);
-    CHECK(player.nodes[1]->name.empty());
+    CHECK(player.nodes[1]->name == auto_node_name(player.nodes[1]->id));
 
     // Shrinking a node's type pads the freed bytes so offsets stay put.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
@@ -240,6 +259,9 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     CHECK(player.nodes[2]->kind() == NodeKind::hex16);
     CHECK(player.nodes[3]->kind() == NodeKind::hex8);
     CHECK(player.nodes[3]->name.empty());
+
+    // The retyped node keeps the name it was given when it was created.
+    CHECK(player.nodes[1]->name == auto_node_name(player.nodes[1]->id));
 
     // Show as hex acts on the selection, and Delete removes it.
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
@@ -306,7 +328,8 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     fixture.dialog = &dialog;
     fixture.target = slopkit::test::fake_target();
     attach_session(fixture.worker);
-    dialog.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)});
+    dialog.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)},
+                       std::vector<slopkit::process::RegionInfo> {region_of(kAppBase, 0x1000, "/app", true)});
     dialog.show();
     QCoreApplication::processEvents();
 

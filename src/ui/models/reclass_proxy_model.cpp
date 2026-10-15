@@ -1,6 +1,7 @@
 #include "ui/models/reclass_proxy_model.hpp"
 
 #include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/fonts.hpp"
 #include "ui/models/reclass_structure_model.hpp"
 #include "ui/models/reclass_value_model.hpp"
 #include "ui/theme.hpp"
@@ -36,12 +37,28 @@ namespace slopkit::ui::models
             {
                 return values_.value_text(*row);
             }
+            if (index.column() == ReclassStructureModel::hints)
+            {
+                return values_.hint_text(*row);
+            }
+            if (index.column() == ReclassStructureModel::pointer)
+            {
+                return values_.pointer_text(*row);
+            }
         }
         // The editor starts from the value a write parses, not from the readings
         // the cell draws beside it.
         if (role == Qt::EditRole && index.column() == ReclassStructureModel::value)
         {
             return values_.edit_text(*row);
+        }
+
+        // The live fields are machine read-outs, so they take the mono face the
+        // structure model gives its own mono columns.
+        if (role == Qt::FontRole
+            && (index.column() == ReclassStructureModel::hints || index.column() == ReclassStructureModel::pointer))
+        {
+            return QVariant::fromValue(mono_font());
         }
 
         const QVariant base = QIdentityProxyModel::data(index, role);
@@ -69,6 +86,14 @@ namespace slopkit::ui::models
             {
                 return active_theme().text_muted;
             }
+        }
+        if (index.column() == ReclassStructureModel::hints)
+        {
+            return active_theme().datatype_readout;
+        }
+        if (index.column() == ReclassStructureModel::pointer)
+        {
+            return active_theme().grid_pointer;
         }
         return base;
     }
@@ -123,13 +148,17 @@ namespace slopkit::ui::models
             const QModelIndex address_index = index(position, ReclassStructureModel::address, parent);
             const QModelIndex ascii_index   = index(position, ReclassStructureModel::ascii, parent);
             const QModelIndex value_index   = index(position, ReclassStructureModel::value, parent);
+            const QModelIndex hints_index   = index(position, ReclassStructureModel::hints, parent);
+            const QModelIndex pointer_index = index(position, ReclassStructureModel::pointer, parent);
             const ReclassRow* row           = structure_.row_for(mapToSource(address_index));
 
             if (row != nullptr && address_index.isValid() && value_index.isValid())
             {
                 const Shown now {.address = values_.address_text(*row),
                                  .ascii   = values_.ascii_text(*row),
-                                 .value   = values_.value_text(*row)};
+                                 .value   = values_.value_text(*row),
+                                 .hints   = values_.hint_text(*row),
+                                 .pointer = values_.pointer_text(*row)};
                 const auto  before = shown_.find(row);
                 // The first pass after a rebuild only fills the cache: the
                 // reset the rebuild performed has already repainted the view.
@@ -146,6 +175,14 @@ namespace slopkit::ui::models
                     if (before->second.value != now.value)
                     {
                         emit dataChanged(value_index, value_index);
+                    }
+                    if (before->second.hints != now.hints)
+                    {
+                        emit dataChanged(hints_index, hints_index);
+                    }
+                    if (before->second.pointer != now.pointer)
+                    {
+                        emit dataChanged(pointer_index, pointer_index);
                     }
                 }
                 shown_.insert_or_assign(row, now);

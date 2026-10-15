@@ -583,7 +583,7 @@ namespace slopkit::ui::panels
         apply_range(0, scan::kMaxUserAddress);
         rebuild_range_items();
 
-        emit memoryMapApplied(modules_);
+        emit memoryMapApplied(modules_, std::move(result.regions));
     }
 
     void ScannerPanel::note_memory_map_failure(process::AccessError error)
@@ -638,7 +638,7 @@ namespace slopkit::ui::panels
         module_combo_->setToolTip(tr("Whole process or a single loaded module"));
         range_updating_ = false;
 
-        emit memoryMapApplied({});
+        emit memoryMapApplied({}, {});
     }
 
     void ScannerPanel::rebuild_range_items()

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "reclass/node.hpp"
@@ -27,6 +28,15 @@ namespace slopkit::reclass
     // following nodes keep their offsets, the reference's
     // ShouldCompensateSizeChanges behaviour.
     void change_node_kind(Project& project, std::vector<NodePtr>& nodes, std::size_t index, NodeKind kind);
+
+    // The name a node is given when it is created with a type: `N` and the
+    // node's own id zero-padded to eight digits, so nothing new is stored and a
+    // name never shifts when a sibling is inserted or removed.
+    [[nodiscard]] std::string auto_node_name(std::size_t id);
+
+    // Creates a node of this kind with a fresh id and, unless the kind is a hex
+    // kind, its automatic name; the caller inserts it where it belongs.
+    [[nodiscard]] NodePtr create_node(Project& project, NodeKind kind);
 
     // The vector that holds a node of the project, and the node's index in it.
     struct NodeRef

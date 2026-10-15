@@ -34,6 +34,11 @@ namespace slopkit::test
 
     process::ModuleInfo module_image(std::string_view name, std::uint64_t base, std::uint64_t size);
 
+    // A readable mapped region, the shape the scanner's memory map carries: the
+    // pointer field tags an address with the kind of memory its region is.
+    process::RegionInfo region_of(
+        std::uint64_t base, std::uint64_t size, std::string path = {}, bool executable = false, bool writable = false);
+
     process::AttachedTarget fake_target();
 
     QString scratch_settings_file(std::string_view suite, std::string_view name);

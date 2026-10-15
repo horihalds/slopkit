@@ -71,6 +71,8 @@ namespace slopkit::ui::models
             name,
             value,
             comment,
+            hints,
+            pointer,
             column_count,
         };
 

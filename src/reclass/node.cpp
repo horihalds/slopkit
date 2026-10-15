@@ -294,4 +294,9 @@ namespace slopkit::reclass
         return kind == NodeKind::hex8 || kind == NodeKind::hex16 || kind == NodeKind::hex32 || kind == NodeKind::hex64;
     }
 
+    bool is_pointer_kind(NodeKind kind) noexcept
+    {
+        return kind == NodeKind::pointer || kind == NodeKind::class_pointer || kind == NodeKind::class_instance_array;
+    }
+
 }

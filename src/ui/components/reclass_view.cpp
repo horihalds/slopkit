@@ -69,25 +69,71 @@ namespace slopkit::ui::components
                 && column != ReclassStructureModel::ascii;
         }
 
-        // The colour a value run paints: the readout colour for a reading, the
-        // warning colour for a byte of its own that moved, and the grid's text
-        // otherwise. A run with no byte of its own - a kind that draws no byte
-        // pair - warns whole when any of the node's bytes moved.
+        // The colour a value run paints: the warning colour for a byte of its own
+        // that moved, and the grid's text otherwise. A run with no byte of its own
+        // - a kind that draws no byte pair - warns whole when any of the node's
+        // bytes moved.
         QColor part_colour(const reclass::ValuePart&     part,
                            std::span<const std::uint8_t> moved,
                            bool                          any_moved,
                            const QColor&                 primary)
         {
-            if (part.reading)
-            {
-                return active_theme().datatype_readout;
-            }
             if (part.byte.has_value())
             {
                 const std::size_t index = *part.byte;
                 return index < moved.size() && moved[index] != 0 ? active_theme().warning : primary;
             }
             return any_moved ? active_theme().warning : primary;
+        }
+
+        // The widest readings a hex cell can draw: the longest float three
+        // decimals can spell, the signed value's longest text and the raw bits
+        // at full width. A reading only arrives on a live pass, when the columns
+        // are not measured again, so the hints field is sized for this and never
+        // for what the node currently reads.
+        QString widest_readings(reclass::NodeKind kind)
+        {
+            const bool wide = reclass::kind_size(kind) == 8;
+            return QStringLiteral("(-999998.999  %1  0x%2)")
+                .arg(wide ? QStringLiteral("-9223372036854775808") : QStringLiteral("-2147483648"),
+                     wide ? QStringLiteral("FFFFFFFFFFFFFFFF") : QStringLiteral("FFFFFFFF"));
+        }
+
+        // The widest pointer field a row can draw: the value model's longest
+        // region tag beside the padded address itself.
+        QString widest_pointer()
+        {
+            return QStringLiteral("-> <STACK>") + format_padded_hex(0);
+        }
+
+        // The widest value text a row can draw, taken from the row's kind rather
+        // than from what the class reads right now: a live pass never measures
+        // the columns again, so a value that arrives later must already fit. A
+        // hex cell's dump is fixed by its width, and every other kind is read
+        // through the same formatter the cell uses, on a sample of its own size.
+        QString widest_value_text(const reclass::Node& node)
+        {
+            const reclass::NodeKind kind = node.kind();
+            const std::size_t       size = reclass::kind_size(kind);
+            if (size == 0)
+            {
+                return {};
+            }
+
+            const std::vector<std::byte> sample(size, std::byte {0x80});
+            std::string                  text;
+            for (const reclass::ValuePart& part : reclass::format_node_value_parts(kind, sample, node.hex))
+            {
+                if (!part.reading)
+                {
+                    text += part.text;
+                }
+            }
+            if (text.empty() || reclass::is_pointer_kind(kind))
+            {
+                return {};
+            }
+            return reclass::is_hex_kind(kind) ? to_qstring(text) : QStringLiteral("= ") + to_qstring(text);
         }
     }
 
@@ -189,10 +235,9 @@ namespace slopkit::ui::components
         row_height_ = std::max(1, std::max(mono.height(), prose.height()) + 4);
 
         // The address is always the padded form, so it keeps a width measured
-        // from the font once here and never again; the comment column starts at
-        // its header word and is widened to the notes the class draws (see
-        // update_content_widths); the columns between them are sized to the
-        // text the class draws.
+        // from the font once here and never again; the notes and the values the
+        // class draws are measured from the flattened rows (see
+        // update_content_widths).
         const auto measured = [](const QFontMetrics& metrics, const QString& sample)
         {
             return metrics.horizontalAdvance(sample) + kColumnGap;
@@ -201,9 +246,12 @@ namespace slopkit::ui::components
         using models::ReclassStructureModel;
         column_width_[ReclassStructureModel::address] = measured(mono, format_padded_hex(0));
         column_width_[ReclassStructureModel::ascii]   = 0;
-        comment_content_                              = measured(prose, tr("Comment"));
-        column_width_[ReclassStructureModel::comment] = comment_content_;
+        column_width_[ReclassStructureModel::comment] = 0;
         column_width_[ReclassStructureModel::value]   = 0;
+        column_width_[ReclassStructureModel::hints]   = 0;
+        column_width_[ReclassStructureModel::pointer] = 0;
+        comment_content_                              = 0;
+        value_content_                                = 0;
     }
 
     void ReClassView::update_content_widths()
@@ -225,9 +273,21 @@ namespace slopkit::ui::components
         int ascii_width   = 0;
         int type_width    = 0;
         int name_width    = 0;
+        int value_width   = 0;
         int comment_width = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
+        // The hints and the pointer are sized for the widest text their field can
+        // ever be given, never for what the class reads right now: a reading only
+        // arrives on a live pass, and a live pass does not measure again.
+        int hints_width   = 0;
+        int pointer_width = 0;
         for (const VisualRow& entry : rows_)
         {
+            const reclass::Node* node = entry.row->node;
+            if (node == nullptr)
+            {
+                continue;
+            }
+
             const int indent = static_cast<int>(entry.depth) * kIndentStep;
             offset_width = std::max(offset_width,
                                     mono.horizontalAdvance(display(entry, ReclassStructureModel::offset)) + kColumnGap);
@@ -238,42 +298,84 @@ namespace slopkit::ui::components
                                         + indent + (expandable(*entry.row) ? kTriangleWidth : 0));
             name_width   = std::max(
                 name_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::name)) + kColumnGap + indent);
+            value_width   = std::max(value_width,
+                                     mono.horizontalAdvance(display(entry, ReclassStructureModel::value)) + kColumnGap);
             comment_width = std::max(
                 comment_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::comment)) + kColumnGap);
+
+            // The value field is sized for the widest value the row's kind can
+            // draw, so the values that only arrive with the first live pass are
+            // not clipped by a column measured while nothing had been read.
+            const QString widest_value = widest_value_text(*node);
+            if (!widest_value.isEmpty())
+            {
+                value_width = std::max(value_width, mono.horizontalAdvance(widest_value) + kColumnGap);
+            }
+
+            const reclass::NodeKind kind = node->kind();
+            if (reclass::is_hex_kind(kind) && reclass::kind_size(kind) >= 4)
+            {
+                hints_width = std::max(hints_width, mono.horizontalAdvance(widest_readings(kind)) + kColumnGap);
+            }
+            if (reclass::is_hex_kind(kind) || reclass::is_pointer_kind(kind))
+            {
+                pointer_width = std::max(pointer_width, mono.horizontalAdvance(widest_pointer()) + kColumnGap);
+            }
         }
 
-        column_width_[ReclassStructureModel::offset] = offset_width;
-        column_width_[ReclassStructureModel::ascii]  = ascii_width;
-        column_width_[ReclassStructureModel::type]   = type_width;
-        column_width_[ReclassStructureModel::name]   = name_width;
-        comment_content_                             = comment_width;
+        column_width_[ReclassStructureModel::offset]  = offset_width;
+        column_width_[ReclassStructureModel::ascii]   = ascii_width;
+        column_width_[ReclassStructureModel::type]    = type_width;
+        column_width_[ReclassStructureModel::name]    = name_width;
+        column_width_[ReclassStructureModel::value]   = value_width;
+        column_width_[ReclassStructureModel::comment] = comment_width;
+        column_width_[ReclassStructureModel::hints]   = hints_width;
+        column_width_[ReclassStructureModel::pointer] = pointer_width;
+        // Kept unclamped: update_columns() clamps the note and gives the value
+        // field up to the pane on every resize, so it must start from the
+        // measurement rather than from what it fitted last time.
+        comment_content_                              = comment_width;
+        value_content_                                = value_width;
     }
 
     void ReClassView::update_columns()
     {
         using models::ReclassStructureModel;
 
-        // The first four columns keep the widths they were measured for; the
-        // value column takes whatever the pane has left, and the comment column
-        // is pinned to the right edge, sized to the notes the class draws but
-        // clamped so it can never starve the value column.
+        // Every field is placed left to right at the width it was measured for,
+        // and each width holds one gutter of its own, so the gaps between the
+        // fields are the same on every row and the pane's leftover width trails
+        // after the pointer field.
+        const QFontMetrics prose(ui_font());
+        const int          floor_width = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
+        const int          cap         = std::max(floor_width, viewport()->width() / 3);
+
+        column_width_[ReclassStructureModel::comment] = std::clamp(comment_content_, floor_width, cap);
+        column_width_[ReclassStructureModel::value]   = value_content_;
+
+        int total = kMargin;
+        for (int column = 0; column < ReclassStructureModel::column_count; ++column)
+        {
+            total += column_width_[column];
+        }
+
+        // A note longer than a third of the pane is clamped, and a row wider than
+        // the pane gives its value field up first - down to the narrowest value
+        // cell, which still reads from its tooltip - so the fields behind the
+        // value keep the place the class gave them.
+        const int overrun = total - viewport()->width();
+        if (overrun > 0)
+        {
+            column_width_[ReclassStructureModel::value] =
+                std::max(kValueColumnMinWidth, column_width_[ReclassStructureModel::value] - overrun);
+        }
+
         int x = kMargin;
-        for (int column = 0; column <= ReclassStructureModel::name; ++column)
+        for (int column = 0; column < ReclassStructureModel::column_count; ++column)
         {
             column_x_[column] = x;
             x += column_width_[column];
         }
-
-        const QFontMetrics prose(ui_font());
-        const int          floor_width                = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
-        const int          cap                        = std::max(floor_width, viewport()->width() / 3);
-        const int          comment_width              = std::clamp(comment_content_, floor_width, cap);
-        column_width_[ReclassStructureModel::comment] = comment_width;
-
-        column_x_[ReclassStructureModel::value] = x;
-        const int comment = std::max(x + kValueColumnMinWidth, viewport()->width() - comment_width - kMargin);
-        column_width_[ReclassStructureModel::value] = comment - x;
-        column_x_[ReclassStructureModel::comment]   = comment;
     }
 
     void ReClassView::update_rows()

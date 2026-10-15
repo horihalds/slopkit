@@ -45,7 +45,9 @@ namespace slopkit::ui::models
 
         void set_structure(ReclassStructureModel& structure);
 
-        void set_modules(std::vector<process::ModuleInfo> modules);
+        // The memory map: the modules the classes' expressions resolve against
+        // and the regions the pointer field tags an address with.
+        void set_modules(std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions);
 
         // The rows changed shape: the readings belong to the old shape, while
         // the resolved addresses stay because they are keyed by class id.
@@ -63,10 +65,22 @@ namespace slopkit::ui::models
 
         [[nodiscard]] QString value_text(const ReclassRow& row) const;
 
-        // The value cell's text as the runs the grid paints: the node's own
-        // bytes and the readings drawn beside them, module-pointer form
-        // included. `value_text` is their concatenation.
+        // The value cell's text as the runs the grid paints: a hex node's own
+        // bytes, a kind that draws a value of its own behind the grid's `= `
+        // marker, and nothing for a pointer or a container. `value_text` is the
+        // runs' concatenation.
         [[nodiscard]] std::vector<reclass::ValuePart> value_parts(const ReclassRow& row) const;
+
+        // The readings a hex32/hex64 cell draws beside its bytes, as the hints
+        // field shows them: the float, the integer and the raw bits in
+        // parentheses. Empty for every other kind.
+        [[nodiscard]] std::vector<reclass::ValuePart> hint_parts(const ReclassRow& row) const;
+        [[nodiscard]] QString                         hint_text(const ReclassRow& row) const;
+
+        // The pointer field: the address a pointer node holds, or the address a
+        // hex cell's bytes plausibly name. Empty when the value is not an
+        // address at all.
+        [[nodiscard]] QString pointer_text(const ReclassRow& row) const;
 
         // The row's own bytes as text: a printable byte as itself, every other
         // byte as '.', an empty cell for a kind without bytes and '?' for a
@@ -93,8 +107,10 @@ namespace slopkit::ui::models
         // read or there is nothing to compare the reading against.
         [[nodiscard]] std::span<const std::uint8_t> node_changed_bytes(const ReclassRow& row) const;
 
-        // Whether the address lies inside a loaded module image.
-        [[nodiscard]] bool inside_module(std::uint64_t address) const;
+        // Whether the address lies inside a readable mapped region, which the
+        // dissect command uses to tell a pointer it can dereference from one it
+        // has to probe first.
+        [[nodiscard]] bool inside_region(std::uint64_t address) const;
 
         // The address a class is pinned to, once its expression resolved; the
         // project's classes are re-read first.
@@ -165,6 +181,7 @@ namespace slopkit::ui::models
         process::AttachedTarget& target_;
         ReclassStructureModel*   structure_ {};
         ModuleSpans              modules_;
+        RegionSpans              regions_;
 
         std::vector<ClassAddress> classes_;
         LiveCells                 cells_;

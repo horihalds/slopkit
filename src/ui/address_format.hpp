@@ -60,6 +60,26 @@ namespace slopkit::ui
         std::size_t             main_index_ {};
     };
 
+    // The target's memory map as the row readout needs it: which region an
+    // address lands in, and so what kind of memory that address belongs to.
+    class RegionSpans
+    {
+    public:
+        void set_regions(std::span<const process::RegionInfo> regions);
+
+        // The region that holds this address, readable or not; null when no
+        // region does.
+        [[nodiscard]] const process::RegionInfo* containing(std::uint64_t address) const;
+
+    private:
+        std::vector<process::RegionInfo> regions_;
+    };
+
+    // The kind of memory a region is, as the pointer field tags it: an executable
+    // mapping is `CODE`, the stack `STACK`, the heap `HEAP`, another mapped file
+    // `DATA`, anonymous writable memory `HEAP` and the rest `ETC`.
+    [[nodiscard]] std::string_view region_label(const process::RegionInfo& region);
+
     [[nodiscard]] QString format_module_relative(const ModuleSpan& span, std::uint64_t address);
 
     [[nodiscard]] QString format_module_relative_full(const ModuleSpan& span, std::uint64_t address);

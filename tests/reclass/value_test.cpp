@@ -257,6 +257,29 @@ TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]
     REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false) == folded);
 }
 
+TEST_CASE("a hex node's readings are its float, its value and its raw bits", "[reclass]")
+{
+    using slopkit::reclass::format_node_readings;
+
+    // The reading the grid shows beside a hex node's bytes, without the space
+    // the value cell prefixes it with.
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "0.000  42  0x2A");
+    REQUIRE(format_node_readings(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}))
+            == "0.000  4194368  0x400040");
+
+    // A null value stops after the float, a negative one is signed, and a float
+    // that is not usable reads as the reference's "#####".
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00})) == "0.000  0");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0xFF, 0xFF, 0xFF, 0xFF})) == "#####  -1  0xFFFFFFFF");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x80, 0x4F}))
+            == "#####  1333788672  0x4F800000");
+
+    // Only a hex32/hex64 cell has readings, and a span that does not cover the
+    // kind has none.
+    REQUIRE(format_node_readings(NodeKind::int32, bytes_of({0x2A, 0x00, 0x00, 0x00})).empty());
+    REQUIRE(format_node_readings(NodeKind::hex64, bytes_of({0x01, 0x02})).empty());
+}
+
 TEST_CASE("malformed values are refused with a reason", "[reclass]")
 {
     REQUIRE_FALSE(parse_node_value(NodeKind::int32, "").has_value());

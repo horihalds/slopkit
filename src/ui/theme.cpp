@@ -74,6 +74,7 @@ namespace slopkit::ui
         theme.grid_address      = rgb(0.52f, 0.85f, 0.58f);
         theme.grid_ascii        = rgb(0.45f, 0.68f, 0.98f);
         theme.grid_comment      = rgb(0.52f, 0.85f, 0.58f);
+        theme.grid_pointer      = rgb(0.95f, 0.45f, 0.45f);
         return theme;
     }
 
@@ -112,6 +113,7 @@ namespace slopkit::ui
         theme.grid_address      = rgb(0.10f, 0.45f, 0.25f);
         theme.grid_ascii        = rgb(0.13f, 0.35f, 0.78f);
         theme.grid_comment      = rgb(0.10f, 0.45f, 0.25f);
+        theme.grid_pointer      = rgb(0.78f, 0.22f, 0.22f);
         return theme;
     }
 

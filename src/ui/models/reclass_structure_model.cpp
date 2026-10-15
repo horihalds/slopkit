@@ -40,11 +40,11 @@ namespace slopkit::ui::models
             return row.unknown_class || row.cycle || row.too_deep;
         }
 
-        // A note is drawn the way it would be written in source: prefixed and
-        // left empty when there is no note to draw.
+        // A note is drawn the way it would be written in source: prefixed, and
+        // drawn as the bare marker when there is no note to draw.
         QString comment_text(const std::string& comment)
         {
-            return comment.empty() ? QString {} : QStringLiteral("// ") + to_qstring(comment);
+            return comment.empty() ? QStringLiteral("//") : QStringLiteral("// ") + to_qstring(comment);
         }
     }
 
@@ -470,14 +470,16 @@ namespace slopkit::ui::models
             case offset:
                 return QString::fromStdString(std::format("{:X}", row->offset));
             case type:
-                return type_text(*row, node);
+                // A hex node's own width is what its byte count shows, so the
+                // kind cell stays empty for it.
+                return reclass::is_hex_kind(node.kind()) ? QVariant {} : type_text(*row, node);
             case name:
                 return to_qstring(node.name);
             case comment:
                 return comment_text(node.comment);
             default:
-                // The address, ascii and value columns are answered by the value
-                // model.
+                // The address, ascii, value, hints and pointer columns are
+                // answered by the value model.
                 return {};
             }
         case Qt::EditRole:
@@ -517,7 +519,9 @@ namespace slopkit::ui::models
             case name:
                 return to_qstring(node.name);
             case comment:
-                return comment_text(node.comment);
+                // The tooltip carries the note alone: the marker is the grid's
+                // own decoration.
+                return to_qstring(node.comment);
             default:
                 return {};
             }
@@ -548,6 +552,10 @@ namespace slopkit::ui::models
             return tr("Value");
         case comment:
             return tr("Comment");
+        case hints:
+            return tr("Hints");
+        case pointer:
+            return tr("Pointer");
         default:
             return {};
         }

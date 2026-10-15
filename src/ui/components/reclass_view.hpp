@@ -122,12 +122,14 @@ namespace slopkit::ui::components
 
         void update_layout();
         void update_rows();
-        // Sizes the offset, type and name columns to the text the flattened rows
-        // draw; a structure change, never a live pass.
+        // Sizes every column to the text the flattened rows draw - the hints and
+        // the pointer field from the kinds rather than from what a live pass
+        // happens to read. A structure change, never a live pass.
         void update_content_widths();
         void update_view();
-        // Places the measured columns for the current viewport width; the value
-        // column owns the slack, so this follows a resize as well.
+        // Places the measured columns for the current viewport width, so the
+        // fields keep one shared gutter and the slack trails after the pointer;
+        // a resize re-runs this and nothing else.
         void update_columns();
         void flatten(const QModelIndex& parent, std::size_t depth);
         void resolve_identity();
@@ -167,10 +169,11 @@ namespace slopkit::ui::components
         int                    row_height_ {1};
         int                    column_x_[models::ReclassStructureModel::column_count] {};
         int                    column_width_[models::ReclassStructureModel::column_count] {};
-        // The widest `// …` note the shown class draws, before update_columns()
-        // clamps it to the viewport; kept between resizes like the other
-        // measured widths.
+        // The widest `// …` note and the widest value the shown class draws,
+        // before update_columns() clamps the note and gives the value field up to
+        // the pane; kept between resizes like the other measured widths.
         int                    comment_content_ {};
+        int                    value_content_ {};
 
         std::vector<std::size_t> selected_;
         std::size_t              current_ {};

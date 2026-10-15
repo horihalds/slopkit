@@ -41,6 +41,11 @@ namespace slopkit::reclass
     [[nodiscard]] std::vector<ValuePart>
     format_node_value_parts(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
 
+    // The readings a hex32/hex64 cell draws beside its bytes - the float, the
+    // integer and the raw bits - without the space the value cell prefixes them
+    // with; empty for every other kind.
+    [[nodiscard]] std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes);
+
     // The same value as the grid draws it: the codec's text beside the readings
     // the reference shows next to it - an integer's hex form, a hex node's float
     // and integer readings, a pointer's target.

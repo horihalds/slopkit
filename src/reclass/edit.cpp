@@ -1,9 +1,11 @@
 #include "reclass/edit.hpp"
 
 #include <algorithm>
+#include <format>
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <string>
 
 #include "reclass/nodes/container.hpp"
 #include "reclass/nodes/node.hpp"
@@ -45,6 +47,22 @@ namespace slopkit::reclass
         }
     }
 
+    std::string auto_node_name(std::size_t id)
+    {
+        return std::format("N{:08}", id);
+    }
+
+    NodePtr create_node(Project& project, NodeKind kind)
+    {
+        NodePtr node = make_node(kind);
+        node->id     = project.next_node_id();
+        if (!is_hex_kind(kind))
+        {
+            node->name = auto_node_name(node->id);
+        }
+        return node;
+    }
+
     void change_node_kind(Project& project, std::vector<NodePtr>& nodes, std::size_t index, NodeKind kind)
     {
         if (index >= nodes.size())
@@ -63,6 +81,13 @@ namespace slopkit::reclass
         if (is_class_kind(kind))
         {
             replacement->class_name = nodes[index]->class_name;
+        }
+        // A node that has just been given a type and has no name of its own takes
+        // the automatic one; a name the user typed is never touched, and a hex
+        // node stays unnamed.
+        if (replacement->name.empty() && !is_hex_kind(kind))
+        {
+            replacement->name = auto_node_name(replacement->id);
         }
         nodes[index] = std::move(replacement);
 

@@ -33,6 +33,7 @@ namespace
     using slopkit::test::module_image;
     using slopkit::test::node_of;
     using slopkit::test::reading_for;
+    using slopkit::test::region_of;
     using slopkit::test::stage_bytes;
     using slopkit::ui::LiveReading;
     using slopkit::ui::LiveRequest;
@@ -40,8 +41,9 @@ namespace
     using slopkit::ui::models::ReclassStructureModel;
     using slopkit::ui::models::ReclassValueModel;
 
-    constexpr std::uint64_t kAppBase  = 0x400000;
-    constexpr std::uint64_t kHeapBase = 0x600000;
+    constexpr std::uint64_t kAppBase   = 0x400000;
+    constexpr std::uint64_t kHeapBase  = 0x600000;
+    constexpr std::uint64_t kStackBase = 0x7FF00000;
 
     // Player { int8 tag; class_pointer next; } and Point { int32 x; int32 y; },
     // with Player pinned at app+0x10.
@@ -52,7 +54,14 @@ namespace
         {
             target = slopkit::test::fake_target();
             attach_session(worker);
-            values.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)});
+            // The image, an anonymous writable block and the stack: the kinds of
+            // memory the pointer field tags an address with.
+            values.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)},
+                               std::vector<slopkit::process::RegionInfo> {
+                                   region_of(kAppBase, 0x1000, "/app", true),
+                                   region_of(kHeapBase, 0x1000, {}, false, true),
+                                   region_of(kStackBase, 0x1000, "[stack]"),
+                               });
             values.set_structure(structure);
 
             project.add_class("Point", "app+0x20");
@@ -197,20 +206,28 @@ TEST_CASE("each node's value is sliced out of its block at its offset", "[reclas
     Fixture fixture;
     fixture.resolve();
 
-    fixture.write(fixture.player_address(), {0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A});
+    // The class pointer's bytes name the heap, so its field tags the region.
+    fixture.write(fixture.player_address(), {0x2A, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00});
     fixture.pass();
 
     // Each cell draws the node's value: the integer beside its hex form, the
     // class pointer as the address it holds.
-    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("42  0x2A"));
-    CHECK(fixture.values.value_text(fixture.row(1)) == QStringLiteral("-> 0x2A00000000000000"));
+    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 42  0x2A"));
+    // A pointer's address is the pointer field's; the value cell stays empty.
+    CHECK(fixture.values.value_text(fixture.row(1)).isEmpty());
+    CHECK(fixture.values.pointer_text(fixture.row(1)) == QStringLiteral("-> <HEAP>0x0000000000600000"));
+
+    // An address in no region at all is no pointer: the field stays empty.
+    fixture.write(fixture.player_address(), {0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A});
+    fixture.pass();
+    CHECK(fixture.values.pointer_text(fixture.row(1)).isEmpty());
 
     // The address column follows the node's own offset inside the class.
     CHECK(fixture.values.address_text(fixture.row(1)) == QStringLiteral("0x0000000000400011"));
     CHECK(fixture.values.node_address(fixture.row(1)) == fixture.player_address() + 1);
 }
 
-TEST_CASE("a hex node whose bytes land in a module hints at the pointer", "[reclass][ui]")
+TEST_CASE("a hex node whose bytes name a module address fills the pointer field", "[reclass][ui]")
 {
     application();
 
@@ -231,25 +248,32 @@ TEST_CASE("a hex node whose bytes land in a module hints at the pointer", "[recl
 
     const QString text = fixture.values.value_text(fixture.row(2));
     CHECK(text.startsWith(QStringLiteral("40 00 40 00")));
-    CHECK(text.endsWith(QStringLiteral("-> 0x0000000000400040")));
+    CHECK_FALSE(text.contains(QStringLiteral("->")));
 
-    // The cell's runs split the bytes from the readings; the module pointer is
-    // one more reading run.
+    // The readings are the hints field's and the plausible pointer is the
+    // pointer field's.
+    const QString hints = fixture.values.hint_text(fixture.row(2));
+    CHECK(hints.startsWith(QStringLiteral("(")));
+    CHECK(hints.endsWith(QStringLiteral(")")));
+    CHECK(hints.contains(QStringLiteral("0x400040")));
+    CHECK(fixture.values.pointer_text(fixture.row(2)) == QStringLiteral("-> <CODE>0x0000000000400040"));
+    CHECK(fixture.values.hint_text(fixture.row(1)).isEmpty());
+    CHECK(fixture.values.pointer_text(fixture.row(0)).isEmpty());
+
+    // The value cell's runs are its own byte pairs and nothing else.
     const std::vector<slopkit::reclass::ValuePart> parts = fixture.values.value_parts(fixture.row(2));
-    REQUIRE(parts.size() == 10);
+    REQUIRE(parts.size() == 8);
     for (std::size_t index = 0; index < 8; ++index)
     {
         CHECK_FALSE(parts[index].reading);
         CHECK(parts[index].byte == index);
     }
-    CHECK(parts[8].reading);
-    CHECK_FALSE(parts[8].byte.has_value());
-    CHECK(parts[9].reading);
-    CHECK(parts[9].text.find("-> 0x0000000000400040") != std::string::npos);
-
-    // A value outside every module is only its own readings.
+    // A value outside every module or region is drawn by the value cell alone,
+    // with the readings still in the hints field.
     fixture.write(fixture.player_address() + 9, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00});
     fixture.pass();
+    CHECK(fixture.values.hint_text(fixture.row(2)).contains(QStringLiteral("0x77665544332211")));
+    CHECK(fixture.values.pointer_text(fixture.row(2)).isEmpty());
     CHECK_FALSE(fixture.values.value_text(fixture.row(2)).contains(QStringLiteral("->")));
 }
 
@@ -366,8 +390,8 @@ TEST_CASE("an expanded class pointer is read one pass after its pointer changes"
     CHECK(requests[1].size == 8);
 
     REQUIRE(fixture.structure.rowCount(fixture.structure.index(1, 0)) == 2);
-    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("7  0x00000007"));
-    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("9  0x00000009"));
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 7  0x00000007"));
+    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 9  0x00000009"));
     CHECK(fixture.values.node_address(fixture.child(1, 1)) == kHeapBase + 4);
     CHECK(fixture.values.address_text(fixture.child(1, 1)) == QStringLiteral("0x0000000000600004"));
 }

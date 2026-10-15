@@ -12,7 +12,9 @@
 namespace
 {
     using slopkit::reclass::append_bytes;
+    using slopkit::reclass::auto_node_name;
     using slopkit::reclass::change_node_kind;
+    using slopkit::reclass::create_node;
     using slopkit::reclass::layout_class;
     using slopkit::reclass::NodeKind;
     using slopkit::reclass::pad_nodes;
@@ -170,4 +172,42 @@ TEST_CASE("re-typing an array pads the bytes it freed", "[reclass]")
             == std::vector<NodeKind> {
                 NodeKind::int8, NodeKind::hex64, NodeKind::hex32, NodeKind::hex16, NodeKind::hex8, NodeKind::int32});
     REQUIRE(offsets_of(project, 0) == std::vector<std::size_t> {0, 1, 9, 13, 15, 16});
+}
+
+TEST_CASE("a node that is given a type is named after its own id", "[reclass]")
+{
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+
+    // The name carries the node's own id, zero-padded to eight digits, so it
+    // reads in order and never shifts when a sibling is inserted in front of it.
+    CHECK(auto_node_name(1) == "N00000001");
+    CHECK(auto_node_name(4321) == "N00004321");
+
+    // A node created with a type carries it; a hex node stays unnamed, because
+    // its kind cell draws nothing and its byte count already shows its width.
+    slopkit::reclass::NodePtr typed = create_node(project, NodeKind::int32);
+    CHECK(typed->id != 0);
+    CHECK(typed->name == auto_node_name(typed->id));
+    slopkit::reclass::NodePtr raw = create_node(project, NodeKind::hex64);
+    CHECK(raw->name.empty());
+
+    player.nodes.push_back(node_of(project, NodeKind::hex64));
+    player.nodes.push_back(node_of(project, NodeKind::hex16, "raw"));
+
+    // Re-typing an unnamed node names it...
+    change_node_kind(project, player.nodes, 0, NodeKind::int32);
+    REQUIRE(kinds_of(player.nodes) == std::vector<NodeKind> {NodeKind::int32, NodeKind::hex32, NodeKind::hex16});
+    CHECK(player.nodes[0]->name == auto_node_name(player.nodes[0]->id));
+
+    // ...a name the user typed is kept, whichever kind it is retyped to...
+    change_node_kind(project, player.nodes, 2, NodeKind::uint32);
+    REQUIRE(player.nodes[2]->kind() == NodeKind::uint32);
+    CHECK(player.nodes[2]->name == "raw");
+
+    // ...and a node that already has one is never re-numbered.
+    const std::string first = player.nodes[0]->name;
+    change_node_kind(project, player.nodes, 0, NodeKind::int64);
+    CHECK(player.nodes[0]->name == first);
 }

@@ -139,4 +139,8 @@ namespace slopkit::reclass
 
     [[nodiscard]] bool is_hex_kind(NodeKind kind) noexcept;
 
+    // The kinds whose own value is an address: the grid draws it in its pointer
+    // field and leaves the value cell empty.
+    [[nodiscard]] bool is_pointer_kind(NodeKind kind) noexcept;
+
 }

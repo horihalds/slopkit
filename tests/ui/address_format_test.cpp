@@ -259,3 +259,33 @@ TEST_CASE("address text resolves symbol names", "[ui]")
     CHECK(slopkit::ui::parse_address_text("deadbeef", spans) == std::optional<std::uint64_t> {0xDEADBEEF});
     CHECK_FALSE(slopkit::ui::parse_address_text("hp", spans).has_value());
 }
+
+TEST_CASE("the region spans name the kind of memory an address lands in", "[ui]")
+{
+    slopkit::ui::RegionSpans spans;
+    CHECK(spans.containing(0x400000) == nullptr);
+
+    // Deliberately out of order; the map sorts by the region's start.
+    spans.set_regions(std::vector<slopkit::process::RegionInfo> {
+        slopkit::test::region_of(0x600000, 0x1000, {}, false, true),
+        slopkit::test::region_of(0x400000, 0x1000, "/app", true),
+        slopkit::test::region_of(0x7FF00000, 0x1000, "[stack]"),
+        slopkit::test::region_of(0x700000, 0x1000, "[heap]"),
+        slopkit::test::region_of(0x800000, 0x1000, "/data.bin"),
+        slopkit::test::region_of(0x900000, 0x1000),
+    });
+
+    // The last byte of a region belongs to it; the one past it is outside.
+    REQUIRE(spans.containing(0x400000) != nullptr);
+    CHECK(spans.containing(0x400FFF) != nullptr);
+    CHECK(spans.containing(0x401000) == nullptr);
+    CHECK(spans.containing(0x3FFFFF) == nullptr);
+
+    // Each region reads as the kind of memory it is.
+    CHECK(slopkit::ui::region_label(*spans.containing(0x400000)) == "CODE");
+    CHECK(slopkit::ui::region_label(*spans.containing(0x600000)) == "HEAP");
+    CHECK(slopkit::ui::region_label(*spans.containing(0x700000)) == "HEAP");
+    CHECK(slopkit::ui::region_label(*spans.containing(0x7FF00000)) == "STACK");
+    CHECK(slopkit::ui::region_label(*spans.containing(0x800000)) == "DATA");
+    CHECK(slopkit::ui::region_label(*spans.containing(0x900000)) == "ETC");
+}

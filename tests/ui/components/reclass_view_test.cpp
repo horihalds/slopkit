@@ -49,6 +49,7 @@ namespace
     using slopkit::test::module_image;
     using slopkit::test::node_of;
     using slopkit::test::reading_for;
+    using slopkit::test::region_of;
     using slopkit::test::stage_bytes;
     using slopkit::ui::LiveReading;
     using slopkit::ui::LiveRequest;
@@ -69,7 +70,10 @@ namespace
         {
             target = slopkit::test::fake_target();
             attach_session(worker);
-            values.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)});
+            values.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)},
+                               std::vector<slopkit::process::RegionInfo> {
+                                   region_of(kAppBase, 0x1000, "/app", true),
+                               });
             values.set_structure(structure);
 
             project.add_class("Point", "app+0x20");
@@ -263,7 +267,7 @@ TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][
 
     Fixture     fixture;
     ReClassView view {fixture.proxy, fixture.structure, fixture.values};
-    view.resize(700, 200);
+    view.resize(1000, 200);
     view.show();
     QCoreApplication::processEvents();
 
@@ -273,28 +277,45 @@ TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][
     CHECK(view.structure() == &fixture.structure);
     CHECK(view.row_count() == 2);
 
-    // The columns run left to right and none of them is resizable.
-    for (int column = 1; column < ReclassStructureModel::column_count; ++column)
-    {
-        CHECK(view.column_x(column) > view.column_x(column - 1));
-    }
-    CHECK(view.column_width(ReclassStructureModel::address) > 0);
-    CHECK(view.column_width(ReclassStructureModel::offset) > 0);
-    CHECK(view.column_width(ReclassStructureModel::name) > 0);
-
-    // The offset is first and the ascii view sits between the address and the
-    // type, so the row reads as an offset, an address, its bytes and the kind.
-    CHECK(view.column_width(ReclassStructureModel::ascii) > 0);
+    // The fields stand in the order the row reads: offset, address, ascii, type,
+    // name, value, comment, hints, pointer.
     CHECK(ReclassStructureModel::offset < ReclassStructureModel::address);
     CHECK(ReclassStructureModel::address < ReclassStructureModel::ascii);
     CHECK(ReclassStructureModel::ascii < ReclassStructureModel::type);
+    CHECK(ReclassStructureModel::type < ReclassStructureModel::name);
+    CHECK(ReclassStructureModel::name < ReclassStructureModel::value);
+    CHECK(ReclassStructureModel::value < ReclassStructureModel::comment);
+    CHECK(ReclassStructureModel::comment < ReclassStructureModel::hints);
+    CHECK(ReclassStructureModel::hints < ReclassStructureModel::pointer);
 
-    // The value column owns the pane's slack with the comment column pinned
-    // against the right edge, so a reading wider than its text still fits.
-    CHECK(view.column_x(ReclassStructureModel::comment)
-          == view.column_x(ReclassStructureModel::value) + view.column_width(ReclassStructureModel::value));
-    CHECK(view.column_x(ReclassStructureModel::comment) + view.column_width(ReclassStructureModel::comment)
-          <= view.viewport()->width());
+    // Every field starts where the one before it ended, so the one gutter each
+    // column was measured with is all the space between them.
+    for (int column = 1; column < ReclassStructureModel::column_count; ++column)
+    {
+        CHECK(view.column_x(column) == view.column_x(column - 1) + view.column_width(column - 1));
+    }
+
+    CHECK(view.column_width(ReclassStructureModel::offset) > 0);
+    CHECK(view.column_width(ReclassStructureModel::address) > 0);
+    CHECK(view.column_width(ReclassStructureModel::ascii) > 0);
+    CHECK(view.column_width(ReclassStructureModel::type) > 0);
+    CHECK(view.column_width(ReclassStructureModel::name) > 0);
+    CHECK(view.column_width(ReclassStructureModel::value) > 0);
+    CHECK(view.column_width(ReclassStructureModel::comment) > 0);
+
+    // The class draws no hex cell, so the hints field collapses to nothing; the
+    // pointer field is the width the class's pointer row needs.
+    CHECK(view.column_width(ReclassStructureModel::hints) == 0);
+    CHECK(view.column_x(ReclassStructureModel::pointer) == view.column_x(ReclassStructureModel::hints));
+    CHECK(view.column_width(ReclassStructureModel::pointer) > 0);
+
+    // A row with no note draws the bare marker.
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(0), ReclassStructureModel::comment)).toStdString() == "//");
+
+    // The pane's leftover width trails after the pointer field instead of being
+    // swallowed by the value cell.
+    const int end = view.column_x(ReclassStructureModel::pointer) + view.column_width(ReclassStructureModel::pointer);
+    CHECK(end < view.viewport()->width());
 
     const QModelIndex name_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::name);
     const int         address_x = view.column_x(ReclassStructureModel::address);
@@ -305,14 +326,15 @@ TEST_CASE("the class view holds fixed columns and paints no header", "[reclass][
 
     CHECK(view.cell_text(name_cell).toStdString() == "tag");
 
-    // The widths never follow the pane: only the value column answers a resize.
-    view.resize(1000, 200);
+    // The widths follow the class, never the pane: a wider pane only moves the
+    // slack.
+    view.resize(1400, 200);
     QCoreApplication::processEvents();
 
     CHECK(view.column_x(ReclassStructureModel::address) == address_x);
     CHECK(view.column_width(ReclassStructureModel::address) == address_w);
-    CHECK(view.column_width(ReclassStructureModel::value) > value_w);
-    CHECK(view.column_x(ReclassStructureModel::comment) > comment_x);
+    CHECK(view.column_width(ReclassStructureModel::value) == value_w);
+    CHECK(view.column_x(ReclassStructureModel::comment) == comment_x);
 
     // No header band: the first row starts at the view's own top margin.
     CHECK(view.cell_rect(name_cell).value().top() == first_top);
@@ -377,6 +399,13 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
     fixture.pass();
     QCoreApplication::processEvents();
     CHECK(view.column_width(ReclassStructureModel::name) == settled);
+
+    // The reading that arrived on the live pass fits its own field, which is
+    // sized for the widest reading a hex cell can draw rather than for what the
+    // class happens to read now.
+    const QModelIndex raw_hint = fixture.cell(fixture.node_id(2), ReclassStructureModel::hints);
+    CHECK_FALSE(view.cell_text(raw_hint).isEmpty());
+    CHECK(view.hover_full_text(view.cell_rect(raw_hint).value().center()).isEmpty());
 
     // The offset and ascii columns sit on their content box, so the one-digit
     // offset of `tag` and the two-digit one of `tail` leave the same gap before
@@ -618,7 +647,7 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
 
     const QModelIndex value_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::value);
     REQUIRE(fixture.values.editable(*fixture.structure.row_for(value_cell)));
-    CHECK(view.cell_text(value_cell).toStdString() == "42  0x2A");
+    CHECK(view.cell_text(value_cell).toStdString() == "= 42  0x2A");
 
     // The value cell of an editable node offers itself to the editor, and so
     // does the node's own name.
@@ -646,7 +675,7 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
     CHECK(fixture.holds(fixture.player_address(), {0xF9, 0xAA, 0xAA, 0xAA}));
 
     fixture.pass();
-    CHECK(view.cell_text(value_cell).toStdString() == "-7  0xF9");
+    CHECK(view.cell_text(value_cell).toStdString() == "= -7  0xF9");
 }
 
 TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")
@@ -734,36 +763,46 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     CHECK(editor->text().toStdString() == "health");
 }
 
-TEST_CASE("a reading wider than its column is readable from the tooltip", "[reclass][ui][view]")
+TEST_CASE("a value wider than its column is readable from the tooltip", "[reclass][ui][view]")
 {
     application();
 
     using slopkit::ui::models::ReclassStructureModel;
 
-    Fixture     fixture;
+    Fixture fixture;
+
+    // A hex64 node after Player's own fields, its dump the widest value the
+    // class draws.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
     ReClassView view {fixture.proxy, fixture.structure, fixture.values};
-    view.resize(900, 200);
+    view.resize(1600, 200);
     view.show();
     QCoreApplication::processEvents();
 
-    fixture.put(fixture.player_address(), {0x00, 0x00, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00});
     fixture.resolve();
+    fixture.put(fixture.player_address() + 9, {0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89});
     fixture.pass();
 
-    const QModelIndex pointer_value = fixture.cell(fixture.node_id(1), ReclassStructureModel::value);
-    CHECK(view.cell_text(pointer_value).toStdString() == "-> 0x00000000002A0000");
+    const QModelIndex value_cell = fixture.cell(fixture.node_id(2), ReclassStructureModel::value);
+    CHECK(view.cell_text(value_cell).toStdString() == "AB CD EF 01 23 45 67 89");
 
     // A cell whose text fits carries no tooltip...
-    CHECK(view.hover_full_text(view.cell_rect(pointer_value).value().center()).isEmpty());
+    CHECK(view.hover_full_text(view.cell_rect(value_cell).value().center()).isEmpty());
 
-    view.resize(300, 200);
+    // ...and a pane too narrow for the row takes the value field down first, so
+    // its text overflows and is read from the full text instead.
+    const int value_width = view.column_width(ReclassStructureModel::value);
+    view.resize(900, 200);
     QCoreApplication::processEvents();
 
-    // ...and one that overflows is read from its full text.
-    const QModelIndex narrow_value = fixture.cell(fixture.node_id(1), ReclassStructureModel::value);
-    CHECK(view.hover_full_text(view.cell_rect(narrow_value).value().center()).toStdString()
-          == view.cell_text(narrow_value).toStdString());
-    CHECK_FALSE(view.hover_full_text(view.cell_rect(narrow_value).value().center()).isEmpty());
+    CHECK(view.column_width(ReclassStructureModel::value) < value_width);
+    CHECK(view.hover_full_text(view.cell_rect(value_cell).value().center()).toStdString()
+          == view.cell_text(value_cell).toStdString());
+    CHECK_FALSE(view.hover_full_text(view.cell_rect(value_cell).value().center()).isEmpty());
 }
 
 TEST_CASE("the grid stripes its rows and colours the cells the model colours", "[reclass][ui][view]")
@@ -818,7 +857,7 @@ TEST_CASE("a moved hex byte pair warns while its neighbour keeps the grid colour
     fixture.structure.set_class(1);
 
     PaintedView view {fixture.proxy, fixture.structure, fixture.values};
-    view.resize(700, 200);
+    view.resize(1000, 200);
     view.show();
     QCoreApplication::processEvents();
 
@@ -859,7 +898,7 @@ TEST_CASE("a moved hex byte pair warns while its neighbour keeps the grid colour
     CHECK_FALSE(paints_ink(image, second, theme.warning));
 }
 
-TEST_CASE("the readings beside a moved hex value keep the readout colour", "[reclass][ui][view]")
+TEST_CASE("the hint field paints a hex node's readings in the readout colour", "[reclass][ui][view]")
 {
     application();
 
@@ -872,39 +911,32 @@ TEST_CASE("the readings beside a moved hex value keep the readout colour", "[rec
     fixture.structure.set_class(1);
 
     PaintedView view {fixture.proxy, fixture.structure, fixture.values};
-    view.resize(1400, 200);
+    view.resize(1600, 200);
     view.show();
     QCoreApplication::processEvents();
 
     fixture.resolve();
     fixture.put(fixture.player_address(), {0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1A, 0x2B, 0x3C, 0x4D});
     fixture.pass();
+    // The hex32's second byte moves.
     fixture.put(fixture.player_address() + 10, {0x00});
     fixture.pass();
     QCoreApplication::processEvents();
 
     const QModelIndex value_cell = fixture.cell(fixture.node_id(2), ReclassStructureModel::value);
-    const QRect       cell       = view.cell_rect(value_cell).value();
+    const QModelIndex hint_cell  = fixture.cell(fixture.node_id(2), ReclassStructureModel::hints);
 
     QImage image(view.viewport()->size(), QImage::Format_ARGB32);
     image.fill(Qt::transparent);
     view.paint_into(image);
 
-    const QFontMetrics mono(slopkit::ui::mono_font());
-    const int          left = cell.left() + 4;
-    const int          w0   = mono.horizontalAdvance(QStringLiteral("1A"));
-    const int          w1   = mono.horizontalAdvance(QStringLiteral(" 00"));
-    const int          w2   = mono.horizontalAdvance(QStringLiteral(" 3C"));
-    const int          w3   = mono.horizontalAdvance(QStringLiteral(" 4D"));
-
-    const QRect second(left + w0, cell.top(), w1, cell.height());
-    const int   reading_x = left + w0 + w1 + w2 + w3;
-    const QRect reading(reading_x, cell.top(), cell.left() + cell.width() - reading_x, cell.height());
-
     const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
-    CHECK(paints_ink(image, second, theme.warning));
-    CHECK(paints_ink(image, reading, theme.datatype_readout));
-    CHECK_FALSE(paints_ink(image, reading, theme.warning));
+
+    // The moved byte warns in the value field, while the readings sit apart from
+    // it in the readout colour and take no part in the warning.
+    CHECK(paints_ink(image, view.cell_rect(value_cell).value(), theme.warning));
+    CHECK(paints_ink(image, view.cell_rect(hint_cell).value(), theme.datatype_readout));
+    CHECK_FALSE(paints_ink(image, view.cell_rect(hint_cell).value(), theme.warning));
 }
 
 TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view]")
@@ -923,7 +955,7 @@ TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view
 
     const std::size_t x_node = fixture.project.classes()[0].nodes[0]->id;
 
-    // Point's int32 x moves, so the whole `43  0x0000002B` is a moved value.
+    // Point's int32 x moves, so the whole `= 43  0x0000002B` is a moved value.
     fixture.resolve();
     fixture.put(kAppBase + 0x20, {0x2A, 0, 0, 0, 0, 0, 0, 0});
     fixture.pass();
@@ -932,7 +964,7 @@ TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view
     QCoreApplication::processEvents();
 
     const QModelIndex value_cell = fixture.cell(x_node, ReclassStructureModel::value);
-    CHECK(view.cell_text(value_cell).toStdString() == "43  0x0000002B");
+    CHECK(view.cell_text(value_cell).toStdString() == "= 43  0x0000002B");
 
     const QRect cell = view.cell_rect(value_cell).value();
     QImage      image(view.viewport()->size(), QImage::Format_ARGB32);

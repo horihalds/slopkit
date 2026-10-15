@@ -34,12 +34,14 @@ namespace slopkit::ui::models
         void refresh_values();
 
     private:
-        // What a row last showed, so a pass can tell what actually moved.
+        // The live columns, so a pass can tell what actually moved.
         struct Shown
         {
             QString address;
             QString ascii;
             QString value;
+            QString hints;
+            QString pointer;
         };
 
         void refresh(const QModelIndex& parent);

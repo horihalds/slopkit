@@ -75,15 +75,20 @@ TEST_CASE("the grid lists the selected class's nodes with derived offsets", "[re
     CHECK(model.headerData(Model::value, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Value"));
     CHECK(model.headerData(Model::comment, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Comment"));
     CHECK(model.headerData(Model::ascii, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Ascii"));
+    CHECK(model.headerData(Model::hints, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Hints"));
+    CHECK(model.headerData(Model::pointer, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Pointer"));
 
-    // The order is the grid's: offset, address, ascii, type, name, value, comment.
-    CHECK(Model::column_count == 7);
+    // The order is the grid's: offset, address, ascii, type, name, value,
+    // comment, hints, pointer.
+    CHECK(Model::column_count == 9);
     CHECK(Model::offset < Model::address);
     CHECK(Model::address < Model::ascii);
     CHECK(Model::ascii < Model::type);
     CHECK(Model::type < Model::name);
     CHECK(Model::name < Model::value);
     CHECK(Model::value < Model::comment);
+    CHECK(Model::comment < Model::hints);
+    CHECK(Model::hints < Model::pointer);
 
     CHECK(cell(model, model.index(0, 0), Model::name) == QStringLiteral("flag"));
     CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Int8"));
@@ -94,9 +99,37 @@ TEST_CASE("the grid lists the selected class's nodes with derived offsets", "[re
     // The live columns belong to the value model.
     CHECK_FALSE(model.data(model.index(0, Model::address), Qt::DisplayRole).isValid());
     CHECK_FALSE(model.data(model.index(0, Model::value), Qt::DisplayRole).isValid());
+    CHECK_FALSE(model.data(model.index(0, Model::hints), Qt::DisplayRole).isValid());
+    CHECK_FALSE(model.data(model.index(0, Model::pointer), Qt::DisplayRole).isValid());
 
     CHECK(model.blocks().size() == 1);
     CHECK(model.blocks()[0].size == 13);
+}
+
+TEST_CASE("a hex node draws no kind and only a name it has", "[reclass][ui]")
+{
+    application();
+
+    Project               project;
+    ReclassStructureModel model {project};
+    project.add_class("Player", "app+0x10");
+    Class& player = project.classes().front();
+    player.nodes.push_back(node_of(project, NodeKind::hex64, ""));
+    player.nodes.push_back(node_of(project, NodeKind::int32, "health"));
+    player.nodes.push_back(node_of(project, NodeKind::hex16, "raw"));
+    model.set_project(project);
+
+    // The byte count already shows a hex node's width, so its kind cell stays
+    // empty while a typed node spells its own out.
+    CHECK(cell(model, model.index(0, 0), Model::type).isEmpty());
+    CHECK(cell(model, model.index(1, 0), Model::type) == QStringLiteral("Int32"));
+    CHECK(cell(model, model.index(2, 0), Model::type).isEmpty());
+
+    // A hex node whose name the user typed still draws it; the unnamed one
+    // stays unnamed.
+    CHECK(cell(model, model.index(0, 0), Model::name).isEmpty());
+    CHECK(cell(model, model.index(1, 0), Model::name) == QStringLiteral("health"));
+    CHECK(cell(model, model.index(2, 0), Model::name) == QStringLiteral("raw"));
 }
 
 TEST_CASE("an expanded class instance inlines its class beneath the node", "[reclass][ui]")
@@ -371,15 +404,15 @@ TEST_CASE("a note is drawn prefixed and each column takes the theme's role", "[r
 
     const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
 
-    // A note is prefixed in both the cell and its full text.
+    // The cell is prefixed with the marker, the tooltip carries the note alone.
     const QModelIndex note = model.index(0, Model::comment);
     CHECK(model.data(note, Qt::DisplayRole).toString() == QStringLiteral("// the player's health"));
-    CHECK(model.data(note, slopkit::ui::widgets::kFullTextRole).toString() == QStringLiteral("// the player's health"));
+    CHECK(model.data(note, slopkit::ui::widgets::kFullTextRole).toString() == QStringLiteral("the player's health"));
     CHECK(model.data(note, Qt::ForegroundRole).value<QColor>() == theme.grid_comment);
 
-    // An empty note stays empty in both roles.
+    // A row with no note draws the bare marker, and its tooltip stays empty.
     const QModelIndex empty = model.index(1, Model::comment);
-    CHECK(model.data(empty, Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.data(empty, Qt::DisplayRole).toString() == QStringLiteral("//"));
     CHECK(model.data(empty, slopkit::ui::widgets::kFullTextRole).toString().isEmpty());
 
     // The offset and the kind's name take their own roles; the name column is
