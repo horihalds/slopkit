@@ -83,7 +83,9 @@ namespace slopkit::ui
 
         setWindowTitle(QStringLiteral("slopkit"));
         setWindowIcon(widgets::application_icon());
-        resize(748, 768);
+        // The found-list bar's six companion buttons set the window's minimum
+        // width, so the default is wide enough to show them all.
+        resize(880, 768);
 
         build_actions();
         build_menus();
@@ -291,6 +293,11 @@ namespace slopkit::ui
                     on_memory_view_requested(scanner_->main_module_address());
                 });
         connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
+        connect(found_list_, &panels::FoundListPanel::logRequested, this, &MainWindow::show_log);
+        connect(found_list_, &panels::FoundListPanel::settingsRequested, this, &MainWindow::show_settings);
+        connect(found_list_, &panels::FoundListPanel::breakpointsRequested, this, &MainWindow::show_breakpoints);
+        connect(found_list_, &panels::FoundListPanel::accessWatchWindowRequested, this, &MainWindow::show_access_watch);
+        connect(found_list_, &panels::FoundListPanel::reclassRequested, this, &MainWindow::show_reclass);
         connect(found_list_, &panels::FoundListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(
             found_list_, &panels::FoundListPanel::changeValuesRequested, this, &MainWindow::on_found_values_requested);
@@ -372,10 +379,11 @@ namespace slopkit::ui
 
     void MainWindow::apply_tab_order()
     {
-        widgets::chain_tab_order({scanner_->tab_order_last(),
-                                  found_list_->tab_order_first(),
-                                  found_list_->tab_order_last(),
-                                  address_list_->tab_order_first()});
+        // Only the two boundaries are linked here: the panel chains its own
+        // widgets, so re-linking its last button after its first would collapse
+        // that chain.
+        widgets::chain_tab_order({scanner_->tab_order_last(), found_list_->tab_order_first()});
+        widgets::chain_tab_order({found_list_->tab_order_last(), address_list_->tab_order_first()});
     }
 
     void MainWindow::build_dialogs()

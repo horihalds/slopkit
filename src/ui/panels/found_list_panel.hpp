@@ -55,6 +55,16 @@ namespace slopkit::ui::panels
 
         void accessWatchRequested(std::uint64_t address, std::size_t width, slopkit::debug::Kind kind);
 
+        void logRequested();
+
+        void settingsRequested();
+
+        void breakpointsRequested();
+
+        void accessWatchWindowRequested();
+
+        void reclassRequested();
+
         void browseRequested(quint64 address);
 
         void changeValuesRequested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
@@ -76,6 +86,11 @@ namespace slopkit::ui::panels
         QTableView*                table_view_ {};
         models::FoundResultsModel* model_ {};
         QPushButton*               memory_view_button_ {};
+        QPushButton*               reclass_button_ {};
+        QPushButton*               breakpoints_button_ {};
+        QPushButton*               access_watch_button_ {};
+        QPushButton*               log_button_ {};
+        QPushButton*               settings_button_ {};
 
         QAction* edit_value_action_ {};
         QAction* browse_region_action_ {};

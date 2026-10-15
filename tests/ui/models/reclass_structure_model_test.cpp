@@ -342,16 +342,49 @@ TEST_CASE("a node's name is edited in place through the model", "[reclass][ui]")
     REQUIRE(messages.size() == 1);
     CHECK(messages.front() == QStringLiteral("Node renamed."));
 
-    // An empty name is refused and the node keeps the name it had.
-    CHECK_FALSE(model.setData(name_cell, QStringLiteral("   "), Qt::EditRole));
-    CHECK(project.classes()[1].nodes[0]->name == "health");
+    // A name is free text, so a name that is only spaces clears it and the row
+    // draws nothing where it was.
+    CHECK(model.setData(name_cell, QStringLiteral("   "), Qt::EditRole));
+    CHECK(project.classes()[1].nodes[0]->name.empty());
+    CHECK(cell(model, model.index(0, 0), Model::name) == QString());
+    CHECK(announced.row() == 0);
+    CHECK(announced.column() == Model::name);
     REQUIRE(messages.size() == 2);
-    CHECK(messages.back() == QStringLiteral("A node name is required."));
+    CHECK(messages.back() == QStringLiteral("Node name cleared."));
 
     // No other column and no other role takes an edit.
     CHECK_FALSE(model.setData(model.index(0, Model::offset), QStringLiteral("9"), Qt::EditRole));
     CHECK_FALSE(model.setData(name_cell, QStringLiteral("other"), Qt::DisplayRole));
-    CHECK(project.classes()[1].nodes[0]->name == "health");
+    CHECK(project.classes()[1].nodes[0]->name.empty());
+}
+
+TEST_CASE("clearing a node's name leaves the rest of the node alone", "[reclass][ui]")
+{
+    application();
+
+    Project               project = two_classes();
+    ReclassStructureModel model {project};
+    model.set_class(1);
+
+    Class& player            = project.classes()[1];
+    player.nodes[0]->comment = "the player's tag";
+    player.nodes[0]->hex     = true;
+    model.rebuild();
+
+    const QModelIndex name_cell = model.index(0, Model::name);
+    const QString     offset    = cell(model, model.index(1, 0), Model::offset);
+    CHECK(cell(model, model.index(0, 0), Model::name) == QStringLiteral("tag"));
+
+    CHECK(model.setData(name_cell, QString(), Qt::EditRole));
+    CHECK(player.nodes[0]->name.empty());
+    // The cleared name takes nothing else with it: not the note, not the hex
+    // display flag, not the hidden flag and not any offset.
+    CHECK(player.nodes[0]->comment == "the player's tag");
+    CHECK(player.nodes[0]->hex);
+    CHECK_FALSE(player.nodes[0]->hidden);
+    CHECK(cell(model, model.index(0, 0), Model::comment) == QStringLiteral("// the player's tag"));
+    CHECK(cell(model, model.index(1, 0), Model::offset) == offset);
+    CHECK(model.rowCount() == 2);
 }
 
 TEST_CASE("a node's note is edited in place through the model", "[reclass][ui]")

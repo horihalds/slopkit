@@ -402,6 +402,12 @@ namespace slopkit::ui::dialogs
                 {
                     action->setIcon(icon);
                 }
+                // The grid answers these combinations itself, so the menu entry
+                // only documents the one for its own kind.
+                if (change && reclass::is_hex_kind(entry.kind))
+                {
+                    action->setShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(reclass::kind_size(entry.kind))));
+                }
                 connect(action,
                         &QAction::triggered,
                         this,
@@ -460,6 +466,23 @@ namespace slopkit::ui::dialogs
                     refresh_all();
                     report(tr("Node revealed."), false);
                 });
+
+        connect(grid_,
+                &components::ReClassView::insertBytesRequested,
+                this,
+                [this](std::size_t count)
+                {
+                    // The row menu's entry is only live with one row selected, so
+                    // the hotkey must not fall back to the class head.
+                    if (!grid_->currentIndex().isValid())
+                    {
+                        report(tr("Select a node first."), true);
+                        return;
+                    }
+                    static_cast<void>(insert_bytes(count));
+                });
+
+        connect(grid_, &components::ReClassView::changeKindRequested, this, &ReClassDialog::change_node_kind);
 
         connect(grid_, &components::ReClassView::selectionChanged, this, &ReClassDialog::update_actions);
 
@@ -1144,13 +1167,9 @@ namespace slopkit::ui::dialogs
         }
 
         widgets::InputBoxOptions options;
-        options.title    = tr("Node Name");
-        options.label    = tr("Name");
-        options.initial  = to_qstring(node->name);
-        options.validate = [this](const QString& text)
-        {
-            return text.trimmed().isEmpty() ? tr("A node name is required.") : QString();
-        };
+        options.title   = tr("Node Name");
+        options.label   = tr("Name");
+        options.initial = to_qstring(node->name);
 
         const std::optional<QString> name = widgets::get_text(options, this);
         if (!name.has_value())

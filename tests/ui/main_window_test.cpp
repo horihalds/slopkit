@@ -169,7 +169,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(middle->orientation() == Qt::Horizontal);
     CHECK(middle->count() == 2);
 
-    CHECK(window.size() == QSize(748, 768));
+    CHECK(window.size() == QSize(880, 768));
 
     auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
     REQUIRE(found_list != nullptr);
@@ -274,32 +274,38 @@ TEST_CASE("the main window's tab order follows the scan flow", "[ui]")
         return nullptr;
     };
 
-    auto* first_scan    = button_labelled(*scanner, QStringLiteral("First Scan"));
-    auto* next_scan     = button_labelled(*scanner, QStringLiteral("Next Scan"));
-    auto* undo_scan     = button_labelled(*scanner, QStringLiteral("Undo Scan"));
-    auto* cancel        = button_labelled(*scanner, QStringLiteral("Cancel"));
-    auto* hex           = checkbox_labelled(*scanner, QStringLiteral("Hex"));
-    auto* value         = address_field(*scanner, "Value");
-    auto* upper_value   = address_field(*scanner, "Upper value");
-    auto* scan_type     = combo_showing(*scanner, QStringLiteral("Exact Value"));
-    auto* value_type    = combo_showing(*scanner, QStringLiteral("4 Bytes"));
-    auto* memory_region = range_combo(*scanner);
-    auto* start_address = address_field(*scanner, "Start address");
-    auto* stop_address  = address_field(*scanner, "Stop address");
-    auto* writable      = checkbox_labelled(*scanner, QStringLiteral("Writable"));
-    auto* executable    = checkbox_labelled(*scanner, QStringLiteral("Executable"));
-    auto* copy_on_write = checkbox_labelled(*scanner, QStringLiteral("CopyOnWrite"));
-    auto* fast_scan     = checkbox_labelled(*scanner, QStringLiteral("Fast Scan"));
-    auto* alignment     = address_field(*scanner, "Alignment");
-    auto* pause         = checkbox_labelled(*scanner, QStringLiteral("Pause the game while scanning"));
-    auto* hits          = found_list->findChild<QTableView*>();
-    auto* memory_view   = button_labelled(*found_list, QStringLiteral("Memory View"));
-    auto* addresses     = address_list->findChild<QTableView*>();
+    auto* first_scan      = button_labelled(*scanner, QStringLiteral("First Scan"));
+    auto* next_scan       = button_labelled(*scanner, QStringLiteral("Next Scan"));
+    auto* undo_scan       = button_labelled(*scanner, QStringLiteral("Undo Scan"));
+    auto* cancel          = button_labelled(*scanner, QStringLiteral("Cancel"));
+    auto* hex             = checkbox_labelled(*scanner, QStringLiteral("Hex"));
+    auto* value           = address_field(*scanner, "Value");
+    auto* upper_value     = address_field(*scanner, "Upper value");
+    auto* scan_type       = combo_showing(*scanner, QStringLiteral("Exact Value"));
+    auto* value_type      = combo_showing(*scanner, QStringLiteral("4 Bytes"));
+    auto* memory_region   = range_combo(*scanner);
+    auto* start_address   = address_field(*scanner, "Start address");
+    auto* stop_address    = address_field(*scanner, "Stop address");
+    auto* writable        = checkbox_labelled(*scanner, QStringLiteral("Writable"));
+    auto* executable      = checkbox_labelled(*scanner, QStringLiteral("Executable"));
+    auto* copy_on_write   = checkbox_labelled(*scanner, QStringLiteral("CopyOnWrite"));
+    auto* fast_scan       = checkbox_labelled(*scanner, QStringLiteral("Fast Scan"));
+    auto* alignment       = address_field(*scanner, "Alignment");
+    auto* pause           = checkbox_labelled(*scanner, QStringLiteral("Pause the game while scanning"));
+    auto* hits            = found_list->findChild<QTableView*>();
+    auto* memory_view     = button_labelled(*found_list, QStringLiteral("Memory View"));
+    auto* reclass         = button_labelled(*found_list, QStringLiteral("ReClass"));
+    auto* breakpoints     = button_labelled(*found_list, QStringLiteral("Breakpoints"));
+    auto* access_watch    = button_labelled(*found_list, QStringLiteral("Access Watch"));
+    auto* log_button      = button_labelled(*found_list, QStringLiteral("Log"));
+    auto* settings_button = button_labelled(*found_list, QStringLiteral("Settings"));
+    auto* addresses       = address_list->findChild<QTableView*>();
 
     const std::vector<QWidget*> order {
-        first_scan,    next_scan,  undo_scan,     cancel,        hex,          value,       upper_value,
-        scan_type,     value_type, memory_region, start_address, stop_address, writable,    executable,
-        copy_on_write, fast_scan,  alignment,     pause,         hits,         memory_view, addresses};
+        first_scan,    next_scan,    undo_scan,     cancel,          hex,          value,       upper_value,
+        scan_type,     value_type,   memory_region, start_address,   stop_address, writable,    executable,
+        copy_on_write, fast_scan,    alignment,     pause,           hits,         memory_view, reclass,
+        breakpoints,   access_watch, log_button,    settings_button, addresses};
     for (QWidget* widget : order)
     {
         REQUIRE(widget != nullptr);
@@ -439,6 +445,55 @@ TEST_CASE("the debug control bar's Breakpoints button opens the window", "[ui]")
     CHECK(dialog->isVisible());
 }
 
+TEST_CASE("the found list bar's companion buttons open their windows", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("found_list_companions.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto* found_list = window.findChild<slopkit::ui::panels::FoundListPanel*>();
+    REQUIRE(found_list != nullptr);
+
+    auto* settings_dialog = window.findChild<slopkit::ui::dialogs::SettingsDialog*>();
+    REQUIRE(settings_dialog != nullptr);
+
+    const std::pair<QString, QWidget*> companions[] = {
+        {         QStringLiteral("Log"),          window.log()},
+        {    QStringLiteral("Settings"),       settings_dialog},
+        { QStringLiteral("Breakpoints"),  window.breakpoints()},
+        {QStringLiteral("Access Watch"), window.access_watch()},
+        {     QStringLiteral("ReClass"),      window.reclass()}
+    };
+
+    for (const auto& [label, companion] : companions)
+    {
+        REQUIRE(companion != nullptr);
+        auto* button = button_labelled(*found_list, label);
+        REQUIRE(button != nullptr);
+        button->click();
+        CHECK(companion->isVisible());
+        // A second click re-shows the same instance instead of creating another.
+        button->click();
+        CHECK(companion->isVisible());
+        // The default window is wide enough for the full labels.
+        CHECK(button->width() >= button->sizeHint().width());
+    }
+
+    CHECK(window.findChildren<slopkit::ui::dialogs::LogDialog*>().isEmpty());
+    CHECK(window.findChildren<slopkit::ui::dialogs::BreakpointsDialog*>().isEmpty());
+    CHECK(window.findChildren<slopkit::ui::dialogs::AccessWatchDialog*>().isEmpty());
+    CHECK(window.findChildren<slopkit::ui::dialogs::ReClassDialog*>().isEmpty());
+    CHECK(window.findChildren<slopkit::ui::dialogs::SettingsDialog*>().size() == 1);
+}
+
 TEST_CASE("closing the main window ends the session", "[ui]")
 {
     application();
@@ -490,6 +545,10 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         slopkit::ui::SettingsController  settings {path};
         slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
+        // The found-list bar gives the window a minimum width larger than the
+        // offscreen test screen, so let the window take the test's small size;
+        // the geometry keeper is what this test covers.
+        window.setMinimumWidth(1);
         window.resize(700, 700);
         window.show();
         QCoreApplication::processEvents();
@@ -497,7 +556,7 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         QCoreApplication::processEvents();
         saved_size     = window.size();
         saved_position = window.pos();
-        CHECK(saved_size != QSize(748, 768));
+        CHECK(saved_size != QSize(880, 768));
         window.hide();
         QCoreApplication::processEvents();
 
@@ -512,6 +571,7 @@ TEST_CASE("the main window remembers its geometry across a restart", "[ui]")
         slopkit::ui::SettingsController  settings {path};
         slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
+        window.setMinimumWidth(1);
         window.show();
         QCoreApplication::processEvents();
 
@@ -543,7 +603,7 @@ TEST_CASE("a corrupt main-window geometry leaves the default size", "[ui]")
     slopkit::ui::SettingsController  settings {path};
     slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
 
-    CHECK(window.size() == QSize(748, 768));
+    CHECK(window.size() == QSize(880, 768));
 
     int warnings = 0;
     for (const slopkit::log::Record& record : records)

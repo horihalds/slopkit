@@ -132,12 +132,44 @@ namespace slopkit::ui::panels
         memory_view_button_->setToolTip(tr("Open the Memory Viewer at the main module's entry point (or its base)"));
         memory_view_button_->setEnabled(false);
         entry_row->addWidget(memory_view_button_);
+
+        reclass_button_ = widgets::secondary_button(tr("ReClass"), this);
+        reclass_button_->setToolTip(tr("Open the ReClass window"));
+        entry_row->addWidget(reclass_button_);
+
+        breakpoints_button_ = widgets::secondary_button(tr("Breakpoints"), this);
+        breakpoints_button_->setToolTip(tr("Open the Breakpoints window"));
+        entry_row->addWidget(breakpoints_button_);
+
+        access_watch_button_ = widgets::secondary_button(tr("Access Watch"), this);
+        access_watch_button_->setToolTip(tr("Open the Access Watch window"));
+        entry_row->addWidget(access_watch_button_);
+
+        log_button_ = widgets::secondary_button(tr("Log"), this);
+        log_button_->setToolTip(tr("Open the Log window"));
+        entry_row->addWidget(log_button_);
+
+        settings_button_ = widgets::secondary_button(tr("Settings"), this);
+        settings_button_->setToolTip(tr("Open the Settings window"));
+        entry_row->addWidget(settings_button_);
+
         entry_row->addStretch(1);
         layout->addLayout(entry_row);
 
         connect(memory_view_button_, &QPushButton::clicked, this, &FoundListPanel::memoryViewRequested);
+        connect(reclass_button_, &QPushButton::clicked, this, &FoundListPanel::reclassRequested);
+        connect(breakpoints_button_, &QPushButton::clicked, this, &FoundListPanel::breakpointsRequested);
+        connect(access_watch_button_, &QPushButton::clicked, this, &FoundListPanel::accessWatchWindowRequested);
+        connect(log_button_, &QPushButton::clicked, this, &FoundListPanel::logRequested);
+        connect(settings_button_, &QPushButton::clicked, this, &FoundListPanel::settingsRequested);
 
-        widgets::chain_tab_order({table_view_, memory_view_button_});
+        widgets::chain_tab_order({table_view_,
+                                  memory_view_button_,
+                                  reclass_button_,
+                                  breakpoints_button_,
+                                  access_watch_button_,
+                                  log_button_,
+                                  settings_button_});
     }
 
     void FoundListPanel::set_target_attached(bool attached)
@@ -173,7 +205,7 @@ namespace slopkit::ui::panels
 
     QWidget* FoundListPanel::tab_order_last() const noexcept
     {
-        return memory_view_button_;
+        return settings_button_;
     }
 
     void FoundListPanel::refresh()

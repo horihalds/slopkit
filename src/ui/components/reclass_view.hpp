@@ -104,6 +104,14 @@ namespace slopkit::ui::components
         // node back.
         void hiddenRowActivated(std::size_t node_id);
 
+        // A digit pressed on the grid: insert that many bytes at the cursor row,
+        // the same command the row menu's `Insert Bytes` entries run.
+        void insertBytesRequested(std::size_t count);
+
+        // `Ctrl` and 1, 2, 4 or 8 on the grid: retype the cursor row as the hex
+        // node of that byte size, the command `Change Type` runs.
+        void changeKindRequested(reclass::NodeKind kind);
+
     protected:
         void resizeEvent(QResizeEvent* event) override;
         void changeEvent(QEvent* event) override;

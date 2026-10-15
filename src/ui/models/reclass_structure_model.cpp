@@ -191,13 +191,6 @@ namespace slopkit::ui::models
 
     bool ReclassStructureModel::set_node_name(const ReclassRow& row, const QString& name)
     {
-        const QString trimmed = name.trimmed();
-        if (trimmed.isEmpty())
-        {
-            emit statusChanged(tr("A node name is required."), true);
-            return false;
-        }
-
         if (row.node == nullptr)
         {
             return false;
@@ -217,6 +210,7 @@ namespace slopkit::ui::models
         {
             return false;
         }
+        const QString trimmed           = name.trimmed();
         (*ref->owner)[ref->index]->name = trimmed.toStdString();
 
         // A rename moves no offset, so the row objects stay and only the one
@@ -227,7 +221,7 @@ namespace slopkit::ui::models
             const QModelIndex changed = index(base.row(), ReclassStructureModel::name, base.parent());
             emit              dataChanged(changed, changed);
         }
-        emit statusChanged(tr("Node renamed."), false);
+        emit statusChanged(trimmed.isEmpty() ? tr("Node name cleared.") : tr("Node renamed."), false);
         return true;
     }
 

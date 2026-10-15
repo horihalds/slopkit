@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
@@ -321,9 +322,10 @@ TEST_CASE("the node commands build and edit the displayed class", "[reclass][ui]
     CHECK(player.nodes[0]->name == "vitals");
     CHECK(dialog.status_label()->text() == QStringLiteral("Node renamed."));
 
-    CHECK_FALSE(dialog.proxy()->setData(name_cell, QStringLiteral("   "), Qt::EditRole));
-    CHECK(player.nodes[0]->name == "vitals");
-    CHECK(dialog.status_label()->text() == QStringLiteral("A node name is required."));
+    // A name that is only spaces clears the node's name through the same cell.
+    CHECK(dialog.proxy()->setData(name_cell, QStringLiteral("   "), Qt::EditRole));
+    CHECK(player.nodes[0]->name.empty());
+    CHECK(dialog.status_label()->text() == QStringLiteral("Node name cleared."));
 
     dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
     dialog.remove_selected_nodes();
@@ -957,6 +959,43 @@ TEST_CASE("the node comment prompt edits the note the grid draws", "[reclass][ui
     dialog.close();
 }
 
+TEST_CASE("the node name prompt renames and clears the name", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    // The prompt's text goes through the same model call the grid's inline
+    // editor uses, so the menu and the cell report alike.
+    answer_prompt(QStringLiteral("  health  "));
+    dialog.edit_name();
+
+    CHECK(player.nodes[0]->name == "health");
+    CHECK(dialog.status_label()->text() == QStringLiteral("Node renamed."));
+    CHECK(dialog.grid()->cell_text(dialog.structure()->index(0, ReclassStructureModel::name)).toStdString()
+          == "health");
+
+    // An empty prompt clears the name, exactly as an empty editor does.
+    answer_prompt(QString());
+    dialog.edit_name();
+
+    CHECK(player.nodes[0]->name.empty());
+    CHECK(dialog.status_label()->text() == QStringLiteral("Node name cleared."));
+    CHECK(dialog.grid()->cell_text(dialog.structure()->index(0, ReclassStructureModel::name)).isEmpty());
+
+    dialog.close();
+}
+
 TEST_CASE("shrink class trims the trailing padding", "[reclass][ui]")
 {
     application();
@@ -978,6 +1017,191 @@ TEST_CASE("shrink class trims the trailing padding", "[reclass][ui]")
     dialog.shrink_class();
     CHECK(player.nodes.size() == 2);
     CHECK(dialog.status_label()->text() == QStringLiteral("1 padding node(s) removed."));
+
+    dialog.close();
+}
+
+TEST_CASE("the grid's digit keys insert bytes in the window", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+
+    // The cursor sits on the pointer node, so the bytes go in front of it.
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(1, 0));
+    QKeyEvent four {QEvent::KeyPress, Qt::Key_4, Qt::NoModifier};
+    QApplication::sendEvent(dialog.grid(), &four);
+
+    REQUIRE(player.nodes.size() == 3);
+    CHECK(player.nodes[1]->kind() == NodeKind::hex32);
+    CHECK(player.nodes[2]->kind() == NodeKind::pointer);
+    CHECK(dialog.status_label()->text() == QStringLiteral("4 byte(s) inserted."));
+
+    // The first row is where the class starts, so the bytes land at its head.
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+    QKeyEvent one {QEvent::KeyPress, Qt::Key_1, Qt::NoModifier};
+    QApplication::sendEvent(dialog.grid(), &one);
+
+    REQUIRE(player.nodes.size() == 4);
+    CHECK(player.nodes[0]->kind() == NodeKind::hex8);
+    CHECK(player.nodes[1]->kind() == NodeKind::int8);
+    CHECK(dialog.status_label()->text() == QStringLiteral("1 byte(s) inserted."));
+
+    // With no cursor row nothing is inserted, and the status line says so rather
+    // than growing the class at its head.
+    dialog.grid()->setCurrentIndex(QModelIndex());
+    QCoreApplication::processEvents();
+    QKeyEvent two {QEvent::KeyPress, Qt::Key_2, Qt::NoModifier};
+    QApplication::sendEvent(dialog.grid(), &two);
+
+    CHECK(player.nodes.size() == 4);
+    CHECK(player.nodes[0]->kind() == NodeKind::hex8);
+    CHECK(dialog.status_label()->text() == QStringLiteral("Select a node first."));
+
+    dialog.close();
+}
+
+TEST_CASE("a digit typed into the name editor inserts no bytes", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+    QKeyEvent f2 {QEvent::KeyPress, Qt::Key_F2, Qt::NoModifier};
+    QApplication::sendEvent(dialog.grid(), &f2);
+    QCoreApplication::processEvents();
+
+    QLineEdit* editor = dialog.grid()->editor();
+    REQUIRE(editor != nullptr);
+    REQUIRE(editor->isVisible());
+    editor->clear();
+
+    // The digits go to the editor the grid opened, not to the grid's byte keys.
+    QKeyEvent one {QEvent::KeyPress, Qt::Key_1, Qt::NoModifier, QStringLiteral("1")};
+    QKeyEvent two {QEvent::KeyPress, Qt::Key_2, Qt::NoModifier, QStringLiteral("2")};
+    QApplication::sendEvent(editor, &one);
+    QApplication::sendEvent(editor, &two);
+
+    CHECK(editor->text() == QStringLiteral("12"));
+    CHECK(player.nodes.size() == 2);
+
+    dialog.close();
+}
+
+TEST_CASE("the grid's Ctrl+digit keys retype the cursor node", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+    player.nodes[0]->comment = "the tag";
+
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+    QCoreApplication::processEvents();
+    const std::size_t id = player.nodes[0]->id;
+
+    // Only the type changes: the node keeps its id, its name and its note, and
+    // the class keeps the nodes it had.
+    QKeyEvent ctrl4 {QEvent::KeyPress, Qt::Key_4, Qt::ControlModifier};
+    QApplication::sendEvent(dialog.grid(), &ctrl4);
+
+    REQUIRE(player.nodes.size() == 2);
+    CHECK(player.nodes[0]->id == id);
+    CHECK(player.nodes[0]->kind() == NodeKind::hex32);
+    CHECK(player.nodes[0]->name == "tag");
+    CHECK(player.nodes[0]->comment == "the tag");
+    CHECK(player.nodes[1]->kind() == NodeKind::pointer);
+    CHECK(dialog.status_label()->text() == QStringLiteral("Type changed to Hex32."));
+
+    // The pointer node is the same node, so the cursor stays on it.
+    QKeyEvent ctrl8 {QEvent::KeyPress, Qt::Key_8, Qt::ControlModifier};
+    QApplication::sendEvent(dialog.grid(), &ctrl8);
+
+    REQUIRE(player.nodes.size() == 2);
+    CHECK(player.nodes[0]->id == id);
+    CHECK(player.nodes[0]->kind() == NodeKind::hex64);
+    CHECK(dialog.status_label()->text() == QStringLiteral("Type changed to Hex64."));
+
+    // A digit without a hex kind of that size changes nothing at all.
+    QKeyEvent ctrl3 {QEvent::KeyPress, Qt::Key_3, Qt::ControlModifier};
+    QApplication::sendEvent(dialog.grid(), &ctrl3);
+
+    CHECK(player.nodes[0]->kind() == NodeKind::hex64);
+    CHECK(dialog.status_label()->text() == QStringLiteral("Type changed to Hex64."));
+
+    dialog.close();
+}
+
+TEST_CASE("a Ctrl+digit key retypes only the cursor row", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    REQUIRE(player.nodes.size() == 2);
+
+    // Two rows are selected with a plain click and a Ctrl-click; the command
+    // acts on the cursor row alone, as the row menu's entry does.
+    const auto click_row = [&dialog](const QModelIndex& index, Qt::KeyboardModifiers modifiers)
+    {
+        const std::optional<QRect> rect = dialog.grid()->cell_rect(index);
+        REQUIRE(rect.has_value());
+        const QPoint point  = rect->center();
+        const QPoint global = dialog.grid()->viewport()->mapToGlobal(point);
+        QMouseEvent  press {
+            QEvent::MouseButtonPress, QPointF(point), QPointF(global), Qt::LeftButton, Qt::LeftButton, modifiers};
+        QApplication::sendEvent(dialog.grid()->viewport(), &press);
+    };
+
+    click_row(dialog.structure()->index(0, 0), Qt::NoModifier);
+    click_row(dialog.structure()->index(1, 0), Qt::ControlModifier);
+    REQUIRE(dialog.grid()->selected_rows().size() == 2);
+
+    const int         cursor_row = dialog.grid()->currentIndex().row();
+    const int         other_row  = cursor_row == 0 ? 1 : 0;
+    const NodeKind    other_kind = player.nodes[other_row]->kind();
+    const std::size_t cursor_id  = player.nodes[cursor_row]->id;
+
+    // Hex64 is never smaller than the pointer it replaces, so nothing is padded
+    // and the rows keep their places.
+    QKeyEvent ctrl8 {QEvent::KeyPress, Qt::Key_8, Qt::ControlModifier};
+    QApplication::sendEvent(dialog.grid(), &ctrl8);
+
+    REQUIRE(player.nodes.size() == 2);
+    CHECK(player.nodes[cursor_row]->id == cursor_id);
+    CHECK(player.nodes[cursor_row]->kind() == NodeKind::hex64);
+    CHECK(player.nodes[other_row]->kind() == other_kind);
+    CHECK(dialog.status_label()->text() == QStringLiteral("Type changed to Hex64."));
 
     dialog.close();
 }

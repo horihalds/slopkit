@@ -46,6 +46,110 @@ TEST_CASE("the found list keeps one result line", "[ui]")
     CHECK(panel.findChildren<QLabel*>().size() == 1);
 }
 
+TEST_CASE("the found list bar carries a button for every companion window", "[ui]")
+{
+    application();
+
+    slopkit::scan::ScanEngine           engine;
+    slopkit::table::AddressTable        table;
+    slopkit::ui::panels::FoundListPanel panel {engine, table};
+
+    const QList<QPushButton*> buttons = panel.findChildren<QPushButton*>();
+    REQUIRE(buttons.size() == 6);
+    CHECK(buttons[0]->text() == QStringLiteral("Memory View"));
+    CHECK(buttons[1]->text() == QStringLiteral("ReClass"));
+    CHECK(buttons[2]->text() == QStringLiteral("Breakpoints"));
+    CHECK(buttons[3]->text() == QStringLiteral("Access Watch"));
+    CHECK(buttons[4]->text() == QStringLiteral("Log"));
+    CHECK(buttons[5]->text() == QStringLiteral("Settings"));
+    for (QPushButton* button : buttons)
+    {
+        CHECK_FALSE(button->toolTip().isEmpty());
+    }
+
+    // Memory View keeps its target gate; the five companion buttons mirror the
+    // always-enabled View menu entries.
+    CHECK_FALSE(buttons[0]->isEnabled());
+    for (int index = 1; index < buttons.size(); ++index)
+    {
+        CHECK(buttons[index]->isEnabled());
+    }
+    panel.set_target_attached(true);
+    for (QPushButton* button : buttons)
+    {
+        CHECK(button->isEnabled());
+    }
+
+    CHECK(panel.tab_order_first() == panel.findChild<QTableView*>());
+    CHECK(panel.tab_order_last() == buttons[5]);
+    for (int index = 0; index + 1 < buttons.size(); ++index)
+    {
+        check_tab_order(panel, buttons[index], buttons[index + 1]);
+    }
+
+    int memory_views = 0;
+    int reclass      = 0;
+    int breakpoints  = 0;
+    int access_watch = 0;
+    int logs         = 0;
+    int settings     = 0;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::memoryViewRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++memory_views;
+                     });
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::reclassRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++reclass;
+                     });
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::breakpointsRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++breakpoints;
+                     });
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::accessWatchWindowRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++access_watch;
+                     });
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::logRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++logs;
+                     });
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::FoundListPanel::settingsRequested,
+                     &panel,
+                     [&]
+                     {
+                         ++settings;
+                     });
+
+    for (QPushButton* button : buttons)
+    {
+        button->click();
+    }
+
+    // Each click emits exactly its own signal and no other.
+    CHECK(memory_views == 1);
+    CHECK(reclass == 1);
+    CHECK(breakpoints == 1);
+    CHECK(access_watch == 1);
+    CHECK(logs == 1);
+    CHECK(settings == 1);
+}
+
 TEST_CASE("the found list stays empty until the scan finishes", "[ui]")
 {
     application();

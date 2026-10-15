@@ -48,6 +48,9 @@ namespace slopkit::ui::components
         // The note field of a node with no note is only as wide as its marker,
         // so its editor opens at least this wide to be typed into.
         constexpr int kCommentEditorMinWidth = 160;
+        // An unnamed node draws no name run at all, so its editor opens at least
+        // this wide to be typed into.
+        constexpr int kNameEditorMinWidth    = 160;
         // The cursor and hover tints are drawn over the stripes rather than
         // beside them, so both kinds of row keep the same tint.
         constexpr int kTintAlpha             = 36;
@@ -1679,10 +1682,15 @@ namespace slopkit::ui::components
         // byte the row draws, bare and upper case, for a per-byte edit - and not
         // the readings the cell draws beside a value.
         editor_->setText(edit_text(*hit.row));
-        // A node with no note draws only its marker, so the editor is opened
-        // wide enough to type a note into without re-laying the row out.
+        // A node with no note draws only its marker and an unnamed node draws
+        // nothing, so their editors are opened wide enough to type into without
+        // re-laying the row out.
         QRect rect = hit.rect;
-        if (hit.column == models::ReclassStructureModel::comment)
+        if (hit.column == models::ReclassStructureModel::name)
+        {
+            rect.setWidth(std::max(rect.width(), kNameEditorMinWidth));
+        }
+        else if (hit.column == models::ReclassStructureModel::comment)
         {
             rect.setWidth(std::max(rect.width(), kCommentEditorMinWidth));
         }
@@ -1823,6 +1831,29 @@ namespace slopkit::ui::components
     {
         const int current = has_current_ ? visual_index_of(current_) : -1;
         const int rows    = static_cast<int>(rows_.size());
+
+        // A bare digit inserts that many bytes at the cursor row and `Ctrl` with
+        // 1, 2, 4 or 8 retypes it as the hex node of that byte size, the same
+        // commands the row menu runs. The keypad's own modifier is allowed; any
+        // other combination is left to the base class, so a digit is never taken
+        // from the class-name field, the byte-count prompt or an editor.
+        const Qt::KeyboardModifiers modifiers = event->modifiers();
+        const int                   digit     = event->key() - Qt::Key_0;
+        if ((modifiers == Qt::NoModifier || modifiers == Qt::KeypadModifier) && digit >= 1 && digit <= 8)
+        {
+            emit insertBytesRequested(static_cast<std::size_t>(digit));
+            event->accept();
+            return;
+        }
+        if (modifiers == Qt::ControlModifier && (digit == 1 || digit == 2 || digit == 4 || digit == 8))
+        {
+            emit changeKindRequested(digit == 1   ? reclass::NodeKind::hex8
+                                     : digit == 2 ? reclass::NodeKind::hex16
+                                     : digit == 4 ? reclass::NodeKind::hex32
+                                                  : reclass::NodeKind::hex64);
+            event->accept();
+            return;
+        }
 
         switch (event->key())
         {

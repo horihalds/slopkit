@@ -1578,26 +1578,142 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     CHECK(player.nodes[0]->name == "health");
     CHECK(messages.size() == 1);
 
-    // An empty name is refused with its reason, and the editor stays open for
-    // the correction.
+    // A name is free text, so a name that is only spaces clears it and leaves
+    // the row unnamed, moving no offset of the nodes behind it.
+    const QModelIndex next_offset = fixture.cell(fixture.node_id(1), ReclassStructureModel::offset);
+    const QString     offset_text = view.cell_text(next_offset);
     double_click(view, fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
     QCoreApplication::processEvents();
     editor->setText(QStringLiteral("   "));
     QApplication::sendEvent(editor, &enter);
-    CHECK(editor->isVisible());
-    CHECK(player.nodes[0]->name == "health");
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(player.nodes[0]->name.empty());
     REQUIRE(messages.size() == 2);
-    CHECK(messages.last().toStdString() == "A node name is required.");
+    CHECK(messages.last().toStdString() == "Node name cleared.");
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(0), ReclassStructureModel::name)).isEmpty());
+    CHECK(view.cell_text(next_offset) == offset_text);
 
-    QApplication::sendEvent(editor, &escape);
-
-    // F2 opens the name of the cursor row, which needs no attached target.
+    // The row draws no name run any more, so there is nothing to double-click;
+    // F2 on the cursor row is the way back and opens a typeable editor.
     view.setCurrentIndex(fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
     QKeyEvent f2 {QEvent::KeyPress, Qt::Key_F2, Qt::NoModifier};
     QApplication::sendEvent(&view, &f2);
     QCoreApplication::processEvents();
+
     CHECK(editor->isVisible());
-    CHECK(editor->text().toStdString() == "health");
+    CHECK(editor->text().isEmpty());
+    CHECK(editor->width() >= 160);
+
+    editor->setText(QStringLiteral("vitality"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK(player.nodes[0]->name == "vitality");
+    REQUIRE(messages.size() == 3);
+    CHECK(messages.last().toStdString() == "Node renamed.");
+}
+
+TEST_CASE("the grid's digit keys ask for bytes at the cursor row", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture     fixture;
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    std::vector<std::size_t> requests;
+    QObject::connect(&view,
+                     &ReClassView::insertBytesRequested,
+                     [&requests](std::size_t count)
+                     {
+                         requests.push_back(count);
+                     });
+
+    view.setCurrentIndex(fixture.cell(fixture.node_id(1), ReclassStructureModel::name));
+    QCoreApplication::processEvents();
+
+    for (int digit = 1; digit <= 8; ++digit)
+    {
+        QKeyEvent press {QEvent::KeyPress, static_cast<int>(Qt::Key_0) + digit, Qt::NoModifier};
+        QApplication::sendEvent(&view, &press);
+        // The grid takes the key rather than handing it to the base class.
+        CHECK(press.isAccepted());
+    }
+    CHECK(requests == std::vector<std::size_t> {1, 2, 3, 4, 5, 6, 7, 8});
+
+    // The keypad digits are the same keys.
+    QKeyEvent keypad {QEvent::KeyPress, Qt::Key_3, Qt::KeypadModifier};
+    QApplication::sendEvent(&view, &keypad);
+    CHECK(keypad.isAccepted());
+    REQUIRE(requests.size() == 9);
+    CHECK(requests.back() == 3);
+
+    // A digit with another modifier is not a byte command and stays with the
+    // base class, so the type keys keep their own combinations.
+    requests.clear();
+    QKeyEvent modified {QEvent::KeyPress, Qt::Key_3, Qt::AltModifier};
+    QApplication::sendEvent(&view, &modified);
+    CHECK(requests.empty());
+
+    // With no cursor row the request still goes out, so the window can report
+    // why nothing was inserted.
+    view.setCurrentIndex(QModelIndex());
+    QCoreApplication::processEvents();
+    QKeyEvent no_row {QEvent::KeyPress, Qt::Key_2, Qt::NoModifier};
+    QApplication::sendEvent(&view, &no_row);
+    CHECK(no_row.isAccepted());
+    CHECK(requests == std::vector<std::size_t> {2});
+}
+
+TEST_CASE("the grid's Ctrl+digit keys ask for a hex type", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture     fixture;
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    std::vector<NodeKind> kinds;
+    QObject::connect(&view,
+                     &ReClassView::changeKindRequested,
+                     [&kinds](NodeKind kind)
+                     {
+                         kinds.push_back(kind);
+                     });
+
+    view.setCurrentIndex(fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
+    QCoreApplication::processEvents();
+
+    const std::pair<int, NodeKind> keys[] = {
+        {Qt::Key_1,  NodeKind::hex8},
+        {Qt::Key_2, NodeKind::hex16},
+        {Qt::Key_4, NodeKind::hex32},
+        {Qt::Key_8, NodeKind::hex64}
+    };
+    for (const auto& [key, kind] : keys)
+    {
+        QKeyEvent press {QEvent::KeyPress, key, Qt::ControlModifier};
+        QApplication::sendEvent(&view, &press);
+        CHECK(press.isAccepted());
+        CHECK(kinds == std::vector<NodeKind> {kind});
+        kinds.clear();
+    }
+
+    // Only the four hex sizes have a key of their own; the other digits stay
+    // with the base class and change nothing.
+    for (const int key : {Qt::Key_3, Qt::Key_5, Qt::Key_6, Qt::Key_7, Qt::Key_9})
+    {
+        QKeyEvent press {QEvent::KeyPress, key, Qt::ControlModifier};
+        QApplication::sendEvent(&view, &press);
+        CHECK_FALSE(press.isAccepted());
+    }
+    CHECK(kinds.empty());
 }
 
 TEST_CASE("a note is edited in place through the grid's editor", "[reclass][ui][view]")
