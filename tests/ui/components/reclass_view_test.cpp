@@ -1332,3 +1332,118 @@ TEST_CASE("a marker keeps the grid colour while a whole-value kind warns", "[rec
     CHECK(paints_ink(image, value, theme.on_accent));
     CHECK_FALSE(paints_ink(image, value, theme.warning));
 }
+
+TEST_CASE("a field measured for its own text draws that text whole", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    // The reported class: a uint64 `score` whose note is `the score`, its own
+    // texts the widest the class draws, so each of its runs is measured for
+    // exactly the text it holds. `raw` keeps the class wider than the pane the
+    // row is checked in, `ratio` can read a value wider than the cap its kind
+    // allows, and the hidden `skipped` row draws the `...` placeholder.
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.clear();
+    player.nodes.push_back(node_of(fixture.project, NodeKind::uint64, "score"));
+    player.nodes[0]->comment = "the score";
+    player.nodes.push_back(node_of(fixture.project, NodeKind::float32, "ratio"));
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    slopkit::reclass::NodePtr skipped = node_of(fixture.project, NodeKind::uint8, "skipped");
+    skipped->hidden                   = true;
+    player.nodes.push_back(std::move(skipped));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    PaintedView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(1000, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const QFontMetrics prose(slopkit::ui::ui_font());
+    const std::size_t  score  = fixture.node_id(0);
+    const std::size_t  hidden = fixture.node_id(3);
+    const auto         rect   = [&view, &fixture](std::size_t node, int column)
+    {
+        return view.cell_rect(fixture.cell(node, column)).value();
+    };
+
+    // A flowed field's run is exactly as wide as the text it was measured for,
+    // which is the width Qt counts as too wide, so it used to drop the run's
+    // tail.
+    CHECK(rect(score, ReclassStructureModel::type).width() == prose.horizontalAdvance(QStringLiteral("UInt64")));
+    CHECK(rect(score, ReclassStructureModel::name).width() == prose.horizontalAdvance(QStringLiteral("score")));
+    CHECK(rect(score, ReclassStructureModel::comment).width()
+          == prose.horizontalAdvance(QStringLiteral("// the score")));
+
+    // The ink a run reaches: a text drawn whole fills its run, an elided one
+    // stops well short of the run's last pixel. The last glyph's own ink can
+    // stop a pixel short of its advance, its right side bearing.
+    const auto whole = [&rect, &prose](const QImage& painted, std::size_t node, int column, const QString& text)
+    {
+        const QRect field = rect(node, column);
+        REQUIRE(field.left() >= 0);
+        REQUIRE(field.right() < painted.width());
+        const auto span = ink_span(painted, field);
+        REQUIRE(span.has_value());
+        CHECK(span->second - field.left() + 1 >= prose.horizontalAdvance(text) - 1);
+    };
+    const auto no_tooltip = [&rect, &view](std::size_t node, int column)
+    {
+        CHECK(view.hover_full_text(rect(node, column).center()).isEmpty());
+    };
+
+    QImage image(view.viewport()->size(), QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+
+    // The reported row reads in full and asks for no tooltip, because nothing
+    // was clipped.
+    whole(image, score, ReclassStructureModel::type, QStringLiteral("UInt64"));
+    whole(image, score, ReclassStructureModel::name, QStringLiteral("score"));
+    whole(image, score, ReclassStructureModel::comment, QStringLiteral("// the score"));
+    no_tooltip(score, ReclassStructureModel::type);
+    no_tooltip(score, ReclassStructureModel::name);
+    no_tooltip(score, ReclassStructureModel::comment);
+
+    // The collapsed node's `...` placeholder goes through the same rule.
+    whole(image, hidden, ReclassStructureModel::name, QStringLiteral("..."));
+
+    // A pane narrower than the class, but still wide enough to hold the row's
+    // tail: the bar is up, and a flowed run keeps its measured width, so the
+    // same row still reads in full.
+    view.resize(rect(score, ReclassStructureModel::comment).right() + 60, 200);
+    QCoreApplication::processEvents();
+    REQUIRE(view.horizontalScrollBar()->maximum() > 0);
+    REQUIRE(rect(score, ReclassStructureModel::comment).right() < view.viewport()->width());
+
+    QImage narrow(view.viewport()->size(), QImage::Format_ARGB32);
+    narrow.fill(Qt::transparent);
+    view.paint_into(narrow);
+    whole(narrow, score, ReclassStructureModel::type, QStringLiteral("UInt64"));
+    whole(narrow, score, ReclassStructureModel::name, QStringLiteral("score"));
+    whole(narrow, score, ReclassStructureModel::comment, QStringLiteral("// the score"));
+
+    // A live value wider than the cap its kind was measured for still elides,
+    // and the tooltip still carries it whole.
+    fixture.resolve();
+    fixture.put(fixture.player_address() + 8, {0xFF, 0xFF, 0x7F, 0x7F});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    const QModelIndex  ratio_cell = fixture.cell(fixture.node_id(1), ReclassStructureModel::value);
+    const QRect        ratio_run  = view.cell_rect(ratio_cell).value();
+    const QString      ratio_full = view.cell_text(ratio_cell);
+    REQUIRE(mono.horizontalAdvance(ratio_full) > ratio_run.width());
+    CHECK(view.hover_full_text(ratio_run.center()) == ratio_full);
+
+    QImage live(view.viewport()->size(), QImage::Format_ARGB32);
+    live.fill(Qt::transparent);
+    view.paint_into(live);
+    const auto clipped = ink_span(live, ratio_run);
+    REQUIRE(clipped.has_value());
+    CHECK(clipped->second - ratio_run.left() + 1 < mono.horizontalAdvance(ratio_full));
+}

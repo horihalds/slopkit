@@ -60,6 +60,17 @@ namespace slopkit::ui::components
                      : kColumnGap;
         }
 
+        // A flowed field's run is exactly as wide as the text it was measured
+        // for, and Qt's own elision counts a text as too wide when it is exactly
+        // as wide as the room it is given, so it would drop the run's last
+        // characters. A text that fits is therefore drawn whole - the same
+        // "does it fit" the hover tooltip answers with in hover_full_text().
+        QString fitted_run(const QFontMetrics& metrics, const QString& text, int available)
+        {
+            return metrics.horizontalAdvance(text) <= available ? text
+                                                                : metrics.elidedText(text, Qt::ElideRight, available);
+        }
+
         // The value's own font and colour when the model states them, and the
         // grid's when the choice is left to us.
         QFont cell_font(const QModelIndex& index, const QAbstractItemModel& model)
@@ -1119,8 +1130,7 @@ namespace slopkit::ui::components
             painter.setPen(any ? active_theme().warning : primary);
         }
 
-        painter.drawText(
-            text_rect, Qt::AlignLeft | Qt::AlignVCenter, metrics.elidedText(text, Qt::ElideRight, available));
+        painter.drawText(text_rect, Qt::AlignLeft | Qt::AlignVCenter, fitted_run(metrics, text, available));
     }
 
     void ReClassView::paint_triangle(QPainter& painter, const VisualRow& entry, int row_index, bool selected) const
