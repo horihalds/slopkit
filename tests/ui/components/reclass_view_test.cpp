@@ -45,6 +45,7 @@ namespace
     using slopkit::reclass::Class;
     using slopkit::reclass::NodeKind;
     using slopkit::reclass::Project;
+    using slopkit::test::array_of;
     using slopkit::test::attach_session;
     using slopkit::test::drain_until_idle;
     using slopkit::test::FakeAccess;
@@ -631,6 +632,69 @@ TEST_CASE("the ascii field fits the bytes a class draws from the kinds alone", "
     CHECK(ascii_width() <= widest + kAllowedGap);
 }
 
+TEST_CASE("an ascii cell draws eight characters and hovers the whole reading", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+
+    // A string field of sixteen bytes: twice the eight characters a cell draws.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::utf8_text, "title"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    fixture.resolve();
+    fixture.put(fixture.player_address(), {0x41, 0,    0,    0,    0,    0,    0,    0,    0,    0x48, 0x65, 0x6C,
+                                           0x6C, 0x6F, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0,    0,    0});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    const std::size_t  title = fixture.node_id(2);
+
+    // The cell draws the first eight characters, and the field is measured for
+    // those eight rather than for the sixteen the node holds.
+    CHECK(view.cell_text(fixture.cell(title, ReclassStructureModel::ascii)) == QStringLiteral("Hello Wo"));
+    CHECK(view.cell_rect(fixture.cell(title, ReclassStructureModel::ascii)).value().width()
+          <= mono.horizontalAdvance(QStringLiteral("WWWWWWWW")) + 24);
+
+    // Hovering it offers the whole reading, including what the cap hides.
+    CHECK(view.hover_full_text(view.cell_rect(fixture.cell(title, ReclassStructureModel::ascii)).value().center())
+          == QStringLiteral("Hello World!...."));
+
+    // The bytes the cell still draws keep their own rects; a byte the cap hides
+    // has none, and no byte-editable kind is wider than the eight a cell draws
+    // in the first place, so the cap never takes a clickable byte away.
+    REQUIRE(view.byte_rect(fixture.cell(title, ReclassStructureModel::ascii), 0).has_value());
+    REQUIRE(view.byte_rect(fixture.cell(title, ReclassStructureModel::ascii), 7).has_value());
+    CHECK_FALSE(view.byte_rect(fixture.cell(title, ReclassStructureModel::ascii), 8).has_value());
+
+    // A row of eight bytes or fewer is unaffected: its whole reading fits the
+    // cell, so it needs no hover.
+    const QModelIndex pointer = fixture.cell(fixture.node_id(1), ReclassStructureModel::ascii);
+    CHECK(view.cell_text(pointer).size() == 8);
+    CHECK(view.hover_full_text(view.cell_rect(pointer).value().center()).isEmpty());
+
+    // The per-byte Ascii editor is untouched: a scalar's drawn character still
+    // opens over that byte.
+    const QModelIndex tag = fixture.cell(fixture.node_id(0), ReclassStructureModel::ascii);
+    double_click_at(view, view.byte_rect(tag, 0).value().center());
+    QCoreApplication::processEvents();
+
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text().toStdString() == "41");
+}
+
 TEST_CASE("a long note keeps its full width and the pane scrolls instead", "[reclass][ui][view]")
 {
     application();
@@ -1027,6 +1091,150 @@ TEST_CASE("a byte of a hex dump or of the Ascii column is typed into where it is
     double_click_at(view, first_byte);
     QCoreApplication::processEvents();
     CHECK_FALSE(editor->isVisible());
+}
+
+TEST_CASE("the Type cell's bracketed number is edited in place", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::utf16_text, "title"));
+    player.nodes.push_back(node_of(fixture.project, NodeKind::int32, "score"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QStringList messages;
+    QObject::connect(&fixture.structure,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(2), ReclassStructureModel::type)).toStdString()
+          == "Utf16Text [16]");
+
+    // The run is offered where the cell draws it, inside the cell's own box.
+    const std::optional<QRect> run = view.extent_rect(fixture.cell(fixture.node_id(2), ReclassStructureModel::type));
+    REQUIRE(run.has_value());
+    const QRect title_rect = view.cell_rect(fixture.cell(fixture.node_id(2), ReclassStructureModel::type)).value();
+    CHECK(title_rect.contains(run->center()));
+    CHECK(run->right() <= title_rect.right());
+
+    // A double-click on the run opens the editor over it, holding the bare
+    // number and no brackets.
+    double_click_at(view, run->center());
+    QCoreApplication::processEvents();
+
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text().toStdString() == "16");
+
+    editor->setText(QStringLiteral("32"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(messages == QStringList {QStringLiteral("Length set to 32.")});
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(2), ReclassStructureModel::type)).toStdString()
+          == "Utf16Text [32]");
+
+    // Esc discards what was typed and the node keeps its length.
+    double_click_at(view,
+                    view.extent_rect(fixture.cell(fixture.node_id(2), ReclassStructureModel::type)).value().center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("99"));
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(2), ReclassStructureModel::type)).toStdString()
+          == "Utf16Text [32]");
+
+    // A typo is refused with its reason, the node keeps its length and the
+    // editor stays open with the text selected.
+    messages.clear();
+    double_click_at(view,
+                    view.extent_rect(fixture.cell(fixture.node_id(2), ReclassStructureModel::type)).value().center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("0"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK(editor->isVisible());
+    CHECK(editor->selectedText().toStdString() == "0");
+    CHECK(messages == QStringList {QStringLiteral("Length: expected a whole number of at least 1.")});
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(2), ReclassStructureModel::type)).toStdString()
+          == "Utf16Text [32]");
+
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+}
+
+TEST_CASE("a Type cell without a bracketed number keeps its own rules", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::bitfield, "flags"));
+    player.nodes.push_back(array_of(fixture.project, 2, NodeKind::int32));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+
+    const QModelIndex tag  = fixture.cell(fixture.node_id(0), ReclassStructureModel::type);
+    const QModelIndex bits = fixture.cell(fixture.node_id(2), ReclassStructureModel::type);
+    const QModelIndex list = fixture.cell(fixture.node_id(3), ReclassStructureModel::type);
+
+    // A bit field brackets its width and a plain scalar brackets nothing, so
+    // neither offers the run.
+    CHECK_FALSE(view.extent_rect(tag).has_value());
+    CHECK_FALSE(view.extent_rect(bits).has_value());
+
+    // A double-click on a cell that brackets nothing keeps the cell's own
+    // rules: no editor opens.
+    double_click_at(view, view.cell_rect(tag).value().center());
+    QCoreApplication::processEvents();
+    QLineEdit* editor = view.editor();
+    CHECK((editor == nullptr || !editor->isVisible()));
+
+    // The array keeps the count it brackets and edits it in place.
+    CHECK(view.cell_text(list).toStdString() == "Array [2]");
+    const std::optional<QRect> run = view.extent_rect(list);
+    REQUIRE(run.has_value());
+    double_click_at(view, run->center());
+    QCoreApplication::processEvents();
+
+    editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text().toStdString() == "2");
+
+    editor->setText(QStringLiteral("4"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(3), ReclassStructureModel::type)).toStdString() == "Array [4]");
 }
 
 TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")

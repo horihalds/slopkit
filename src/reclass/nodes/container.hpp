@@ -87,6 +87,16 @@ namespace slopkit::reclass
 
         [[nodiscard]] std::string_view extra_text() const noexcept override;
 
+        // The array's element count, the number the Type column brackets; it is
+        // the element list itself, so growing appends an element and shrinking
+        // drops one from the end.
+        [[nodiscard]] std::optional<std::size_t> extent() const noexcept override
+        {
+            return count();
+        }
+
+        [[nodiscard]] bool set_extent(Project& project, std::size_t value) override;
+
         [[nodiscard]] std::size_t count() const noexcept
         {
             return children_.size();
@@ -147,6 +157,13 @@ namespace slopkit::reclass
 
         [[nodiscard]] std::string_view extra_text() const noexcept override;
 
+        [[nodiscard]] std::optional<std::size_t> extent() const noexcept override
+        {
+            return count;
+        }
+
+        [[nodiscard]] bool set_extent(Project& project, std::size_t value) override;
+
     private:
         mutable std::string extra_cache_;
     };
@@ -177,6 +194,13 @@ namespace slopkit::reclass
         [[nodiscard]] NodePtr clone() const override;
 
         [[nodiscard]] std::string_view extra_text() const noexcept override;
+
+        [[nodiscard]] std::optional<std::size_t> extent() const noexcept override
+        {
+            return count;
+        }
+
+        [[nodiscard]] bool set_extent(Project& project, std::size_t value) override;
 
     private:
         mutable std::string extra_cache_;

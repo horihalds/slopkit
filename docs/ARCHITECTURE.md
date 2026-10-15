@@ -703,24 +703,34 @@ later, the same lag the reference has. The window adds no timer: it is a
 registered `LiveSurface` that refreshes on the shared cadence, stays quiet while
 hidden, while live update is off, while no target is attached or while a job is in
 flight, and matches every completion against the job it was submitted for. A
-`Value` cell of an editable kind, and one byte of a `hexN` node's dump or `Ascii`
-column, are edited in place: `ReClassView` keeps one editor plus an edit target of
-node, column and byte index, a whole cell writes through the proxy's `setData`
-(the text is parsed for the node's kind and one `submit_write` carries the node's
-address and bytes) and one byte writes through `ReclassValueModel::write_byte`,
-which parses that single byte itself and submits the same job with a one-byte
-payload at the node's address plus the byte's index, so the row's other bytes are
-never written. A write that is refused — a byte the node does not cover or a text
-the field cannot read reads `Byte: expected one hex byte such as 1A.` — says why on
-the status line instead of writing a guessed address, and the editor stays open
+`Value` cell of an editable kind, one byte of a `hexN` node's dump or `Ascii`
+column, and the `[N]` a `Type` cell brackets — a text node's length in characters
+or an array's element count — are edited in place: `ReClassView` keeps one editor
+plus an edit target of node, column, byte index and the run, a whole cell writes
+through the proxy's `setData` (the text is parsed for the node's kind and one
+`submit_write` carries the node's address and bytes) and one byte writes through
+`ReclassValueModel::write_byte`, which parses that single byte itself and submits
+the same job with a one-byte payload at the node's address plus the byte's index,
+so the row's other bytes are never written. The run is the node's own number and
+writes through `ReclassStructureModel::set_node_extent`, which parses a whole
+number of at least one and hands it to the node's own `set_extent`, so it touches
+no target, and because it sizes the node the class re-flattens the way a kind
+change makes it. A write that is refused — a byte the node does not cover or a text
+the field cannot read (`Byte: expected one hex byte such as 1A.`), a length or
+count that is not a whole number of at least one (`Length:` / `Count: expected a
+whole number of at least 1.`) — says why on the status line instead of writing a
+guessed address, and the editor stays open
 with its text selected so the correction is one edit away. The grid paints the
 last reading, so a completion patches the bytes it wrote into the cached block and
 repaints that cell instead of leaving them invisible until the next pass, which
 still corrects the cell if the target took the write and said nothing.
-A node's `Name` and `Comment` cells are the structure model's own editable fields
-on that same `setData` path — a note is trimmed free text and an empty one clears
-it — so an inline rename and the row menu's `Edit Comment…` are validated in one
-place and reported on that same status line, touch no target and need none. `F2`,
+A node's `Name`, `Comment` and the bracketed length or count of its `Type` cell are
+the structure model's own editable fields — a note is trimmed free text and an
+empty one clears it, while the run takes a whole number of at least one the node's
+own storage holds — so an inline rename, the row menu's `Edit Comment…` and a
+length or count edit are validated in one place and reported on that same status
+line, touch no target and need none. The `Name` and `Comment` cells take the
+structure model's `setData` path and the run its own writer. `F2`,
 `F3` and `Enter` open the cursor row's name, comment and value, and the `Return` an
 open editor would hand up to its parent is taken in the view's own filter, where a
 dialog would otherwise press its default button.

@@ -14,6 +14,7 @@
 #include "support/reclass_helpers.hpp"
 #include "support/reclass_live_helpers.hpp"
 #include "support/ui_helpers.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
 #include "ui/live_values.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
 #include "ui/models/reclass_structure_model.hpp"
@@ -370,4 +371,33 @@ TEST_CASE("a reading that moved repaints the hint field", "[reclass][ui]")
     }
     CHECK(hinted);
     CHECK(fixture.proxy->data(hints, Qt::DisplayRole).toString().contains(QStringLiteral("10")));
+}
+
+TEST_CASE("an ascii cell draws the capped reading and shows the whole one on hover", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    // A string field wide enough to overflow the ascii cell.
+    Class& player = fixture.project.classes()[0];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::utf8_text, "title"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(0);
+
+    fixture.stage(fixture.player_address(), {0xAA, 0x00, 0x00, 0x00, 0x00, 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x20,
+                                             0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+
+    const QModelIndex ascii = fixture.index(2, ReclassStructureModel::ascii);
+    CHECK(fixture.proxy->data(ascii, Qt::DisplayRole).toString() == QStringLiteral("Hello Wo"));
+    CHECK(fixture.proxy->data(ascii, slopkit::ui::widgets::kFullTextRole).toString()
+          == QStringLiteral("Hello World!...."));
+
+    // A narrow cell answers the same text to both roles, and a kind without
+    // bytes of its own answers nothing at all.
+    const QModelIndex pointer = fixture.index(1, ReclassStructureModel::ascii);
+    CHECK(fixture.proxy->data(pointer, Qt::DisplayRole)
+          == fixture.proxy->data(pointer, slopkit::ui::widgets::kFullTextRole));
 }

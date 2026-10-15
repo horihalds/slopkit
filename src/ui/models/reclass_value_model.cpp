@@ -925,6 +925,11 @@ namespace slopkit::ui::models
 
     QString ReclassValueModel::ascii_text(const ReclassRow& row) const
     {
+        return ascii_full_text(row).left(static_cast<qsizetype>(kAsciiMaxChars));
+    }
+
+    QString ReclassValueModel::ascii_full_text(const ReclassRow& row) const
+    {
         if (!attached())
         {
             return QStringLiteral("?");

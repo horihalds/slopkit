@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "reclass/nodes/node.hpp"
 
@@ -29,10 +31,34 @@ namespace slopkit::reclass
             return length;
         }
 
+        [[nodiscard]] std::optional<std::size_t> extent() const noexcept override
+        {
+            return length;
+        }
+
+        [[nodiscard]] bool set_extent(Project&, std::size_t value) override
+        {
+            if (value == 0)
+            {
+                return false;
+            }
+            length = value;
+            return true;
+        }
+
+        [[nodiscard]] std::string_view extra_text() const noexcept override
+        {
+            extra_cache_ = count_label(length);
+            return extra_cache_;
+        }
+
         [[nodiscard]] NodePtr clone() const override
         {
             return std::make_unique<UTF8TextNode>(*this);
         }
+
+    private:
+        mutable std::string extra_cache_;
     };
 
     class UTF16TextNode : public Node
@@ -55,10 +81,34 @@ namespace slopkit::reclass
             return length * 2;
         }
 
+        [[nodiscard]] std::optional<std::size_t> extent() const noexcept override
+        {
+            return length;
+        }
+
+        [[nodiscard]] bool set_extent(Project&, std::size_t value) override
+        {
+            if (value == 0)
+            {
+                return false;
+            }
+            length = value;
+            return true;
+        }
+
+        [[nodiscard]] std::string_view extra_text() const noexcept override
+        {
+            extra_cache_ = count_label(length);
+            return extra_cache_;
+        }
+
         [[nodiscard]] NodePtr clone() const override
         {
             return std::make_unique<UTF16TextNode>(*this);
         }
+
+    private:
+        mutable std::string extra_cache_;
     };
 
     class UTF32TextNode : public Node
@@ -81,10 +131,34 @@ namespace slopkit::reclass
             return length * 4;
         }
 
+        [[nodiscard]] std::optional<std::size_t> extent() const noexcept override
+        {
+            return length;
+        }
+
+        [[nodiscard]] bool set_extent(Project&, std::size_t value) override
+        {
+            if (value == 0)
+            {
+                return false;
+            }
+            length = value;
+            return true;
+        }
+
+        [[nodiscard]] std::string_view extra_text() const noexcept override
+        {
+            extra_cache_ = count_label(length);
+            return extra_cache_;
+        }
+
         [[nodiscard]] NodePtr clone() const override
         {
             return std::make_unique<UTF32TextNode>(*this);
         }
+
+    private:
+        mutable std::string extra_cache_;
     };
 
     // The pointer forms hold the address of the string; the grid shows that

@@ -23,6 +23,11 @@
 
 namespace slopkit::ui::models
 {
+    // An Ascii cell draws at most this many characters; the whole reading is
+    // what ascii_full_text answers, so the hover tooltip can show what the cap
+    // hides.
+    inline constexpr std::size_t kAsciiMaxChars = 8;
+
     // The live half of the node grid: it resolves every class's address
     // expression, submits one read per visible block and slices the bytes back
     // into the node values. Nothing is submitted while no target is attached.
@@ -82,10 +87,15 @@ namespace slopkit::ui::models
         // address at all.
         [[nodiscard]] QString pointer_text(const ReclassRow& row) const;
 
-        // The row's own bytes as text: a printable byte as itself, every other
-        // byte as '.', an empty cell for a kind without bytes and '?' for a
-        // block that was not read or with no target attached.
+        // The row's own bytes as text, cut to kAsciiMaxChars: a printable byte
+        // as itself, every other byte as '.', an empty cell for a kind without
+        // bytes and '?' for a block that was not read or with no target
+        // attached.
         [[nodiscard]] QString ascii_text(const ReclassRow& row) const;
+
+        // The same reading uncut, for the hover tooltip of a cell that draws
+        // less than it holds.
+        [[nodiscard]] QString ascii_full_text(const ReclassRow& row) const;
 
         // The same value as the editor is prefilled with: the value a write
         // parses, without the readings the cell draws beside it.

@@ -17,7 +17,9 @@ namespace
     using slopkit::reclass::NodeKind;
     using slopkit::reclass::NodePtr;
     using slopkit::reclass::Project;
+    using slopkit::test::array_of;
     using slopkit::test::node_of;
+    using slopkit::ui::models::kExtentTextRole;
     using slopkit::ui::models::ReclassStructureModel;
     using Model = ReclassStructureModel;
 
@@ -505,5 +507,166 @@ TEST_CASE("a marked reference row is muted in every column", "[reclass][ui]")
     for (const int column : {Model::offset, Model::type, Model::comment})
     {
         CHECK(model.data(model.index(0, column), Qt::ForegroundRole).value<QColor>() == muted);
+    }
+}
+
+TEST_CASE("the Type cell's bracketed run is answered for the kinds that own one", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(node_of(project, NodeKind::utf16_text, "title"));
+    player.nodes.push_back(array_of(project, 3, NodeKind::int32));
+    player.nodes.push_back(node_of(project, NodeKind::int32, "health"));
+    player.nodes.push_back(node_of(project, NodeKind::bitfield, "flags"));
+    player.nodes.push_back(node_of(project, NodeKind::enum_node, "state"));
+
+    Model model {project};
+
+    // The run is the text the cell already draws, and the editor prefills the
+    // bare number without its brackets.
+    const QModelIndex text_run = model.index(0, Model::type);
+    CHECK(model.data(text_run, Qt::DisplayRole).toString() == QStringLiteral("Utf16Text [16]"));
+    CHECK(model.data(text_run, kExtentTextRole).toString() == QStringLiteral("[16]"));
+    CHECK(model.data(text_run, Qt::EditRole).toString() == QStringLiteral("16"));
+
+    const QModelIndex array_run = model.index(1, Model::type);
+    CHECK(model.data(array_run, Qt::DisplayRole).toString() == QStringLiteral("Array [3]"));
+    CHECK(model.data(array_run, kExtentTextRole).toString() == QStringLiteral("[3]"));
+    CHECK(model.data(array_run, Qt::EditRole).toString() == QStringLiteral("3"));
+
+    // A bit field's width and an enum's name are not a number the user types,
+    // and a plain scalar has no per-kind text at all.
+    for (const int row : {2, 3, 4})
+    {
+        CHECK_FALSE(model.data(model.index(row, Model::type), kExtentTextRole).isValid());
+        CHECK_FALSE(model.data(model.index(row, Model::type), Qt::EditRole).isValid());
+    }
+}
+
+TEST_CASE("a hidden placeholder row offers no bracketed run", "[reclass][ui]")
+{
+    application();
+
+    Project               project;
+    ReclassStructureModel model {project};
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(node_of(project, NodeKind::utf16_text, "title"));
+    model.set_project(project);
+
+    CHECK(model.data(model.index(0, Model::type), kExtentTextRole).toString() == QStringLiteral("[16]"));
+
+    player.nodes[0]->hidden = true;
+    model.rebuild();
+
+    const auto* hidden = model.row_at({}, 0);
+    REQUIRE(hidden != nullptr);
+    REQUIRE(hidden->hidden);
+    CHECK_FALSE(model.data(model.index(0, Model::type), kExtentTextRole).isValid());
+    CHECK_FALSE(model.data(model.index(0, Model::type), Qt::EditRole).isValid());
+    CHECK_FALSE(model.set_node_extent(*hidden, QStringLiteral("8")));
+    CHECK(player.nodes[0]->extent() == 16);
+}
+
+TEST_CASE("a text node's length is edited in place through the model", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(node_of(project, NodeKind::utf16_text, "title"));
+    player.nodes.push_back(node_of(project, NodeKind::int32, "health"));
+
+    Model model {project};
+
+    std::vector<QString> messages;
+    QObject::connect(&model,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    CHECK(model.set_node_extent(*model.row_at({}, 0), QStringLiteral("  32  ")));
+    CHECK(player.nodes[0]->extent() == 32);
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Utf16Text [32]"));
+    // 32 utf16 characters are 64 bytes, so the row behind the text moves with
+    // it and the int32 now starts at 0x40.
+    CHECK(cell(model, model.index(1, 0), Model::offset) == QStringLiteral("40"));
+    REQUIRE(messages.size() == 1);
+    CHECK(messages.back() == QStringLiteral("Length set to 32."));
+
+    // A typo is refused with its reason and the node keeps its length; a
+    // refusal never re-flattens the class.
+    for (const QString& bad :
+         {QStringLiteral("0"), QStringLiteral(""), QStringLiteral("-1"), QStringLiteral("abc"), QStringLiteral("16x")})
+    {
+        const auto* current = model.row_at({}, 0);
+        REQUIRE(current != nullptr);
+        CHECK_FALSE(model.set_node_extent(*current, bad));
+        CHECK(player.nodes[0]->extent() == 32);
+        CHECK(messages.back() == QStringLiteral("Length: expected a whole number of at least 1."));
+    }
+}
+
+TEST_CASE("an array's count is edited in place through the model", "[reclass][ui]")
+{
+    application();
+
+    Project project;
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(array_of(project, 2, NodeKind::int32));
+    player.nodes.push_back(node_of(project, NodeKind::int32, "tail"));
+
+    Model model {project};
+
+    std::vector<QString> messages;
+    QObject::connect(&model,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    // An expanded array grows its element rows with the count.
+    model.set_expanded(player.nodes[0]->id, true);
+    REQUIRE(model.rowCount(model.index(0, 0)) == 2);
+    CHECK(cell(model, model.index(1, 0), Model::offset) == QStringLiteral("8"));
+
+    CHECK(model.set_node_extent(*model.row_at({}, 0), QStringLiteral("4")));
+    REQUIRE(model.rowCount(model.index(0, 0)) == 4);
+    CHECK(cell(model, model.index(0, 0), Model::type) == QStringLiteral("Array [4]"));
+    CHECK(cell(model, model.index(1, 0), Model::offset) == QStringLiteral("10"));
+    REQUIRE(messages.size() == 1);
+    CHECK(messages.back() == QStringLiteral("Count set to 4."));
+
+    const auto* row = model.row_at({}, 0);
+    REQUIRE(row != nullptr);
+    CHECK_FALSE(model.set_node_extent(*row, QStringLiteral("0")));
+    CHECK(messages.back() == QStringLiteral("Count: expected a whole number of at least 1."));
+}
+
+TEST_CASE("a row whose kind owns no number takes no edit", "[reclass][ui]")
+{
+    application();
+
+    Project               project;
+    ReclassStructureModel model {project};
+    project.add_class("Player", "app+0x10");
+    auto& player = project.classes().front();
+    player.nodes.push_back(node_of(project, NodeKind::int32, "health"));
+    player.nodes.push_back(node_of(project, NodeKind::bitfield, "flags"));
+    model.set_project(project);
+
+    for (const std::size_t index : {std::size_t {0}, std::size_t {1}})
+    {
+        const auto* row = model.row_at({}, index);
+        REQUIRE(row != nullptr);
+        CHECK_FALSE(model.set_node_extent(*row, QStringLiteral("4")));
     }
 }

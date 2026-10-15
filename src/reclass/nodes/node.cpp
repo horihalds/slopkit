@@ -1,5 +1,6 @@
 #include "reclass/nodes/node.hpp"
 
+#include <format>
 #include <string>
 
 #include "reclass/nodes/container.hpp"
@@ -11,6 +12,11 @@
 
 namespace slopkit::reclass
 {
+    std::string count_label(std::size_t count)
+    {
+        return std::format("[{}]", count);
+    }
+
     NodePtr make_node(NodeKind kind)
     {
         switch (kind)

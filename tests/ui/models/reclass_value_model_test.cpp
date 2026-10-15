@@ -390,6 +390,35 @@ TEST_CASE("the ascii view spells a row's bytes", "[reclass][ui]")
     CHECK(fixture.values.ascii_text(fixture.row(2)).isEmpty());
 }
 
+TEST_CASE("an ascii cell keeps the characters it does not draw for the hover", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    // A string field wide enough to overflow the cell: sixteen bytes behind the
+    // row's int8 and its pointer.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::utf8_text, "title"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+    fixture.structure.rebuild();
+
+    fixture.write(fixture.player_address(),
+                  {0xAA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x65, 0x6C, 0x6C,
+                   0x6F, 0x20, 0x57, 0x6F, 0x72, 0x6C, 0x64, 0x21, 0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+
+    REQUIRE(fixture.values.node_bytes(fixture.row(2)).size() == 16);
+    CHECK(fixture.values.ascii_text(fixture.row(2)) == QStringLiteral("Hello Wo"));
+    CHECK(fixture.values.ascii_full_text(fixture.row(2)) == QStringLiteral("Hello World!...."));
+
+    // A node of eight bytes or fewer is unaffected: the two readings agree.
+    REQUIRE(fixture.values.node_bytes(fixture.row(1)).size() == 8);
+    CHECK(fixture.values.ascii_text(fixture.row(1)) == fixture.values.ascii_full_text(fixture.row(1)));
+}
+
 TEST_CASE("an expanded class pointer is read one pass after its pointer changes", "[reclass][ui]")
 {
     application();

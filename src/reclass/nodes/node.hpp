@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -68,6 +69,25 @@ namespace slopkit::reclass
         {
             return {};
         }
+
+        // The number that text brackets and the user may type there: a text
+        // node's length in characters, an array's element count. Empty for a
+        // kind whose per-kind text is not that number - a bit field's width, an
+        // enum's name - so the cell offers no run editor.
+        [[nodiscard]] virtual std::optional<std::size_t> extent() const noexcept
+        {
+            return std::nullopt;
+        }
+
+        // Sets that number; a kind without one refuses, and a zero is refused
+        // everywhere, since it would leave a text node with no bytes or an
+        // array with no element to shape the next one from.
+        [[nodiscard]] virtual bool set_extent(Project& project, std::size_t value)
+        {
+            static_cast<void>(project);
+            static_cast<void>(value);
+            return false;
+        }
     };
 
     // A fixed-size node that carries no per-kind state: the numeric, hex and
@@ -99,5 +119,9 @@ namespace slopkit::reclass
 
     // Builds a node of `kind` with no id, name or other per-node state.
     [[nodiscard]] NodePtr make_node(NodeKind kind);
+
+    // The `[N]` a kind brackets beside its name: a text node's length, an
+    // array's element count.
+    [[nodiscard]] std::string count_label(std::size_t count);
 
 }

@@ -74,6 +74,25 @@ namespace slopkit::ui::components
                                                                 : metrics.elidedText(text, Qt::ElideRight, available);
         }
 
+        // The rect the `[N]` a Type cell brackets draws in, when the cell draws
+        // its whole text: nothing when the run is absent or the cell elides the
+        // text it sits in, which leaves the run no fixed place.
+        std::optional<QRect>
+        run_rect(const QRect& cell, const QFontMetrics& metrics, const QString& text, const QString& run)
+        {
+            if (run.isEmpty() || !text.endsWith(run))
+            {
+                return std::nullopt;
+            }
+            const int offset    = metrics.horizontalAdvance(text.first(text.size() - run.size()));
+            const int run_width = metrics.horizontalAdvance(run);
+            if (offset + run_width > cell.width())
+            {
+                return std::nullopt;
+            }
+            return QRect(cell.x() + offset, cell.y(), run_width, cell.height());
+        }
+
         // The value's own font and colour when the model states them, and the
         // grid's when the choice is left to us.
         QFont cell_font(const QModelIndex& index, const QAbstractItemModel& model)
@@ -337,8 +356,12 @@ namespace slopkit::ui::components
             }
             offset_width = std::max(offset_width,
                                     mono.horizontalAdvance(display(entry, ReclassStructureModel::offset)) + kColumnGap);
-            const std::size_t ascii_chars = entry.row->hidden ? 0 : node->value_size();
-            ascii_width                   = std::max(
+            // An Ascii cell draws at most kAsciiMaxChars characters, so the
+            // column is measured at the characters it can draw; a wider node
+            // then no longer stretches the row.
+            const std::size_t ascii_chars =
+                entry.row->hidden ? 0 : std::min(node->value_size(), models::kAsciiMaxChars);
+            ascii_width = std::max(
                 ascii_width,
                 mono.horizontalAdvance(QString(static_cast<qsizetype>(ascii_chars), QLatin1Char('W'))) + kColumnGap);
 
@@ -646,6 +669,32 @@ namespace slopkit::ui::components
         return byte_rect_in(rows_[static_cast<std::size_t>(visual)], visual, index.column(), byte_index);
     }
 
+    std::optional<QRect> ReClassView::extent_rect(const QModelIndex& index) const
+    {
+        using models::ReclassStructureModel;
+        const models::ReclassRow* row = row_of(index);
+        if (row == nullptr || index.column() != ReclassStructureModel::type)
+        {
+            return std::nullopt;
+        }
+        const int visual = visual_index_of(row->node_id);
+        if (visual < 0)
+        {
+            return std::nullopt;
+        }
+        const QModelIndex  type = index_for(*row, ReclassStructureModel::type);
+        const QRect        cell = cell_rect_at(visual, ReclassStructureModel::type);
+        const QFontMetrics metrics(cell_font(type, *model_));
+        if (cell.isEmpty())
+        {
+            return std::nullopt;
+        }
+        return run_rect(cell,
+                        metrics,
+                        model_->data(type, Qt::DisplayRole).toString(),
+                        model_->data(type, models::kExtentTextRole).toString());
+    }
+
     std::optional<QRect>
     ReClassView::byte_rect_in(const VisualRow& entry, int row_index, int column, std::size_t byte_index) const
     {
@@ -702,6 +751,30 @@ namespace slopkit::ui::components
             x += width;
         }
         return std::nullopt;
+    }
+
+    std::optional<QRect>
+    ReClassView::extent_rect_in(const VisualRow& entry, int row_index, const QPoint& position) const
+    {
+        using models::ReclassStructureModel;
+        const QModelIndex  type = index_for(*entry.row, ReclassStructureModel::type);
+        const QRect        cell = cell_rect_at(row_index, ReclassStructureModel::type);
+        const QFontMetrics metrics(cell_font(type, *model_));
+        if (cell.isEmpty())
+        {
+            return std::nullopt;
+        }
+        const std::optional<QRect> run = run_rect(cell,
+                                                  metrics,
+                                                  model_->data(type, Qt::DisplayRole).toString(),
+                                                  model_->data(type, models::kExtentTextRole).toString());
+        // A point right of the run's start is on the run: the cell is exactly as
+        // wide as the text it draws, so nothing else stands beside it.
+        if (!run.has_value() || position.x() < run->x())
+        {
+            return std::nullopt;
+        }
+        return run;
     }
 
     int ReClassView::byte_at(const VisualRow& entry, int row_index, int column, const QPoint& position) const
@@ -1015,12 +1088,22 @@ namespace slopkit::ui::components
             close_editor();
             return;
         }
-        // One byte writes through the value model, which is the only path that
+        // The run writes through the structure model, which owns the node's own
+        // number; one byte writes through the value model, the only path that
         // can address a part of a cell; a whole cell writes through the model.
-        const bool applied =
-            target_.byte_index >= 0
-                ? values_->write_byte(*row, static_cast<std::size_t>(target_.byte_index), editor_->text())
-                : model_->setData(index_for(*row, target_.column), editor_->text(), Qt::EditRole);
+        bool applied = false;
+        if (target_.extent)
+        {
+            applied = structure_->set_node_extent(*row, editor_->text());
+        }
+        else if (target_.byte_index >= 0)
+        {
+            applied = values_->write_byte(*row, static_cast<std::size_t>(target_.byte_index), editor_->text());
+        }
+        else
+        {
+            applied = model_->setData(index_for(*row, target_.column), editor_->text(), Qt::EditRole);
+        }
         if (applied)
         {
             close_editor();
@@ -1347,6 +1430,21 @@ namespace slopkit::ui::components
             }
         }
 
+        // The Type cell's bracketed run is typed into on its own: a double-click
+        // on the run opens the editor over it, while a click elsewhere in the
+        // cell keeps the rules below.
+        if (hit->column == models::ReclassStructureModel::type)
+        {
+            const VisualRow&           entry = rows_[static_cast<std::size_t>(hit->row_index)];
+            const std::optional<QRect> run   = extent_rect_in(entry, hit->row_index, event->position().toPoint());
+            if (run.has_value())
+            {
+                open_extent_editor(hit->row_index, *run);
+                event->accept();
+                return;
+            }
+        }
+
         if (model_->flags(index_for(*hit->row, hit->column)).testFlag(Qt::ItemIsEditable))
         {
             // Either a value the write path accepts or the node's own name.
@@ -1394,8 +1492,11 @@ namespace slopkit::ui::components
         }
 
         editing_ = true;
-        target_  = EditTarget {
-            .node_id = hit.row->node_id, .column = hit.column, .byte_index = hit.byte_index, .rect = hit.rect};
+        target_  = EditTarget {.node_id    = hit.row->node_id,
+                               .column     = hit.column,
+                               .byte_index = hit.byte_index,
+                               .extent     = hit.extent,
+                               .rect       = hit.rect};
         editor_->setFont(cell_font(index, *model_));
         // The editor shows the plain text the model answers for the cell - the
         // byte the row draws, bare and upper case, for a per-byte edit - and not
@@ -1411,6 +1512,13 @@ namespace slopkit::ui::components
         else if (hit.byte_index >= 0)
         {
             // A pair-wide box would clip the two digits it holds.
+            const QFontMetrics metrics(cell_font(index, *model_));
+            rect.setWidth(std::max(rect.width(), metrics.horizontalAdvance(QStringLiteral("0000"))));
+        }
+        else if (hit.extent)
+        {
+            // The run's own box is as wide as its brackets; the number typed
+            // into it needs the room a hex pair is given.
             const QFontMetrics metrics(cell_font(index, *model_));
             rect.setWidth(std::max(rect.width(), metrics.horizontalAdvance(QStringLiteral("0000"))));
         }
@@ -1456,6 +1564,24 @@ namespace slopkit::ui::components
         hit.column     = column;
         hit.rect       = *rect;
         hit.byte_index = byte_index;
+        open_editor(hit);
+    }
+
+    void ReClassView::open_extent_editor(int row_index, const QRect& run)
+    {
+        if (row_index < 0 || row_index >= static_cast<int>(rows_.size()))
+        {
+            return;
+        }
+        ensure_visible(row_index);
+        const VisualRow& entry = rows_[static_cast<std::size_t>(row_index)];
+
+        Hit hit;
+        hit.row       = entry.row;
+        hit.row_index = row_index;
+        hit.column    = models::ReclassStructureModel::type;
+        hit.rect      = run;
+        hit.extent    = true;
         open_editor(hit);
     }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -38,6 +39,18 @@ namespace slopkit::ui::models
         bool is_marked(const ReclassRow& row)
         {
             return row.unknown_class || row.cycle || row.too_deep;
+        }
+
+        // The number the Type cell brackets, when the row offers one: a hidden
+        // placeholder or a marked reference row answers nothing, exactly as its
+        // cell text does.
+        std::optional<std::size_t> run_extent(const ReclassRow& row, const reclass::Node& node)
+        {
+            if (row.hidden || is_marked(row))
+            {
+                return std::nullopt;
+            }
+            return node.extent();
         }
 
         // A note is drawn the way it would be written in source: prefixed, and
@@ -150,6 +163,45 @@ namespace slopkit::ui::models
             emit              dataChanged(changed, changed);
         }
         emit statusChanged(tr("Node renamed."), false);
+        return true;
+    }
+
+    bool ReclassStructureModel::set_node_extent(const ReclassRow& row, const QString& text)
+    {
+        if (row.node == nullptr || row.hidden || is_marked(row))
+        {
+            return false;
+        }
+        const auto ref = reclass::node_ref(*project_, row.node_id);
+        if (!ref)
+        {
+            return false;
+        }
+
+        reclass::Node& node = *(*ref->owner)[ref->index];
+        if (!run_extent(row, node).has_value())
+        {
+            return false;
+        }
+
+        // The two wording choices are the only kind knowledge here; the number
+        // itself is the node's own, so a kind without one never gets this far.
+        const bool is_text = node.kind() == reclass::NodeKind::utf8_text || node.kind() == reclass::NodeKind::utf16_text
+                          || node.kind() == reclass::NodeKind::utf32_text;
+        const QString noun = is_text ? tr("Length") : tr("Count");
+
+        bool                     ok    = false;
+        const unsigned long long value = text.trimmed().toULongLong(&ok);
+        if (!ok || value == 0 || !node.set_extent(*project_, static_cast<std::size_t>(value)))
+        {
+            emit statusChanged(tr("%1: expected a whole number of at least 1.").arg(noun), true);
+            return false;
+        }
+
+        // The number sizes the node, so everything behind the node moves with
+        // it and the class re-flattens the way a kind change makes it.
+        rebuild();
+        emit statusChanged(tr("%1 set to %2.").arg(noun).arg(value), false);
         return true;
     }
 
@@ -519,8 +571,9 @@ namespace slopkit::ui::models
                 return {};
             }
         case Qt::EditRole:
-            // The name and the note are typed into, so the editor starts from
-            // the same text the cell shows; no other cell takes an edit.
+            // The name, the note and the Type cell's bracketed number are typed
+            // into, so the editor starts from the same text the cell shows; the
+            // run alone prefills its bare number, without the brackets.
             if (index.column() == name)
             {
                 return to_qstring(node.name);
@@ -528,6 +581,13 @@ namespace slopkit::ui::models
             if (index.column() == comment)
             {
                 return to_qstring(node.comment);
+            }
+            if (index.column() == type)
+            {
+                if (const std::optional<std::size_t> extent = run_extent(*row, node))
+                {
+                    return QString::number(*extent);
+                }
             }
             return {};
         case Qt::FontRole:
@@ -569,6 +629,17 @@ namespace slopkit::ui::models
             default:
                 return {};
             }
+        case kExtentTextRole:
+            // The run the cell already draws, so the grid can anchor its inline
+            // editor on it without parsing the drawn text back apart.
+            if (index.column() == type)
+            {
+                if (run_extent(*row, node).has_value())
+                {
+                    return to_qstring(node.extra_text());
+                }
+            }
+            return {};
         default:
             return {};
         }

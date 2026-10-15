@@ -18,6 +18,11 @@ namespace slopkit::ui::models
     // stops inlining, so a pathological chain cannot explode the grid.
     inline constexpr std::size_t kMaxReclassBlockDepth = 8;
 
+    // The Type cell's bracketed, editable suffix - a text node's length in
+    // characters, an array's element count - which the grid anchors its inline
+    // editor on: every other kind answers nothing and takes no run editor.
+    inline constexpr int kExtentTextRole = Qt::UserRole + 3;
+
     // One grid row: a node of the selected class, or a node inlined from a
     // class a reference node names. `offset` is shown in the Offset column and
     // continues from the referencing node's offset, while `block` names the
@@ -92,6 +97,12 @@ namespace slopkit::ui::models
         // Sets the node's note: the text is trimmed and an empty one clears the
         // note, so there is nothing to refuse.
         bool set_node_comment(const ReclassRow& row, const QString& text);
+
+        // Sets the node's own number, the one the Type cell brackets: a text
+        // node's length in characters or an array's element count. The text
+        // must be a whole number of at least one; anything else is refused with
+        // its reason on statusChanged, and so is a row with no node of its own.
+        bool set_node_extent(const ReclassRow& row, const QString& text);
 
         [[nodiscard]] reclass::Project& project() noexcept;
         [[nodiscard]] std::size_t       selected_class() const noexcept;

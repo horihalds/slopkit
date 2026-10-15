@@ -31,7 +31,9 @@ namespace slopkit::ui::models
             }
             if (index.column() == ReclassStructureModel::ascii)
             {
-                return values_.ascii_text(*row);
+                // The cell draws at most kAsciiMaxChars characters, while the
+                // tooltip answers the whole reading.
+                return role == widgets::kFullTextRole ? values_.ascii_full_text(*row) : values_.ascii_text(*row);
             }
             if (index.column() == ReclassStructureModel::value)
             {
