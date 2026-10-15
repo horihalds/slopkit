@@ -54,8 +54,10 @@ namespace slopkit::ui::models
         // and the regions the pointer field tags an address with.
         void set_modules(std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions);
 
-        // The rows changed shape: the readings belong to the old shape, while
-        // the resolved addresses stay because they are keyed by class id.
+        // The rows changed shape: the readings stay so a block whose address
+        // did not move keeps its value, and only a block whose base moved
+        // counts as unread. The resolved addresses stay because they are keyed
+        // by class id.
         void invalidate();
 
         // At most one batched resolve job, on a one-second cadence, while a

@@ -17,6 +17,11 @@ namespace slopkit::ui::models
         pending_.clear();
     }
 
+    void LiveCells::invalidate()
+    {
+        pending_.clear();
+    }
+
     std::size_t LiveCells::size() const noexcept
     {
         return cells_.size();
@@ -103,15 +108,18 @@ namespace slopkit::ui::models
             cell.changed_bytes.clear();
             if (readable)
             {
-                const bool had = cell.bytes.has_value();
+                // Bytes read at another address, or of another size, describe
+                // different bytes: this reading is the cell's first and flags
+                // nothing.
+                const bool had = cell.bytes.has_value() && cell.identity == pending.identity
+                              && cell.bytes->size() == reading.bytes.size();
                 cell.changed_bytes.assign(reading.bytes.size(), 0);
                 if (had)
                 {
-                    const bool same_size = cell.bytes->size() == reading.bytes.size();
-                    bool       moved     = false;
+                    bool moved = false;
                     for (std::size_t b = 0; b < cell.changed_bytes.size(); ++b)
                     {
-                        if (!same_size || (*cell.bytes)[b] != reading.bytes[b])
+                        if ((*cell.bytes)[b] != reading.bytes[b])
                         {
                             cell.changed_bytes[b] = 1;
                             moved                 = true;
@@ -131,6 +139,7 @@ namespace slopkit::ui::models
             }
             cell.has_reading = true;
             cell.readable    = readable;
+            cell.identity    = pending.identity;
 
             if (was_state != cell.has_reading || was_read != cell.readable || was_chg != cell.changed
                 || was_bytes != cell.bytes)

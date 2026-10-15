@@ -77,7 +77,7 @@ namespace slopkit::ui::models
 
     void ReclassValueModel::invalidate()
     {
-        cells_.clear();
+        cells_.invalidate();
         force_resolve_ = true;
     }
 
@@ -526,6 +526,13 @@ namespace slopkit::ui::models
         {
             return {};
         }
+        // Bytes read at another base describe whatever stood there before: the
+        // block is unread until the pass that follows a move reads it.
+        const std::optional<std::uint64_t> base = block_base(block);
+        if (!base.has_value() || *base != cell->identity)
+        {
+            return {};
+        }
         return *cell->bytes;
     }
 
@@ -533,6 +540,11 @@ namespace slopkit::ui::models
     {
         const LiveCell* cell = cells_.at(block);
         if (cell == nullptr || !cell->has_reading || !cell->readable)
+        {
+            return {};
+        }
+        const std::optional<std::uint64_t> base = block_base(block);
+        if (!base.has_value() || *base != cell->identity)
         {
             return {};
         }

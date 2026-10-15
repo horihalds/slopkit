@@ -407,6 +407,51 @@ TEST_CASE("dissect guesses the kind a hex node's live bytes fit", "[reclass][ui]
     dialog.close();
 }
 
+TEST_CASE("a class edit keeps the grid's values until the next live pass", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    fixture.target = slopkit::test::fake_target();
+    attach_session(fixture.worker);
+    dialog.set_modules(std::vector<slopkit::process::ModuleInfo> {module_image("app", kAppBase, 0x1000)},
+                       std::vector<slopkit::process::RegionInfo> {region_of(kAppBase, 0x1000, "/app", true)});
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    stage_bytes(fixture.access, kAppBase + 0x10, {0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    live_pass(fixture, dialog);
+    live_pass(fixture, dialog);
+    QCoreApplication::processEvents();
+    REQUIRE(dialog.grid()->cell_text(dialog.structure()->index(0, ReclassStructureModel::value)).toStdString()
+            == "= 42 (0x2A)");
+
+    // Adding a node re-lays the rows: the nodes the retained reading still
+    // covers keep their value, and the new node reads unread until the next
+    // pass paints it.
+    dialog.grid()->setCurrentIndex({});
+    dialog.insert_node(NodeKind::int32);
+    REQUIRE(fixture.project.classes()[1].nodes.size() == 3);
+    QCoreApplication::processEvents();
+
+    CHECK(dialog.grid()->cell_text(dialog.structure()->index(0, ReclassStructureModel::value)).toStdString()
+          == "= 42 (0x2A)");
+    CHECK(dialog.grid()->cell_text(dialog.structure()->index(2, ReclassStructureModel::value)).toStdString() == "?");
+
+    stage_bytes(fixture.access, kAppBase + 0x10 + 9, {0x07, 0x00, 0x00, 0x00});
+    live_pass(fixture, dialog);
+    QCoreApplication::processEvents();
+    CHECK(dialog.grid()->cell_text(dialog.structure()->index(2, ReclassStructureModel::value)).toStdString()
+          == "= 7 (0x7)");
+
+    dialog.close();
+}
+
 TEST_CASE("follow pointer references a class and inlines it", "[reclass][ui]")
 {
     application();

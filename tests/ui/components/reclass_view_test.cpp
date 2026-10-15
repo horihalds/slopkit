@@ -870,6 +870,13 @@ TEST_CASE("toggling a reference row inlines its class and keeps the cursor", "[r
     const QModelIndex inlined = fixture.structure.index(0, ReclassStructureModel::name, fixture.structure.index(1, 0));
     CHECK(view.cell_text(inlined).toStdString() == "x");
 
+    // A quick second click on the triangle is swallowed: the press already
+    // folded the row once, so it does not fold back.
+    double_click_at(view, triangle);
+    QCoreApplication::processEvents();
+    CHECK(view.isExpanded(fixture.cell(fixture.node_id(1), ReclassStructureModel::name)));
+    CHECK(view.row_count() == 4);
+
     // A double-click on a cell that is not typed into collapses it again; the
     // name cell of this row now belongs to the name editor.
     double_click(view, fixture.cell(fixture.node_id(1), ReclassStructureModel::offset));
@@ -1298,8 +1305,20 @@ TEST_CASE("an array row's arrows walk its elements", "[reclass][ui][view]")
     CHECK(view.row_count() == 5);
     CHECK(view.cell_text(type()).toStdString() == "Array<UInt8> [4] ◀ (1) ▶");
 
+    // A quick second click arrives as a double-click: the arrow steps the
+    // element again rather than folding the row it lives in.
+    double_click_at(view, control().value().next.center());
+    QCoreApplication::processEvents();
+    CHECK(fixture.structure.is_expanded(list));
+    CHECK(view.row_count() == 5);
+    CHECK(fixture.structure.element_index(list) == 2);
+    CHECK(view.cell_text(type()).toStdString() == "Array<UInt8> [4] ◀ (2) ▶");
+
     // The back arrow steps back, and the first element's back arrow wraps to
     // the last.
+    click_at(view, control().value().previous.center());
+    QCoreApplication::processEvents();
+    CHECK(fixture.structure.element_index(list) == 1);
     click_at(view, control().value().previous.center());
     QCoreApplication::processEvents();
     CHECK(fixture.structure.element_index(list) == 0);
@@ -1332,6 +1351,20 @@ TEST_CASE("an array row's arrows walk its elements", "[reclass][ui][view]")
           == "Array<UInt8> [1] ◀ (0) ▶");
     click_at(view, one->next.center());
     QCoreApplication::processEvents();
+    CHECK(fixture.structure.element_index(single) == 0);
+    CHECK(view.cell_text(fixture.cell(single, ReclassStructureModel::type)).toStdString()
+          == "Array<UInt8> [1] ◀ (0) ▶");
+
+    // A quick second click there arrives as a double-click: the one-element
+    // array moves nowhere and its row is left open rather than folded away.
+    fixture.structure.set_expanded(single, true);
+    QCoreApplication::processEvents();
+    const std::optional<ReClassView::ElementRects> single_control =
+        view.element_rects(fixture.cell(single, ReclassStructureModel::type));
+    REQUIRE(single_control.has_value());
+    double_click_at(view, single_control->next.center());
+    QCoreApplication::processEvents();
+    CHECK(fixture.structure.is_expanded(single));
     CHECK(fixture.structure.element_index(single) == 0);
     CHECK(view.cell_text(fixture.cell(single, ReclassStructureModel::type)).toStdString()
           == "Array<UInt8> [1] ◀ (0) ▶");

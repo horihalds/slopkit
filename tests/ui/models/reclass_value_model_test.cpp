@@ -370,6 +370,78 @@ TEST_CASE("an unreadable block paints every one of its nodes with a question mar
     CHECK(fixture.values.address_text(fixture.row(0)) == QStringLiteral("400010"));
 }
 
+TEST_CASE("a class edit keeps the values the reading still covers", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    fixture.write(fixture.player_address(), {0x2A, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+
+    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 42 (0x2A)"));
+    const QString pointer_ascii = fixture.values.ascii_text(fixture.row(1));
+
+    // Appending a node grows the class past the retained reading: the nodes the
+    // reading still covers keep their values, the new one reads as unread.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::int32, "score"));
+    fixture.write(fixture.player_address(),
+                  {0x2A, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00});
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+    fixture.values.invalidate();
+
+    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 42 (0x2A)"));
+    CHECK(fixture.values.ascii_text(fixture.row(1)) == pointer_ascii);
+    CHECK(fixture.values.value_text(fixture.row(2)) == QStringLiteral("?"));
+
+    // The next pass fills the rest in.
+    fixture.pass();
+    CHECK(fixture.values.value_text(fixture.row(2)) == QStringLiteral("= 7 (0x7)"));
+}
+
+TEST_CASE("a block whose address moved reads unread until the next pass", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    fixture.resolve();
+
+    // The pointer at offset 1 points at the heap object; both blocks are read.
+    fixture.write(fixture.player_address(), {0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.write(kHeapBase, {0x07, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00});
+    fixture.pass();
+
+    const std::size_t pointer_id = fixture.project.classes()[1].nodes[1]->id;
+    fixture.structure.set_expanded(pointer_id, true);
+    fixture.pass();
+    REQUIRE(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 7 (0x7)"));
+
+    // Retyping the tag to int32 moves the pointer field four bytes along, so its
+    // target sits where the retained reading of the class does not reach.
+    Class& player   = fixture.project.classes()[1];
+    player.nodes[0] = node_of(fixture.project, NodeKind::int32, "tag");
+    fixture.write(fixture.player_address(), {0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00});
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+    fixture.structure.set_expanded(pointer_id, true);
+    fixture.values.invalidate();
+
+    // The class's own row keeps the reading it was taken at; the inlined target,
+    // whose address is no longer known, reads unread.
+    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 1610612736 (0x60000000)"));
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("?"));
+    CHECK(fixture.values.address_text(fixture.child(1, 0)) == QStringLiteral("?"));
+
+    // The next passes read the class at its new shape and the target it points
+    // at, and the values come back.
+    fixture.pass();
+    fixture.pass();
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 7 (0x7)"));
+}
+
 TEST_CASE("the ascii view spells a row's bytes", "[reclass][ui]")
 {
     application();
@@ -548,7 +620,8 @@ TEST_CASE("an instance array's element is read past the pointer's target", "[rec
     CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 1 (0x1)"));
 
     // A reading asked for before a jump belongs to the element that moved away,
-    // so the late answer must not land where the new element sits.
+    // so the late answer must not land where the new element sits, and the moved
+    // block reads unread until the next pass reads the element it now covers.
     const std::vector<LiveRequest> stale = fixture.values.requests();
     REQUIRE(stale.size() == 2);
     REQUIRE(fixture.structure.step_element(array_id, 2));
@@ -556,7 +629,7 @@ TEST_CASE("an instance array's element is read past the pointer's target", "[rec
     fixture.values.apply_readings(
         std::vector<LiveReading> {fixture.reading(stale[0].id, stale[0].address, stale[0].size),
                                   fixture.reading(stale[1].id, stale[1].address, stale[1].size)});
-    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 1 (0x1)"));
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("?"));
 }
 
 TEST_CASE("a live pass leaves the grid's rows alone", "[reclass][ui]")

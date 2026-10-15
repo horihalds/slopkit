@@ -1577,6 +1577,19 @@ namespace slopkit::ui::components
             return;
         }
 
+        // The fold triangle and an array's arrows act on a press: the second
+        // click of a fast double-click must not fold the row - or, when the
+        // first one rebuilt the rows, whatever row now stands under the point.
+        if (hit->on_triangle || (hit->element_step != 0 && hit->row != nullptr))
+        {
+            if (hit->element_step != 0 && hit->row != nullptr)
+            {
+                structure_->step_element(hit->row->node_id, hit->element_step);
+            }
+            event->accept();
+            return;
+        }
+
         // A byte of a hex dump or of the Ascii column is typed into on its own,
         // when the row's value is writable and the point resolves to a byte the
         // row covers; every other cell keeps the rule below.

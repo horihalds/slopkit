@@ -705,7 +705,10 @@ resolves each class's expression — one batched `submit_resolve_expressions` jo
 keyed by class id, about once a second and immediately when an expression or the
 module map changes — and submits **one read per visible block** through
 `process::AccessWorker`, then slices every node's value out of its block at the
-node's own offset. A block that cannot be read paints `?` for all of its nodes, an
+node's own offset. A reading is kept across a class edit and used only at the
+address it was taken at, so re-laying the rows leaves every block whose address did
+not move on screen and paints `?` for a block that moved until the next pass reads
+it. A block that cannot be read paints `?` for all of its nodes, an
 unresolved class address `not resolved yet` and a detached target
 `Attach to a target first.`; the proxy model fuses the two models into the
 nine fields the painted grid flows.

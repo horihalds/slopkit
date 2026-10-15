@@ -332,3 +332,60 @@ TEST_CASE("live cells forget the byte mask when the row set is reset", "[ui][mod
     CHECK(cells.at(0)->changed_bytes.empty());
     CHECK_FALSE(cells.at(0)->changed);
 }
+
+TEST_CASE("live cells keep a reading across an invalidate", "[ui][models]")
+{
+    slopkit::ui::models::LiveCells cells;
+    const auto                     valid = [](std::size_t, std::uint64_t)
+    {
+        return true;
+    };
+    std::size_t runs     = 0;
+    const auto  emit_run = [&runs](std::size_t, std::size_t)
+    {
+        ++runs;
+    };
+
+    (void)cells.request(1,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 100 + row);
+                        });
+    cells.apply(std::vector<slopkit::ui::LiveReading> {readable(0, bytes({1, 2, 3, 4}))}, valid, emit_run);
+    REQUIRE(cells.at(0)->has_reading);
+    REQUIRE(cells.at(0)->bytes.has_value());
+
+    // An invalidate drops only the request that was in flight; the reading stays.
+    cells.invalidate();
+    CHECK(cells.at(0)->has_reading);
+    CHECK(cells.at(0)->readable);
+    REQUIRE(cells.at(0)->bytes.has_value());
+    CHECK(*cells.at(0)->bytes == bytes({1, 2, 3, 4}));
+
+    // With no request in flight a following batch applies nothing.
+    runs = 0;
+    cells.apply(std::vector<slopkit::ui::LiveReading> {readable(0, bytes({9, 9, 9, 9}))}, valid, emit_run);
+    CHECK(runs == 0);
+    CHECK(*cells.at(0)->bytes == bytes({1, 2, 3, 4}));
+
+    // A reading for another identity describes different bytes: it is the cell's
+    // first and flags nothing.
+    (void)cells.request(1,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 200 + row);
+                        });
+    cells.apply(std::vector<slopkit::ui::LiveReading> {readable(0, bytes({9, 9, 9, 9}))}, valid, emit_run);
+    CHECK_FALSE(cells.at(0)->changed);
+    CHECK(cells.at(0)->changed_bytes == std::vector<std::uint8_t> {0, 0, 0, 0});
+
+    // A reading of another size flags nothing either.
+    (void)cells.request(1,
+                        [](std::size_t row)
+                        {
+                            return candidate(row, 200 + row);
+                        });
+    cells.apply(std::vector<slopkit::ui::LiveReading> {readable(0, bytes({9, 9}))}, valid, emit_run);
+    CHECK_FALSE(cells.at(0)->changed);
+    CHECK(cells.at(0)->changed_bytes == std::vector<std::uint8_t> {0, 0});
+}

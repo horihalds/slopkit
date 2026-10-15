@@ -16,6 +16,10 @@ namespace slopkit::ui::models
         bool                                  has_reading {false};
         bool                                  readable {false};
         std::optional<std::vector<std::byte>> bytes;
+        // What the bytes describe: the address a ReClass block was read at, the
+        // entry id of an address-list row. 0 while the cell holds bytes no
+        // reading produced.
+        std::uint64_t                         identity {0};
         // One flag per byte of `bytes`, empty while the cell is unreadable.
         // `std::uint8_t` rather than `bool` so the value model can hand out a span.
         std::vector<std::uint8_t>             changed_bytes;
@@ -36,6 +40,10 @@ namespace slopkit::ui::models
         void reset(std::size_t rows);
 
         void clear();
+
+        // Drops the in-flight requests and keeps the readings, so a row set that
+        // only changed shape keeps the values of the rows that did not move.
+        void invalidate();
 
         [[nodiscard]] std::size_t     size() const noexcept;
         [[nodiscard]] const LiveCell* at(std::size_t row) const noexcept;
