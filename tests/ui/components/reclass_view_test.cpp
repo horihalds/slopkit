@@ -19,6 +19,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QRect>
+#include <QScrollBar>
 #include <QStringList>
 
 #include "process/access_worker.hpp"
@@ -453,7 +454,7 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
     CHECK(tail_ink->second == tag_ink->second);
 }
 
-TEST_CASE("a note widens the comment column up to a share of the pane", "[reclass][ui][view]")
+TEST_CASE("a long note keeps its full width and the pane scrolls instead", "[reclass][ui][view]")
 {
     application();
 
@@ -481,15 +482,19 @@ TEST_CASE("a note widens the comment column up to a share of the pane", "[reclas
     const int needed = prose.horizontalAdvance(QStringLiteral("// the health field"));
     CHECK(view.column_width(ReclassStructureModel::comment) >= needed);
 
-    // A note longer than a third of the pane is clamped there, so the value
-    // column keeps the slack.
+    // A note longer than a third of the pane keeps its full width instead of
+    // being clamped, and the row overflowing the pane makes it scroll.
     fixture.project.classes()[1].nodes[0]->comment =
         "a note so long that it would otherwise swallow the whole value column and then some";
     fixture.structure.rebuild();
     QCoreApplication::processEvents();
 
-    CHECK(view.column_width(ReclassStructureModel::comment) <= view.viewport()->width() / 3 + 1);
+    const int note = prose.horizontalAdvance(
+        QStringLiteral("// a note so long that it would otherwise swallow the whole value column and then some"));
+    CHECK(view.column_width(ReclassStructureModel::comment) >= note);
+    CHECK(view.column_width(ReclassStructureModel::comment) > view.viewport()->width() / 3);
     CHECK(view.column_width(ReclassStructureModel::value) > 0);
+    CHECK(view.horizontalScrollBar()->maximum() > 0);
 }
 
 TEST_CASE("clicking a row selects it and shift extends the selection", "[reclass][ui][view]")
@@ -763,7 +768,7 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     CHECK(editor->text().toStdString() == "health");
 }
 
-TEST_CASE("a value wider than its column is readable from the tooltip", "[reclass][ui][view]")
+TEST_CASE("a value keeps its measured width and the pane scrolls instead", "[reclass][ui][view]")
 {
     application();
 
@@ -790,19 +795,127 @@ TEST_CASE("a value wider than its column is readable from the tooltip", "[reclas
     const QModelIndex value_cell = fixture.cell(fixture.node_id(2), ReclassStructureModel::value);
     CHECK(view.cell_text(value_cell).toStdString() == "AB CD EF 01 23 45 67 89");
 
-    // A cell whose text fits carries no tooltip...
+    // A pane wide enough for the class shows no bar and reads the value whole.
+    CHECK(view.horizontalScrollBar()->maximum() == 0);
     CHECK(view.hover_full_text(view.cell_rect(value_cell).value().center()).isEmpty());
 
-    // ...and a pane too narrow for the row takes the value field down first, so
-    // its text overflows and is read from the full text instead.
+    // A pane too narrow for the row no longer takes the value field down: the
+    // field keeps the width the class measured and the pane scrolls instead.
     const int value_width = view.column_width(ReclassStructureModel::value);
     view.resize(900, 200);
     QCoreApplication::processEvents();
 
-    CHECK(view.column_width(ReclassStructureModel::value) < value_width);
-    CHECK(view.hover_full_text(view.cell_rect(value_cell).value().center()).toStdString()
-          == view.cell_text(value_cell).toStdString());
-    CHECK_FALSE(view.hover_full_text(view.cell_rect(value_cell).value().center()).isEmpty());
+    CHECK(view.column_width(ReclassStructureModel::value) == value_width);
+    CHECK(view.horizontalScrollBar()->maximum() > 0);
+}
+
+TEST_CASE("the pane scrolls the whole row without narrowing a field", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+
+    // A hex64 row makes the class wider than the pane.
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QScrollBar* bar = view.horizontalScrollBar();
+    REQUIRE(bar->maximum() > 0);
+
+    // Every field starts where the one before it ended, at every scroll offset.
+    const auto tiles = [&view]
+    {
+        for (int column = 1; column < ReclassStructureModel::column_count; ++column)
+        {
+            REQUIRE(view.column_x(column) == view.column_x(column - 1) + view.column_width(column - 1));
+        }
+    };
+
+    std::vector<int> widths;
+    for (int column = 0; column < ReclassStructureModel::column_count; ++column)
+    {
+        widths.push_back(view.column_width(column));
+    }
+    const int left = view.column_x(ReclassStructureModel::offset);
+    tiles();
+
+    // Narrowing the pane past the row leaves every width alone and only grows
+    // the bar's range.
+    const int range = bar->maximum();
+    view.resize(500, 200);
+    QCoreApplication::processEvents();
+    CHECK(bar->maximum() > range);
+    for (int column = 0; column < ReclassStructureModel::column_count; ++column)
+    {
+        CHECK(view.column_width(column) == widths[static_cast<std::size_t>(column)]);
+    }
+
+    // Scrolling shifts all nine fields together.
+    bar->setValue(bar->maximum() / 2);
+    QCoreApplication::processEvents();
+    CHECK(view.column_x(ReclassStructureModel::offset) < left);
+    tiles();
+
+    // At the far end the trailing pointer field sits fully inside the pane, so
+    // the end of the row stays reachable.
+    bar->setValue(bar->maximum());
+    QCoreApplication::processEvents();
+    tiles();
+    CHECK(view.column_x(ReclassStructureModel::pointer) >= 0);
+    CHECK(view.column_x(ReclassStructureModel::pointer) + view.column_width(ReclassStructureModel::pointer)
+          <= view.viewport()->width());
+
+    // A click on the scrolled pointer cell lands on the row it covers.
+    click(view, fixture.cell(fixture.node_id(2), ReclassStructureModel::pointer));
+    QCoreApplication::processEvents();
+    CHECK(node_at(fixture.structure, view.currentIndex()) == fixture.node_id(2));
+
+    // A pane wide enough for the class hides the bar and left-aligns the row.
+    view.resize(2000, 200);
+    QCoreApplication::processEvents();
+    CHECK(bar->maximum() == 0);
+    CHECK(view.column_x(ReclassStructureModel::offset) == left);
+}
+
+TEST_CASE("scrolling the pane closes the inline editor", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    // The name cell is visible at offset zero, and opens its editor.
+    double_click(view, fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
+    QCoreApplication::processEvents();
+    REQUIRE(view.editor() != nullptr);
+    REQUIRE(view.editor()->isVisible());
+
+    // A horizontal scroll re-places every cell, so the editor closes rather than
+    // float over the wrong field.
+    QScrollBar* bar = view.horizontalScrollBar();
+    REQUIRE(bar->maximum() > 0);
+    bar->setValue(bar->maximum() / 2);
+    QCoreApplication::processEvents();
+    CHECK_FALSE(view.editor()->isVisible());
 }
 
 TEST_CASE("the grid stripes its rows and colours the cells the model colours", "[reclass][ui][view]")

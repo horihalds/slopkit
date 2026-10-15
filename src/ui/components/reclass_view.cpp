@@ -16,6 +16,7 @@
 #include <QPainter>
 #include <QPolygon>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QToolTip>
 #include <QVariant>
 #include <QWheelEvent>
@@ -32,19 +33,18 @@ namespace slopkit::ui::components
 {
     namespace
     {
-        constexpr int kMargin              = 4;
-        constexpr int kTextPadding         = 4;
+        constexpr int kMargin        = 4;
+        constexpr int kTextPadding   = 4;
         // The room the widest text a column was measured for leaves before the
         // next column's text: a grid whose columns are sized once should not
         // spend more than a few pixels between them.
-        constexpr int kColumnGap           = 12;
-        constexpr int kIndentStep          = 12;
-        constexpr int kTriangleWidth       = 8;
-        constexpr int kValueColumnMinWidth = 24;
-        constexpr int kWheelRows           = 3;
+        constexpr int kColumnGap     = 12;
+        constexpr int kIndentStep    = 12;
+        constexpr int kTriangleWidth = 8;
+        constexpr int kWheelRows     = 3;
         // The cursor and hover tints are drawn over the stripes rather than
         // beside them, so both kinds of row keep the same tint.
-        constexpr int kTintAlpha           = 36;
+        constexpr int kTintAlpha     = 36;
 
         // The value's own font and colour when the model states them, and the
         // grid's when the choice is left to us.
@@ -149,12 +149,37 @@ namespace slopkit::ui::components
                     })
     {
         setFocusPolicy(Qt::StrongFocus);
-        setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
         viewport()->setMouseTracking(true);
 
         update_layout();
         update_rows();
+
+        // The bar's offset is part of the columns' on-screen x, so a scroll
+        // re-places the row; the bar appearing or hiding resizes the viewport,
+        // which changes how many rows fit. The editor and the tooltip were
+        // pinned to the cells as they stood, so both close.
+        const auto follow_scroll = [this]
+        {
+            QToolTip::hideText();
+            close_editor();
+            update_view();
+        };
+        connect(horizontalScrollBar(),
+                &QScrollBar::valueChanged,
+                this,
+                [follow_scroll](int)
+                {
+                    follow_scroll();
+                });
+        connect(horizontalScrollBar(),
+                &QScrollBar::rangeChanged,
+                this,
+                [follow_scroll](int, int)
+                {
+                    follow_scroll();
+                });
 
         // The model resets itself when a pass rebuilds the tree, so the rows are
         // flattened again; a live pass only changes data, which repaints.
@@ -331,9 +356,8 @@ namespace slopkit::ui::components
         column_width_[ReclassStructureModel::comment] = comment_width;
         column_width_[ReclassStructureModel::hints]   = hints_width;
         column_width_[ReclassStructureModel::pointer] = pointer_width;
-        // Kept unclamped: update_columns() clamps the note and gives the value
-        // field up to the pane on every resize, so it must start from the
-        // measurement rather than from what it fitted last time.
+        // The measurement the layout starts from: update_columns() lays a field
+        // out at exactly this width and never narrows it.
         comment_content_                              = comment_width;
         value_content_                                = value_width;
     }
@@ -342,35 +366,26 @@ namespace slopkit::ui::components
     {
         using models::ReclassStructureModel;
 
-        // Every field is placed left to right at the width it was measured for,
-        // and each width holds one gutter of its own, so the gaps between the
-        // fields are the same on every row and the pane's leftover width trails
-        // after the pointer field.
-        const QFontMetrics prose(ui_font());
-        const int          floor_width = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
-        const int          cap         = std::max(floor_width, viewport()->width() / 3);
-
-        column_width_[ReclassStructureModel::comment] = std::clamp(comment_content_, floor_width, cap);
+        // Every field keeps the width the class measured: nothing is clamped and
+        // nothing gives way, so a row wider than the pane scrolls instead.
+        column_width_[ReclassStructureModel::comment] = comment_content_;
         column_width_[ReclassStructureModel::value]   = value_content_;
 
-        int total = kMargin;
+        int content = kMargin;
         for (int column = 0; column < ReclassStructureModel::column_count; ++column)
         {
-            total += column_width_[column];
+            content += column_width_[column];
         }
 
-        // A note longer than a third of the pane is clamped, and a row wider than
-        // the pane gives its value field up first - down to the narrowest value
-        // cell, which still reads from its tooltip - so the fields behind the
-        // value keep the place the class gave them.
-        const int overrun = total - viewport()->width();
-        if (overrun > 0)
-        {
-            column_width_[ReclassStructureModel::value] =
-                std::max(kValueColumnMinWidth, column_width_[ReclassStructureModel::value] - overrun);
-        }
+        // The bar spans exactly the width the row overflows the pane, and its
+        // offset is baked into the columns' x, so every paint, hit-test and
+        // editor path keeps reading view coordinates.
+        QScrollBar* bar = horizontalScrollBar();
+        bar->setRange(0, std::max(0, content - viewport()->width()));
+        bar->setPageStep(viewport()->width());
+        bar->setSingleStep(std::max(1, row_height_));
 
-        int x = kMargin;
+        int x = kMargin - bar->value();
         for (int column = 0; column < ReclassStructureModel::column_count; ++column)
         {
             column_x_[column] = x;
