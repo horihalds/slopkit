@@ -647,7 +647,8 @@ namespace slopkit::ui::models
             return {};
         }
         return {
-            {"= " + value, false}
+            {.text = "= ", .label = true},
+            {.text = value}
         };
     }
 

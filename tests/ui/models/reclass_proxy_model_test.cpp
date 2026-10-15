@@ -151,7 +151,7 @@ TEST_CASE("a live pass repaints only the cells whose text moved", "[reclass][ui]
     CHECK(repainted[0].column() == ReclassStructureModel::value);
     CHECK(repainted[0].row() == 1);
     CHECK(fixture.proxy->data(fixture.index(1, ReclassStructureModel::value), Qt::DisplayRole).toString()
-          == QStringLiteral("= 3  3"));
+          == QStringLiteral("= 3 (0x3)"));
 }
 
 TEST_CASE("an address that resolves repaints the address cells alone", "[reclass][ui]")
@@ -228,7 +228,7 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
 
     fixture.stage(fixture.player_address() + 1, {0x2A, 0, 0, 0});
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  2A"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42 (0x2A)"));
     // The value cell no longer states the warning itself: the view paints the
     // moved bytes from the value model's per-byte mask.
     CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
@@ -239,7 +239,7 @@ TEST_CASE("a value that moved is highlighted until the next pass", "[reclass][ui
 
     // The row keeps its value and drops the highlight on the next pass.
     fixture.pass();
-    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42  2A"));
+    CHECK(fixture.proxy->data(health, Qt::DisplayRole).toString() == QStringLiteral("= 42 (0x2A)"));
     CHECK_FALSE(fixture.proxy->data(health, Qt::ForegroundRole).isValid());
 }
 

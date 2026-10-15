@@ -34,6 +34,10 @@ namespace slopkit::reclass
         // The byte this run draws for a hex cell's per-byte dump; absent for a
         // reading and for a kind whose text is not a byte dump.
         std::optional<std::size_t> byte {};
+        // A run that names what follows - the value cell's `= ` - rather than
+        // reading the node's bytes: it keeps the cell's own colour however the
+        // value beside it changes.
+        bool                       label {};
     };
 
     // The display text split into runs: the node's own bytes as the first, one
@@ -47,8 +51,8 @@ namespace slopkit::reclass
     [[nodiscard]] std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes);
 
     // The same value as the grid draws it: the codec's text beside the readings
-    // the reference shows next to it - an integer's hex form, a hex node's float
-    // and integer readings, a pointer's target.
+    // the reference shows next to it - an integer's parenthesised hex
+    // alternative, a hex node's float and integer readings, a pointer's target.
     [[nodiscard]] std::string
     format_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
 

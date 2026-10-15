@@ -409,6 +409,22 @@ TEST_CASE("the narrow columns are sized to the text the class draws", "[reclass]
     CHECK_FALSE(view.cell_text(raw_hint).isEmpty());
     CHECK(view.hover_full_text(view.cell_rect(raw_hint).value().center()).isEmpty());
 
+    // The field's own cap carries the raw bits' `0x` prefix, so the two extra
+    // glyphs cannot push a live reading out of a column a live pass never
+    // re-measures.
+    const int widest_reading =
+        mono.horizontalAdvance(QStringLiteral("(-999998.999  -9223372036854775808  0xFFFFFFFFFFFFFFFF)"));
+    CHECK(view.column_width(ReclassStructureModel::hints) >= widest_reading);
+
+    // The value, comment and hints fields leave half the gutter the tabular
+    // columns do, so a value and the notes that annotate it read as one group.
+    const int     dump_widest      = mono.horizontalAdvance(QStringLiteral("80 80 80 80 80 80 80 80"));
+    const QString tail_offset_text = view.cell_text(fixture.cell(fixture.node_id(3), ReclassStructureModel::offset));
+    CHECK(view.column_width(ReclassStructureModel::value) == dump_widest + 6);
+    CHECK(view.column_width(ReclassStructureModel::comment) == prose.horizontalAdvance(QStringLiteral("Comment")) + 6);
+    CHECK(view.column_width(ReclassStructureModel::hints) == widest_reading + 6);
+    CHECK(view.column_width(ReclassStructureModel::offset) == mono.horizontalAdvance(tail_offset_text) + 12);
+
     // The offset and ascii columns sit on their content box, so the one-digit
     // offset of `tag` and the two-digit one of `tail` leave the same gap before
     // the address text - and the same holds for ascii before the type.
@@ -803,7 +819,7 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
 
     const QModelIndex value_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::value);
     REQUIRE(fixture.values.editable(*fixture.structure.row_for(value_cell)));
-    CHECK(view.cell_text(value_cell).toStdString() == "= 42  2A");
+    CHECK(view.cell_text(value_cell).toStdString() == "= 42 (0x2A)");
 
     // The value cell of an editable node offers itself to the editor, and so
     // does the node's own name.
@@ -831,7 +847,7 @@ TEST_CASE("a double-click on a value cell edits the plain value and writes it", 
     CHECK(fixture.holds(fixture.player_address(), {0xF9, 0xAA, 0xAA, 0xAA}));
 
     fixture.pass();
-    CHECK(view.cell_text(value_cell).toStdString() == "= -7  F9");
+    CHECK(view.cell_text(value_cell).toStdString() == "= -7 (0xF9)");
 }
 
 TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")
@@ -935,7 +951,7 @@ TEST_CASE("a value keeps its measured width and the pane scrolls instead", "[rec
     fixture.structure.set_class(1);
 
     ReClassView view {fixture.proxy, fixture.structure, fixture.values};
-    view.resize(1600, 200);
+    view.resize(1700, 200);
     view.show();
     QCoreApplication::processEvents();
 
@@ -1203,7 +1219,7 @@ TEST_CASE("the hint field paints a hex node's readings in the readout colour", "
     CHECK_FALSE(paints_ink(image, view.cell_rect(hint_cell).value(), theme.warning));
 }
 
-TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view]")
+TEST_CASE("a marker keeps the grid colour while a whole-value kind warns", "[reclass][ui][view]")
 {
     application();
 
@@ -1219,7 +1235,8 @@ TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view
 
     const std::size_t x_node = fixture.project.classes()[0].nodes[0]->id;
 
-    // Point's int32 x moves, so the whole `= 43  2B` is a moved value.
+    // Point's int32 x moves, so its value warns while the `= ` marker that names
+    // it keeps the grid's own colour.
     fixture.resolve();
     fixture.put(kAppBase + 0x20, {0x2A, 0, 0, 0, 0, 0, 0, 0});
     fixture.pass();
@@ -1228,15 +1245,31 @@ TEST_CASE("a kind with no byte pairs warns its whole value", "[reclass][ui][view
     QCoreApplication::processEvents();
 
     const QModelIndex value_cell = fixture.cell(x_node, ReclassStructureModel::value);
-    CHECK(view.cell_text(value_cell).toStdString() == "= 43  2B");
+    CHECK(view.cell_text(value_cell).toStdString() == "= 43 (0x2B)");
 
     const QRect cell = view.cell_rect(value_cell).value();
     QImage      image(view.viewport()->size(), QImage::Format_ARGB32);
     image.fill(Qt::transparent);
     view.paint_into(image);
 
-    const QRect               band(cell.left() + 4, cell.top(), cell.width() - 4, cell.height());
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    const int          marker_w = mono.horizontalAdvance(QStringLiteral("= "));
+    const QRect        marker(cell.left() + 4, cell.top(), marker_w, cell.height());
+    const QRect        value(cell.left() + 4 + marker_w, cell.top(), cell.width() - 4 - marker_w, cell.height());
+
     const slopkit::ui::Theme& theme = slopkit::ui::active_theme();
-    CHECK(paints_ink(image, band, theme.warning));
-    CHECK_FALSE(paints_ink(image, band, theme.text));
+    CHECK(paints_ink(image, marker, theme.text));
+    CHECK_FALSE(paints_ink(image, marker, theme.warning));
+    CHECK(paints_ink(image, value, theme.warning));
+    CHECK_FALSE(paints_ink(image, value, theme.text));
+
+    // A selected row paints the whole cell in the on-accent colour instead,
+    // marker and value alike.
+    click(view, value_cell);
+    QCoreApplication::processEvents();
+    image.fill(Qt::transparent);
+    view.paint_into(image);
+    CHECK(paints_ink(image, marker, theme.on_accent));
+    CHECK(paints_ink(image, value, theme.on_accent));
+    CHECK_FALSE(paints_ink(image, value, theme.warning));
 }

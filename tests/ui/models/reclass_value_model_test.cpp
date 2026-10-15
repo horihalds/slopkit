@@ -225,7 +225,15 @@ TEST_CASE("each node's value is sliced out of its block at its offset", "[reclas
 
     // Each cell draws the node's value: the integer beside its hex form, the
     // class pointer as the address it holds.
-    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 42  2A"));
+    CHECK(fixture.values.value_text(fixture.row(0)) == QStringLiteral("= 42 (0x2A)"));
+    // The marker is its own run, so a painter keeps it the grid's colour while
+    // the value beside it warns.
+    const std::vector<slopkit::reclass::ValuePart> runs = fixture.values.value_parts(fixture.row(0));
+    REQUIRE(runs.size() == 2);
+    CHECK(runs[0].text == "= ");
+    CHECK(runs[0].label);
+    CHECK(runs[1].text == "42 (0x2A)");
+    CHECK_FALSE(runs[1].label);
     // A pointer's address is the pointer field's; the value cell stays empty.
     CHECK(fixture.values.value_text(fixture.row(1)).isEmpty());
     CHECK(fixture.values.pointer_text(fixture.row(1)) == QStringLiteral("-> <HEAP>600000"));
@@ -403,8 +411,8 @@ TEST_CASE("an expanded class pointer is read one pass after its pointer changes"
     CHECK(requests[1].size == 8);
 
     REQUIRE(fixture.structure.rowCount(fixture.structure.index(1, 0)) == 2);
-    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 7  7"));
-    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 9  9"));
+    CHECK(fixture.values.value_text(fixture.child(1, 0)) == QStringLiteral("= 7 (0x7)"));
+    CHECK(fixture.values.value_text(fixture.child(1, 1)) == QStringLiteral("= 9 (0x9)"));
     CHECK(fixture.values.node_address(fixture.child(1, 1)) == kHeapBase + 4);
     CHECK(fixture.values.address_text(fixture.child(1, 1)) == QStringLiteral("600004"));
 }

@@ -38,12 +38,27 @@ namespace slopkit::ui::components
         // next column's text: a grid whose columns are sized once should not
         // spend more than a few pixels between them.
         constexpr int kColumnGap     = 12;
+        // The value and the notes and readings that annotate it sit closer
+        // together than the tabular fields before them, so a row reads as one
+        // value with its annotations.
+        constexpr int kAnnotationGap = 6;
         constexpr int kIndentStep    = 12;
         constexpr int kTriangleWidth = 8;
         constexpr int kWheelRows     = 3;
         // The cursor and hover tints are drawn over the stripes rather than
         // beside them, so both kinds of row keep the same tint.
         constexpr int kTintAlpha     = 36;
+
+        // The gutter a column leaves before the next one: the value and the
+        // notes and readings that annotate it take the tighter one.
+        constexpr int gap_after(int column)
+        {
+            using models::ReclassStructureModel;
+            return column == ReclassStructureModel::value || column == ReclassStructureModel::comment
+                        || column == ReclassStructureModel::hints
+                     ? kAnnotationGap
+                     : kColumnGap;
+        }
 
         // The value's own font and colour when the model states them, and the
         // grid's when the choice is left to us.
@@ -71,12 +86,17 @@ namespace slopkit::ui::components
         // The colour a value run paints: the warning colour for a byte of its own
         // that moved, and the grid's text otherwise. A run with no byte of its own
         // - a kind that draws no byte pair - warns whole when any of the node's
-        // bytes moved.
+        // bytes moved, except the cell's own `= ` marker, which names the value
+        // rather than reading it and so keeps the grid's text.
         QColor part_colour(const reclass::ValuePart&     part,
                            std::span<const std::uint8_t> moved,
                            bool                          any_moved,
                            const QColor&                 primary)
         {
+            if (part.label)
+            {
+                return primary;
+            }
             if (part.byte.has_value())
             {
                 const std::size_t index = *part.byte;
@@ -95,7 +115,7 @@ namespace slopkit::ui::components
             const bool wide = reclass::kind_size(kind) == 8;
             return QStringLiteral("(-999998.999  %1  %2)")
                 .arg(wide ? QStringLiteral("-9223372036854775808") : QStringLiteral("-2147483648"),
-                     wide ? QStringLiteral("FFFFFFFFFFFFFFFF") : QStringLiteral("FFFFFFFF"));
+                     wide ? QStringLiteral("0xFFFFFFFFFFFFFFFF") : QStringLiteral("0xFFFFFFFF"));
         }
 
         // The widest pointer field a row can draw: the value model's longest
@@ -308,7 +328,7 @@ namespace slopkit::ui::components
         int type_width    = 0;
         int name_width    = 0;
         int value_width   = 0;
-        int comment_width = prose.horizontalAdvance(tr("Comment")) + kColumnGap;
+        int comment_width = prose.horizontalAdvance(tr("Comment")) + gap_after(ReclassStructureModel::comment);
         // The hints, the pointer and the ascii field are sized for the widest
         // text their field can ever be given, never for what the class reads
         // right now: a reading only arrives on a live pass, and a live pass does
@@ -343,9 +363,11 @@ namespace slopkit::ui::components
             name_width = std::max(
                 name_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::name)) + kColumnGap + indent);
             value_width   = std::max(value_width,
-                                     mono.horizontalAdvance(display(entry, ReclassStructureModel::value)) + kColumnGap);
-            comment_width = std::max(
-                comment_width, prose.horizontalAdvance(display(entry, ReclassStructureModel::comment)) + kColumnGap);
+                                     mono.horizontalAdvance(display(entry, ReclassStructureModel::value))
+                                         + gap_after(ReclassStructureModel::value));
+            comment_width = std::max(comment_width,
+                                     prose.horizontalAdvance(display(entry, ReclassStructureModel::comment))
+                                         + gap_after(ReclassStructureModel::comment));
 
             // The value field is sized for the widest value the row's kind can
             // draw, so the values that only arrive with the first live pass are
@@ -353,13 +375,16 @@ namespace slopkit::ui::components
             const QString widest_value = widest_value_text(*node);
             if (!widest_value.isEmpty())
             {
-                value_width = std::max(value_width, mono.horizontalAdvance(widest_value) + kColumnGap);
+                value_width = std::max(value_width,
+                                       mono.horizontalAdvance(widest_value) + gap_after(ReclassStructureModel::value));
             }
 
             const reclass::NodeKind kind = node->kind();
             if (reclass::is_hex_kind(kind) && reclass::kind_size(kind) >= 4)
             {
-                hints_width = std::max(hints_width, mono.horizontalAdvance(widest_readings(kind)) + kColumnGap);
+                hints_width =
+                    std::max(hints_width,
+                             mono.horizontalAdvance(widest_readings(kind)) + gap_after(ReclassStructureModel::hints));
             }
             if (reclass::is_hex_kind(kind) || reclass::is_pointer_kind(kind))
             {
@@ -660,7 +685,7 @@ namespace slopkit::ui::components
             const QModelIndex index   = index_for(*entry.row, column);
             const int         advance = QFontMetrics(cell_font(index, *model_))
                                             .horizontalAdvance(model_->data(index, Qt::DisplayRole).toString());
-            return base + std::max(0, column_width_[column] - kColumnGap - advance);
+            return base + std::max(0, column_width_[column] - gap_after(column) - advance);
         }
 
         if (!indents(column))
