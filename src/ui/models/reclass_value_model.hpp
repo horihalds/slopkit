@@ -127,9 +127,19 @@ namespace slopkit::ui::models
         // Whether a value can be typed into this node's cell.
         [[nodiscard]] bool editable(const ReclassRow& row) const;
 
+        // Whether one byte of this node can be typed into: a hex node's dump and
+        // any typed-into node's Ascii characters, while the node's own bytes are
+        // the row's and the block was read.
+        [[nodiscard]] bool byte_editable(const ReclassRow& row) const;
+
         // Parses the text for the node's kind and writes one value into the
         // target; the outcome is reported on statusChanged.
         bool write_value(const ReclassRow& row, const QString& text);
+
+        // Parses one byte and writes it at `byte_offset` inside the node's own
+        // bytes, leaving the node's other bytes alone; the outcome is reported
+        // on statusChanged.
+        bool write_byte(const ReclassRow& row, std::size_t byte_offset, const QString& text);
 
         [[nodiscard]] bool attached() const;
 
@@ -180,6 +190,21 @@ namespace slopkit::ui::models
         [[nodiscard]] std::span<const std::uint8_t> block_changed(std::size_t block) const;
 
         [[nodiscard]] const reclass::Node* node_of(const ReclassRow& row) const;
+
+        // Where a node's bytes lie inside the cached bytes of a block that was
+        // read: the reading they belong to and the offset in it.
+        struct CachedRange
+        {
+            std::size_t cell {};
+            std::size_t index {};
+        };
+
+        [[nodiscard]] std::optional<CachedRange> cached_range(const ReclassRow& row, std::size_t byte_offset) const;
+
+        // The grid paints the last reading, so a write patches the bytes it
+        // wrote there and repaints at once; the next live pass still corrects a
+        // write the target took without saying so.
+        void patch_cached_bytes(const CachedRange& range, std::span<const std::byte> bytes);
 
         process::AccessWorker&   worker_;
         process::AttachedTarget& target_;

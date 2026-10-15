@@ -226,6 +226,22 @@ namespace slopkit::ui::dialogs
                     prompt_go_to();
                 });
         connect(view_, &components::MemoryView::navigated, this, &MemoryViewerDialog::request_page);
+        connect(view_,
+                &components::MemoryView::editRejected,
+                this,
+                [this](const QString& reason)
+                {
+                    status_->set_status(widgets::StatusKind::warning, reason);
+                });
+        // The register table sits in this window's debugger pane, so a register
+        // the controller turns down reports on the line under it.
+        connect(debugger_,
+                &panels::DebuggerPanel::statusChanged,
+                this,
+                [this](const QString& message, bool is_error)
+                {
+                    status_->set_status(is_error ? widgets::StatusKind::error : widgets::StatusKind::info, message);
+                });
     }
 
     QWidget* MemoryViewerDialog::build_code_pane()

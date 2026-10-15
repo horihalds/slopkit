@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include <QStringList>
+
 #include "ui/models/register_model.hpp"
 
 using slopkit::ui::models::RegisterModel;
@@ -99,4 +101,45 @@ TEST_CASE("register model routes a committed edit through the handler", "[ui][mo
     model.set_values(std::vector {read_value("RAX", QStringLiteral("0x1"))});
     model.set_editable(false);
     CHECK_FALSE(model.flags(model.index(0, RegisterModel::value)) & Qt::ItemIsEditable);
+}
+
+TEST_CASE("register model names why an edit was refused", "[ui][models][register]")
+{
+    RegisterModel model;
+    model.set_values(std::vector {read_value("RAX", QStringLiteral("0x1"))});
+    model.set_editable(true);
+
+    QStringList messages;
+    QObject::connect(&model,
+                     &RegisterModel::statusChanged,
+                     [&messages](const QString& message, bool error)
+                     {
+                         messages.push_back(error ? QStringLiteral("error: ") + message : message);
+                     });
+
+    model.set_commit_handler(
+        [](const std::string&, std::uint64_t)
+        {
+            return true;
+        });
+
+    const QModelIndex cell = model.index(0, RegisterModel::value);
+    CHECK(model.setData(cell, QStringLiteral("0x10"), Qt::EditRole));
+    CHECK(messages.isEmpty());
+
+    // A text the model cannot read names what the cell expects instead of
+    // dropping the typed value silently.
+    CHECK_FALSE(model.setData(cell, QStringLiteral("zzz"), Qt::EditRole));
+    CHECK(messages == QStringList {QStringLiteral("error: Value: expected a number such as 1A or 0x1A.")});
+
+    // And a write the controller turns down names that too.
+    model.set_commit_handler(
+        [](const std::string&, std::uint64_t)
+        {
+            return false;
+        });
+    messages.clear();
+    CHECK_FALSE(model.setData(cell, QStringLiteral("0x20"), Qt::EditRole));
+    CHECK(messages == QStringList {QStringLiteral("error: The register could not be written.")});
+    CHECK(model.data(cell, Qt::DisplayRole).toString() == QStringLiteral("0x10"));
 }

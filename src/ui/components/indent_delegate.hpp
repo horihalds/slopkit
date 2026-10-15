@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/components/validating_delegate.hpp"
 
 class QPainter;
 class QStyleOptionViewItem;
@@ -9,7 +9,9 @@ namespace slopkit::ui::widgets
 {
     inline constexpr int kDepthRole = Qt::UserRole + 2;
 
-    class IndentDelegate : public ElidedTooltipDelegate
+    // Indents a nested cell and edits it the way every other cell editor does:
+    // the validation comes with the base, the painting is this one's own.
+    class IndentDelegate : public components::ValidatingDelegate
     {
         Q_OBJECT
 

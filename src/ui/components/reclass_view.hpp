@@ -64,6 +64,10 @@ namespace slopkit::ui::components
         [[nodiscard]] std::size_t visible_row_count() const noexcept;
 
         [[nodiscard]] std::optional<QRect> cell_rect(const QModelIndex& index) const;
+        // The rect the `byte_index`th byte of a cell draws in, when that cell
+        // offers a per-byte editor: a pair of a hex dump or a character of the
+        // Ascii column.
+        [[nodiscard]] std::optional<QRect> byte_rect(const QModelIndex& index, std::size_t byte_index) const;
         [[nodiscard]] QString              cell_text(const QModelIndex& index) const;
         // The full text of the cell under the cursor, when it does not fit.
         [[nodiscard]] QString              hover_full_text(const QPoint& position) const;
@@ -117,6 +121,9 @@ namespace slopkit::ui::components
             int                       column {-1};
             bool                      on_triangle {false};
             QRect                     rect;
+            // The byte of a hex dump or of the Ascii column the point stands
+            // for, when a double-click resolved one; -1 for a whole field.
+            int                       byte_index {-1};
         };
 
         // Where each of the row's nine fields stands once the row's own content
@@ -173,9 +180,22 @@ namespace slopkit::ui::components
         void toggle_row(int row_index);
         void open_editor_at(int row_index, int column);
         void open_editor(const Hit& hit);
-        void commit_edit();
-        void scroll_rows(long long delta);
-        void ensure_visible(int row_index);
+        void open_byte_editor(int row_index, int column, int byte_index);
+        // The rect the `byte_index`th byte of a value cell's hex dump draws in,
+        // or of the character the Ascii column draws for it; nothing when the
+        // cell elides its text, so no byte sits at a fixed place.
+        [[nodiscard]] std::optional<QRect>
+        byte_rect_in(const VisualRow& entry, int row_index, int column, std::size_t byte_index) const;
+        // The text the editor opens with: the byte the row draws, bare and upper
+        // case, for a per-byte edit, and the model's own text for a whole cell.
+        [[nodiscard]] QString edit_text(const models::ReclassRow& row) const;
+        // The byte a point of a cell stands for - the dump pair or the Ascii
+        // character under it - clamped to the bytes the cell covers; -1 when the
+        // cell draws no byte there.
+        [[nodiscard]] int     byte_at(const VisualRow& entry, int row_index, int column, const QPoint& position) const;
+        void                  commit_edit();
+        void                  scroll_rows(long long delta);
+        void                  ensure_visible(int row_index);
 
         models::ReclassProxyModel*     model_ {};
         models::ReclassStructureModel* structure_ {};
@@ -199,11 +219,19 @@ namespace slopkit::ui::components
         bool                     has_current_ {false};
         int                      hovered_ {-1};
 
-        QLineEdit*  editor_ {};
-        bool        editing_ {false};
-        bool        commit_ran_ {false};
-        std::size_t edit_node_id_ {};
-        int         edit_column_ {};
+        // What an open editor edits: one cell, or one byte of a hex dump or of
+        // the Ascii column when `byte_index` is not -1.
+        struct EditTarget
+        {
+            std::size_t node_id {};
+            int         column {};
+            int         byte_index {-1};
+            QRect       rect;
+        };
+
+        QLineEdit* editor_ {};
+        bool       editing_ {false};
+        EditTarget target_ {};
 
         NeutralScroller scroller_;
     };

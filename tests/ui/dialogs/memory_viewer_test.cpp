@@ -1990,3 +1990,87 @@ TEST_CASE("the disassembly mode follows the module's pointer size", "[ui]")
 
     viewer.hide();
 }
+
+TEST_CASE("a refused byte-view commit names its reason on the viewer's status line", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+
+    // The target holds bytes, so the reads the panes ask for answer with them
+    // and a write has somewhere to land.
+    for (std::uint64_t offset = 0; offset < 0x3000; ++offset)
+    {
+        access.memory->bytes[0x1000 + offset] = std::byte {0x11};
+    }
+
+    viewer.set_address(0x1000);
+    viewer.show();
+    settle_panes(worker, viewer);
+
+    const std::vector<slopkit::ui::LiveRequest> requests = viewer.next_live_request();
+    std::vector<slopkit::ui::LiveReading>       readings;
+    readings.reserve(requests.size());
+    for (const slopkit::ui::LiveRequest& request : requests)
+    {
+        readings.push_back(slopkit::ui::LiveReading {
+            .id = request.id, .readable = true, .bytes = std::vector<std::byte>(request.size, std::byte {0x11})});
+    }
+    viewer.apply_live_readings(readings);
+    QCoreApplication::processEvents();
+
+    REQUIRE(view->cell_text(0x1000) == QStringLiteral("11"));
+    const std::optional<QRect> cell = view->cell_rect(0x1000);
+    REQUIRE(cell.has_value());
+
+    const auto double_click_at = [&](const QPoint& point)
+    {
+        QMouseEvent event(QEvent::MouseButtonDblClick,
+                          QPointF(point),
+                          QPointF(view->viewport()->mapToGlobal(point)),
+                          Qt::LeftButton,
+                          Qt::LeftButton,
+                          Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &event);
+    };
+
+    double_click_at(cell->center());
+    REQUIRE(view->editor() != nullptr);
+    REQUIRE(view->editor()->isVisible());
+    CHECK(view->editor()->text() == QStringLiteral("11"));
+
+    // A text the cell's format cannot read keeps the editor open, with the text
+    // selected, and the reason lands on the line under the panes instead of the
+    // log alone; the cell keeps the byte it showed.
+    view->editor()->setText(QStringLiteral("zz"));
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QApplication::sendEvent(view->editor(), &enter);
+    QCoreApplication::processEvents();
+
+    CHECK(view->editor()->isVisible());
+    CHECK(view->editor()->selectedText() == QStringLiteral("zz"));
+    CHECK(viewer.status_text().startsWith(QStringLiteral("Value:")));
+    CHECK(view->cell_text(0x1000) == QStringLiteral("11"));
+
+    // The correction applies from the same open editor.
+    view->editor()->setText(QStringLiteral("0x7F"));
+    QApplication::sendEvent(view->editor(), &enter);
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(view->editor()->isVisible());
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return access.memory->at(0x1000) == std::byte {0x7F};
+                    }));
+
+    viewer.hide();
+}

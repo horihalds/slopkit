@@ -89,6 +89,10 @@ namespace slopkit::ui::models
         // reason on statusChanged, the way the value model refuses a write.
         bool set_node_name(const ReclassRow& row, const QString& name);
 
+        // Sets the node's note: the text is trimmed and an empty one clears the
+        // note, so there is nothing to refuse.
+        bool set_node_comment(const ReclassRow& row, const QString& text);
+
         [[nodiscard]] reclass::Project& project() noexcept;
         [[nodiscard]] std::size_t       selected_class() const noexcept;
         [[nodiscard]] bool              valid_class() const noexcept;

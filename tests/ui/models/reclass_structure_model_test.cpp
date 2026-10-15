@@ -346,6 +346,71 @@ TEST_CASE("a node's name is edited in place through the model", "[reclass][ui]")
     CHECK(project.classes()[1].nodes[0]->name == "health");
 }
 
+TEST_CASE("a node's note is edited in place through the model", "[reclass][ui]")
+{
+    application();
+
+    Project               project = two_classes();
+    ReclassStructureModel model {project};
+    model.set_class(1);
+
+    std::vector<QString> messages;
+    QObject::connect(&model,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    QModelIndex announced;
+    QObject::connect(&model,
+                     &QAbstractItemModel::dataChanged,
+                     [&announced](const QModelIndex& top_left, const QModelIndex&, const QList<int>&)
+                     {
+                         announced = top_left;
+                     });
+
+    // The note is typed into like the name beside it, and the editor starts
+    // from the stored text rather than from the drawn marker.
+    const QModelIndex note = model.index(0, Model::comment);
+    CHECK(model.flags(note).testFlag(Qt::ItemIsEditable));
+    CHECK(model.data(note, Qt::EditRole).toString().isEmpty());
+    CHECK_FALSE(model.data(model.index(0, Model::offset), Qt::EditRole).isValid());
+
+    CHECK(model.setData(note, QStringLiteral("  the player's tag  "), Qt::EditRole));
+    CHECK(project.classes()[1].nodes[0]->comment == "the player's tag");
+    CHECK(model.data(note, Qt::EditRole).toString() == QStringLiteral("the player's tag"));
+    CHECK(cell(model, model.index(0, 0), Model::comment) == QStringLiteral("// the player's tag"));
+    // Only the one cell is announced, so the grid repaints nothing else.
+    CHECK(announced.row() == 0);
+    CHECK(announced.column() == Model::comment);
+    REQUIRE(messages.size() == 1);
+    CHECK(messages.front() == QStringLiteral("Comment saved."));
+
+    // A note is free text, so a note that is only spaces clears it.
+    CHECK(model.setData(note, QStringLiteral("   "), Qt::EditRole));
+    CHECK(project.classes()[1].nodes[0]->comment.empty());
+    CHECK(cell(model, model.index(0, 0), Model::comment) == QStringLiteral("//"));
+    REQUIRE(messages.size() == 2);
+    CHECK(messages.back() == QStringLiteral("Comment cleared."));
+
+    // No other column and no other role takes an edit.
+    CHECK_FALSE(model.setData(note, QStringLiteral("other"), Qt::DisplayRole));
+    CHECK_FALSE(model.setData(model.index(0, Model::offset), QStringLiteral("9"), Qt::EditRole));
+    CHECK(project.classes()[1].nodes[0]->comment.empty());
+
+    // A hidden node's `...` placeholder takes no note of its own.
+    project.classes()[1].nodes[0]->hidden = true;
+    model.rebuild();
+
+    const auto* hidden = model.row_at({}, 0);
+    REQUIRE(hidden != nullptr);
+    REQUIRE(hidden->hidden);
+    CHECK_FALSE(model.flags(model.index(0, Model::comment)).testFlag(Qt::ItemIsEditable));
+    CHECK_FALSE(model.set_node_comment(*hidden, QStringLiteral("hidden")));
+    CHECK(project.classes()[1].nodes[0]->comment.empty());
+}
+
 TEST_CASE("a container inlines its children and shows its count", "[reclass][ui]")
 {
     application();

@@ -187,10 +187,12 @@ namespace slopkit::ui::models
         const auto parsed = parse_value(value.toString().toStdString());
         if (!parsed)
         {
+            emit statusChanged(tr("Value: expected a number such as 1A or 0x1A."), true);
             return false;
         }
         if (commit_ && !commit_(entry.name, *parsed))
         {
+            emit statusChanged(tr("The register could not be written."), true);
             return false;
         }
 

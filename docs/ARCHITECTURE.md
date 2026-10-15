@@ -703,12 +703,27 @@ later, the same lag the reference has. The window adds no timer: it is a
 registered `LiveSurface` that refreshes on the shared cadence, stays quiet while
 hidden, while live update is off, while no target is attached or while a job is in
 flight, and matches every completion against the job it was submitted for. A
-`Value` cell of an editable kind is edited in place: the text is parsed for the
-node's kind, one `submit_write` carries the node's address and bytes, and a
-refused write says why on the status line instead of writing a guessed address. A
-node's `Name` cell is the structure model's own editable field on the same
-`setData` path, so a rename is validated in one place and reported on that same
-status line, touches no target and needs none.
+`Value` cell of an editable kind, and one byte of a `hexN` node's dump or `Ascii`
+column, are edited in place: `ReClassView` keeps one editor plus an edit target of
+node, column and byte index, a whole cell writes through the proxy's `setData`
+(the text is parsed for the node's kind and one `submit_write` carries the node's
+address and bytes) and one byte writes through `ReclassValueModel::write_byte`,
+which parses that single byte itself and submits the same job with a one-byte
+payload at the node's address plus the byte's index, so the row's other bytes are
+never written. A write that is refused — a byte the node does not cover or a text
+the field cannot read reads `Byte: expected one hex byte such as 1A.` — says why on
+the status line instead of writing a guessed address, and the editor stays open
+with its text selected so the correction is one edit away. The grid paints the
+last reading, so a completion patches the bytes it wrote into the cached block and
+repaints that cell instead of leaving them invisible until the next pass, which
+still corrects the cell if the target took the write and said nothing.
+A node's `Name` and `Comment` cells are the structure model's own editable fields
+on that same `setData` path — a note is trimmed free text and an empty one clears
+it — so an inline rename and the row menu's `Edit Comment…` are validated in one
+place and reported on that same status line, touch no target and need none. `F2`,
+`F3` and `Enter` open the cursor row's name, comment and value, and the `Return` an
+open editor would hand up to its parent is taken in the view's own filter, where a
+dialog would otherwise press its default button.
 The cell's text and the text a write parses are deliberately two functions:
 `format_node_value_display` adds the readings the reference draws beside a value
 — an integer's hex form, a float at three decimals, a hex node's float and

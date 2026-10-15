@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include <QAbstractItemModel>
+#include <QStringList>
 #include <QTableView>
 
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include "debug/controller.hpp"
 #include "support/fake_debug.hpp"
 #include "support/fake_process.hpp"
+#include "ui/components/validating_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/register_model.hpp"
 #include "ui/panels/debugger_panel.hpp"
@@ -70,4 +72,41 @@ TEST_CASE("debugger pane renders its tables in the embedded mono font", "[ui][pa
               ->data(pane.register_model()->index(16, slopkit::ui::models::RegisterModel::value), Qt::DisplayRole)
               .toString()
           == QStringLiteral("0x0000000000001234"));
+}
+
+TEST_CASE("debugger pane reports why a register edit was turned down", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+
+    DebuggerPanel pane(controller);
+
+    // The register table edits through the validating delegate, so a refusal
+    // keeps its editor open instead of dropping the typed value.
+    CHECK(dynamic_cast<slopkit::ui::components::ValidatingDelegate*>(pane.register_table()->itemDelegate()) != nullptr);
+
+    QStringList messages;
+    QObject::connect(&pane,
+                     &DebuggerPanel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    controller.start(42, "fake");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.registers().size() == 18;
+                       }));
+
+    auto*             model = pane.register_model();
+    const QModelIndex cell  = model->index(0, slopkit::ui::models::RegisterModel::value);
+    CHECK(model->setData(cell, QStringLiteral("0x10"), Qt::EditRole));
+    CHECK(messages.isEmpty());
+
+    CHECK_FALSE(model->setData(cell, QStringLiteral("zzz"), Qt::EditRole));
+    CHECK(messages == QStringList {QStringLiteral("Value: expected a number such as 1A or 0x1A.")});
 }

@@ -188,7 +188,12 @@ TEST_CASE("the memory view edits a cell inline", "[ui]")
     REQUIRE(pump_worker(fixture.worker,
                         [&]
                         {
-                            return fixture.access.memory->at(cell_address) == std::byte {0xEF};
+                            // The write's side effect and its completion are two
+                            // steps, and the cell only shows the byte once the
+                            // completion was drained; waiting for both leaves no
+                            // write in flight for the commits below.
+                            return fixture.access.memory->at(cell_address) == std::byte {0xEF}
+                                && view.cell_text(cell_address) != QStringLiteral("11");
                         }));
 
     double_click_at(cell->center());
@@ -198,6 +203,42 @@ TEST_CASE("the memory view edits a cell inline", "[ui]")
     QApplication::sendEvent(view.editor(), &escape);
     CHECK_FALSE(view.editor()->isVisible());
     CHECK(fixture.access.memory->at(cell_address) == std::byte {0xEF});
+
+    // A text the format cannot read is refused, and the editingFinished that
+    // follows the Enter must not close the refusal away: the editor stays open
+    // with the text selected and the reason goes to the surface's status line.
+    QStringList rejected;
+    QObject::connect(&view,
+                     &MemoryView::editRejected,
+                     [&rejected](const QString& reason)
+                     {
+                         rejected.push_back(reason);
+                     });
+
+    double_click_at(cell->center());
+    REQUIRE(view.editor()->isVisible());
+    view.editor()->setText(QStringLiteral("zz"));
+    QApplication::sendEvent(view.editor(), &enter);
+    QCoreApplication::processEvents();
+
+    CHECK(view.editor()->isVisible());
+    CHECK(view.editor()->selectedText() == QStringLiteral("zz"));
+    REQUIRE(rejected.size() == 1);
+    CHECK(rejected.first().startsWith(QStringLiteral("Value:")));
+    CHECK(fixture.access.memory->at(cell_address) == std::byte {0xEF});
+
+    // The correction applies from the same open editor.
+    view.editor()->setText(QStringLiteral("0x7F"));
+    QApplication::sendEvent(view.editor(), &enter);
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(view.editor()->isVisible());
+    CHECK(rejected.size() == 1);
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return fixture.access.memory->at(cell_address) == std::byte {0x7F};
+                        }));
 
     view.hide();
 }

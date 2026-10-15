@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <map>
 #include <optional>
 #include <span>
@@ -95,7 +96,10 @@ namespace slopkit::ui::components
         [[nodiscard]] Cell    cell(std::uint64_t address) const;
         [[nodiscard]] QString text_row(std::uint64_t row_address) const;
 
-        bool write_value(std::uint64_t address, const QString& text);
+        // Parses the text for the cell's format and writes it at `address`; a
+        // refusal answers with the reason to show on the view's status line and
+        // keeps the log record it writes today.
+        std::expected<void, QString> write_value(std::uint64_t address, const QString& text);
 
     signals:
         void repaintRequested();

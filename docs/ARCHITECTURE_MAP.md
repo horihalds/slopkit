@@ -77,7 +77,7 @@ docs that hold the detail behind this map.
 | platform/linux | Linux primitives shared with plugins | `platform/linux/debug_session.hpp` (`DebugSession`), `ptrace.hpp`, `procfs.hpp`, `memory.hpp`, `process_control.hpp`, `module_entry.hpp`, `proc_text.hpp`, `desktop_entry.hpp`, `wine.hpp` | `tests/platform/linux/*` | core |
 | sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
 | ui | Main window, settings, live values, table file, theme/fonts | `ui/main_window.hpp` (`MainWindow`), `app.hpp`, `settings.hpp` (per-window geometries), `platform.hpp` (`preferred_platform_spec`), `text.hpp` (`to_qstring`), `live_values.hpp` (`LiveSurface`, `LiveTicker`), `script_updates.hpp` (`ScriptUpdates`), `debug_session.hpp`, `access_watch.hpp`, `completion_notifier.hpp`, `log_notifier.hpp`, `theme.hpp`, `datatype_palette.hpp` (`datatype_icon_name`, `datatype_colour`), `fonts.hpp`, `table_file.hpp`, `address_format.hpp` | `tests/ui/*` | process, plugin, table, scan, debug |
-| ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `script_editor.hpp` (`ScriptEditor`), `script_highlighter.hpp` (`ScriptHighlighter`), `script_context.hpp` (`identifier_at`, `enclosing_call`, `document_names`), `script_completion.hpp` (`ScriptCompletionPopup`, `ScriptCompletionModel`), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`, `datatype_icon`), `code_patch.hpp`, `address_table_view.hpp` (`AddressTableView`), `indent_delegate.hpp` (`IndentDelegate`, `kDepthRole`), `elided_tooltip_delegate.hpp`, `reclass_view.hpp` (`ReClassView`), `project_view.hpp` (`ProjectView`), `row_menu.hpp`, `referenced_strings.hpp` (`ReferencedStringTable`) | `tests/ui/components/*` | ui, disasm |
+| ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `script_editor.hpp` (`ScriptEditor`), `script_highlighter.hpp` (`ScriptHighlighter`), `script_context.hpp` (`identifier_at`, `enclosing_call`, `document_names`), `script_completion.hpp` (`ScriptCompletionPopup`, `ScriptCompletionModel`), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`, `datatype_icon`), `code_patch.hpp`, `address_table_view.hpp` (`AddressTableView`), `indent_delegate.hpp` (`IndentDelegate`, `kDepthRole`), `validating_delegate.hpp` (`ValidatingDelegate`: a cell editor that keeps the editor open while the model refuses its text), `elided_tooltip_delegate.hpp`, `reclass_view.hpp` (`ReClassView`), `project_view.hpp` (`ProjectView`), `row_menu.hpp`, `referenced_strings.hpp` (`ReferencedStringTable`) | `tests/ui/components/*` | ui, disasm |
 | ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `ReClassDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`, `ModuleChooserDialog`, `ReferencedStringsDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script, reclass |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `referenced_string_model.hpp`, `reclass_structure_model.hpp`, `reclass_value_model.hpp`, `reclass_proxy_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug, reclass, ui/components |
 | ui/panels | Docked panes (the address list's extended selection, its shared `Del` action and the multi-row delete included) | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
@@ -102,7 +102,10 @@ docs that hold the detail behind this map.
   selected class into rows and memory blocks, `ReclassValueModel` resolves the
   class addresses (keyed by class id) and submits one read per visible block
   through `AccessWorker`, and `ReclassProxyModel` fuses the two into the one
-  tree the view shows. `ui::components::ProjectView` shows the project's classes
+  tree the view shows. A cell's whole value writes through the proxy's `setData`
+  and one byte of a `hexN` dump or `Ascii` character through
+  `ReclassValueModel::write_byte`, which is the only path that can address a part
+  of a cell; `ui::components::ProjectView` shows the project's classes
   and enums and drives the selected class, and its node menu's `Search for Equal
   Values` and `Find Out What Writes/Accesses This Address` hand the node's value
   to the scanner panel and its address to the Access Watch rather than reading
@@ -192,6 +195,15 @@ docs that hold the detail behind this map.
   drain until `AccessWorker::idle()`, and `drain_until_idle`
   (`tests/support/fake_debug.hpp`) does the same for `Controller::idle()` — worked
   example in `tests/ui/components/memory_view_document_test.cpp`.
+- An in-place cell editor must take the `Return` itself: a `QLineEdit` that leaves
+  the key unhandled hands it up to its parent, where a dialog presses its own
+  default button, and the base `QStyledItemDelegate::eventFilter` reports the
+  commit whatever the model answered, which would close an editor the model just
+  refused. `ui::components::ValidatingDelegate` does both — it writes through the
+  model's `setData`, keeps the editor open with the text selected while that
+  answers `false`, and stops the key — and the custom-painted `ReClassView` and
+  `MemoryView` do the same in their own `eventFilter`; put a new cell editor on
+  that path rather than on the line editor's `returnPressed`.
 - Configure fails without ImageMagick, the Zydis, libzip, Lua and sol2 dev
   packages and `pkg-config`.
 - The `slopkit-agent` target cross-compiles the Wine resident agent with

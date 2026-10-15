@@ -1177,9 +1177,9 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        node->comment = comment->toStdString();
-        refresh_all();
-        report(tr("Comment saved."), false);
+        // The note goes through the model the grid edits through, so the two
+        // paths cannot report different outcomes.
+        static_cast<void>(structure_->set_node_comment(*row, *comment));
     }
 
     void ReClassDialog::set_node_hex(bool hex)

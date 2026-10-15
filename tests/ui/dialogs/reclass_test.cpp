@@ -10,8 +10,11 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QTimer>
+#include <QWidget>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -21,6 +24,7 @@
 #include "support/reclass_helpers.hpp"
 #include "support/reclass_live_helpers.hpp"
 #include "support/ui_helpers.hpp"
+#include "ui/components/input_box.hpp"
 #include "ui/components/project_view.hpp"
 #include "ui/components/reclass_view.hpp"
 #include "ui/dialogs/reclass.hpp"
@@ -79,6 +83,26 @@ namespace
     }
 
     constexpr std::uint64_t kAppBase = 0x400000;
+
+    // Types into the modal prompt an action opens and accepts it, the way a
+    // user would; the prompt has no other handle for a test.
+    void answer_prompt(const QString& text)
+    {
+        QTimer::singleShot(0,
+                           [text]
+                           {
+                               for (QWidget* widget : QApplication::topLevelWidgets())
+                               {
+                                   auto* box = qobject_cast<slopkit::ui::widgets::InputBox*>(widget);
+                                   if (box != nullptr && box->isVisible())
+                                   {
+                                       box->line_edit()->setText(text);
+                                       box->accept();
+                                       return;
+                                   }
+                               }
+                           });
+    }
 
     // One live pass through the window's own surface: the reads the window asks
     // for, answered the way the live values pass answers them.
@@ -763,6 +787,42 @@ TEST_CASE("create class from nodes moves the selection into a new class", "[recl
     REQUIRE(player.nodes.size() == 2);
     CHECK(player.nodes[1]->kind() == NodeKind::class_instance);
     CHECK(player.nodes[1]->class_name == created.name);
+
+    dialog.close();
+}
+
+TEST_CASE("the node comment prompt edits the note the grid draws", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+    select_player(fixture);
+
+    Class& player = fixture.project.classes()[1];
+    dialog.grid()->setCurrentIndex(dialog.structure()->index(0, 0));
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    // The prompt's text goes through the same model call the grid's inline
+    // editor uses, so the menu and the cell report alike.
+    answer_prompt(QStringLiteral("  the player's tag  "));
+    dialog.edit_comment();
+
+    CHECK(player.nodes[0]->comment == "the player's tag");
+    CHECK(dialog.status_label()->text() == QStringLiteral("Comment saved."));
+    CHECK(dialog.grid()->cell_text(dialog.structure()->index(0, ReclassStructureModel::comment)).toStdString()
+          == "// the player's tag");
+
+    // An empty prompt clears the note, exactly as an empty editor does.
+    answer_prompt(QString());
+    dialog.edit_comment();
+
+    CHECK(player.nodes[0]->comment.empty());
+    CHECK(dialog.status_label()->text() == QStringLiteral("Comment cleared."));
 
     dialog.close();
 }

@@ -32,22 +32,25 @@ namespace slopkit::ui::components
 {
     namespace
     {
-        constexpr int kMargin        = 4;
-        constexpr int kTextPadding   = 4;
+        constexpr int kMargin                = 4;
+        constexpr int kTextPadding           = 4;
         // The room the widest text a column was measured for leaves before the
         // next column's text: a grid whose columns are sized once should not
         // spend more than a few pixels between them.
-        constexpr int kColumnGap     = 12;
+        constexpr int kColumnGap             = 12;
         // The value and the notes and readings that annotate it sit closer
         // together than the tabular fields before them, so a row reads as one
         // value with its annotations.
-        constexpr int kAnnotationGap = 6;
-        constexpr int kIndentStep    = 12;
-        constexpr int kTriangleWidth = 8;
-        constexpr int kWheelRows     = 3;
+        constexpr int kAnnotationGap         = 6;
+        constexpr int kIndentStep            = 12;
+        constexpr int kTriangleWidth         = 8;
+        constexpr int kWheelRows             = 3;
+        // The note field of a node with no note is only as wide as its marker,
+        // so its editor opens at least this wide to be typed into.
+        constexpr int kCommentEditorMinWidth = 160;
         // The cursor and hover tints are drawn over the stripes rather than
         // beside them, so both kinds of row keep the same tint.
-        constexpr int kTintAlpha     = 36;
+        constexpr int kTintAlpha             = 36;
 
         // The gutter a column leaves before the next one: the value and the
         // notes and readings that annotate it take the tighter one.
@@ -213,12 +216,13 @@ namespace slopkit::ui::components
                 [this](const QModelIndex& top_left, const QModelIndex& bottom_right, const QList<int>&)
                 {
                     using models::ReclassStructureModel;
-                    // A rename and an address that resolves or retargets are the
-                    // live changes that can move a column boundary; a value pass
-                    // never re-measures.
-                    const bool renamed = top_left.column() == ReclassStructureModel::name
-                                      && bottom_right.column() == ReclassStructureModel::name;
-                    if (renamed)
+                    // A rename, a note and an address that resolves or retargets
+                    // are the changes that can move a column boundary; a value
+                    // pass never re-measures.
+                    const bool retyped = top_left.column() == bottom_right.column()
+                                      && (top_left.column() == ReclassStructureModel::name
+                                          || top_left.column() == ReclassStructureModel::comment);
+                    if (retyped)
                     {
                         update_content_widths();
                         update_columns();
@@ -627,6 +631,99 @@ namespace slopkit::ui::components
         return cell_rect_at(visual, index.column());
     }
 
+    std::optional<QRect> ReClassView::byte_rect(const QModelIndex& index, std::size_t byte_index) const
+    {
+        const models::ReclassRow* row = row_of(index);
+        if (row == nullptr)
+        {
+            return std::nullopt;
+        }
+        const int visual = visual_index_of(row->node_id);
+        if (visual < 0)
+        {
+            return std::nullopt;
+        }
+        return byte_rect_in(rows_[static_cast<std::size_t>(visual)], visual, index.column(), byte_index);
+    }
+
+    std::optional<QRect>
+    ReClassView::byte_rect_in(const VisualRow& entry, int row_index, int column, std::size_t byte_index) const
+    {
+        const RowLayout layout = layout_row(entry, row_index);
+        const QRect     cell   = layout.rects[column];
+        if (cell.isEmpty())
+        {
+            return std::nullopt;
+        }
+        const QFontMetrics metrics(cell_font(index_for(*entry.row, column), *model_));
+
+        if (column == models::ReclassStructureModel::ascii)
+        {
+            const QString text = values_->ascii_text(*entry.row);
+            const int     x    = aligned_x(entry, column);
+            // An elided Ascii cell draws a text that is no longer one character
+            // per byte, so no character sits at a fixed place in it.
+            if (metrics.horizontalAdvance(text) > cell.x() + cell.width() - x
+                || byte_index >= static_cast<std::size_t>(text.size()))
+            {
+                return std::nullopt;
+            }
+            const int advance = metrics.horizontalAdvance(QLatin1Char('0'));
+            return QRect(x + static_cast<int>(byte_index) * advance, cell.y(), advance, cell.height());
+        }
+
+        if (column != models::ReclassStructureModel::value)
+        {
+            return std::nullopt;
+        }
+
+        // The value cell draws a hex dump one run per byte, each run carrying
+        // the space before its pair, so the pair itself starts behind it.
+        const std::vector<reclass::ValuePart> parts = values_->value_parts(*entry.row);
+        int                                   total = 0;
+        for (const reclass::ValuePart& part : parts)
+        {
+            total += metrics.horizontalAdvance(to_qstring(part.text));
+        }
+        if (parts.empty() || total > cell.width())
+        {
+            return std::nullopt;
+        }
+
+        int x = cell.x();
+        for (const reclass::ValuePart& part : parts)
+        {
+            const int width = metrics.horizontalAdvance(to_qstring(part.text));
+            if (part.byte == byte_index)
+            {
+                const int pair = metrics.horizontalAdvance(QStringLiteral("00"));
+                return QRect(x + width - pair, cell.y(), pair, cell.height());
+            }
+            x += width;
+        }
+        return std::nullopt;
+    }
+
+    int ReClassView::byte_at(const VisualRow& entry, int row_index, int column, const QPoint& position) const
+    {
+        int last = -1;
+        for (int index = 0;; ++index)
+        {
+            const std::optional<QRect> rect = byte_rect_in(entry, row_index, column, static_cast<std::size_t>(index));
+            if (!rect.has_value())
+            {
+                break;
+            }
+            last = index;
+            if (position.x() < rect->x() + rect->width())
+            {
+                return index;
+            }
+        }
+        // A click past the cell's last byte belongs to that byte.
+        return last;
+    }
+
     QString ReClassView::cell_text(const QModelIndex& index) const
     {
         return model_->data(index, Qt::DisplayRole).toString();
@@ -912,15 +1009,19 @@ namespace slopkit::ui::components
         {
             return;
         }
-        commit_ran_                   = true;
-        const models::ReclassRow* row = row_for_node(edit_node_id_);
+        const models::ReclassRow* row = row_for_node(target_.node_id);
         if (row == nullptr)
         {
             close_editor();
             return;
         }
-        const QModelIndex index = index_for(*row, edit_column_);
-        if (model_->setData(index, editor_->text(), Qt::EditRole))
+        // One byte writes through the value model, which is the only path that
+        // can address a part of a cell; a whole cell writes through the model.
+        const bool applied =
+            target_.byte_index >= 0
+                ? values_->write_byte(*row, static_cast<std::size_t>(target_.byte_index), editor_->text())
+                : model_->setData(index_for(*row, target_.column), editor_->text(), Qt::EditRole);
+        if (applied)
         {
             close_editor();
             return;
@@ -936,9 +1037,8 @@ namespace slopkit::ui::components
         {
             return;
         }
-        editing_      = false;
-        edit_node_id_ = 0;
-        commit_ran_   = false;
+        editing_ = false;
+        target_  = EditTarget {};
         if (editor_ != nullptr)
         {
             editor_->hide();
@@ -1230,6 +1330,23 @@ namespace slopkit::ui::components
             return;
         }
 
+        // A byte of a hex dump or of the Ascii column is typed into on its own,
+        // when the row's value is writable and the point resolves to a byte the
+        // row covers; every other cell keeps the rule below.
+        const bool byte_column =
+            hit->column == models::ReclassStructureModel::value || hit->column == models::ReclassStructureModel::ascii;
+        if (byte_column && values_->byte_editable(*hit->row))
+        {
+            const VisualRow& entry      = rows_[static_cast<std::size_t>(hit->row_index)];
+            const int        byte_index = byte_at(entry, hit->row_index, hit->column, event->position().toPoint());
+            if (byte_index >= 0)
+            {
+                open_byte_editor(hit->row_index, hit->column, byte_index);
+                event->accept();
+                return;
+            }
+        }
+
         if (model_->flags(index_for(*hit->row, hit->column)).testFlag(Qt::ItemIsEditable))
         {
             // Either a value the write path accepts or the node's own name.
@@ -1262,20 +1379,13 @@ namespace slopkit::ui::components
             editor_->setObjectName(QStringLiteral("reclass_view_editor"));
             editor_->setFont(mono_font());
             editor_->installEventFilter(this);
-            connect(editor_, &QLineEdit::returnPressed, this, &ReClassView::commit_edit);
             connect(editor_,
                     &QLineEdit::editingFinished,
                     this,
                     [this]
                     {
-                        // Return emits this right after returnPressed, so a
-                        // commit that was refused keeps the editor open for the
-                        // correction; a focus loss discards the text instead.
-                        if (commit_ran_)
-                        {
-                            commit_ran_ = false;
-                            return;
-                        }
+                        // Return commits in the event filter, so a focus loss is
+                        // the only way here: it discards the typed text.
                         if (editing_)
                         {
                             close_editor();
@@ -1283,17 +1393,70 @@ namespace slopkit::ui::components
                     });
         }
 
-        editing_      = true;
-        edit_node_id_ = hit.row->node_id;
-        edit_column_  = hit.column;
-        // The editor shows the plain text the model answers for the cell, not the
-        // readings a value cell draws beside it.
+        editing_ = true;
+        target_  = EditTarget {
+            .node_id = hit.row->node_id, .column = hit.column, .byte_index = hit.byte_index, .rect = hit.rect};
         editor_->setFont(cell_font(index, *model_));
-        editor_->setText(model_->data(index, Qt::EditRole).toString());
-        editor_->setGeometry(hit.rect);
+        // The editor shows the plain text the model answers for the cell - the
+        // byte the row draws, bare and upper case, for a per-byte edit - and not
+        // the readings the cell draws beside a value.
+        editor_->setText(edit_text(*hit.row));
+        // A node with no note draws only its marker, so the editor is opened
+        // wide enough to type a note into without re-laying the row out.
+        QRect rect = hit.rect;
+        if (hit.column == models::ReclassStructureModel::comment)
+        {
+            rect.setWidth(std::max(rect.width(), kCommentEditorMinWidth));
+        }
+        else if (hit.byte_index >= 0)
+        {
+            // A pair-wide box would clip the two digits it holds.
+            const QFontMetrics metrics(cell_font(index, *model_));
+            rect.setWidth(std::max(rect.width(), metrics.horizontalAdvance(QStringLiteral("0000"))));
+        }
+        editor_->setGeometry(rect);
         editor_->show();
         editor_->setFocus(Qt::MouseFocusReason);
         editor_->selectAll();
+    }
+
+    QString ReClassView::edit_text(const models::ReclassRow& row) const
+    {
+        if (target_.byte_index >= 0)
+        {
+            const std::span<const std::byte> bytes  = values_->node_bytes(row);
+            const auto                       offset = static_cast<std::size_t>(target_.byte_index);
+            if (offset >= bytes.size())
+            {
+                return {};
+            }
+            const unsigned value = std::to_integer<unsigned>(bytes[offset]);
+            return QStringLiteral("%1").arg(value, 2, 16, QLatin1Char('0')).toUpper();
+        }
+        return model_->data(index_for(row, target_.column), Qt::EditRole).toString();
+    }
+
+    void ReClassView::open_byte_editor(int row_index, int column, int byte_index)
+    {
+        if (row_index < 0 || row_index >= static_cast<int>(rows_.size()) || byte_index < 0)
+        {
+            return;
+        }
+        ensure_visible(row_index);
+        const VisualRow&           entry = rows_[static_cast<std::size_t>(row_index)];
+        const std::optional<QRect> rect  = byte_rect_in(entry, row_index, column, static_cast<std::size_t>(byte_index));
+        if (!rect.has_value())
+        {
+            return;
+        }
+
+        Hit hit;
+        hit.row        = entry.row;
+        hit.row_index  = row_index;
+        hit.column     = column;
+        hit.rect       = *rect;
+        hit.byte_index = byte_index;
+        open_editor(hit);
     }
 
     void ReClassView::contextMenuEvent(QContextMenuEvent* event)
@@ -1379,6 +1542,17 @@ namespace slopkit::ui::components
                 open_editor_at(current, models::ReclassStructureModel::value);
             }
             break;
+        case Qt::Key_F3:
+            // A note is typed into without a target, like the name beside it.
+            if (current >= 0
+                && model_
+                       ->flags(index_for(*rows_[static_cast<std::size_t>(current)].row,
+                                         models::ReclassStructureModel::comment))
+                       .testFlag(Qt::ItemIsEditable))
+            {
+                open_editor_at(current, models::ReclassStructureModel::comment);
+            }
+            break;
         case Qt::Key_F2:
             // A name is typed into without a target, so it opens even when the
             // value cell of the same row is read-only.
@@ -1398,9 +1572,18 @@ namespace slopkit::ui::components
     {
         if (watched == editor_ && event->type() == QEvent::KeyPress)
         {
-            if (auto* key = static_cast<QKeyEvent*>(event); key->key() == Qt::Key_Escape)
+            auto* key = static_cast<QKeyEvent*>(event);
+            if (key->key() == Qt::Key_Escape)
             {
                 close_editor();
+                return true;
+            }
+            if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter)
+            {
+                // A line editor hands an unhandled Return up to its parent, where
+                // a dialog would press its own default button; the edit belongs to
+                // the cell, so the key stops here.
+                commit_edit();
                 return true;
             }
         }

@@ -93,6 +93,34 @@ namespace slopkit::ui::models
         emit blocksChanged();
     }
 
+    bool ReclassStructureModel::set_node_comment(const ReclassRow& row, const QString& text)
+    {
+        // A hidden node is the collapsed `...` placeholder of a whole collapsed
+        // run, so its row takes no note of its own.
+        if (row.node == nullptr || row.hidden)
+        {
+            return false;
+        }
+        const auto ref = reclass::node_ref(*project_, row.node_id);
+        if (!ref)
+        {
+            return false;
+        }
+        const QString trimmed              = text.trimmed();
+        (*ref->owner)[ref->index]->comment = trimmed.toStdString();
+
+        // A note moves no offset, so the row objects stay and only the one cell
+        // is announced; the grid re-measures that column on it.
+        const QModelIndex base = index_for_node(row.node_id);
+        if (base.isValid())
+        {
+            const QModelIndex changed = index(base.row(), ReclassStructureModel::comment, base.parent());
+            emit              dataChanged(changed, changed);
+        }
+        emit statusChanged(trimmed.isEmpty() ? tr("Comment cleared.") : tr("Comment saved."), false);
+        return true;
+    }
+
     bool ReclassStructureModel::set_node_name(const ReclassRow& row, const QString& name)
     {
         const QString trimmed = name.trimmed();
@@ -128,11 +156,19 @@ namespace slopkit::ui::models
     bool ReclassStructureModel::setData(const QModelIndex& index, const QVariant& value, int role)
     {
         const ReclassRow* row = row_for(index);
-        if (role != Qt::EditRole || index.column() != ReclassStructureModel::name || row == nullptr)
+        if (role != Qt::EditRole || row == nullptr)
         {
             return false;
         }
-        return set_node_name(*row, value.toString());
+        if (index.column() == ReclassStructureModel::name)
+        {
+            return set_node_name(*row, value.toString());
+        }
+        if (index.column() == ReclassStructureModel::comment)
+        {
+            return set_node_comment(*row, value.toString());
+        }
+        return false;
     }
 
     reclass::Project& ReclassStructureModel::project() noexcept
@@ -483,9 +519,17 @@ namespace slopkit::ui::models
                 return {};
             }
         case Qt::EditRole:
-            // The name cell is typed into, so the editor starts from the same
-            // text the cell shows; no other cell takes an edit.
-            return index.column() == name ? to_qstring(node.name) : QVariant {};
+            // The name and the note are typed into, so the editor starts from
+            // the same text the cell shows; no other cell takes an edit.
+            if (index.column() == name)
+            {
+                return to_qstring(node.name);
+            }
+            if (index.column() == comment)
+            {
+                return to_qstring(node.comment);
+            }
+            return {};
         case Qt::FontRole:
             if (index.column() == address || index.column() == offset || index.column() == ascii
                 || index.column() == value)
@@ -572,6 +616,13 @@ namespace slopkit::ui::models
         {
             // A node's name is the user's own label and costs no target access,
             // so it is typed straight into the cell.
+            result |= Qt::ItemIsEditable;
+        }
+        const ReclassRow* row = row_for(index);
+        if (index.column() == comment && row != nullptr && !row->hidden)
+        {
+            // A note costs no target access either, but the collapsed `...`
+            // placeholder of a hidden node takes no edit.
             result |= Qt::ItemIsEditable;
         }
         return result;

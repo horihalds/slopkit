@@ -465,6 +465,83 @@ TEST_CASE("writing a value submits the node's address and its encoded bytes", "[
     CHECK(fixture.holds(fixture.player_address(), {0xF9, 0xAA, 0xAA, 0xAA}));
 }
 
+TEST_CASE("writing one byte submits one byte at the node's own offset", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    // A hex node is what draws a byte dump, so the byte writer needs one: Player
+    // holds an int8 and a pointer, neither of which is a dump.
+    REQUIRE(fixture.project.add_class("Flags", "app+0x40") != 0);
+    fixture.project.classes().back().nodes.push_back(node_of(fixture.project, NodeKind::hex32, "bits"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(2);
+    fixture.resolve();
+    fixture.pass();
+
+    const std::uint64_t address = kAppBase + 0x40;
+    fixture.write(address, {0x11, 0x22, 0x33, 0x44});
+
+    QStringList messages;
+    QObject::connect(&fixture.values,
+                     &ReclassValueModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    // A hex node's whole value is not typed into, but one of its bytes is, so
+    // the dump and the Ascii column can be poked without retyping the value.
+    const ReclassRow& row = fixture.row(0);
+    CHECK_FALSE(fixture.values.editable(row));
+    CHECK(fixture.values.byte_editable(row));
+
+    REQUIRE(fixture.values.write_byte(row, 2, QStringLiteral("ff")));
+    REQUIRE(drain_until_idle(fixture.worker));
+
+    CHECK(messages == QStringList {QStringLiteral("Byte written.")});
+    // Only the byte that was typed changed; the node's other bytes stand.
+    CHECK(fixture.holds(address, {0x11, 0x22, 0xFF, 0x44}));
+
+    // The number fields spell a byte: bare or `0x` hex, or `#` for decimal.
+    REQUIRE(fixture.values.write_byte(row, 0, QStringLiteral("0x7A")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(address, {0x7A, 0x22, 0xFF, 0x44}));
+
+    // What was written shows at once, without waiting for the next pass.
+    CHECK(fixture.values.node_bytes(row)[0] == static_cast<std::byte>(0x7A));
+    CHECK(fixture.values.node_changed_bytes(row)[0] != 0);
+
+    REQUIRE(fixture.values.write_byte(row, 1, QStringLiteral("#1")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(address, {0x7A, 0x01, 0xFF, 0x44}));
+
+    // One byte and no more: too many digits, a digit out of range, an empty
+    // field and a number past a byte are all refused, and the target stands.
+    for (const QString& refused :
+         {QStringLiteral("ZZ"), QStringLiteral("1G"), QString(), QStringLiteral("100"), QStringLiteral("#300")})
+    {
+        CHECK_FALSE(fixture.values.write_byte(row, 0, refused));
+        CHECK(messages.back() == QStringLiteral("Byte: expected one hex byte such as 1A."));
+        CHECK(fixture.holds(address, {0x7A, 0x01, 0xFF, 0x44}));
+    }
+
+    // A byte the node does not cover is refused rather than written past it.
+    CHECK_FALSE(fixture.values.write_byte(row, 4, QStringLiteral("1")));
+    CHECK(messages.back() == QStringLiteral("Byte: the node is smaller than that byte."));
+
+    // A kind neither writer takes never reaches the target.
+    fixture.structure.set_class(1);
+    const ReclassRow& pointer = fixture.row(1);
+    CHECK_FALSE(fixture.values.byte_editable(pointer));
+    CHECK_FALSE(fixture.values.write_byte(pointer, 0, QStringLiteral("1")));
+
+    // Nor does a detached target or a block that was not read.
+    fixture.target.clear();
+    CHECK_FALSE(fixture.values.byte_editable(row));
+    CHECK_FALSE(fixture.values.write_byte(row, 0, QStringLiteral("1")));
+}
+
 TEST_CASE("a value the node's kind cannot hold never reaches the target", "[reclass][ui]")
 {
     application();

@@ -531,12 +531,14 @@ namespace slopkit::ui::components
                     editor_->setObjectName(QStringLiteral("memory_view_editor"));
                     editor_->setFont(mono_font());
                     editor_->installEventFilter(this);
-                    connect(editor_, &QLineEdit::returnPressed, this, &MemoryView::commit_edit);
                     connect(editor_,
                             &QLineEdit::editingFinished,
                             this,
                             [this]
                             {
+                                // Return commits in the event filter, so a
+                                // focus loss is the only way here: it discards
+                                // the typed text.
                                 if (editing_)
                                 {
                                     close_editor();
@@ -660,9 +662,18 @@ namespace slopkit::ui::components
     {
         if (watched == editor_ && event->type() == QEvent::KeyPress)
         {
-            if (auto* key = static_cast<QKeyEvent*>(event); key->key() == Qt::Key_Escape)
+            auto* key = static_cast<QKeyEvent*>(event);
+            if (key->key() == Qt::Key_Escape)
             {
                 close_editor();
+                return true;
+            }
+            if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter)
+            {
+                // A line editor hands an unhandled Return up to its parent, where
+                // a dialog would press its own default button; the edit belongs to
+                // the cell, so the key stops here.
+                commit_edit();
                 return true;
             }
         }
@@ -676,12 +687,16 @@ namespace slopkit::ui::components
             return;
         }
 
-        if (document_.write_value(edit_address_, editor_->text()))
+        const std::expected<void, QString> written = document_.write_value(edit_address_, editor_->text());
+        if (written.has_value())
         {
             close_editor();
             emit bytesEdited();
             return;
         }
+        // The refusal is kept on the status line and the cell keeps the typed
+        // text, so the correction is one edit away.
+        emit editRejected(written.error());
         editor_->selectAll();
     }
 

@@ -28,6 +28,11 @@ namespace slopkit::ui::panels
         [[nodiscard]] QTableView*             register_table() const noexcept;
         [[nodiscard]] QTableView*             call_stack_table() const noexcept;
 
+    signals:
+        // A register edit's outcome, or why it was refused, for the main
+        // window's status bar.
+        void statusChanged(const QString& message, bool error);
+
     private:
         void build_layout();
         void refresh_registers();

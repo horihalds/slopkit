@@ -52,6 +52,11 @@ namespace slopkit::ui::models
         [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
         bool                        setData(const QModelIndex& index, const QVariant& value, int role) override;
 
+    signals:
+        // A commit's outcome, or why it was refused, for the main window's
+        // status bar.
+        void statusChanged(const QString& message, bool error);
+
     private:
         std::vector<RegisterValue> values_;
         CommitHandler              commit_;

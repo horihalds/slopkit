@@ -7,7 +7,7 @@
 
 namespace slopkit::ui::widgets
 {
-    IndentDelegate::IndentDelegate(QObject* parent) : ElidedTooltipDelegate(parent) {}
+    IndentDelegate::IndentDelegate(QObject* parent) : components::ValidatingDelegate(parent) {}
 
     void IndentDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
     {

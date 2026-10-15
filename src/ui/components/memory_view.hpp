@@ -55,6 +55,10 @@ namespace slopkit::ui::components
         void bytesEdited();
         void navigated();
 
+        // A commit the document refused, with the reason for the status line;
+        // the editor stays open so the text can be corrected.
+        void editRejected(const QString& reason);
+
     protected:
         void resizeEvent(QResizeEvent* event) override;
         void paintEvent(QPaintEvent* event) override;

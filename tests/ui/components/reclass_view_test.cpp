@@ -202,6 +202,11 @@ namespace
         mouse_event(view, QEvent::MouseButtonDblClick, point, Qt::LeftButton, Qt::LeftButton);
     }
 
+    void double_click_at(ReClassView& view, const QPoint& point)
+    {
+        mouse_event(view, QEvent::MouseButtonDblClick, point, Qt::LeftButton, Qt::LeftButton);
+    }
+
     std::optional<std::size_t> node_at(const ReclassStructureModel& structure, const QModelIndex& index)
     {
         const ReclassRow* row = structure.row_for(index);
@@ -894,12 +899,16 @@ TEST_CASE("a hex row's dump is its own field and not the name field", "[reclass]
     CHECK(view.cell_rect(value_cell).value().left()
           == view.cell_rect(name_cell).value().left() + view.cell_rect(name_cell).value().width() + 12);
 
-    // A hex row's dump is not typed into, so a double-click on it opens no
-    // editor - while the name just to its left opens the name editor. A dump
-    // that had landed on the name field would have opened one itself.
+    // A hex row's whole value is not typed into, so a double-click on its dump
+    // opens the editor over the one byte drawn under the point rather than over
+    // the cell - and the cell keeps its text.
     double_click(view, value_cell);
     QCoreApplication::processEvents();
-    CHECK(view.editor() == nullptr);
+    REQUIRE(view.editor() != nullptr);
+    CHECK(view.editor()->isVisible());
+    CHECK(view.editor()->width() < view.cell_rect(value_cell).value().width());
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+    QApplication::sendEvent(view.editor(), &escape);
 
     double_click(view, name_cell);
     QCoreApplication::processEvents();
@@ -908,6 +917,116 @@ TEST_CASE("a hex row's dump is its own field and not the name field", "[reclass]
     REQUIRE(editor != nullptr);
     CHECK(editor->isVisible());
     CHECK(editor->text().toStdString() == "raw");
+}
+
+TEST_CASE("a byte of a hex dump or of the Ascii column is typed into where it is drawn", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex32, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(900, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    fixture.resolve();
+    fixture.put(fixture.player_address(), {0, 0, 0, 0, 0, 0, 0, 0, 0, 0x11, 0x22, 0x33, 0x44});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    QStringList messages;
+    QObject::connect(&fixture.values,
+                     &ReclassValueModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    const QModelIndex dump  = fixture.cell(fixture.node_id(2), ReclassStructureModel::value);
+    const QModelIndex ascii = fixture.cell(fixture.node_id(2), ReclassStructureModel::ascii);
+    REQUIRE(view.cell_text(dump).toStdString() == "11 22 33 44");
+
+    const ReclassRow* raw_row = fixture.structure.row_for(dump);
+    REQUIRE(raw_row != nullptr);
+    REQUIRE(fixture.values.byte_editable(*raw_row));
+    const std::optional<std::uint64_t> raw = fixture.values.node_address(*raw_row);
+    REQUIRE(raw.has_value());
+
+    // The third pair of the dump: the editor opens over that pair alone, holding
+    // the byte the row draws, bare and upper case.
+    double_click_at(view, view.byte_rect(dump, 2).value().center());
+    QCoreApplication::processEvents();
+
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text().toStdString() == "33");
+    CHECK(editor->width() < view.cell_rect(dump).value().width());
+
+    editor->setText(QStringLiteral("ff"));
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QApplication::sendEvent(editor, &enter);
+    REQUIRE(drain_until_idle(fixture.worker));
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(messages == QStringList {QStringLiteral("Byte written.")});
+    // One byte reached the target at the node's own offset, and no other.
+    CHECK(fixture.holds(*raw, {0x11, 0x22, 0xFF, 0x44}));
+    // What was written shows at once instead of on the next live pass.
+    CHECK(view.cell_text(dump).toStdString() == "11 22 FF 44");
+
+    // A character of the Ascii column edits the byte that character stands for.
+    double_click_at(view, view.byte_rect(ascii, 0).value().center());
+    QCoreApplication::processEvents();
+
+    REQUIRE(editor->isVisible());
+    CHECK(editor->text().toStdString() == "11");
+
+    editor->setText(QStringLiteral("#65"));
+    QApplication::sendEvent(editor, &enter);
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(*raw, {0x41, 0x22, 0xFF, 0x44}));
+
+    // A click past the dump's last pair belongs to that last byte.
+    const QRect cell_rect = view.cell_rect(dump).value();
+    double_click_at(view, QPoint {cell_rect.right() + 2, cell_rect.center().y()});
+    QCoreApplication::processEvents();
+
+    REQUIRE(editor->isVisible());
+    CHECK(editor->text().toStdString() == "44");
+
+    // A malformed byte is refused with its reason, the node's bytes are left as
+    // they were and the editor stays open with the typo selected.
+    messages.clear();
+    editor->setText(QStringLiteral("ZZ"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK(editor->isVisible());
+    CHECK(editor->selectedText().toStdString() == "ZZ");
+    CHECK(messages == QStringList {QStringLiteral("Byte: expected one hex byte such as 1A.")});
+    CHECK(fixture.holds(*raw, {0x41, 0x22, 0xFF, 0x44}));
+
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+
+    // A row whose value cannot be written - here because the target is gone -
+    // offers no byte editor at all.
+    const QPoint first_byte = view.byte_rect(dump, 0).value().center();
+    fixture.target.clear();
+    double_click_at(view, first_byte);
+    QCoreApplication::processEvents();
+    CHECK_FALSE(editor->isVisible());
 }
 
 TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][ui][view]")
@@ -993,6 +1112,104 @@ TEST_CASE("a double-click on a name cell renames the node in place", "[reclass][
     QCoreApplication::processEvents();
     CHECK(editor->isVisible());
     CHECK(editor->text().toStdString() == "health");
+}
+
+TEST_CASE("a note is edited in place through the grid's editor", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture     fixture;
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QStringList messages;
+    QObject::connect(&fixture.structure,
+                     &ReclassStructureModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    Class&            player    = fixture.project.classes()[1];
+    const QModelIndex note_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::comment);
+
+    // A note costs no target access, so the cell is typed into with nothing
+    // resolved; the row draws the bare marker for the note it has none of.
+    CHECK(fixture.proxy.flags(note_cell).testFlag(Qt::ItemIsEditable));
+    CHECK(view.cell_text(note_cell).toStdString() == "//");
+
+    // F3 opens the cursor row's note, which is how a node that draws no note
+    // gets one: the bare marker is the only text there is to click.
+    view.setCurrentIndex(fixture.cell(fixture.node_id(0), ReclassStructureModel::comment));
+    QKeyEvent f3 {QEvent::KeyPress, Qt::Key_F3, Qt::NoModifier};
+    QApplication::sendEvent(&view, &f3);
+    QCoreApplication::processEvents();
+
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text().isEmpty());
+    // The marker's run is only as wide as `//`, so the editor opens wide enough
+    // to type a note into it.
+    CHECK(editor->width() > view.cell_rect(note_cell).value().width());
+
+    editor->setText(QStringLiteral("  the player's tag  "));
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(player.nodes[0]->comment == "the player's tag");
+    REQUIRE(messages.size() == 1);
+    CHECK(messages.first().toStdString() == "Comment saved.");
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(0), ReclassStructureModel::comment)).toStdString()
+          == "// the player's tag");
+
+    // A double-click on the drawn note opens the same editor, prefilled with the
+    // stored text rather than with the marker.
+    double_click(view, fixture.cell(fixture.node_id(0), ReclassStructureModel::comment));
+    QCoreApplication::processEvents();
+    CHECK(editor->isVisible());
+    CHECK(editor->text().toStdString() == "the player's tag");
+
+    // Escape leaves the node as it was.
+    editor->setText(QStringLiteral("discarded"));
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+    CHECK(player.nodes[0]->comment == "the player's tag");
+    CHECK(messages.size() == 1);
+
+    // A note is free text, so a note that is only spaces clears it.
+    view.setCurrentIndex(fixture.cell(fixture.node_id(0), ReclassStructureModel::comment));
+    QApplication::sendEvent(&view, &f3);
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("   "));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(player.nodes[0]->comment.empty());
+    REQUIRE(messages.size() == 2);
+    CHECK(messages.last().toStdString() == "Comment cleared.");
+    CHECK(view.cell_text(fixture.cell(fixture.node_id(0), ReclassStructureModel::comment)).toStdString() == "//");
+
+    // A hidden node's `...` placeholder takes no note, so it opens no editor.
+    player.nodes[0]->hidden = true;
+    fixture.structure.rebuild();
+    view.setCurrentIndex(fixture.cell(fixture.node_id(0), ReclassStructureModel::name));
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(fixture.proxy.flags(fixture.cell(fixture.node_id(0), ReclassStructureModel::comment))
+                    .testFlag(Qt::ItemIsEditable));
+    QApplication::sendEvent(&view, &f3);
+    QCoreApplication::processEvents();
+    CHECK_FALSE(editor->isVisible());
 }
 
 TEST_CASE("a value keeps its measured width and the pane scrolls instead", "[reclass][ui][view]")

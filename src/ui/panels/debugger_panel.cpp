@@ -9,6 +9,7 @@
 
 #include "ui/address_format.hpp"
 #include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/components/validating_delegate.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/call_stack_model.hpp"
@@ -39,6 +40,7 @@ namespace slopkit::ui::panels
                     sync_editable();
                 });
         connect(&controller_, &debug::Controller::backtraceChanged, this, &DebuggerPanel::refresh_backtrace);
+        connect(register_model_, &models::RegisterModel::statusChanged, this, &DebuggerPanel::statusChanged);
 
         register_model_->set_commit_handler(
             [this](const std::string& name, std::uint64_t value)
@@ -67,6 +69,9 @@ namespace slopkit::ui::panels
         register_table_ = new QTableView(this);
         register_table_->setObjectName(QStringLiteral("register_table"));
         register_table_->setModel(register_model_);
+        // A register value the controller turns down keeps its editor open with
+        // the reason on the status bar, like the address list's cells.
+        register_table_->setItemDelegate(new components::ValidatingDelegate(register_table_));
         register_table_->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed
                                          | QAbstractItemView::AnyKeyPressed);
         register_table_->setSelectionMode(QAbstractItemView::SingleSelection);

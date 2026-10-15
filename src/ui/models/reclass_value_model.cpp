@@ -23,6 +23,35 @@ namespace slopkit::ui::models
             }
             return text;
         }
+
+        // One byte as the number fields spell a number: bare or `0x`-prefixed
+        // hex, or `#` for decimal.
+        std::optional<std::byte> parse_byte_value(const QString& text)
+        {
+            QString digits = text.trimmed();
+            int     base   = 16;
+            if (digits.startsWith(QLatin1Char('#')))
+            {
+                digits.remove(0, 1);
+                base = 10;
+            }
+            else if (digits.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive))
+            {
+                digits.remove(0, 2);
+            }
+            if (digits.isEmpty())
+            {
+                return std::nullopt;
+            }
+
+            bool                     ok    = false;
+            const unsigned long long value = digits.toULongLong(&ok, base);
+            if (!ok || value > 0xFF)
+            {
+                return std::nullopt;
+            }
+            return static_cast<std::byte>(value);
+        }
     }
 
     ReclassValueModel::ReclassValueModel(process::AccessWorker&   worker,
@@ -128,6 +157,121 @@ namespace slopkit::ui::models
         return block_view(row.block).readable && node_address(row).has_value();
     }
 
+    bool ReclassValueModel::byte_editable(const ReclassRow& row) const
+    {
+        if (!attached() || row.hidden)
+        {
+            return false;
+        }
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        // A hex node's whole value is not typed into, but one byte of its dump
+        // still is; every other kind that can be typed into is poked one byte at
+        // a time from the Ascii column.
+        if (!reclass::is_editable(node->kind()) && !reclass::is_hex_kind(node->kind()))
+        {
+            return false;
+        }
+        return block_view(row.block).readable && node_address(row).has_value();
+    }
+
+    bool ReclassValueModel::write_byte(const ReclassRow& row, std::size_t byte_offset, const QString& text)
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        if (!attached())
+        {
+            emit statusChanged(tr("Not attached; cannot write."), true);
+            return false;
+        }
+        if (!reclass::is_editable(node->kind()) && !reclass::is_hex_kind(node->kind()))
+        {
+            emit statusChanged(
+                tr("%1 values cannot be written from the grid.").arg(to_qstring(reclass::describe(node->kind()))),
+                true);
+            return false;
+        }
+        if (write_job_.has_value())
+        {
+            emit statusChanged(tr("A write is already in progress."), true);
+            return false;
+        }
+
+        const std::optional<std::uint64_t> address = node_address(row);
+        if (!address.has_value())
+        {
+            emit statusChanged(tr("The node's address is unknown; cannot write."), true);
+            return false;
+        }
+        if (!block_view(row.block).readable)
+        {
+            emit statusChanged(tr("The node's block was not read; cannot write."), true);
+            return false;
+        }
+        if (byte_offset >= node->value_size())
+        {
+            emit statusChanged(tr("Byte: the node is smaller than that byte."), true);
+            return false;
+        }
+
+        const std::optional<std::byte> value = parse_byte_value(text);
+        if (!value.has_value())
+        {
+            emit statusChanged(tr("Byte: expected one hex byte such as 1A."), true);
+            return false;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        write_job_                  = job_id;
+
+        const std::vector<std::byte>     written {*value};
+        const std::optional<CachedRange> range     = cached_range(row, byte_offset);
+        const bool                       submitted = worker_.submit_write(
+            job_id,
+            row.node_id,
+            *address + byte_offset,
+            written,
+            [this, job_id, range, written](process::JobResult&& result)
+            {
+                if (write_job_ != job_id)
+                {
+                    return;
+                }
+                write_job_.reset();
+
+                if (!std::holds_alternative<process::WriteResult>(result))
+                {
+                    emit statusChanged(tr("The write did not complete."), true);
+                    return;
+                }
+                if (const auto& complete = std::get<process::WriteResult>(result); complete.error.has_value())
+                {
+                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*complete.error))),
+                                       true);
+                    return;
+                }
+                if (range.has_value())
+                {
+                    patch_cached_bytes(*range, written);
+                    emit valuesChanged();
+                }
+                emit statusChanged(tr("Byte written."), false);
+            });
+        if (!submitted)
+        {
+            write_job_.reset();
+            emit statusChanged(tr("The write was refused."), true);
+            return false;
+        }
+        return true;
+    }
+
     bool ReclassValueModel::write_value(const ReclassRow& row, const QString& text)
     {
         const reclass::Node* node = node_of(row);
@@ -175,12 +319,14 @@ namespace slopkit::ui::models
         const process::JobId job_id = worker_.next_job_id();
         write_job_                  = job_id;
 
-        const bool submitted = worker_.submit_write(
+        const std::vector<std::byte>     written   = *parsed;
+        const std::optional<CachedRange> range     = cached_range(row, 0);
+        const bool                       submitted = worker_.submit_write(
             job_id,
             row.node_id,
             *address,
-            *parsed,
-            [this, job_id](process::JobResult&& result)
+            written,
+            [this, job_id, range, written](process::JobResult&& result)
             {
                 if (write_job_ != job_id)
                 {
@@ -193,10 +339,16 @@ namespace slopkit::ui::models
                     emit statusChanged(tr("The write did not complete."), true);
                     return;
                 }
-                if (const auto& written = std::get<process::WriteResult>(result); written.error.has_value())
+                if (const auto& complete = std::get<process::WriteResult>(result); complete.error.has_value())
                 {
-                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*written.error))), true);
+                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*complete.error))),
+                                       true);
                     return;
+                }
+                if (range.has_value())
+                {
+                    patch_cached_bytes(*range, written);
+                    emit valuesChanged();
                 }
                 emit statusChanged(tr("Value written."), false);
             });
@@ -207,6 +359,58 @@ namespace slopkit::ui::models
             return false;
         }
         return true;
+    }
+
+    std::optional<ReclassValueModel::CachedRange> ReclassValueModel::cached_range(const ReclassRow& row,
+                                                                                  std::size_t       byte_offset) const
+    {
+        if (structure_ == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (row.block >= blocks.size())
+        {
+            return std::nullopt;
+        }
+
+        // A class instance shares its parent's bytes, so the reading that owns
+        // them is the block the pass actually read.
+        std::size_t owner = row.block;
+        while (owner != 0 && !blocks[owner].via_pointer)
+        {
+            owner = blocks[owner].parent_block;
+        }
+
+        const BlockView view = block_view(row.block);
+        if (!view.readable)
+        {
+            return std::nullopt;
+        }
+        const std::size_t index = view.start + row.offset - blocks[row.block].base_offset + byte_offset;
+        if (index >= view.bytes.size())
+        {
+            return std::nullopt;
+        }
+        return CachedRange {.cell = owner, .index = index};
+    }
+
+    void ReclassValueModel::patch_cached_bytes(const CachedRange& range, std::span<const std::byte> bytes)
+    {
+        LiveCell& cell = cells_.cell(range.cell);
+        if (!cell.bytes.has_value() || cell.changed_bytes.size() != cell.bytes->size()
+            || range.index >= cell.bytes->size())
+        {
+            return;
+        }
+
+        const std::size_t count = std::min(bytes.size(), cell.bytes->size() - range.index);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            (*cell.bytes)[range.index + i]      = bytes[i];
+            cell.changed_bytes[range.index + i] = 1;
+        }
+        cell.changed = true;
     }
 
     void ReclassValueModel::maybe_resolve_addresses()

@@ -477,24 +477,24 @@ namespace slopkit::ui::components
         block.ever_read = true;
     }
 
-    bool MemoryViewDocument::write_value(std::uint64_t address, const QString& text)
+    std::expected<void, QString> MemoryViewDocument::write_value(std::uint64_t address, const QString& text)
     {
         if (!target_.valid())
         {
             log::warning(log::category::ui, "memory view write refused: no target attached");
-            return false;
+            return std::unexpected(tr("No target is attached; cannot write."));
         }
         if (write_pending_.has_value())
         {
             log::warning(log::category::ui, "memory view write refused: a write is already in progress");
-            return false;
+            return std::unexpected(tr("A write is already in progress."));
         }
 
         const std::size_t size = format_.size();
         if (size == 0)
         {
             log::warning(log::category::ui, "memory view write refused: unsupported value type");
-            return false;
+            return std::unexpected(tr("The value format cannot be written."));
         }
 
         const std::string input  = text.toStdString();
@@ -502,13 +502,13 @@ namespace slopkit::ui::components
         if (!parsed)
         {
             log::warning(log::category::ui, std::format("memory view value rejected: {}", parsed.error().message));
-            return false;
+            return std::unexpected(tr("Value: %1").arg(to_qstring(parsed.error().message)));
         }
         const std::vector<std::byte> encoded = scan::encode_value(format_.type, *parsed);
         if (encoded.size() != size)
         {
             log::warning(log::category::ui, "memory view write refused: invalid value");
-            return false;
+            return std::unexpected(tr("Value: the format cannot hold that."));
         }
 
         const process::JobId job_id = worker_.next_job_id();
@@ -546,9 +546,9 @@ namespace slopkit::ui::components
         {
             write_pending_.reset();
             log::warning(log::category::ui, "memory view write refused: the access worker is not accepting jobs");
-            return false;
+            return std::unexpected(tr("The write was refused."));
         }
-        return true;
+        return {};
     }
 
 }
