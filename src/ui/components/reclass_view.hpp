@@ -30,11 +30,12 @@ namespace slopkit::ui::models
 
 namespace slopkit::ui::components
 {
-    // The node grid, painted rather than assembled out of a tree view: the seven
-    // columns are sized to the text the class draws, no header band is drawn and
-    // nothing about the layout can be dragged or measured again on a pass. The
-    // rows come from the structure model through the fused proxy, so the widget
-    // itself only lays out, paints and handles input.
+    // The node grid, painted rather than assembled out of a tree view: the three
+    // leading fields are sized to the text the class draws, the rest of the row
+    // flows after them, no header band is drawn and nothing about the layout can
+    // be dragged or measured again on a pass. The rows come from the structure
+    // model through the fused proxy, so the widget itself only lays out, paints
+    // and handles input.
     class ReClassView : public QAbstractScrollArea
     {
         Q_OBJECT
@@ -66,8 +67,6 @@ namespace slopkit::ui::components
         [[nodiscard]] QString              cell_text(const QModelIndex& index) const;
         // The full text of the cell under the cursor, when it does not fit.
         [[nodiscard]] QString              hover_full_text(const QPoint& position) const;
-        [[nodiscard]] int                  column_x(int column) const noexcept;
-        [[nodiscard]] int                  column_width(int column) const noexcept;
 
         // The inline cell editor, or nullptr until a cell was opened.
         [[nodiscard]] QLineEdit* editor() const noexcept;
@@ -120,6 +119,16 @@ namespace slopkit::ui::components
             QRect                     rect;
         };
 
+        // Where each of the row's nine fields stands once the row's own content
+        // has been placed: the offset, address and ascii fields on their measured
+        // columns, the type, name and value in the one content slot, and the
+        // note, the readings and the pointer immediately behind the value they
+        // annotate.
+        struct RowLayout
+        {
+            QRect rects[models::ReclassStructureModel::column_count];
+        };
+
         void update_layout();
         void update_rows();
         // Sizes every column to the text the flattened rows draw - the hints and
@@ -139,8 +148,17 @@ namespace slopkit::ui::components
         [[nodiscard]] int                       visual_index_of(std::size_t node_id) const;
         [[nodiscard]] QModelIndex               index_for(const models::ReclassRow& row, int column) const;
         [[nodiscard]] std::optional<Hit>        hit_test(const QPoint& position) const;
-        [[nodiscard]] int                       column_at(int x) const noexcept;
-        [[nodiscard]] int                       content_x(const VisualRow& entry, int column) const noexcept;
+        // Lays a row's nine fields out for the row's own text: the three aligned
+        // fields on their measured columns, then type, name, value, comment,
+        // hints and pointer flowing one behind the other from the head of the
+        // content slot.
+        [[nodiscard]] RowLayout                 layout_row(const VisualRow& entry, int row_index) const;
+        // The field a point inside a row falls on: an empty field is skipped, a
+        // point past the row's last field belongs to that field.
+        [[nodiscard]] int                       field_at(const RowLayout& layout, int x) const noexcept;
+        // The x the text of an aligned field starts at, right-aligned on the
+        // column's content box; a flowing field starts on its own rect.
+        [[nodiscard]] int                       aligned_x(const VisualRow& entry, int column) const noexcept;
         [[nodiscard]] QRect                     cell_rect_at(int row_index, int column) const;
         [[nodiscard]] QRect                     triangle_rect(const VisualRow& entry, int row_index) const;
         [[nodiscard]] bool                      expandable(const models::ReclassRow& row) const;
@@ -168,11 +186,13 @@ namespace slopkit::ui::components
         int                    first_row_ {0};
         int                    row_height_ {1};
         int                    column_x_[models::ReclassStructureModel::column_count] {};
+        // The measured width of an aligned field, or the cap a flowing field is
+        // clipped at; update_content_widths() owns every entry.
         int                    column_width_[models::ReclassStructureModel::column_count] {};
-        // The widest `// …` note and the widest value the shown class draws;
-        // update_columns() lays them out at that width and never narrows them.
-        int                    comment_content_ {};
-        int                    value_content_ {};
+        // The head of the row's content slot, right after the ascii field, and
+        // the widest row's end - the horizontal scrollbar's range.
+        int                    content_x_ {};
+        int                    content_width_ {};
 
         std::vector<std::size_t> selected_;
         std::size_t              current_ {};

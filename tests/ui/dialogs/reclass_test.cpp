@@ -124,31 +124,44 @@ TEST_CASE("the ReClass window opens as a companion window", "[reclass][ui]")
     CHECK(dialog.grid()->model() == dialog.proxy());
 
     // The grid is painted by its own component rather than assembled out of a
-    // tree view: the nine fields are sized by the component to the text the class
-    // draws - the hints and the pointer field from the class's kinds - no header
-    // band sits above them, and nothing about the layout can be dragged.
-    // The note follows the value, and the fields the user reads by eye keep the
-    // widths the class gave them when the window grows: only the slack moves.
+    // tree view: the three leading fields are sized by the component to the text
+    // the class draws, the notes flow behind the row's own value, no header band
+    // sits above them, and nothing about the layout can be dragged.
+    // The fields the user reads by eye keep the widths the class gave them when
+    // the window grows: only the slack moves.
     using slopkit::ui::models::ReclassStructureModel;
     CHECK(dialog.grid()->row_count() == 2);
-    CHECK(dialog.grid()->column_x(ReclassStructureModel::comment)
-          == dialog.grid()->column_x(ReclassStructureModel::value)
-                 + dialog.grid()->column_width(ReclassStructureModel::value));
-    CHECK(dialog.grid()->column_x(ReclassStructureModel::pointer)
-          >= dialog.grid()->column_x(ReclassStructureModel::hints)
-                 + dialog.grid()->column_width(ReclassStructureModel::hints));
 
-    const int address_width = dialog.grid()->column_width(ReclassStructureModel::address);
-    const int offset_width  = dialog.grid()->column_width(ReclassStructureModel::offset);
-    const int type_width    = dialog.grid()->column_width(ReclassStructureModel::type);
-    const int name_width    = dialog.grid()->column_width(ReclassStructureModel::name);
+    const auto rect = [&dialog](int row, int column)
+    {
+        return dialog.grid()->cell_rect(dialog.grid()->model()->index(row, column)).value();
+    };
+    const int address_x =
+        rect(0, ReclassStructureModel::address).left() + rect(0, ReclassStructureModel::address).width();
+    const int type_x  = rect(0, ReclassStructureModel::type).left();
+    const int value_x = rect(0, ReclassStructureModel::value).left();
+    const int note_x  = rect(0, ReclassStructureModel::comment).left();
+
+    // A row's own type, name and value start at one slot right after the ascii
+    // field, and the note follows the value it annotates.
+    CHECK(rect(0, ReclassStructureModel::ascii).left() == address_x);
+    CHECK(type_x > rect(0, ReclassStructureModel::ascii).left());
+    CHECK(value_x > type_x);
+    CHECK(note_x == value_x + rect(0, ReclassStructureModel::value).width() + 6);
+
+    // An int32 row draws no readings, so the note is its only annotation.
+    CHECK(rect(0, ReclassStructureModel::hints).width() == 0);
+    CHECK(rect(0, ReclassStructureModel::pointer).width() == 0);
+
+    const int offset_x = rect(0, ReclassStructureModel::offset).left();
+    const int ascii_x  = rect(0, ReclassStructureModel::ascii).left();
     dialog.resize(dialog.width() + 160, dialog.height());
     QCoreApplication::processEvents();
 
-    CHECK(dialog.grid()->column_width(ReclassStructureModel::address) == address_width);
-    CHECK(dialog.grid()->column_width(ReclassStructureModel::offset) == offset_width);
-    CHECK(dialog.grid()->column_width(ReclassStructureModel::type) == type_width);
-    CHECK(dialog.grid()->column_width(ReclassStructureModel::name) == name_width);
+    CHECK(rect(0, ReclassStructureModel::offset).left() == offset_x);
+    CHECK(rect(0, ReclassStructureModel::ascii).left() == ascii_x);
+    CHECK(rect(0, ReclassStructureModel::type).left() == type_x);
+    CHECK(rect(0, ReclassStructureModel::comment).left() == note_x);
 
     // Re-opening brings the same window and the same project back.
     dialog.hide();

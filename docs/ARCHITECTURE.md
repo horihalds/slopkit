@@ -694,7 +694,7 @@ module map changes — and submits **one read per visible block** through
 node's own offset. A block that cannot be read paints `?` for all of its nodes, an
 unresolved class address `not resolved yet` and a detached target
 `Attach to a target first.`; the proxy model fuses the two models into the
-six-column tree the painted grid shows.
+nine fields the painted grid flows.
 
 A `class_instance` shares its parent's bytes, so it costs no read of its own, and
 a `class_pointer`'s target is read out of the pointer's own bytes in the parent
@@ -740,22 +740,23 @@ the same two the toolbar's drop-down buttons offer, all on the prompt-free
 copied sub-tree through `Node::clone()` and re-ids every node, so a container's
 children come with it, and a `Create Class from Nodes` moves the selection into a
 new class and leaves a same-sized class instance in its place. A hidden node
-collapses to one `...` row the grid paints in the `Name` column; the row inlines
-nothing and a click unhides the node, while the bytes a hidden node covers stay
-where they are. Two commands hand off rather than read the target: `Search for
-Equal Values` gives the node's shown value to the scanner panel (filling its value
-field and picking the value type that fits) and the `Find Out What Writes This
+collapses to one `...` row the grid paints at the head of the row's own content
+slot; the row inlines nothing and a click unhides the node, while the bytes a
+hidden node covers stay where they are. Two commands hand off rather than read
+the target: `Search for Equal Values` gives the node's shown value to the scanner
+panel (filling its value field and picking the value type that fits) and the
+`Find Out What Writes This
 Address` / `Find Out What Accesses This Address` pair gives the node's address and
 width to the Access Watch, whose dialog the main window opens.
 
-The proxy model answers the two live columns from the value model and leaves the
-other four to the structure model, and a pass repaints a cell only when its text
-moved: it remembers what each row last showed, emits `dataChanged` for that one
-cell, and skips the first pass after a rebuild because the reset has already
-repainted the grid. The grid itself is `ui::components::ReClassView`, a
+The proxy model answers the live fields from the value model and leaves the rest
+to the structure model, and a pass repaints a cell only when its text moved: it
+remembers what each row last showed, emits `dataChanged` for that one cell, and
+skips the first pass after a rebuild because the reset has already repainted the
+grid. The grid itself is `ui::components::ReClassView`, a
 custom-painted scroll area: it flattens the model's rows in pre-order, keeps the
 cursor and the selection as node ids so a rebuild never drops them, paints no
-header band, and sizes every field to the text the class draws - so nothing can
+header band, and caps each field at the width the class draws - so nothing can
 resize or drag anything and a pass that moves a value never walks the rows to
 re-lay-out the view. The field widths and the grid's horizontal scrollbar are the
 layout rule of [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md).
