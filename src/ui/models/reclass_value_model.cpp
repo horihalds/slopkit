@@ -197,6 +197,35 @@ namespace slopkit::ui::models
         return block_view(row.block).readable && node_address(row).has_value();
     }
 
+    QString ReclassValueModel::reading_datatype(const ReclassRow& row, reclass::NodeReading reading) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return {};
+        }
+        const reclass::NodeKind                 kind     = node->kind();
+        const std::vector<reclass::NodeReading> readings = reclass::node_readings(kind);
+        if (std::ranges::find(readings, reading) == readings.end())
+        {
+            return {};
+        }
+
+        // Each reading is named by the kind that spells it: the float and the
+        // integer of the cell's own width, the raw bits by the cell's own kind.
+        const bool wide = kind == reclass::NodeKind::hex64;
+        switch (reading)
+        {
+        case reclass::NodeReading::floating:
+            return to_qstring(reclass::describe(wide ? reclass::NodeKind::float64 : reclass::NodeKind::float32));
+        case reclass::NodeReading::integer:
+            return to_qstring(reclass::describe(wide ? reclass::NodeKind::int64 : reclass::NodeKind::int32));
+        case reclass::NodeReading::raw:
+            return to_qstring(reclass::describe(kind));
+        }
+        return {};
+    }
+
     bool ReclassValueModel::write_byte(const ReclassRow& row, std::size_t byte_offset, const QString& text)
     {
         const reclass::Node* node = node_of(row);

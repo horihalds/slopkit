@@ -778,7 +778,8 @@ reference's `#####` is gone. `parse_node_reading` reads one typed reading back i
 the base that reading is drawn in, never in the node's own `Hex` toggle's, and
 the value model hands the grid one `HintRun` per reading whose editor commits
 through `write_reading()`, which parses that one reading and writes the node's
-whole bytes.
+whole bytes. `reading_datatype` names a reading after the kind that spells it,
+which the view shows on its hover over that run.
 `Dissect` guesses a better kind for a `hexN` node from its live bytes — a
 plausible pointer first, then a small `f32`, a small `i32` and an aligned `f64` —
 and re-types the node with the padding rule that keeps the following offsets

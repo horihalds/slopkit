@@ -1040,6 +1040,28 @@ namespace slopkit::ui::components
         return metrics.horizontalAdvance(full) > available ? full : QString();
     }
 
+    QString ReClassView::hover_tooltip(const QPoint& position) const
+    {
+        const std::optional<Hit> hit = hit_test(position);
+        // A reading names its own data type wherever it is drawn, even when the
+        // field fits its text and would otherwise say nothing: the point, not the
+        // widget, picks the run - and a field that elides has no run to pick.
+        if (hit.has_value() && hit->row != nullptr && hit->column == models::ReclassStructureModel::hints)
+        {
+            const VisualRow& entry = rows_[static_cast<std::size_t>(hit->row_index)];
+            for (const models::ReclassValueModel::HintRun& run : values_->hint_parts(*hit->row))
+            {
+                const std::optional<QRect> reading = hint_rect_in(entry, hit->row_index, run.reading);
+                if (reading.has_value() && reading->contains(position))
+                {
+                    return values_->reading_datatype(*hit->row, run.reading);
+                }
+            }
+        }
+
+        return hover_full_text(position);
+    }
+
     bool ReClassView::expandable(const models::ReclassRow& row) const
     {
         return structure_->expandable(row);
@@ -1639,7 +1661,7 @@ namespace slopkit::ui::components
         }
         viewport()->unsetCursor();
 
-        const QString full = hover_full_text(event->position().toPoint());
+        const QString full = hover_tooltip(event->position().toPoint());
         if (full.isEmpty())
         {
             QToolTip::hideText();

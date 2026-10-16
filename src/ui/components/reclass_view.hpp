@@ -90,6 +90,9 @@ namespace slopkit::ui::components
         [[nodiscard]] QString                     cell_text(const QModelIndex& index) const;
         // The full text of the cell under the cursor, when it does not fit.
         [[nodiscard]] QString                     hover_full_text(const QPoint& position) const;
+        // What a hover over the cell under the cursor says: the data type of the
+        // reading the point falls in, else that full text, else nothing.
+        [[nodiscard]] QString                     hover_tooltip(const QPoint& position) const;
 
         // The inline cell editor, or nullptr until a cell was opened.
         [[nodiscard]] QLineEdit* editor() const noexcept;

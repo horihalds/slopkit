@@ -21,6 +21,7 @@
 #include <QRect>
 #include <QScrollBar>
 #include <QStringList>
+#include <QToolTip>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
@@ -453,8 +454,12 @@ TEST_CASE("the leading fields are sized to the class and the row flows after the
     CHECK(tail_note.left() < raw_note.left());
 
     // The reading fits its own run, which is sized for the widest reading a hex
-    // cell can draw rather than for what the class happens to read now.
+    // cell can draw rather than for what the class happens to read now, and a
+    // hover on that run names the data type it holds.
     CHECK(view.hover_full_text(view.cell_rect(raw_hint).value().center()).isEmpty());
+    const std::optional<QRect> raw_bits = view.reading_rect(raw_hint, NodeReading::raw);
+    REQUIRE(raw_bits.has_value());
+    CHECK(view.hover_tooltip(raw_bits->center()) == QStringLiteral("Hex64"));
 
     // A live pass repaints the row without re-measuring: the leading fields and
     // the head of the content slot keep their place.
@@ -1252,6 +1257,20 @@ TEST_CASE("a hex cell's readings are edited in place one by one", "[reclass][ui]
     CHECK(run(NodeReading::floating)->right() < run(NodeReading::integer)->left());
     CHECK(run(NodeReading::integer)->right() < run(NodeReading::raw)->left());
 
+    // A hover on one of those runs names the data type it holds, in the wording
+    // the Type cell gives a kind; a point between two runs names nothing.
+    CHECK(view.hover_tooltip(run(NodeReading::floating)->center()) == QStringLiteral("Double"));
+    CHECK(view.hover_tooltip(run(NodeReading::integer)->center()) == QStringLiteral("Int64"));
+    CHECK(view.hover_tooltip(run(NodeReading::raw)->center()) == QStringLiteral("Hex64"));
+    const QPoint between {(run(NodeReading::floating)->right() + run(NodeReading::integer)->left()) / 2,
+                          field.center().y()};
+    CHECK(view.hover_tooltip(between).isEmpty());
+
+    // The hover the mouse drives is the same one, and the point picks the run.
+    mouse_event(view, QEvent::MouseMove, run(NodeReading::integer)->center(), Qt::NoButton, Qt::NoButton);
+    QCoreApplication::processEvents();
+    CHECK(QToolTip::text() == QStringLiteral("Int64"));
+
     QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
     QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
 
@@ -1330,6 +1349,9 @@ TEST_CASE("a hex cell's readings are edited in place one by one", "[reclass][ui]
     fixture.pass();
     QCoreApplication::processEvents();
     CHECK_FALSE(view.reading_rect(hint(), NodeReading::integer).has_value());
+    // An elided field draws no run at a fixed place, so its hover falls back to
+    // the cell's whole readings line instead of naming a data type.
+    CHECK(view.hover_tooltip(view.cell_rect(hint()).value().center()) == view.cell_text(hint()));
     double_click_at(view, view.cell_rect(hint()).value().center());
     QCoreApplication::processEvents();
     CHECK_FALSE(editor->isVisible());

@@ -156,6 +156,12 @@ namespace slopkit::ui::models
         // that reading, a target is attached and the node's block was read.
         [[nodiscard]] bool reading_editable(const ReclassRow& row, reclass::NodeReading reading) const;
 
+        // The data type one of this node's readings shows, in the wording the
+        // Type cell gives the kind that spells it: `Float`/`Double`, `Int32`/
+        // `Int64` and the node's own `Hex32`/`Hex64`. Empty when the row draws
+        // no such reading.
+        [[nodiscard]] QString reading_datatype(const ReclassRow& row, reclass::NodeReading reading) const;
+
         // Parses the text for the node's kind and writes one value into the
         // target; the outcome is reported on statusChanged.
         bool write_value(const ReclassRow& row, const QString& text);

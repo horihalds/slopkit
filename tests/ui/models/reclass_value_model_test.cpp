@@ -800,6 +800,13 @@ TEST_CASE("writing a reading submits the node's whole bytes", "[reclass][ui]")
     CHECK(runs[2].text == QStringLiteral("(0x2A)"));
     CHECK(fixture.values.hint_text(row) == QStringLiteral("(0.000) (42) (0x2A)"));
 
+    // A hover on one of those runs names the data type it shows, in the wording
+    // the Type cell gives a kind: the float and the integer of the cell's own
+    // width, the raw bits by the cell's own kind.
+    CHECK(fixture.values.reading_datatype(row, NodeReading::floating) == QStringLiteral("Float"));
+    CHECK(fixture.values.reading_datatype(row, NodeReading::integer) == QStringLiteral("Int32"));
+    CHECK(fixture.values.reading_datatype(row, NodeReading::raw) == QStringLiteral("Hex32"));
+
     // Each reading writes the node's whole bytes, reports itself and patches the
     // cached bytes at once.
     REQUIRE(fixture.values.write_reading(row, NodeReading::integer, QStringLiteral("-1")));
@@ -841,6 +848,7 @@ TEST_CASE("writing a reading submits the node's whole bytes", "[reclass][ui]")
     // row is one.
     fixture.structure.set_class(1);
     CHECK(fixture.values.hint_parts(fixture.row(1)).empty());
+    CHECK(fixture.values.reading_datatype(fixture.row(1), NodeReading::integer).isEmpty());
     CHECK_FALSE(fixture.values.reading_editable(fixture.row(1), NodeReading::integer));
     CHECK_FALSE(fixture.values.write_reading(fixture.row(1), NodeReading::integer, QStringLiteral("1")));
 
