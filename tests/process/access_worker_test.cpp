@@ -24,7 +24,10 @@ namespace
                     });
     }
 
-    ScriptResult run_script(AccessWorker& worker, std::string chunk, std::size_t pointer_size = 8)
+    ScriptResult run_script(AccessWorker&                                      worker,
+                            std::string                                        chunk,
+                            std::size_t                                        pointer_size = 8,
+                            std::shared_ptr<const slopkit::script::ClassIndex> classes      = {})
     {
         ScriptResult result;
         bool         done = false;
@@ -33,6 +36,7 @@ namespace
                              std::move(chunk),
                              std::string {},
                              pointer_size,
+                             std::move(classes),
                              [&](JobResult&& job)
                              {
                                  result = std::get<ScriptResult>(std::move(job));
@@ -46,7 +50,10 @@ namespace
         return result;
     }
 
-    ScriptResult run_lifecycle(AccessWorker& worker, std::string chunk, std::string function)
+    ScriptResult run_lifecycle(AccessWorker&                                      worker,
+                               std::string                                        chunk,
+                               std::string                                        function,
+                               std::shared_ptr<const slopkit::script::ClassIndex> classes = {})
     {
         ScriptResult result;
         bool         done = false;
@@ -55,6 +62,7 @@ namespace
                              std::move(chunk),
                              std::move(function),
                              8,
+                             std::move(classes),
                              [&](JobResult&& job)
                              {
                                  result = std::get<ScriptResult>(std::move(job));
@@ -68,8 +76,11 @@ namespace
         return result;
     }
 
-    ScriptResult
-    run_lifecycle_as(AccessWorker& worker, std::string description, std::string chunk, std::string function)
+    ScriptResult run_lifecycle_as(AccessWorker&                                      worker,
+                                  std::string                                        description,
+                                  std::string                                        chunk,
+                                  std::string                                        function,
+                                  std::shared_ptr<const slopkit::script::ClassIndex> classes = {})
     {
         ScriptResult result;
         bool         done = false;
@@ -78,6 +89,7 @@ namespace
                              std::move(chunk),
                              std::move(function),
                              8,
+                             std::move(classes),
                              [&](JobResult&& job)
                              {
                                  result = std::get<ScriptResult>(std::move(job));
@@ -91,11 +103,13 @@ namespace
         return result;
     }
 
-    ScriptUpdatesResult run_updates(AccessWorker& worker)
+    ScriptUpdatesResult run_updates(AccessWorker&                                      worker,
+                                    std::shared_ptr<const slopkit::script::ClassIndex> classes = {})
     {
         ScriptUpdatesResult result;
         bool                done = false;
         worker.submit_script_updates(worker.next_job_id(),
+                                     std::move(classes),
                                      [&](JobResult&& job)
                                      {
                                          result = std::get<ScriptUpdatesResult>(std::move(job));

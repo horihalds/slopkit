@@ -59,6 +59,7 @@ namespace slopkit::script
              "update_interval(milliseconds)",     "Sets how often this script's update hook runs, in milliseconds.",
              ApiKind::global_function                                                                                                                  },
             {            "hook",                "hook",               "Installs and removes inline hooks from a facts table.",           ApiKind::table},
+            {         "structs",             "structs",        "The ReClass classes as typed views over the target's memory.",           ApiKind::table},
             {"mem.pointer_size",  "mem.pointer_size()",                                "The target's pointer width in bytes.",  ApiKind::table_function},
             {        "mem.read",
              "mem.read(address, token)", "A typed read; tokens are u8 i8 u16 i16 u32 i32 u64 i64 f32 f64 ptr.",
@@ -78,7 +79,11 @@ namespace slopkit::script
             {    "hook.install",
              "hook.install(spec)",                         "Installs an inline hook from a facts table.",
              ApiKind::table_function                                                                                                                   },
-            {     "hook.remove",   "hook.remove(spec)",                                  "Removes a hook and frees its cave.",  ApiKind::table_function}
+            {     "hook.remove",   "hook.remove(spec)",                                  "Removes a hook and frees its cave.",  ApiKind::table_function},
+            {     "structs.get",
+             "structs.get(name)",                 "Returns the class handle with that name, or raises.",
+             ApiKind::table_function                                                                                                                   },
+            {    "structs.list",      "structs.list()",                                    "Returns the table's class names.",  ApiKind::table_function}
         };
 
         constexpr std::string_view kLuaStandardGlobals[] = {

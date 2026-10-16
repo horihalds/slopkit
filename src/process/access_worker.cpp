@@ -401,12 +401,13 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
-    bool AccessWorker::submit_script(JobId       id,
-                                     std::string description,
-                                     std::string chunk,
-                                     std::string function,
-                                     std::size_t pointer_size,
-                                     JobCallback on_done)
+    bool AccessWorker::submit_script(JobId                                     id,
+                                     std::string                               description,
+                                     std::string                               chunk,
+                                     std::string                               function,
+                                     std::size_t                               pointer_size,
+                                     std::shared_ptr<const script::ClassIndex> classes,
+                                     JobCallback                               on_done)
     {
         Request request;
         request.kind         = JobKind::script;
@@ -415,15 +416,19 @@ namespace slopkit::process
         request.description  = std::move(description);
         request.chunk        = std::move(chunk);
         request.function     = std::move(function);
+        request.classes      = std::move(classes);
         request.on_done      = std::move(on_done);
         return submit(std::move(request));
     }
 
-    bool AccessWorker::submit_script_updates(JobId id, JobCallback on_done)
+    bool AccessWorker::submit_script_updates(JobId                                     id,
+                                             std::shared_ptr<const script::ClassIndex> classes,
+                                             JobCallback                               on_done)
     {
         Request request;
         request.kind    = JobKind::script_update;
         request.id      = id;
+        request.classes = std::move(classes);
         request.on_done = std::move(on_done);
         return submit(std::move(request));
     }
@@ -526,7 +531,7 @@ namespace slopkit::process
         case JobKind::script:
             return do_script(request);
         case JobKind::script_update:
-            return do_script_updates();
+            return do_script_updates(request);
         case JobKind::suspend:
             return do_suspend(request);
         case JobKind::resume:
@@ -1021,6 +1026,7 @@ namespace slopkit::process
         }
 
         script_pointer_size_ = request.pointer_size == 0 ? sizeof(void*) : request.pointer_size;
+        engine_->set_classes(request.classes);
 
         if (request.function.empty())
         {
@@ -1144,7 +1150,7 @@ namespace slopkit::process
         active_script_count_ = 0;
     }
 
-    ScriptUpdatesResult AccessWorker::do_script_updates()
+    ScriptUpdatesResult AccessWorker::do_script_updates(const Request& request)
     {
         ScriptUpdatesResult result;
 
@@ -1152,6 +1158,8 @@ namespace slopkit::process
         {
             return result;
         }
+
+        engine_->set_classes(request.classes);
 
         const std::vector<ActiveScript> pending = active_scripts_;
         const auto                      now     = std::chrono::steady_clock::now();

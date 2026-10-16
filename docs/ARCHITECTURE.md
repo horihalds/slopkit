@@ -342,6 +342,20 @@ target.
   explicit token from the `mem.write` vocabulary overrides that, so a 64-bit
   integer or an `f64` write is always expressible. Every failure names the
   function (`read_u32: <target's error text>`, `write: unknown value type 'x'`).
+- Beside them, `structs` (`script/structs.{hpp,cpp}` over the plain, sol2-free
+  `script/structs_view.{hpp,cpp}`) exposes the address table's ReClass classes as
+  typed views: `structs.get(name)` resolves a class by name and `Class:at(addr)`
+  binds an instance, whose `__index`/`__newindex` read and write one field per
+  access through `script::codec` (`read_field`/`write_field`). An instance stores
+  the class's **name**, and a `script::ClassIndex` is immutable once built, so no
+  pointer into the UI-owned model is ever kept: the UI thread snapshots the project
+  (`script::class_index_of`) and hands the snapshot to the job, which the engine
+  publishes with `Engine::set_classes` before each call. A renamed or deleted class
+  or field, a detach or a class that never existed therefore fails with a clear Lua
+  error on the next access rather than reading stale state. A `snapshot()` instance
+  holds the bytes of one `MemoryApi::read` (at most `kMaxViewSnapshot`), while its
+  pointer fields still follow live memory; arrays and text stop at
+  `kMaxViewArray`/`kMaxViewText`.
 - A chunk also publishes **symbols** through `rsymbol(name[, value])` (registers
   `name`, with `value` or `0`), `ssymbol(name, value)` (sets the value, registering
   the name when it is new) and `usymbol(name)` (removes it). Names are

@@ -17,9 +17,11 @@
 #include <vector>
 
 #include "expr/resolver.hpp"
+#include "reclass/project.hpp"
 #include "script/engine.hpp"
 #include "script/symbols.hpp"
 #include "script/types.hpp"
+#include "support/reclass_helpers.hpp"
 
 namespace
 {
@@ -76,6 +78,18 @@ namespace
         void put_text(std::size_t offset, std::string_view text)
         {
             std::memcpy(bytes.data() + offset, text.data(), text.size());
+        }
+
+        template<typename T>
+        void put_value(std::size_t offset, T value)
+        {
+            std::memcpy(bytes.data() + offset, &value, sizeof(T));
+        }
+
+        [[nodiscard]] std::vector<std::byte> take(std::size_t offset, std::size_t size) const
+        {
+            return std::vector<std::byte>(bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+                                          bytes.begin() + static_cast<std::ptrdiff_t>(offset + size));
         }
 
         [[nodiscard]] MemoryApi api()
@@ -195,4 +209,73 @@ namespace
         {
         }
     };
+
+    // The classes the `structs` tests share: a `Player` whose fields cover every
+    // kind the binding maps, plus the `Weapon` and `Vec` classes the pointer and
+    // inlined fields name. The offsets are the sequential ones the model lays
+    // out, with no padding.
+    inline void build_structs_fixture(slopkit::reclass::Project& project)
+    {
+        using slopkit::reclass::NodeKind;
+        using slopkit::reclass::NodePtr;
+        using slopkit::test::array_of;
+        using slopkit::test::instance_array_of;
+        using slopkit::test::node_of;
+        using slopkit::test::union_of;
+        using slopkit::test::wrapper_array_of;
+
+        project.add_class("Weapon", "game.exe+1A2B40");
+        project.classes().back().nodes.push_back(node_of(project, NodeKind::float32, "damage"));
+
+        project.add_class("Vec", "game.exe+1A2B40");
+        project.classes().back().nodes.push_back(node_of(project, NodeKind::float32, "x"));
+        project.classes().back().nodes.push_back(node_of(project, NodeKind::float32, "y"));
+
+        project.add_class("Player", "game.exe+1A2B40");
+        auto&      player = project.classes().back();
+        const auto add    = [&player](NodePtr node)
+        {
+            player.nodes.push_back(std::move(node));
+        };
+
+        add(node_of(project, NodeKind::float32, "health")); // 0
+        add(node_of(project, NodeKind::int32, "ammo"));     // 4
+
+        NodePtr weapon     = node_of(project, NodeKind::class_pointer, "weapon"); // 8
+        weapon->class_name = "Weapon";
+        add(std::move(weapon));
+
+        NodePtr position     = node_of(project, NodeKind::class_instance, "pos"); // 16
+        position->class_name = "Vec";
+        add(std::move(position));
+
+        add(array_of(project, 3, NodeKind::int32)); // 24
+        player.nodes.back()->name = "items";
+
+        NodePtr text = node_of(project, NodeKind::utf8_text, "name"); // 36
+        text->set_extent(project, 8);
+        add(std::move(text));
+
+        add(node_of(project, NodeKind::boolean, "alive"));            // 44
+        add(node_of(project, NodeKind::hex32, "flags"));              // 45
+        add(node_of(project, NodeKind::pointer, "next"));             // 49
+        add(union_of(project, {NodeKind::int32, NodeKind::float32})); // 57
+        player.nodes.back()->name = "u";
+
+        NodePtr slots = wrapper_array_of(project, "Weapon", 2); // 61
+        slots->name   = "slots";
+        add(std::move(slots));
+
+        NodePtr targets = instance_array_of(project, "Weapon", 2); // 77
+        targets->name   = "targets";
+        add(std::move(targets));
+
+        add(node_of(project, NodeKind::float64, "speed")); // 85
+
+        NodePtr tag = node_of(project, NodeKind::utf16_text, "tag"); // 93
+        tag->set_extent(project, 4);
+        add(std::move(tag));
+
+        add(node_of(project, NodeKind::vector3, "blob")); // 101
+    }
 }

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 
 #include "process/access_worker.hpp"
@@ -14,7 +15,11 @@ namespace slopkit::ui
     public:
         using FailureHandler = std::function<void(const process::ScriptUpdateFailure&)>;
 
-        explicit ScriptUpdates(process::AccessWorker& worker);
+        // The classes the ticked scripts may name, snapshotted on the UI thread
+        // when a pass is submitted, so the worker never reads the editing model.
+        using ClassesProvider = std::function<std::shared_ptr<const script::ClassIndex>()>;
+
+        ScriptUpdates(process::AccessWorker& worker, ClassesProvider classes);
 
         void set_failure_handler(FailureHandler handler);
 
@@ -24,6 +29,7 @@ namespace slopkit::ui
         void apply(process::JobId job_id, process::ScriptUpdatesResult&& result);
 
         process::AccessWorker&                worker_;
+        ClassesProvider                       classes_;
         std::optional<process::JobId>         pending_;
         std::chrono::steady_clock::time_point last_tick_ {};
         bool                                  logged_idle_ {false};

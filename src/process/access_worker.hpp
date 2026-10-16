@@ -8,6 +8,7 @@
 #include <deque>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stop_token>
@@ -218,13 +219,14 @@ namespace slopkit::process
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
-        bool submit_script(JobId       id,
-                           std::string description,
-                           std::string chunk,
-                           std::string function,
-                           std::size_t pointer_size,
-                           JobCallback on_done);
-        bool submit_script_updates(JobId id, JobCallback on_done);
+        bool submit_script(JobId                                     id,
+                           std::string                               description,
+                           std::string                               chunk,
+                           std::string                               function,
+                           std::size_t                               pointer_size,
+                           std::shared_ptr<const script::ClassIndex> classes,
+                           JobCallback                               on_done);
+        bool submit_script_updates(JobId id, std::shared_ptr<const script::ClassIndex> classes, JobCallback on_done);
         bool submit_suspend(JobId id, ProcessId pid, JobCallback on_done);
         bool submit_resume(JobId id, ProcessId pid, JobCallback on_done);
         bool submit_detach(JobId id, JobCallback on_done);
@@ -268,25 +270,28 @@ namespace slopkit::process
 
         struct Request
         {
-            JobKind                      kind {};
-            JobId                        id {};
-            ProcessId                    pid {};
-            std::string                  plugin_id;
-            std::uint64_t                address {};
-            std::size_t                  size {};
-            std::uint64_t                entry_id {};
-            std::vector<std::byte>       bytes;
-            std::vector<WriteItem>       items;
-            std::vector<ReadManyItem>    read_items;
-            std::vector<ResolveRequest>  resolve_items;
-            std::vector<expr::ModuleRef> module_refs;
-            std::size_t                  pointer_size {};
-            std::string                  description;
-            std::string                  chunk;
-            std::string                  function;
-            std::string                  module_name;
-            disasm::MachineMode          machine_mode {disasm::MachineMode::long_64};
-            JobCallback                  on_done;
+            JobKind                                   kind {};
+            JobId                                     id {};
+            ProcessId                                 pid {};
+            std::string                               plugin_id;
+            std::uint64_t                             address {};
+            std::size_t                               size {};
+            std::uint64_t                             entry_id {};
+            std::vector<std::byte>                    bytes;
+            std::vector<WriteItem>                    items;
+            std::vector<ReadManyItem>                 read_items;
+            std::vector<ResolveRequest>               resolve_items;
+            std::vector<expr::ModuleRef>              module_refs;
+            std::size_t                               pointer_size {};
+            std::string                               description;
+            std::string                               chunk;
+            std::string                               function;
+            std::string                               module_name;
+            // The classes the job's scripts may name, snapshotted on the caller's
+            // thread so the worker never reads the editing model.
+            std::shared_ptr<const script::ClassIndex> classes;
+            disasm::MachineMode                       machine_mode {disasm::MachineMode::long_64};
+            JobCallback                               on_done;
         };
 
         struct Completion
@@ -319,7 +324,7 @@ namespace slopkit::process
         WriteResult             do_write(const Request& request);
         FreezeResult            do_freeze(const Request& request);
         ScriptResult            do_script(const Request& request);
-        ScriptUpdatesResult     do_script_updates();
+        ScriptUpdatesResult     do_script_updates(const Request& request);
         void                    remember_lifecycle(const Request& request, const ScriptResult& result);
         void                    note_script_tick(std::string_view                      description,
                                                  const std::optional<std::uint64_t>&   interval_ms,

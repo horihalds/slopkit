@@ -142,7 +142,10 @@ namespace slopkit::ui::panels
         static std::optional<QString>          default_save_path_prompt(QWidget* parent, const QString& suggested);
         void                                   maybe_resolve_expressions();
 
-        void ensure_script_dialog();
+        void                                                    ensure_script_dialog();
+        // The classes a script may name, snapshotted on this thread at the moment
+        // the job is submitted.
+        [[nodiscard]] std::shared_ptr<const script::ClassIndex> script_classes() const;
         void finish_script(process::JobId id, process::JobResult&& result);
         void toggle_script_active(std::size_t row, bool wanted);
         void finish_script_active(process::JobId id, std::uint64_t entry_id, bool wanted, process::JobResult&& result);

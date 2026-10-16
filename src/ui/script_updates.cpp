@@ -8,7 +8,10 @@
 
 namespace slopkit::ui
 {
-    ScriptUpdates::ScriptUpdates(process::AccessWorker& worker) : worker_(worker) {}
+    ScriptUpdates::ScriptUpdates(process::AccessWorker& worker, ClassesProvider classes)
+        : worker_(worker), classes_(std::move(classes))
+    {
+    }
 
     void ScriptUpdates::set_failure_handler(FailureHandler handler)
     {
@@ -44,6 +47,7 @@ namespace slopkit::ui
 
         const bool submitted =
             worker_.submit_script_updates(job_id,
+                                          classes_ ? classes_() : nullptr,
                                           [this, job_id](process::JobResult&& result)
                                           {
                                               apply(job_id, std::get<process::ScriptUpdatesResult>(std::move(result)));

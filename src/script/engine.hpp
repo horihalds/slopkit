@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "script/structs_view.hpp"
 #include "script/types.hpp"
 
 namespace slopkit::script
@@ -35,6 +36,10 @@ namespace slopkit::script
         [[nodiscard]] RunResult run(std::string_view chunk);
 
         [[nodiscard]] LifecycleResult run_lifecycle(std::string_view chunk, std::string_view function);
+
+        // The classes the `structs` global of the next call may name, as the
+        // snapshot the caller took: the engine never reads the editing model.
+        void set_classes(std::shared_ptr<const ClassIndex> classes);
 
         [[nodiscard]] UpdateResult run_update(std::string_view chunk);
 

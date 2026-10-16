@@ -698,6 +698,11 @@ namespace slopkit::ui::panels
         set_status(entry.active ? tr("Entry active.") : tr("Entry inactive."), false);
     }
 
+    std::shared_ptr<const script::ClassIndex> AddressListPanel::script_classes() const
+    {
+        return script::class_index_of(table_.structures());
+    }
+
     void AddressListPanel::ensure_script_dialog()
     {
         if (script_dialog_ == nullptr)
@@ -771,6 +776,7 @@ namespace slopkit::ui::panels
                                                      entry.script,
                                                      std::string {},
                                                      8,
+                                                     script_classes(),
                                                      [this, id](process::JobResult&& result)
                                                      {
                                                          finish_script(id, std::move(result));
@@ -849,6 +855,7 @@ namespace slopkit::ui::panels
                                                               entry.script,
                                                               hook,
                                                               8,
+                                                              script_classes(),
                                                               [this, id, entry_id, wanted](process::JobResult&& job)
                                                               {
                                                          finish_script_active(id, entry_id, wanted, std::move(job));

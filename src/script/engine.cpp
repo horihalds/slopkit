@@ -21,6 +21,7 @@
 #include "scan/pattern.hpp"
 #include "script/codec.hpp"
 #include "script/hook.hpp"
+#include "script/structs.hpp"
 #include "script/symbols.hpp"
 
 namespace slopkit::script
@@ -114,6 +115,8 @@ namespace slopkit::script
         EngineConfig config;
         sol::state   lua;
 
+        StructsContext structs;
+
         SymbolTable                labels;
         std::optional<std::string> labels_owner;
 
@@ -139,6 +142,8 @@ namespace slopkit::script
             install_aobscan();
             install_assembly();
             install_hook();
+            structs.memory = &api;
+            install_structs(lua.lua_state(), structs);
         }
 
         static void budget_hook(lua_State* hooked, lua_Debug*)
@@ -1298,6 +1303,11 @@ namespace slopkit::script
     Engine::~Engine()                            = default;
     Engine::Engine(Engine&&) noexcept            = default;
     Engine& Engine::operator=(Engine&&) noexcept = default;
+
+    void Engine::set_classes(std::shared_ptr<const ClassIndex> classes)
+    {
+        impl_->structs.classes = std::move(classes);
+    }
 
     RunResult Engine::run(std::string_view chunk)
     {

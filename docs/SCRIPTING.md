@@ -104,6 +104,78 @@ naming the function (`read_u32: <target's error text>`).
 | `read_u8(address)` … `read_f64` | one typed read per token; integers return integers, floats return floats |
 | `write(address, value[, type])` | writes a value; without `type` a float writes `f32` and an integer the narrowest token that fits |
 
+## ReClass classes as typed views
+
+The `structs` global exposes the classes of the ReClass view as named, typed
+views over the target's memory. Field names, offsets and types come from the
+live definition, never from a copy, so an edit in the ReClass view takes effect
+on the next access. The classes live in the address table and travel with the
+`.skt` file, and a lookup answers with or without an attached target while a
+read or a write still fails with the usual no-target error.
+
+| Call | Meaning |
+| --- | --- |
+| `structs.get(name)` | the class handle; `structs.get: no class named '<name>'` when there is none |
+| `structs.list()` | an array of the table's class names |
+| `Class:at(address)` | an instance bound to an absolute address, which need not be readable yet — reads and writes fail individually |
+| `Class:fields()` | an array of `{name=, offset=, type=, size=}` |
+| `inst.<field>`, `inst["<field>"]` | the field's value; an unknown field raises `<Class>.<field>: no such field` |
+| `inst.<field> = value` | writes the field; an unknown field raises the same way |
+| `inst:base()` | the instance's address |
+| `inst:address_of(field)` | the address of a field |
+| `inst:field(name[, value])` | reads or writes a field by name, helpers included |
+| `inst:raw(field)` | the field's own address: a pointer without following it, an inlined class or an array where it sits |
+| `inst:snapshot()` | the whole class read once into a buffer |
+| `tostring(inst)` | `Player@0x1A2B40` |
+| `pairs(inst)` | field names and current values; a field the view cannot read reports `nil` |
+
+```lua
+local Player = structs.get("Player")
+local p = Player:at(expression("game.exe+1A2B40"))
+
+print(p.health)         -- the f32 field named "health", at base + its offset
+p.health = 100          -- written back as f32
+p.ammo = 30             -- the i32 field
+print(p.weapon.damage)  -- a pointer to the "Weapon" class, followed once
+```
+
+Field types map onto the `mem` tokens — `u8 i8 u16 i16 u32 i32 u64 i64 f32 f64`,
+plus `ptr` for a plain pointer — and read and write through the same codec, so
+`mem.pointer_size()` decides a pointer's width and a hex node reads as the
+unsigned integer of its width. Beyond the numbers: `bool` reads as a Lua
+boolean, fixed-length UTF-8 and UTF-16 text as a Lua string, a raw blob (vector,
+matrix, function body) as `mem.read_bytes` would, a pointer that names a class as
+an instance of it (`nil` when it is null, an integer address when it names none),
+and an inlined class as an instance bound to `base + offset` without a
+dereference. Writing a text field that does not fit raises instead of truncating,
+as does a fractional value given to an integer field, a write to an inlined class
+or to an array, and a kind with no script value at all (a union, a bit field, an
+enum, UTF-32 text): `<Class>.<field>: the '<kind>' kind has no script value`.
+
+An array field reads as an indexable proxy, indexed **from 1** like every other
+Lua sequence: `p.items[1]` is its first element and `#p.items` its length. An
+index outside the array raises. A proxy stops at 4096 elements and a text field
+at 4096 characters; a longer one raises rather than allocating.
+
+The helpers win over a field of the same name: `base`, `raw`, `field`,
+`snapshot` and `address_of` are the helpers, and a field carrying one of those
+names is reached with `inst:field("<name>")` — writing it as `inst.<name>`
+raises and says so.
+
+`inst:snapshot()` reads the class's whole extent — at most 1 MiB — in one read
+and serves its fields, nested inlined classes and arrays from that buffer with no
+further memory I/O. Writes through a snapshot raise. A pointer field still
+follows live memory, so `p:snapshot().weapon.damage` is what the target holds now
+while `p:snapshot().health` is what the snapshot took.
+
+An instance holds the class's name rather than a copy of its definition, so an
+edit in the ReClass view shows up on the next access, a class or field that is
+gone raises `<Class>: no class named '<Class>'` or `<Class>.<field>: no such
+field`, and an instance a script kept in a global fails the same way after a
+detach instead of reading stale memory. Following a pointer chain costs one
+dereference per field access, so the time and instruction limits above bound a
+runaway script.
+
 ## Symbols and labels
 
 **Global symbols** live in a process-wide registry for as long as slopkit runs:
@@ -287,6 +359,17 @@ function update()
         return false, "hp went negative" -- untickes the script and says why
     end
     write(symbol("hp"), 100)
+end
+```
+
+### Keep a class field topped up
+
+```lua
+function update()
+    local p = structs.get("Player"):at(expression("game.exe+1A2B40"))
+    if p.health < 50 then
+        p.health = 100 -- the f32 field named "health"
+    end
 end
 ```
 

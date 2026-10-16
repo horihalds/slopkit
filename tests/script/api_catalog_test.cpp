@@ -39,7 +39,7 @@ for _, key in ipairs(globals) do
 end
 
 local members = {}
-for _, table_name in ipairs({"mem", "hook", "string", "table", "math"}) do
+for _, table_name in ipairs({"mem", "hook", "structs", "string", "table", "math"}) do
     local value = _G[table_name]
     if type(value) == "table" then
         for key in pairs(value) do

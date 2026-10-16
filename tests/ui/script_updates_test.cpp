@@ -20,6 +20,7 @@ namespace
                              std::move(chunk),
                              std::string {slopkit::script::kActivateHook},
                              8,
+                             nullptr,
                              [&](slopkit::process::JobResult&& result)
                              {
                                  const auto& ran = std::get<slopkit::process::ScriptResult>(std::move(result));
@@ -40,7 +41,11 @@ TEST_CASE("the script update ticker submits one pass per interval", "[ui]")
 
     FakeAccess                     access;
     slopkit::process::AccessWorker worker {access};
-    slopkit::ui::ScriptUpdates     updates {worker};
+    slopkit::ui::ScriptUpdates     updates {worker,
+                                            []
+                                            {
+                                            return std::shared_ptr<const slopkit::script::ClassIndex> {};
+                                            }};
 
     std::vector<ScriptUpdateFailure> failures;
     updates.set_failure_handler(

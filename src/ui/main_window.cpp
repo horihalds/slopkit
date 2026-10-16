@@ -442,7 +442,12 @@ namespace slopkit::ui
         // The ticked scripts' `update` hooks share that cadence, after the read
         // pass; a failed tick was already deactivated by the worker, so the
         // address list only clears the row and reports the reason.
-        script_updates_ = std::make_unique<ScriptUpdates>(worker_);
+        script_updates_ =
+            std::make_unique<ScriptUpdates>(worker_,
+                                            [this]
+                                            {
+                                                return script::class_index_of(address_table_.structures());
+                                            });
         script_updates_->set_failure_handler(
             [this](const process::ScriptUpdateFailure& failure)
             {
