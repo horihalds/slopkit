@@ -9,6 +9,8 @@
 #include <QStyledItemDelegate>
 #include <QWidget>
 
+#include "ui/components/script_context.hpp"
+
 class QListView;
 
 namespace slopkit::ui::components
@@ -39,7 +41,10 @@ namespace slopkit::ui::components
 
         using QAbstractListModel::QAbstractListModel;
 
-        void set_context(const QString& receiver, const QString& prefix, const QString& document_text);
+        void set_context(const QString&                                 receiver,
+                         const QString&                                 prefix,
+                         const QString&                                 document_text,
+                         const std::vector<script_context::ClassField>& fields);
 
         [[nodiscard]] QString  name_at(int row) const;
         [[nodiscard]] bool     function_at(int row) const;
@@ -68,7 +73,10 @@ namespace slopkit::ui::components
     public:
         explicit ScriptCompletionPopup(ScriptEditor* editor);
 
-        void show_at(const QRect& caret_rect, const QString& receiver, const QString& prefix);
+        void show_at(const QRect&                                   caret_rect,
+                     const QString&                                 receiver,
+                     const QString&                                 prefix,
+                     const std::vector<script_context::ClassField>& fields = {});
         void hide_popup();
 
         [[nodiscard]] bool                   is_open() const;

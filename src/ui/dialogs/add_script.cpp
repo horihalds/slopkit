@@ -21,6 +21,7 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "script/engine.hpp"
+#include "script/structs_view.hpp"
 #include "ui/components/script_editor.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/text.hpp"
@@ -102,6 +103,11 @@ end
 
         script_edit_ = new components::ScriptEditor(this);
         script_edit_->setObjectName(QStringLiteral("script_edit"));
+        script_edit_->set_class_fields(
+            [this](const QString& class_name)
+            {
+                return class_fields_of(class_name);
+            });
         layout->addWidget(script_edit_, 1);
 
         status_ = new widgets::StatusLabel(this);
@@ -132,6 +138,25 @@ end
                 });
 
         reset_for_add();
+    }
+
+    std::vector<components::script_context::ClassField>
+    AddScriptDialog::class_fields_of(const QString& class_name) const
+    {
+        const script::ClassIndex index = script::build_class_index(table_.structures());
+        const script::ClassDef*  type  = index.find(class_name.toStdString());
+        if (type == nullptr)
+        {
+            return {};
+        }
+
+        std::vector<components::script_context::ClassField> fields;
+        fields.reserve(type->fields.size());
+        for (const script::FieldDef& field : type->fields)
+        {
+            fields.push_back({to_qstring(field.name), to_qstring(field.type_text)});
+        }
+        return fields;
     }
 
     void AddScriptDialog::keyPressEvent(QKeyEvent* event)

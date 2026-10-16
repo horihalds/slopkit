@@ -19,6 +19,7 @@ namespace
     using slopkit::ui::components::ScriptCallTip;
     using slopkit::ui::components::ScriptCompletionPopup;
     using slopkit::ui::components::ScriptEditor;
+    using slopkit::ui::components::script_context::ClassField;
 
     void
     press(ScriptEditor& editor, int key, Qt::KeyboardModifiers modifiers = Qt::NoModifier, const QString& text = {})
@@ -407,4 +408,66 @@ TEST_CASE("an open completion list hides the argument hint", "[ui]")
     press(editor, Qt::Key_Space, Qt::ControlModifier);
     REQUIRE(completion->is_open());
     CHECK_FALSE(tip->is_visible());
+}
+
+TEST_CASE("the completion offers the fields of a bound class instance", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    ScriptEditor           editor;
+    ScriptCompletionPopup* completion = completion_of(editor);
+    REQUIRE(completion != nullptr);
+
+    editor.set_class_fields(
+        [](const QString&)
+        {
+            return std::vector<ClassField> {
+                ClassField {QStringLiteral("health"), QStringLiteral("f32")},
+                ClassField {  QStringLiteral("ammo"), QStringLiteral("i32")}
+            };
+        });
+
+    editor.setPlainText(QStringLiteral("local p = structs.get(\"Player\"):at(0x1000)\np."));
+    move_to_end(editor);
+    press(editor, Qt::Key_Space, Qt::ControlModifier);
+    REQUIRE(completion->is_open());
+    REQUIRE(completion->selected_name().has_value());
+    CHECK(*completion->selected_name() == QStringLiteral("ammo"));
+
+    type(editor, QStringLiteral("he"));
+    REQUIRE(completion->is_open());
+    REQUIRE(completion->selected_name().has_value());
+    CHECK(*completion->selected_name() == QStringLiteral("health"));
+
+    press(editor, Qt::Key_Tab);
+    CHECK(editor.toPlainText().endsWith(QStringLiteral("p.health")));
+    CHECK_FALSE(completion->is_open());
+}
+
+TEST_CASE("a receiver the text binds to no class offers no field names", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    int          asked = 0;
+    ScriptEditor editor;
+
+    editor.set_class_fields(
+        [&asked](const QString&)
+        {
+            ++asked;
+            return std::vector<ClassField> {
+                ClassField {QStringLiteral("health"), QStringLiteral("f32")}
+            };
+        });
+
+    ScriptCompletionPopup* completion = completion_of(editor);
+    REQUIRE(completion != nullptr);
+
+    editor.setPlainText(QStringLiteral("local p = structs.get(\"Player\") -- the handle, not an instance\np."));
+    move_to_end(editor);
+    press(editor, Qt::Key_Space, Qt::ControlModifier);
+    CHECK_FALSE(completion->is_open());
+    CHECK(asked == 0);
 }

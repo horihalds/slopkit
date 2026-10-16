@@ -12,11 +12,14 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QTextCursor>
 #include <QTextDocument>
 
 #include "script/hook_script.hpp"
+#include "support/reclass_helpers.hpp"
 #include "support/ui_helpers.hpp"
 #include "table/address_table.hpp"
+#include "ui/components/script_completion.hpp"
 #include "ui/components/script_editor.hpp"
 #include "ui/dialogs/add_script.hpp"
 
@@ -67,6 +70,18 @@ namespace
             }
         }
         return nullptr;
+    }
+
+    // Opens the completion list at the end of the editor's text, as
+    // `Ctrl+Space` does.
+    void open_completion(slopkit::ui::components::ScriptEditor& editor)
+    {
+        QTextCursor cursor = editor.textCursor();
+        cursor.movePosition(QTextCursor::End);
+        editor.setTextCursor(cursor);
+
+        QKeyEvent event(QEvent::KeyPress, Qt::Key_Space, Qt::ControlModifier);
+        QCoreApplication::sendEvent(&editor, &event);
     }
 }
 
@@ -329,4 +344,45 @@ TEST_CASE("the add-script dialog opens wide enough for a hook script", "[ui]")
     CHECK(editor->sizeHint().width() >= ideal + editor->gutter_width());
     CHECK(editor->sizeHint().width() > 100 * column);
     CHECK(dialog.sizeHint().width() >= editor->sizeHint().width());
+}
+
+TEST_CASE("the add-script dialog offers the ReClass fields of a bound instance", "[ui]")
+{
+    application();
+
+    AddressTable               table;
+    slopkit::reclass::Project& project = table.structures();
+    project.add_class("Player", "game.exe+1A2B40");
+    project.classes().back().nodes.push_back(
+        slopkit::test::node_of(project, slopkit::reclass::NodeKind::int32, "ammo"));
+    project.classes().back().nodes.push_back(
+        slopkit::test::node_of(project, slopkit::reclass::NodeKind::float32, "health"));
+
+    AddScriptDialog dialog {table};
+    dialog.show();
+
+    auto* editor = script_editor_of(dialog);
+    REQUIRE(editor != nullptr);
+    auto* completion = editor->findChild<slopkit::ui::components::ScriptCompletionPopup*>();
+    REQUIRE(completion != nullptr);
+
+    editor->setPlainText(QStringLiteral("local p = structs.get(\"Player\"):at(0x1000)\np."));
+    open_completion(*editor);
+    REQUIRE(completion->is_open());
+    REQUIRE(completion->selected_name().has_value());
+    CHECK(*completion->selected_name() == QStringLiteral("ammo"));
+
+    // The field's type travels with it, as the popup's detail line.
+    auto* model = completion->findChild<slopkit::ui::components::ScriptCompletionModel*>();
+    REQUIRE(model != nullptr);
+    CHECK(model->data(model->index(0), slopkit::ui::components::ScriptCompletionModel::SignatureRole).toString()
+          == QStringLiteral("i32"));
+
+    // The fields come from the live project, so a rename in the ReClass view
+    // shows up on the next ask.
+    project.classes().back().nodes[0]->name = "rounds";
+    open_completion(*editor);
+    REQUIRE(completion->is_open());
+    REQUIRE(completion->selected_name().has_value());
+    CHECK(*completion->selected_name() == QStringLiteral("health"));
 }

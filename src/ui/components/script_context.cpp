@@ -157,6 +157,171 @@ namespace slopkit::ui::components::script_context
             }
             return false;
         }
+
+        // How many `variable = other` hops the binding walk may follow, so a
+        // cycle of aliases stops instead of recursing forever.
+        constexpr int kMaxBindingDepth = 8;
+
+        [[nodiscard]] bool is_plain_identifier(const QString& text)
+        {
+            if (text.isEmpty() || (!text.at(0).isLetter() && text.at(0) != QLatin1Char('_')))
+            {
+                return false;
+            }
+            for (const QChar character : text)
+            {
+                if (!is_identifier_char(character))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        struct Assignment
+        {
+            QString source;   // the right-hand side of the `=`
+            int     begin {}; // where that side starts in the text
+            int     end {};   // where it ends
+        };
+
+        // Every assignment to `variable` that sits in code, in the order the
+        // text writes them; a statement ends at the line's break or its `;`.
+        [[nodiscard]] std::vector<Assignment> assignments_of(const QString& text, const QString& variable)
+        {
+            const QRegularExpression expression {
+                QStringLiteral(R"((?:local\s+)?\b%1\b\s*=\s*([^\n;]*))").arg(QRegularExpression::escape(variable))};
+
+            const std::vector<bool>         mask = code_mask(text);
+            std::vector<Assignment>         found;
+            QRegularExpressionMatchIterator matches = expression.globalMatch(text);
+            while (matches.hasNext())
+            {
+                const QRegularExpressionMatch match = matches.next();
+                const int                     start = match.capturedStart();
+                if (start < 0 || start >= static_cast<int>(mask.size()) || !mask[static_cast<std::size_t>(start)])
+                {
+                    continue;
+                }
+                found.push_back({match.captured(1),
+                                 static_cast<int>(match.capturedStart(1)),
+                                 static_cast<int>(match.capturedEnd(1))});
+            }
+            return found;
+        }
+
+        // The assignment that decides the variable's value at `position`: the
+        // last one the text writes at or before it.
+        [[nodiscard]] const Assignment* deciding_assignment(const std::vector<Assignment>& found, int position)
+        {
+            const Assignment* deciding = nullptr;
+            for (const Assignment& assignment : found)
+            {
+                if (assignment.end <= position)
+                {
+                    deciding = &assignment;
+                }
+            }
+            return deciding;
+        }
+
+        // The class name a `structs.get("...")` call at the start of `source`
+        // names, with the text after its closing parenthesis in `rest`.
+        [[nodiscard]] std::optional<QString> structs_get_call(const QString& source, QString* rest)
+        {
+            static const QRegularExpression pattern {
+                QStringLiteral(R"(^\s*structs\s*\.\s*get\s*\(\s*(['"])(.*?)\1\s*\)(.*)$)")};
+            const QRegularExpressionMatch match = pattern.match(source);
+            if (!match.hasMatch())
+            {
+                return std::nullopt;
+            }
+            if (rest != nullptr)
+            {
+                *rest = match.captured(3);
+            }
+            return match.captured(2);
+        }
+
+        [[nodiscard]] std::optional<QString>
+        instance_class_at(const QString& text, const QString& variable, int position, int depth);
+
+        // The class a variable holding a class handle names at `position`,
+        // following one handle variable assigned from another.
+        [[nodiscard]] std::optional<QString>
+        handle_class_at(const QString& text, const QString& variable, int position, int depth)
+        {
+            if (depth > kMaxBindingDepth)
+            {
+                return std::nullopt;
+            }
+
+            static const QRegularExpression alias {QStringLiteral(R"(^\s*(\w+)\s*$)")};
+
+            const std::vector<Assignment> found    = assignments_of(text, variable);
+            const Assignment*             deciding = deciding_assignment(found, position);
+            if (deciding == nullptr)
+            {
+                return std::nullopt;
+            }
+            if (const std::optional<QString> name = structs_get_call(deciding->source, nullptr))
+            {
+                return name;
+            }
+
+            const QRegularExpressionMatch match = alias.match(deciding->source);
+            if (match.hasMatch())
+            {
+                return handle_class_at(text, match.captured(1), deciding->end, depth + 1);
+            }
+            return std::nullopt;
+        }
+
+        // The class one assignment's right-hand side names, when it names an
+        // instance at all; the nested lookups it triggers see the bindings in
+        // force where the right-hand side sits.
+        [[nodiscard]] std::optional<QString>
+        class_from_source(const QString& text, const Assignment& assignment, int depth)
+        {
+            if (depth > kMaxBindingDepth)
+            {
+                return std::nullopt;
+            }
+
+            QString rest;
+            if (const std::optional<QString> name = structs_get_call(assignment.source, &rest))
+            {
+                static const QRegularExpression at_call {QStringLiteral(R"(^\s*:\s*at\s*\()")};
+                return at_call.match(rest).hasMatch() ? name : std::nullopt;
+            }
+
+            static const QRegularExpression method {QStringLiteral(R"(^\s*(\w+)\s*:\s*at\s*\()")};
+            const QRegularExpressionMatch   called = method.match(assignment.source);
+            if (called.hasMatch())
+            {
+                return handle_class_at(text, called.captured(1), assignment.end, depth + 1);
+            }
+
+            static const QRegularExpression plain {QStringLiteral(R"(^\s*(\w+)\s*$)")};
+            const QRegularExpressionMatch   named = plain.match(assignment.source);
+            if (named.hasMatch())
+            {
+                return instance_class_at(text, named.captured(1), assignment.end, depth + 1);
+            }
+            return std::nullopt;
+        }
+
+        [[nodiscard]] std::optional<QString>
+        instance_class_at(const QString& text, const QString& variable, int position, int depth)
+        {
+            if (depth > kMaxBindingDepth)
+            {
+                return std::nullopt;
+            }
+            const std::vector<Assignment> found    = assignments_of(text, variable);
+            const Assignment*             deciding = deciding_assignment(found, position);
+            return deciding == nullptr ? std::nullopt : class_from_source(text, *deciding, depth);
+        }
     }
 
     bool is_code_at(const QString& text, int position)
@@ -438,5 +603,14 @@ namespace slopkit::ui::components::script_context
         }
 
         return -1;
+    }
+
+    std::optional<QString> instance_class(const QString& text, int position, const QString& variable)
+    {
+        if (!is_plain_identifier(variable) || position < 0 || position > text.size())
+        {
+            return std::nullopt;
+        }
+        return instance_class_at(text, variable, position, 0);
     }
 }

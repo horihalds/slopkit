@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <optional>
+#include <vector>
 
 #include "table/address_table.hpp"
+#include "ui/components/script_context.hpp"
 
 #include <QDialog>
 #include <QString>
@@ -42,6 +44,12 @@ namespace slopkit::ui::dialogs
     private:
         void commit();
         void verify();
+
+        // The fields of one class of the table's ReClass project, as the script
+        // editor's completion lists them; resolved from the live project on each
+        // ask, so an edit in the ReClass view shows up in the next popup.
+        [[nodiscard]] std::vector<components::script_context::ClassField>
+        class_fields_of(const QString& class_name) const;
 
         table::AddressTable&       table_;
         std::optional<std::size_t> editing_;

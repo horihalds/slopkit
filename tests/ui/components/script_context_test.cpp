@@ -9,6 +9,7 @@ namespace
     using slopkit::ui::components::script_context::document_names;
     using slopkit::ui::components::script_context::enclosing_call;
     using slopkit::ui::components::script_context::identifier_at;
+    using slopkit::ui::components::script_context::instance_class;
     using slopkit::ui::components::script_context::is_code_at;
     using slopkit::ui::components::script_context::matching_bracket;
 }
@@ -136,4 +137,49 @@ TEST_CASE("matching_bracket pairs code brackets only", "[ui]")
     CHECK(matching_bracket(QStringLiteral("f(x"), 1) == -1);
     CHECK(matching_bracket(QStringLiteral("fx"), 1) == -1);
     CHECK(matching_bracket(QStringLiteral("f(\")\")"), 1) == 5);
+}
+
+TEST_CASE("instance_class reads the class a variable is statically bound to", "[ui]")
+{
+    application();
+
+    // The completion asks with the caret's position; a whole-text ask is what
+    // the end-of-document caret sees.
+    const auto bound = [](const QString& text, const QString& variable)
+    {
+        return instance_class(text, text.size(), variable);
+    };
+
+    const QString direct = QStringLiteral("local p = structs.get(\"Player\"):at(0x1000)\n");
+    CHECK(bound(direct, QStringLiteral("p")) == QStringLiteral("Player"));
+    CHECK_FALSE(bound(direct, QStringLiteral("q")).has_value());
+
+    const QString handle = QStringLiteral("local Player = structs.get(\"Player\")\n"
+                                          "local p = Player:at(game.exe + 1A2B40)\n");
+    CHECK(bound(handle, QStringLiteral("p")) == QStringLiteral("Player"));
+
+    const QString alias = QStringLiteral("local p = structs.get(\"Player\"):at(0)\n"
+                                         "local q = p\n"
+                                         "local r = q\n");
+    CHECK(bound(alias, QStringLiteral("r")) == QStringLiteral("Player"));
+
+    // A handle on its own is not an instance, and a reassignment wins.
+    CHECK_FALSE(
+        bound(QStringLiteral("local Player = structs.get(\"Player\")\n"), QStringLiteral("Player")).has_value());
+    CHECK_FALSE(
+        bound(QStringLiteral("local p = structs.get(\"Player\"):at(0)\np = something_else()\n"), QStringLiteral("p"))
+            .has_value());
+
+    // A binding written after the caret does not decide it.
+    CHECK_FALSE(instance_class(direct, 5, QStringLiteral("p")).has_value());
+
+    // A comment, a string and a comparison bind nothing.
+    CHECK_FALSE(bound(QStringLiteral("-- local p = structs.get(\"Player\"):at(0)\n"), QStringLiteral("p")).has_value());
+    CHECK_FALSE(
+        bound(QStringLiteral("local s = \"p = structs.get('Player'):at(0)\"\n"), QStringLiteral("p")).has_value());
+    CHECK_FALSE(bound(QStringLiteral("p == structs.get(\"Player\"):at(0)\n"), QStringLiteral("p")).has_value());
+
+    // A handle and a field path name no instance.
+    CHECK_FALSE(bound(QStringLiteral("local p = structs.get(\"Player\")\n"), QStringLiteral("p")).has_value());
+    CHECK_FALSE(bound(direct, QStringLiteral("p.weapon")).has_value());
 }

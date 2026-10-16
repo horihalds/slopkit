@@ -492,6 +492,26 @@ namespace slopkit::ui::components
         return rect;
     }
 
+    void ScriptEditor::set_class_fields(script_context::ClassFieldSource source)
+    {
+        class_fields_ = std::move(source);
+    }
+
+    std::vector<script_context::ClassField>
+    ScriptEditor::fields_of(const QString& text, int position, const QString& receiver) const
+    {
+        if (receiver.isEmpty() || !class_fields_)
+        {
+            return {};
+        }
+        const std::optional<QString> type = script_context::instance_class(text, position, receiver);
+        if (!type.has_value())
+        {
+            return {};
+        }
+        return class_fields_(*type);
+    }
+
     void ScriptEditor::update_completion(bool allow_open)
     {
         const QString text     = toPlainText();
@@ -505,7 +525,7 @@ namespace slopkit::ui::components
         {
             if (completion_->is_open() || allow_open)
             {
-                completion_->show_at(caret_rect(), receiver, prefix);
+                completion_->show_at(caret_rect(), receiver, prefix, fields_of(text, position, receiver));
             }
             return;
         }
@@ -519,7 +539,7 @@ namespace slopkit::ui::components
         const std::optional<script_context::Identifier> identifier = script_context::identifier_at(text, position);
         const QString                                   receiver   = identifier ? identifier->receiver : QString {};
         const QString prefix = identifier ? text.mid(identifier->begin, position - identifier->begin) : QString {};
-        completion_->show_at(caret_rect(), receiver, prefix);
+        completion_->show_at(caret_rect(), receiver, prefix, fields_of(text, position, receiver));
         refresh_hints();
     }
 

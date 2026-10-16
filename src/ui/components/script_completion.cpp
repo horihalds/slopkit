@@ -76,13 +76,30 @@ namespace slopkit::ui::components
         }
     }
 
-    void
-    ScriptCompletionModel::set_context(const QString& receiver, const QString& prefix, const QString& document_text)
+    void ScriptCompletionModel::set_context(const QString&                                 receiver,
+                                            const QString&                                 prefix,
+                                            const QString&                                 document_text,
+                                            const std::vector<script_context::ClassField>& fields)
     {
         beginResetModel();
         items_.clear();
 
         const bool dotted = !receiver.isEmpty();
+
+        // The class fields the receiver is statically bound to, if any: they are
+        // the only entries a dotted receiver offers when no API name matches.
+        for (const script_context::ClassField& field : fields)
+        {
+            if (!field.name.startsWith(prefix, Qt::CaseInsensitive))
+            {
+                continue;
+            }
+            CompletionItem item;
+            item.name      = field.name;
+            item.signature = field.type;
+            item.group     = 0;
+            items_.push_back(item);
+        }
 
         for (const script::ApiEntry* entry : script::matches(receiver.toStdString(), prefix.toStdString()))
         {
@@ -320,9 +337,12 @@ namespace slopkit::ui::components
         }
     }
 
-    void ScriptCompletionPopup::show_at(const QRect& caret_rect, const QString& receiver, const QString& prefix)
+    void ScriptCompletionPopup::show_at(const QRect&                                   caret_rect,
+                                        const QString&                                 receiver,
+                                        const QString&                                 prefix,
+                                        const std::vector<script_context::ClassField>& fields)
     {
-        model_->set_context(receiver, prefix, editor_->toPlainText());
+        model_->set_context(receiver, prefix, editor_->toPlainText(), fields);
         if (model_->rowCount() == 0)
         {
             hide_popup();
