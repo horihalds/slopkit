@@ -8,6 +8,7 @@ namespace
 {
     using slopkit::ui::components::script_context::document_names;
     using slopkit::ui::components::script_context::enclosing_call;
+    using slopkit::ui::components::script_context::expression_instance_class;
     using slopkit::ui::components::script_context::identifier_at;
     using slopkit::ui::components::script_context::instance_class;
     using slopkit::ui::components::script_context::is_code_at;
@@ -42,6 +43,18 @@ TEST_CASE("identifier_at finds the word the caret touches", "[ui]")
     REQUIRE(empty_prefix.has_value());
     CHECK(empty_prefix->receiver == QStringLiteral("mem"));
     CHECK(empty_prefix->name.isEmpty());
+
+    // A dot after a call hangs off the whole call expression.
+    const QString call  = QStringLiteral("structs.get(\"Player\"):at(0x1000).he");
+    const auto    field = identifier_at(call, call.size());
+    REQUIRE(field.has_value());
+    CHECK(field->receiver == QStringLiteral("structs.get(\"Player\"):at(0x1000)"));
+    CHECK(field->name == QStringLiteral("he"));
+
+    const auto bare_call = identifier_at(QStringLiteral("f()."), 4);
+    REQUIRE(bare_call.has_value());
+    CHECK(bare_call->receiver == QStringLiteral("f()"));
+    CHECK(bare_call->name.isEmpty());
 
     CHECK_FALSE(identifier_at(QStringLiteral("a  b"), 2).has_value());
     CHECK_FALSE(identifier_at(QString {}, 0).has_value());
@@ -182,4 +195,31 @@ TEST_CASE("instance_class reads the class a variable is statically bound to", "[
     // A handle and a field path name no instance.
     CHECK_FALSE(bound(QStringLiteral("local p = structs.get(\"Player\")\n"), QStringLiteral("p")).has_value());
     CHECK_FALSE(bound(direct, QStringLiteral("p.weapon")).has_value());
+}
+
+TEST_CASE("expression_instance_class reads the class an inline instance is built from", "[ui]")
+{
+    application();
+
+    const auto before = [](const QString& text)
+    {
+        return expression_instance_class(text, text.lastIndexOf(QLatin1Char('.')));
+    };
+
+    const QString inline_call = QStringLiteral("structs.get(\"Player\"):at(0x1000).health");
+    CHECK(before(inline_call) == QStringLiteral("Player"));
+
+    // A nested call in the argument list keeps the chain intact.
+    CHECK(before(QStringLiteral("structs.get(\"Player\"):at(expression(\"game.exe+1A2B40\")).health"))
+          == QStringLiteral("Player"));
+
+    // A handle variable's own call, and a variable holding an inline instance.
+    CHECK(before(QStringLiteral("local Player = structs.get(\"Player\")\nPlayer:at(0x1000).health"))
+          == QStringLiteral("Player"));
+    CHECK(before(QStringLiteral("local p = structs.get(\"Player\"):at(0)\np.")) == QStringLiteral("Player"));
+
+    // No class ends there, and a dot in a string is not code.
+    CHECK_FALSE(before(QStringLiteral("f().health")).has_value());
+    CHECK_FALSE(before(QStringLiteral("mem.read.health")).has_value());
+    CHECK_FALSE(expression_instance_class(QStringLiteral("local s = \"a.b\""), 12).has_value());
 }

@@ -45,6 +45,9 @@ namespace slopkit::ui::components::script_context
 
     [[nodiscard]] bool is_code_at(const QString& text, int position);
 
+    // The word the caret touches, and the receiver it hangs off: the identifier
+    // before the dot, or the whole call expression when the dot follows one
+    // (`structs.get("Player"):at(0x1000).health`).
     [[nodiscard]] std::optional<Identifier> identifier_at(const QString& text, int position);
 
     [[nodiscard]] std::optional<Call> enclosing_call(const QString& text, int position);
@@ -62,4 +65,11 @@ namespace slopkit::ui::components::script_context
     // before `position` decides, so a variable reassigned to something else
     // names nothing. Nothing when the text shows no such binding.
     [[nodiscard]] std::optional<QString> instance_class(const QString& text, int position, const QString& variable);
+
+    // The same for an instance built inline rather than held in a variable,
+    // written as the expression that ends just before the `.` at `dot`:
+    // `structs.get("Player"):at(...)`, `Player:at(...)` with `Player` a handle
+    // variable, or a variable that already holds an instance. Nothing when the
+    // text before `dot` ends in no such expression.
+    [[nodiscard]] std::optional<QString> expression_instance_class(const QString& text, int dot);
 }

@@ -225,6 +225,54 @@ namespace slopkit::ui::components::script_context
             return deciding;
         }
 
+        // The start of the instance expression that ends at `end`, which sits
+        // just before a `.`: the call's argument list, its name and the receiver
+        // chain that leads to it, e.g. the whole of
+        // `structs.get("Player"):at(0x1000)`. `-1` when no such expression ends
+        // there.
+        [[nodiscard]] int expression_begin(const QString& text, int end)
+        {
+            const std::vector<bool> mask     = code_mask(text);
+            int                     position = end;
+            for (;;)
+            {
+                // An argument list, whose callee's name sits before its `(`.
+                if (position >= 1 && text.at(position - 1) == QLatin1Char(')'))
+                {
+                    const int open = matching_bracket(text, position - 1);
+                    if (open < 0)
+                    {
+                        return -1;
+                    }
+                    position = open;
+                    while (position > 0 && text.at(position - 1).isSpace())
+                    {
+                        --position;
+                    }
+                }
+
+                const int name_end = position;
+                while (position > 0 && is_identifier_char(text.at(position - 1))
+                       && mask[static_cast<std::size_t>(position - 1)])
+                {
+                    --position;
+                }
+                if (position == name_end)
+                {
+                    return -1;
+                }
+
+                // Another receiver leads to this name, so the chain goes on.
+                if (position >= 1 && mask[static_cast<std::size_t>(position - 1)]
+                    && (text.at(position - 1) == QLatin1Char(':') || text.at(position - 1) == QLatin1Char('.')))
+                {
+                    --position;
+                    continue;
+                }
+                return position;
+            }
+        }
+
         // The class name a `structs.get("...")` call at the start of `source`
         // names, with the text after its closing parenthesis in `rest`.
         [[nodiscard]] std::optional<QString> structs_get_call(const QString& source, QString* rest)
@@ -380,6 +428,10 @@ namespace slopkit::ui::components::script_context
             if (receiver_end > receiver_begin)
             {
                 identifier.receiver = text.mid(receiver_begin, receiver_end - receiver_begin);
+            }
+            else if (const int expression = expression_begin(text, receiver_end); expression >= 0)
+            {
+                identifier.receiver = text.mid(expression, receiver_end - expression);
             }
         }
 
@@ -612,5 +664,20 @@ namespace slopkit::ui::components::script_context
             return std::nullopt;
         }
         return instance_class_at(text, variable, position, 0);
+    }
+
+    std::optional<QString> expression_instance_class(const QString& text, int dot)
+    {
+        if (dot < 1 || dot >= text.size() || text.at(dot) != QLatin1Char('.') || !is_code_at(text, dot))
+        {
+            return std::nullopt;
+        }
+        const int start = expression_begin(text, dot);
+        if (start < 0)
+        {
+            return std::nullopt;
+        }
+        const Assignment chain {text.mid(start, dot - start), start, dot};
+        return class_from_source(text, chain, 0);
     }
 }

@@ -77,7 +77,7 @@ namespace slopkit::ui::components
         [[nodiscard]] QRect caret_rect() const;
 
         [[nodiscard]] std::vector<script_context::ClassField>
-        fields_of(const QString& text, int position, const QString& receiver) const;
+        fields_of(const QString& text, int position, const script_context::Identifier& identifier) const;
 
         void refresh_hints();
 

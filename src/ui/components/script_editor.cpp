@@ -498,13 +498,22 @@ namespace slopkit::ui::components
     }
 
     std::vector<script_context::ClassField>
-    ScriptEditor::fields_of(const QString& text, int position, const QString& receiver) const
+    ScriptEditor::fields_of(const QString& text, int position, const script_context::Identifier& identifier) const
     {
-        if (receiver.isEmpty() || !class_fields_)
+        const int dot = identifier.begin - 1;
+        if (!class_fields_ || dot < 0 || text.at(dot) != QLatin1Char('.'))
         {
             return {};
         }
-        const std::optional<QString> type = script_context::instance_class(text, position, receiver);
+
+        // The receiver is a variable's name when it is one, and the whole call
+        // expression when the dot follows one, as in
+        // `structs.get("Player"):at(0x1000).`.
+        std::optional<QString> type = script_context::instance_class(text, position, identifier.receiver);
+        if (!type.has_value())
+        {
+            type = script_context::expression_instance_class(text, dot);
+        }
         if (!type.has_value())
         {
             return {};
@@ -518,14 +527,24 @@ namespace slopkit::ui::components
         const int     position = textCursor().position();
 
         const std::optional<script_context::Identifier> identifier = script_context::identifier_at(text, position);
-        const QString                                   receiver   = identifier ? identifier->receiver : QString {};
-        const QString prefix = identifier ? text.mid(identifier->begin, position - identifier->begin) : QString {};
+        if (!identifier)
+        {
+            completion_->hide_popup();
+            return;
+        }
 
-        if (identifier && (!prefix.isEmpty() || !receiver.isEmpty()))
+        const QString receiver = identifier->receiver;
+        const QString prefix   = text.mid(identifier->begin, position - identifier->begin);
+        const std::vector<script_context::ClassField> fields = fields_of(text, position, *identifier);
+
+        // An instance built inline, `structs.get("Player"):at(...).`, has no
+        // receiver to match against the catalogue, so its fields alone open the
+        // popup.
+        if (!prefix.isEmpty() || !receiver.isEmpty() || !fields.empty())
         {
             if (completion_->is_open() || allow_open)
             {
-                completion_->show_at(caret_rect(), receiver, prefix, fields_of(text, position, receiver));
+                completion_->show_at(caret_rect(), receiver, prefix, fields);
             }
             return;
         }
@@ -539,7 +558,9 @@ namespace slopkit::ui::components
         const std::optional<script_context::Identifier> identifier = script_context::identifier_at(text, position);
         const QString                                   receiver   = identifier ? identifier->receiver : QString {};
         const QString prefix = identifier ? text.mid(identifier->begin, position - identifier->begin) : QString {};
-        completion_->show_at(caret_rect(), receiver, prefix, fields_of(text, position, receiver));
+        const std::vector<script_context::ClassField> fields =
+            identifier ? fields_of(text, position, *identifier) : std::vector<script_context::ClassField> {};
+        completion_->show_at(caret_rect(), receiver, prefix, fields);
         refresh_hints();
     }
 

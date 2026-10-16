@@ -471,3 +471,41 @@ TEST_CASE("a receiver the text binds to no class offers no field names", "[ui]")
     CHECK_FALSE(completion->is_open());
     CHECK(asked == 0);
 }
+
+TEST_CASE("the completion offers the fields of an instance built inline", "[ui]")
+{
+    application();
+    slopkit::ui::apply_theme(slopkit::ui::dark_theme());
+
+    ScriptEditor           editor;
+    ScriptCompletionPopup* completion = completion_of(editor);
+    REQUIRE(completion != nullptr);
+
+    editor.set_class_fields(
+        [](const QString&)
+        {
+            return std::vector<ClassField> {
+                ClassField {QStringLiteral("health"), QStringLiteral("f32")},
+                ClassField {  QStringLiteral("ammo"), QStringLiteral("i32")}
+            };
+        });
+
+    // The dot alone opens the list.
+    editor.setPlainText(QStringLiteral("structs.get(\"Player\"):at(0x1000)."));
+    move_to_end(editor);
+    press(editor, Qt::Key_Space, Qt::ControlModifier);
+    REQUIRE(completion->is_open());
+    REQUIRE(completion->selected_name().has_value());
+    CHECK(*completion->selected_name() == QStringLiteral("ammo"));
+
+    press(editor, Qt::Key_Tab);
+    CHECK(editor.toPlainText() == QStringLiteral("structs.get(\"Player\"):at(0x1000).ammo"));
+
+    // A prefix typed after the dot narrows the list.
+    editor.setPlainText(QStringLiteral("structs.get(\"Player\"):at(0x1000).he"));
+    move_to_end(editor);
+    type(editor, QStringLiteral("a"));
+    REQUIRE(completion->is_open());
+    REQUIRE(completion->selected_name().has_value());
+    CHECK(*completion->selected_name() == QStringLiteral("health"));
+}
