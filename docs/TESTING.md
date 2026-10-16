@@ -37,11 +37,13 @@ executables, a `.debug/` sub-directory for the plugins), so `gdb` on an installe
 binary still resolves source lines. Pass `-DSLOPKIT_STRIP_INSTALL=OFF` to install
 them verbatim.
 
-Lua, sol2 and Zydis are not system packages: the first configure fetches them at
-pinned revisions through `FetchContent` (see `cmake/Dependencies.cmake`), so it
-needs network access and the checkouts land in `build/_deps`. The Windows trainer
+Lua, sol2 and Zydis are not system packages: the first configure fetches them
+through `FetchContent` (see `cmake/Dependencies.cmake`) — sol2 and Zydis from
+their repositories at pinned revisions, Lua from the official 5.4.7 release
+tarball pinned by its SHA-256 — so it needs network access and the downloads land
+in `build/_deps`. The Windows trainer
 template is a nested mingw cross-build (`cmake/TrainerTemplate.cmake`) that
-reuses those checkouts and builds the same runtime plus the script engine into
+reuses those downloads and builds the same runtime plus the script engine into
 `slopkit-trainer.exe`; without `x86_64-w64-mingw32-gcc`/`-g++` it is skipped with
 a warning and only the Windows trainer target becomes unavailable.
 

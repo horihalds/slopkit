@@ -56,7 +56,7 @@ docs that hold the detail behind this map.
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 | `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `icons/datatypes/*.svg` (node-kind glyphs), `fonts/*.ttf` with `OFL.txt` |
-| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair), `Dependencies.cmake` (fetches sol2, Lua and Zydis at pinned revisions for every build), `TrainerSources.cmake` (the trainer source lists) and `Trainer.cmake` (drives the Windows trainer cross-build, or warns and leaves the Linux-only build working) |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair), `Dependencies.cmake` (fetches sol2 and Zydis from their repositories at pinned revisions and Lua from the official 5.4.7 release tarball pinned by its SHA-256, for every build), `TrainerSources.cmake` (the trainer source lists) and `Trainer.cmake` (drives the Windows trainer cross-build, or warns and leaves the Linux-only build working) |
 | `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `SCRIPTING.md`, `WINE_AGENT.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
 | `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |
@@ -225,10 +225,12 @@ docs that hold the detail behind this map.
   that path rather than on the line editor's `returnPressed`.
 - Configure fails without ImageMagick, the libzip dev package and `pkg-config`.
   Lua, sol2 and Zydis are not system packages: `cmake/Dependencies.cmake` fetches
-  them at pinned revisions, so the first configure needs network access and the
-  nested Windows trainer cross-build reuses the host build's checkouts through
-  `SLOPKIT_SHARED_SOURCE_DIR` — only the source trees are shared, because object
-  files compiled by one toolchain must never be linked by the other.
+  sol2 and Zydis from their repositories at pinned revisions and Lua from the
+  official 5.4.7 release tarball pinned by its SHA-256, so the first configure
+  needs network access and the nested Windows trainer cross-build reuses the host
+  build's downloads through `SLOPKIT_SHARED_SOURCE_DIR` — only the source trees
+  are shared, because object files compiled by one toolchain must never be linked
+  by the other.
 - The `slopkit-agent` target cross-compiles the Wine resident agent with
   `x86_64-w64-mingw32-gcc` and `i686-w64-mingw32-gcc`; without them it copies a
   prebuilt pair from `src/plugins/wine_proton/agent/prebuilt/<bitness>` and

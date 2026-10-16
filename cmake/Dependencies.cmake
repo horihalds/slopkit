@@ -1,13 +1,14 @@
 # --- third-party dependencies ----------------------------------------------
 #
-# sol2, Lua and Zydis are fetched from their upstream repositories at pinned
-# revisions instead of coming from the system packages, so the application, the
-# native trainer and the cross-compiled Windows template all link identical
+# sol2 and Zydis are fetched from their upstream repositories at pinned
+# revisions and Lua from the Lua team's official release tarball, which is pinned
+# by its SHA-256, instead of coming from the system packages, so the application,
+# the native trainer and the cross-compiled Windows template all link identical
 # copies and a script cannot behave differently between them.
 #
 # A nested configure (the mingw cross-build in cmake/TrainerTemplate.cmake) is
 # handed the host build's download directory through `SLOPKIT_SHARED_SOURCE_DIR`,
-# so each repository is checked out once. Only the source trees are shared: each
+# so each dependency is downloaded once. Only the source trees are shared: each
 # build keeps its own binary directories, because object files compiled by one
 # toolchain must never be reused by the other.
 
@@ -20,11 +21,15 @@ endif()
 set(FETCHCONTENT_BASE_DIR "${SLOPKIT_FETCHCONTENT_BASE_DIR}" CACHE PATH
     "Directory the fetched dependencies are downloaded into" FORCE)
 
-set(SLOPKIT_LUA_SOURCE_DIR "${SLOPKIT_FETCHCONTENT_BASE_DIR}/lua-src" CACHE PATH
-    "Lua source checkout")
+# The official Lua release tarball is extracted with its `lua-5.4.7/` top-level
+# directory stripped, so its sources (and `lua.h`) live under the download
+# directory's `src/`. The path is computed on every configure instead of being
+# cached: a tree configured before the switch away from the old git mirror still
+# holds a cache entry for the checkout layout, and it must not be able to win.
+set(SLOPKIT_LUA_SOURCE_DIR "${SLOPKIT_FETCHCONTENT_BASE_DIR}/lua-src/src")
 
-# Reuse a shared checkout when it is already present; a fresh tree downloads its
-# own copy below.
+# Reuse shared source trees when they are already present; a fresh tree downloads
+# its own copies below.
 if(SLOPKIT_SHARED_SOURCE_DIR)
     if(EXISTS "${SLOPKIT_SHARED_SOURCE_DIR}/sol2-src/CMakeLists.txt")
         set(FETCHCONTENT_SOURCE_DIR_SOL2 "${SLOPKIT_SHARED_SOURCE_DIR}/sol2-src" CACHE PATH "" FORCE)
@@ -32,8 +37,8 @@ if(SLOPKIT_SHARED_SOURCE_DIR)
     if(EXISTS "${SLOPKIT_SHARED_SOURCE_DIR}/zydis-src/CMakeLists.txt")
         set(FETCHCONTENT_SOURCE_DIR_ZYDIS "${SLOPKIT_SHARED_SOURCE_DIR}/zydis-src" CACHE PATH "" FORCE)
     endif()
-    if(EXISTS "${SLOPKIT_SHARED_SOURCE_DIR}/lua-src/lua.h")
-        set(SLOPKIT_LUA_SOURCE_DIR "${SLOPKIT_SHARED_SOURCE_DIR}/lua-src" CACHE PATH "" FORCE)
+    if(EXISTS "${SLOPKIT_SHARED_SOURCE_DIR}/lua-src/src/lua.h")
+        set(SLOPKIT_LUA_SOURCE_DIR "${SLOPKIT_SHARED_SOURCE_DIR}/lua-src/src")
     endif()
 endif()
 
@@ -59,15 +64,16 @@ set(ZYDIS_BUILD_MAN OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(sol2 zydis)
 
-# Lua: the VM sol2 binds to (pinned to 5.4.7). Upstream ships no CMake build, so
-# its sources are fetched and compiled into a static library of our own. An
-# already-populated checkout is compiled as it is, without a second download.
+# Lua: the VM sol2 binds to. The Lua team publishes no CMake build, so the
+# official 5.4.7 release tarball is downloaded, pinned by its SHA-256, and its
+# sources are compiled into a static library of our own. An already-downloaded
+# tarball is compiled as it is, without a second download.
 if(NOT EXISTS "${SLOPKIT_LUA_SOURCE_DIR}/lua.h")
     FetchContent_Populate(lua
-        SOURCE_DIR "${SLOPKIT_LUA_SOURCE_DIR}"
+        SOURCE_DIR "${SLOPKIT_FETCHCONTENT_BASE_DIR}/lua-src"
         BINARY_DIR "${SLOPKIT_FETCHCONTENT_BASE_DIR}/lua-build"
-        GIT_REPOSITORY https://github.com/lua/lua.git
-        GIT_TAG v5.4.7)
+        URL https://www.lua.org/ftp/lua-5.4.7.tar.gz
+        URL_HASH SHA256=9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30)
 endif()
 
 file(GLOB SLOPKIT_LUA_SOURCES CONFIGURE_DEPENDS "${SLOPKIT_LUA_SOURCE_DIR}/*.c")

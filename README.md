@@ -38,9 +38,11 @@ Dependencies (from the system repositories): CMake and Ninja, a C++23 compiler,
 the libzip development package (e.g. Fedora's `libzip-devel`) with `pkg-config`,
 Catch2, Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick
 (build-time only, for the icon set). Lua, sol2 and Zydis are not system packages:
-CMake fetches them at pinned revisions with `FetchContent`, so the first
-configure needs network access and downloads each repository once into
-`build/_deps`, which the Windows trainer template's cross-build reuses. The
+CMake fetches them with `FetchContent` — sol2 and Zydis from their repositories
+at pinned revisions, Lua from the Lua team's official 5.4.7 release tarball,
+pinned by its SHA-256 — so the first configure needs network access and downloads
+each once into `build/_deps`, which the Windows trainer template's cross-build
+reuses. The
 Wine/Proton resident agent is cross-compiled and
 needs the mingw-w64 compilers for both bitnesses (`x86_64-w64-mingw32-gcc` and
 `i686-w64-mingw32-gcc`); without them the build uses a prebuilt agent under

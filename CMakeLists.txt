@@ -135,7 +135,6 @@ set(SLOPKIT_TRAINER_RELATIVE_DIR "../${CMAKE_INSTALL_LIBDIR}/slopkit/trainer")
 # --- dependencies ----------------------------------------------------------
 #
 # Qt6 Widgets is the UI toolkit, replacing the previous immediate-mode stack.
-# Zydis still comes from the system packages (see below).
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
@@ -146,8 +145,10 @@ set(CMAKE_AUTOMOC ON)
 # --- system dependencies ---------------------------------------------------
 #
 # libzip backs the `.skt` archive container and comes from the system
-# repositories (e.g. Fedora `libzip-devel`). sol2, Lua and Zydis are fetched at
-# pinned revisions instead (see cmake/Dependencies.cmake).
+# repositories (e.g. Fedora `libzip-devel`). sol2, Lua and Zydis are fetched
+# instead (see cmake/Dependencies.cmake): sol2 and Zydis from their repositories
+# at pinned revisions, Lua from the official 5.4.7 release tarball pinned by its
+# SHA-256.
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
