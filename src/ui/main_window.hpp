@@ -163,6 +163,7 @@ namespace slopkit::ui
         void show_reclass();
         void show_settings();
         void show_about();
+        void show_generate_trainer();
 
         void start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind);
 
@@ -223,6 +224,7 @@ namespace slopkit::ui
         QAction* open_table_action_ {};
         QAction* save_table_action_ {};
         QAction* save_table_as_action_ {};
+        QAction* generate_trainer_action_ {};
         QAction* add_script_action_ {};
         QAction* log_action_ {};
         QAction* settings_action_ {};

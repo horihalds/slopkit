@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iosfwd>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -21,6 +22,10 @@ namespace slopkit::app
     int list_processes(std::ostream& out, std::ostream& err);
 
     int scan_process(std::ostream& out, std::ostream& err, std::uint32_t pid, std::string_view value_text);
+
+    // `slopkit generate-trainer`: turns a saved table into standalone trainers, one
+    // per requested target. `args` are the arguments after the command name.
+    int generate_trainer(std::ostream& out, std::ostream& err, std::span<const std::string_view> args);
 
     // Prints one stored hit per line and the result summary, naming the stored and
     // match counts apart when the scan had to cap its stored set.

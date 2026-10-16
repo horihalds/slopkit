@@ -879,3 +879,50 @@ header band, and caps each field at the width the class draws - so nothing can
 resize or drag anything - while a pass that moves a value re-measures only the
 span the bar covers, never a column. The field widths and the grid's horizontal
 scrollbar are the layout rule of [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md).
+## Generated trainers
+
+`Generate Trainer…` in the File menu and the `slopkit generate-trainer` command
+turn the open table into a standalone console trainer: one file that carries the
+table's value entries inside itself and reproduces their live values and frozen
+writes on a machine with no slopkit, no Qt and no plugin.
+
+`trainer::generate` (`src/trainer/generate.cpp`) does that by copying an installed
+runtime template and appending a payload: a `SLPKTRN1` header, one record per value
+entry (description, value type, frozen and hex flags, the recorded bytes, the
+expression and the address it last resolved to), then a `SLPKTRN2` finger holding
+the payload's size. Both the ELF and the PE loader ignore trailing bytes, so the
+copy is a valid executable and a data file at once, and the runtime finds its own
+data by reading the last sixteen bytes of its own file. Script entries are not
+embedded; the generator counts them and both surfaces report the count. Each target
+is written to `<name>.trainer[.exe].tmp` and renamed over the destination, so a
+failed run leaves no half-written trainer behind, and a target whose template is
+missing fails on its own without stopping the other.
+
+The runtime (`src/trainer/runtime/`) is the same source set on both platforms, with
+the platform specifics in `target_linux.cpp` and `target_windows.cpp`. It attaches
+to `--pid`, else to `--name`, else to the process name recorded at generation time,
+and refuses to guess: no match is a message and exit code 3 without touching
+anything. Its module list is what expressions are resolved against — the basenames
+of every mapped file on Linux and of `EnumProcessModulesEx(LIST_MODULES_ALL)` on
+Windows — so a trainer resolves `module+offset` and `[[module+offset]+n]` exactly
+as slopkit does, through the same `expr::evaluate` and the same `scan::*` value
+codec, both linked from `src/` rather than copied. A level the target cannot read
+fails the expression, and the entry then keeps the address recorded at generation
+time, is marked `unresolved` and is never written to; pointer reads and the final
+value both go through a readability check first.
+
+The console shows index, description, resolved address, value type, value and the
+frozen and unresolved markers, refreshing about four times a second. `f<N>` freezes
+or unfreezes an entry, `s <N> <value>` writes one (parsing in the entry's own hex
+flag), `r` re-resolves every expression, `l` redraws and `q` quits. Frozen entries
+are re-written on every tick, which is what lets the trainer hold a value a game
+keeps overwriting. The non-interactive flags (`--list`, `--set N=VALUE`,
+`--freeze N`, `--interval`, `--wait`) drive the same actions without a TTY, so the
+trainer can be scripted or run by a test; without them and with a terminal it runs
+the interactive loop, and the exit codes are the ones `README.md` documents.
+
+The templates live in the build tree (`SLOPKIT_TRAINER_DIR`) and, once installed,
+next to the plugins (`SLOPKIT_TRAINER_RELATIVE_DIR`), which is where the generator
+looks. The Linux one is the `slopkit-trainer` target itself; the Windows one is
+cross-compiled from the same sources by `cmake/Trainer.cmake` with a statically
+linked C++ runtime, so it needs no mingw DLLs on the target machine.

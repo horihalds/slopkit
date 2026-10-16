@@ -26,6 +26,8 @@
 #include "scan/engine.hpp"
 #include "scan/source.hpp"
 #include "scan/value.hpp"
+#include "table/serializer.hpp"
+#include "trainer/generate.hpp"
 #include "ui/app.hpp"
 
 namespace slopkit::app
@@ -33,6 +35,13 @@ namespace slopkit::app
     namespace
     {
         constexpr std::size_t kLogFileLimit = 1024 * 1024;
+
+        constexpr std::string_view kGenerateTrainerUsage =
+            "usage: slopkit generate-trainer --table <file.skt> [--target linux|windows|both]\n"
+            "                                [--out <directory>] [--name <base>]\n"
+            "  --table is the address table to embed; --target defaults to both\n"
+            "  --out defaults to the current directory, --name to the table file's name\n"
+            "  every produced file is printed on stdout, per-target failures on stderr\n";
 
         std::filesystem::path self_executable_path()
         {
@@ -244,6 +253,109 @@ namespace slopkit::app
         return 0;
     }
 
+    int generate_trainer(std::ostream& out, std::ostream& err, std::span<const std::string_view> args)
+    {
+        log::info(log::category::app, "command generate-trainer: start");
+
+        std::string table_path;
+        std::string target           = "both";
+        std::string output_directory = ".";
+        std::string base_name;
+
+        for (std::size_t index = 0; index < args.size(); ++index)
+        {
+            const auto arg = args[index];
+            if (arg != "--table" && arg != "--target" && arg != "--out" && arg != "--name")
+            {
+                err << "unknown generate-trainer option: " << arg << '\n' << kGenerateTrainerUsage;
+                return 2;
+            }
+            if (index + 1 >= args.size())
+            {
+                err << arg << " needs a value\n" << kGenerateTrainerUsage;
+                return 2;
+            }
+
+            const auto value = args[++index];
+            if (arg == "--table")
+            {
+                table_path = value;
+            }
+            else if (arg == "--target")
+            {
+                target = value;
+            }
+            else if (arg == "--out")
+            {
+                output_directory = value;
+            }
+            else
+            {
+                base_name = value;
+            }
+        }
+
+        if (table_path.empty())
+        {
+            err << "--table is required\n" << kGenerateTrainerUsage;
+            return 2;
+        }
+
+        const bool linux_target   = target == "linux" || target == "both";
+        const bool windows_target = target == "windows" || target == "both";
+        if (!linux_target && !windows_target)
+        {
+            err << "unknown target: " << target << " (expected linux, windows or both)\n";
+            return 2;
+        }
+
+        table::AddressTable table;
+        if (const auto loaded = table::load(table_path, table); !loaded)
+        {
+            err << "cannot read the table: " << loaded.error() << '\n';
+            log::warning(log::category::app, std::format("command generate-trainer: {}", loaded.error()));
+            return 2;
+        }
+
+        trainer::Request generation;
+        generation.table            = &table;
+        generation.process_name     = table.settings().target_process;
+        generation.pointer_size     = sizeof(void*);
+        generation.linux_target     = linux_target;
+        generation.windows_target   = windows_target;
+        generation.output_directory = output_directory;
+        generation.base_name = base_name.empty() ? std::filesystem::path {table_path}.stem().string() : base_name;
+
+        const auto generated = trainer::generate(generation);
+        if (!generated)
+        {
+            err << generated.error() << '\n';
+            log::warning(log::category::app, std::format("command generate-trainer: {}", generated.error()));
+            return 1;
+        }
+
+        for (const auto& written : generated->written)
+        {
+            out << written.path.string() << '\n';
+            log::info(log::category::app,
+                      std::format("command generate-trainer: wrote {} for {}",
+                                  written.path.string(),
+                                  trainer::target_name(written.target)));
+        }
+        for (const auto& message : generated->errors)
+        {
+            err << message << '\n';
+            log::warning(log::category::app, std::format("command generate-trainer: {}", message));
+        }
+
+        log::info(log::category::app,
+                  std::format("command generate-trainer: done, {} file(s), {} value entr(ies), {} skipped script(s)",
+                              generated->written.size(),
+                              generated->value_entries,
+                              generated->skipped_scripts));
+        return generated->written.empty() ? 1 : 0;
+    }
+
     int run(int argc, char** argv)
     {
         const std::vector<std::string_view> args(argv + 1, argv + argc);
@@ -295,6 +407,13 @@ namespace slopkit::app
 
         bool    handled = false;
         QString table_path;
+
+        // `generate-trainer` is the one sub-command: the flags after it belong to it,
+        // so it is dispatched before the option loop below sees them.
+        if (!args.empty() && args.front() == "generate-trainer")
+        {
+            return generate_trainer(std::cout, std::cerr, std::span<const std::string_view> {args}.subspan(1));
+        }
 
         for (std::size_t index = 0; index < args.size(); ++index)
         {
@@ -360,7 +479,8 @@ namespace slopkit::app
                              "               [--list-processes] [--scan <pid> <value>] [--help] [<table.skt>]\n"
                              "  --log-level sets the minimum level: debug|info|warning|error (default info)\n"
                              "  --scan runs one exact-value scan and prints address<TAB>type<TAB>value\n"
-                             "  <table.skt> opens that address table; no flags launches the GUI\n";
+                             "  <table.skt> opens that address table; no flags launches the GUI\n"
+                          << kGenerateTrainerUsage;
             }
             else if (arg.starts_with('-'))
             {

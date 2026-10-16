@@ -18,7 +18,12 @@ namespace slopkit::log
             const std::time_t seconds = std::chrono::system_clock::to_time_t(time);
 
             std::tm local {};
+#if defined(_WIN32)
+            // The Windows CRT spells the reentrant variant this way only.
+            localtime_s(&local, &seconds);
+#else
             localtime_r(&seconds, &local);
+#endif
 
             long milliseconds = static_cast<long>(since_epoch.count() % 1000);
             if (milliseconds < 0)

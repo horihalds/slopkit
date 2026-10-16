@@ -10,6 +10,7 @@
 #include <variant>
 
 #include <QAction>
+#include <QDir>
 #include <QEvent>
 #include <QFileInfo>
 #include <QKeySequence>
@@ -24,6 +25,7 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "debug/controller.hpp"
+#include "trainer/generate.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/components/window_centerer.hpp"
@@ -31,6 +33,7 @@
 #include "ui/dialogs/access_watch.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/breakpoints.hpp"
+#include "ui/dialogs/generate_trainer.hpp"
 #include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
 #include "ui/dialogs/process_list.hpp"
@@ -236,6 +239,12 @@ namespace slopkit::ui
         save_table_as_action_->setShortcut(QKeySequence::SaveAs);
         save_table_as_action_->setShortcutContext(Qt::WindowShortcut);
 
+        generate_trainer_action_ = new QAction(tr("Generate Trainer…"), this);
+        generate_trainer_action_->setIcon(widgets::action_icon(widgets::ActionIcon::diskette));
+        // Generation needs a table; the File menu refreshes this every time it opens.
+        generate_trainer_action_->setEnabled(false);
+        connect(generate_trainer_action_, &QAction::triggered, this, &MainWindow::show_generate_trainer);
+
         add_script_action_ = new QAction(tr("Add Script…"), this);
         add_script_action_->setIcon(widgets::action_icon(widgets::ActionIcon::file));
 
@@ -261,9 +270,20 @@ namespace slopkit::ui
         file_menu->addAction(open_table_action_);
         file_menu->addAction(save_table_action_);
         file_menu->addAction(save_table_as_action_);
+        file_menu->addAction(generate_trainer_action_);
         file_menu->addAction(add_script_action_);
         file_menu->addSeparator();
         file_menu->addAction(quit_action_);
+
+        // Generation needs a table, and the moment the menu opens is when that is
+        // certain: the address list panel owns the table's lifetime.
+        connect(file_menu,
+                &QMenu::aboutToShow,
+                this,
+                [this]
+                {
+                    generate_trainer_action_->setEnabled(!address_table_.empty());
+                });
 
         QMenu* view_menu = menuBar()->addMenu(tr("View"));
         view_menu->addAction(log_action_);
@@ -681,6 +701,45 @@ namespace slopkit::ui
     {
         settings_dialog_->select_about();
         show_settings();
+    }
+
+    void MainWindow::show_generate_trainer()
+    {
+        if (address_table_.empty())
+        {
+            address_list_->report_status("Open a table before generating a trainer.", true);
+            return;
+        }
+
+        const QString   table_path = address_list_->table_path();
+        const QFileInfo table_file {table_path};
+        const auto&     settings  = settings_.values();
+        const QString   directory = !settings.last_directory.isEmpty()
+                                      ? settings.last_directory
+                                      : (table_file.exists() ? table_file.absolutePath() : QDir::currentPath());
+        const QString   base_name =
+            table_file.completeBaseName().isEmpty() ? QStringLiteral("trainer") : table_file.completeBaseName();
+
+        trainer::Request request;
+        request.table            = &address_table_;
+        request.process_name     = target_.valid() ? target_.name : address_table_.settings().target_process;
+        // The width of this session's target; the trainer prefers the live one's own.
+        request.pointer_size     = sizeof(void*);
+        request.linux_target     = true;
+        request.windows_target   = false;
+        request.output_directory = directory.toStdString();
+        request.base_name        = base_name.toStdString();
+
+        dialogs::GenerateTrainerDialog dialog {request, this};
+        WindowCenterer                 centerer {dialog};
+        connect(&dialog,
+                &dialogs::GenerateTrainerDialog::trainersGenerated,
+                this,
+                [this](const QString& chosen)
+                {
+                    settings_.set_last_directory(chosen);
+                });
+        dialog.exec();
     }
 
     void MainWindow::on_launch_sandbox_requested()

@@ -124,6 +124,13 @@ include(GNUInstallDirs)
 # the install rule share it so `lib` vs `lib64` can never drift.
 set(SLOPKIT_PLUGIN_RELATIVE_DIR "../${CMAKE_INSTALL_LIBDIR}/slopkit/plugins")
 
+# Trainer templates (the runtime the generator appends its payload to) are looked
+# up the same way: in the build tree below first, then in the installed layout
+# relative to the executable. Both paths are compile definitions so the lookup and
+# the install rule cannot drift.
+set(SLOPKIT_TRAINER_DIR ${CMAKE_BINARY_DIR}/trainer)
+set(SLOPKIT_TRAINER_RELATIVE_DIR "../${CMAKE_INSTALL_LIBDIR}/slopkit/trainer")
+
 # --- dependencies ----------------------------------------------------------
 #
 # Qt6 Widgets is the UI toolkit, replacing the previous immediate-mode stack.
@@ -268,6 +275,9 @@ list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/plugins/.*")
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/platform/.*")
 # The sandbox is its own executable, never part of the app binary.
 list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/sandbox/.*")
+# The trainer runtime is its own executable, never part of the app binary: its
+# target backends are per-platform and the app never needs the runtime.
+list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/trainer/runtime/.*")
 # The shared UI library compiles these, so neither the app nor the tests may.
 list(REMOVE_ITEM SLOPKIT_SOURCES ${SLOPKIT_UI_COMMON_SOURCES})
 # The platform library owns the decoder (the plugins need it too), so compiling
@@ -277,6 +287,9 @@ list(FILTER SLOPKIT_SOURCES EXCLUDE REGEX "${CMAKE_SOURCE_DIR}/src/disasm/decode
 add_executable(slopkit ${SLOPKIT_SOURCES})
 target_include_directories(slopkit PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_definitions(slopkit PRIVATE SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}")
+target_compile_definitions(slopkit PRIVATE
+    SLOPKIT_TRAINER_DIR="${SLOPKIT_TRAINER_DIR}"
+    SLOPKIT_TRAINER_RELATIVE_DIR="${SLOPKIT_TRAINER_RELATIVE_DIR}")
 target_compile_options(slopkit PRIVATE -Wall -Wextra)
 target_link_libraries(slopkit PRIVATE
     slopkit_ui_common
@@ -312,6 +325,43 @@ target_link_libraries(slopkit-sandbox PRIVATE
     slopkit_native
     Qt6::Widgets)
 slopkit_add_icon_resources(slopkit-sandbox)
+
+# --- trainer runtime -------------------------------------------------------
+
+# The Qt-free console trainer `Generate Trainer…` copies and appends a payload to.
+# The same sources are cross-compiled into the Windows template by
+# cmake/Trainer.cmake; only the portable pieces shared with the app are linked, so
+# the result needs nothing but the C++ runtime on the target machine. The build
+# tree copy is itself the Linux template (SLOPKIT_TRAINER_DIR).
+
+set(SLOPKIT_TRAINER_RUNTIME_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/console.cpp
+    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/payload_reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/resolve.cpp
+    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/target_linux.cpp)
+
+set(SLOPKIT_TRAINER_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/trainer/payload.cpp
+    ${SLOPKIT_TRAINER_RUNTIME_SOURCES}
+    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/main.cpp
+    # The shared codec and expression evaluator the app uses as well, so the two
+    # cannot drift apart; log.cpp is inert until a sink is installed.
+    ${CMAKE_SOURCE_DIR}/src/core/log.cpp
+    ${CMAKE_SOURCE_DIR}/src/expr/expression.cpp
+    ${CMAKE_SOURCE_DIR}/src/expr/resolver.cpp
+    ${CMAKE_SOURCE_DIR}/src/scan/types.cpp
+    ${CMAKE_SOURCE_DIR}/src/scan/value.cpp)
+
+# The native target is not named after the file it produces: CMake resolves the
+# Windows template's `slopkit-trainer.exe` output to the target `slopkit-trainer`
+# and drops its rule, so the target is named apart from it (cmake/Trainer.cmake).
+add_executable(slopkit-trainer-native ${SLOPKIT_TRAINER_SOURCES})
+target_include_directories(slopkit-trainer-native PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_options(slopkit-trainer-native PRIVATE -Wall -Wextra)
+target_link_libraries(slopkit-trainer-native PRIVATE slopkit_native)
+set_target_properties(slopkit-trainer-native PROPERTIES
+    OUTPUT_NAME slopkit-trainer
+    RUNTIME_OUTPUT_DIRECTORY "${SLOPKIT_TRAINER_DIR}")
 
 # --- platform library ------------------------------------------------------
 
@@ -379,6 +429,10 @@ target_link_libraries(slopkit-wine_proton PRIVATE slopkit_plugin_support ${CMAKE
 # The wine-proton plugin's resident agent is a PE binary for the target, so it
 # is cross-compiled into the plugin directory it is loaded from at runtime.
 include(${CMAKE_SOURCE_DIR}/cmake/Agent.cmake)
+
+# The Windows trainer template is a PE binary for the target as well; the Linux
+# one is the `slopkit-trainer` target above, which lands in SLOPKIT_TRAINER_DIR.
+include(${CMAKE_SOURCE_DIR}/cmake/Trainer.cmake)
 
 # --- tests -----------------------------------------------------------------
 
@@ -451,6 +505,11 @@ set(SLOPKIT_TEST_SANDBOX_SOURCES
     ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_values.cpp
     ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox_window.cpp)
 
+# The trainer runtime is compiled into the test binary too, so the console and the
+# Linux target backend are exercised in-process; `main.cpp` stays out because the
+# tests own the entry point, and the driver test runs the built binary instead.
+set(SLOPKIT_TEST_TRAINER_SOURCES ${SLOPKIT_TRAINER_RUNTIME_SOURCES})
+
 # Every test source is picked up, but never the fixture plugin sources: each of
 # them defines `slopkit_plugin_entry`, so they are built as their own libraries.
 file(GLOB_RECURSE SLOPKIT_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/*.cpp)
@@ -463,15 +522,18 @@ add_executable(slopkit_tests
     ${SLOPKIT_TEST_SOURCES}
     ${SLOPKIT_TEST_SUPPORT_SOURCES}
     ${SLOPKIT_TEST_SANDBOX_SOURCES}
+    ${SLOPKIT_TEST_TRAINER_SOURCES}
     ${SLOPKIT_WINE_PROTON_SOURCES})
 # The tests load the bundled plugins the same way the app does, so they need the
 # same exported symbols for the platform library's diagnostics.
 set_target_properties(slopkit_tests PROPERTIES ENABLE_EXPORTS ON)
-add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit-agent slopkit-agent-probe slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor slopkit_test_logging)
+add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit-agent slopkit-agent-probe slopkit_test_bad_abi slopkit_test_no_entry slopkit_test_missing_regions slopkit_test_old_abi_minor slopkit_test_logging slopkit-trainer-native)
 target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tests)
 target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"
+    SLOPKIT_TRAINER_DIR="${SLOPKIT_TRAINER_DIR}"
+    SLOPKIT_TRAINER_RELATIVE_DIR="${SLOPKIT_TRAINER_RELATIVE_DIR}"
     SLOPKIT_TEST_PLUGIN_DIR="${SLOPKIT_TEST_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_TEST_LOGGING_PLUGIN_DIR="${SLOPKIT_TEST_LOGGING_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_AGENT_BINARY_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
@@ -520,6 +582,11 @@ slopkit_install_stripped(slopkit-sandbox ${CMAKE_INSTALL_BINDIR} RUNTIME)
 # (see SLOPKIT_PLUGIN_RELATIVE_DIR above).
 slopkit_install_stripped(slopkit-linux_proc ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins LIBRARY)
 slopkit_install_stripped(slopkit-wine_proton ${CMAKE_INSTALL_LIBDIR}/slopkit/plugins LIBRARY)
+
+# The trainer templates live where the generator looks for them: the Linux
+# template next to the plugins, the cross-compiled Windows one beside it (see
+# cmake/Trainer.cmake).
+slopkit_install_stripped(slopkit-trainer-native ${CMAKE_INSTALL_LIBDIR}/slopkit/trainer RUNTIME)
 
 # The cross-compiled agent DLLs and their injectors sit beside the plugins; the
 # wine-proton plugin locates them through its own module path.

@@ -30,6 +30,7 @@ offers to cancel, overwrite the open table or merge the file.
 | Access Watch | Record every instruction that writes or accesses a watched address, and resolve an instruction's memory operands from live registers. The "find out what writes/accesses" commands attach the debug session on demand after a confirmation, so the Memory Viewer does not have to be opened first. | Implemented (Access Watch window) |
 | Referenced strings | Analyze a loaded module for the ASCII and UTF-16LE strings its code directly references and show each as a comment on the referencing disassembly line, with a filterable, per-module list in the Referenced strings window. | Implemented (Referenced strings window) |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
+| Standalone trainer | Turn the open table into self-contained console trainers (`File > Generate Trainer…`) that reproduce its live values and frozen writes on a machine with no slopkit, Qt or plugin installed; a Linux executable and a 64-bit Windows one are written, each with the table's value entries appended to a runtime template rather than a sidecar file. | Implemented (Generate Trainer…) |
 
 ## Quick start
 
@@ -42,7 +43,10 @@ only, for the icon set). The Wine/Proton resident agent is cross-compiled and
 needs the mingw-w64 compilers for both bitnesses (`x86_64-w64-mingw32-gcc` and
 `i686-w64-mingw32-gcc`); without them the build uses a prebuilt agent under
 `src/plugins/wine_proton/agent/prebuilt/<bitness>` and otherwise fails the
-`slopkit-agent` target — see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md).
+`slopkit-agent` target — see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md). The
+Windows trainer template needs the matching C++ cross-compiler
+(`x86_64-w64-mingw32-g++` from the same package); without it the build still
+succeeds and only the Windows trainer target becomes unavailable.
 
 ```sh
 ./tools/configure.sh
@@ -70,6 +74,49 @@ Run:
 ```
 
 These flags work headlessly, with no display or GPU required.
+
+### Standalone trainers
+
+`File > Generate Trainer…` turns the open table into executables that carry its
+value entries inside themselves and reproduce their behaviour — live values plus
+frozen writes — on a machine that has neither slopkit, Qt nor any plugin
+installed. The same generation is reachable headlessly:
+
+```sh
+./build/slopkit generate-trainer --table game.skt --target both --out ~/trainer
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--table <file.skt>` | the table to embed (required) |
+| `--target linux\|windows\|both` | which executables to write (default `both`) |
+| `--out <directory>` | where they are written (default the current directory) |
+| `--name <base>` | the file name stem (default the table file's own name) |
+
+`<base>.trainer` is the Linux executable and `<base>.trainer.exe` the 64-bit
+Windows one; each is a copy of a runtime template with the payload appended, so
+it is one self-contained file with no sidecars and no plugin. Every produced path
+is printed on stdout, a target whose template is missing is reported on stderr
+while the other target is still written, and the command exits non-zero only when
+no file was produced at all. Script (Lua) entries are never embedded and the
+count of skipped ones is reported.
+
+A generated trainer attaches to `--pid`, else `--name`, else the process name
+recorded when it was generated:
+
+```sh
+./game.trainer                       # interactive console, four refreshes a second
+./game.trainer --pid 4711 --list     # one-shot: print the entries and exit
+./game.trainer --pid 4711 --set 1=250 --freeze 1 --wait 900 --list
+```
+
+The console lists index, description, resolved address, type, value and a frozen
+marker; `f<N>` toggles freeze, `s <N> <value>` writes a value (hex honouring the
+entry's hex flag), `r` re-resolves, `l` re-lists, `q` quits. Frozen entries are
+re-written on every tick. An entry whose expression cannot resolve shows the
+address recorded at generation time with an `unresolved` marker and is never
+written to. Exit codes: `0` success, `1` usage error, `2` no embedded data, `3`
+target process not found, `4` memory access failure.
 
 `./tools/install.sh` configures, builds and installs slopkit with its desktop entry and
 hicolor icons into `~/.local` by default, with no root needed; override the

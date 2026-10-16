@@ -26,6 +26,8 @@ docs that hold the detail behind this map.
 | `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
 | `src/script` | Lua scripting engine: a sol2 state, the `mem` and `structs` APIs, the type-token codec, the process-wide symbol registry and the hook-script generator |
 | `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
+| `src/trainer` | Qt-free trainer generation: the payload format and the generator that appends a table's entries to a copy of a runtime template |
+| `src/trainer/runtime` | Self-contained console trainer (the Linux backend is built natively, the Windows backend is cross-compiled) |
 | `src/ui` | Qt main window and shared UI infrastructure |
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, ReClass project tree, script editor, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
@@ -47,13 +49,14 @@ docs that hold the detail behind this map.
 | `tests/script` | Tests for `src/script` |
 | `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `script_helpers.hpp`, `memory_view_helpers.hpp`, `reclass_helpers.hpp`, `reclass_live_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
 | `tests/table` | Tests for `src/table` |
+| `tests/trainer` | Tests for `src/trainer`, including the built trainer driven against a live process |
 | `tests/ui` | Window/flow tests (the four subdirectories have their own rows) |
 | `tests/ui/components` | Tests for `src/ui/components` |
 | `tests/ui/dialogs` | Tests for `src/ui/dialogs` |
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 | `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `icons/datatypes/*.svg` (node-kind glyphs), `fonts/*.ttf` with `OFL.txt` |
-| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars) and `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair) |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair) and `Trainer.cmake` (cross-compiles the Windows trainer template with mingw-w64 g++, or warns and leaves the Linux-only build working) |
 | `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `SCRIPTING.md`, `WINE_AGENT.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
 | `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |
@@ -70,6 +73,8 @@ docs that hold the detail behind this map.
 | table | Address table (it also owns the ReClass class project), `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, reclass, libzip |
 | expr | Address expression parsing (`base + offset...` and bracket pointer chains) and resolution with an injected per-level validator; a dependency-free leaf (it includes nothing outside `expr/`) | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | — |
 | reclass | ReClass structure model: the polymorphic `Node` hierarchy and its kinds, the derived class layout, the value codec, the dissect ladder and the archive member text; a dependency-free leaf (it includes nothing outside `reclass/`) | `reclass/nodes/{node,number,hex,text,vector,container,function}.hpp` (`Node`, `NodePtr`, `make_node`), `reclass/node.hpp` (`NodeKind`), `reclass/node_menu.hpp` (`node_menu_groups`, `node_menu_label`), `project.hpp`, `enum.hpp` (`EnumDescription`, `EnumValue`), `value.hpp`, `edit.hpp`, `dissect.hpp`, `serialize.hpp`, `cpp_header.hpp` (`cpp_header`) | `tests/reclass/*` | — |
+| trainer | Trainer payload format and the Qt-free generator: template discovery, the per-target copy-and-append write path and the skipped-script count | `trainer/payload.hpp` (`Payload`, `PayloadEntry`, `TargetOs`, `encode_payload`, `decode_payload`), `trainer/generate.hpp` (`Request`, `Result`, `generate`, `template_directories`, `output_name`) | `tests/trainer/generate_test.cpp` | table, app, core |
+| trainer/runtime | Self-contained console trainer: attach by pid or name, module list of basenames, memory read/write, expression resolution and the refresh loop | `trainer/runtime/main.cpp`, `target.hpp` (`Target`, `attach`, `read_line`), `target_linux.cpp`, `target_windows.cpp`, `payload_reader.hpp` (`load_own_payload`), `resolve.hpp` (`Resolver`, `LiveEntry`), `console.hpp` (`parse_command`, `render_rows`) | `tests/trainer/console_test.cpp`, `tests/trainer/driver_test.cpp` | expr, scan, core |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
 | analysis | Module string-reference sweep over an injected read seam | `analysis/string_references.hpp` (`find_string_references`, `StringReference`, `ModuleRange`, `StringScanResult`, `StringScanReport`, `describe`) | `tests/analysis/*` | disasm, process/types, core |
 | script | Lua scripting engine over the system Lua and sol2 | `script/engine.hpp` (`Engine`, `run_lifecycle`, `run_update`, `UpdateResult`, `check_syntax`), `script/types.hpp` (`RunResult`, `LifecycleResult`, `SymbolApi`), `script/symbols.hpp` (`SymbolTable`), `script/codec.hpp`, `script/hook_script.hpp` (`HookTarget`, `build_hook`, `render`), `script/hook.hpp` (`Spec`, `hook::install`, `hook::remove`), `script/api_catalog.hpp` (`api_catalog`, `ApiEntry`, `lua_standard_globals`, `lua_library_members`), `script/structs.hpp` (`install_structs`, `StructsContext`), `script/structs_view.hpp` (`build_class_index`, `class_index_of`, `ClassIndex`, `ClassDef`, `FieldDef`, `FieldValue`, `read_field`, `write_field`, `ByteSource`, `BufferSource`) | `tests/script/*` | Lua, sol2, scan, expr, disasm, reclass |
@@ -78,7 +83,7 @@ docs that hold the detail behind this map.
 | sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
 | ui | Main window, settings, live values, table file, theme/fonts | `ui/main_window.hpp` (`MainWindow`), `app.hpp`, `settings.hpp` (per-window geometries), `platform.hpp` (`preferred_platform_spec`), `text.hpp` (`to_qstring`), `live_values.hpp` (`LiveSurface`, `LiveTicker`), `script_updates.hpp` (`ScriptUpdates`), `debug_session.hpp`, `access_watch.hpp`, `completion_notifier.hpp`, `log_notifier.hpp`, `theme.hpp`, `datatype_palette.hpp` (`datatype_icon_name`, `datatype_colour`), `fonts.hpp`, `table_file.hpp`, `address_format.hpp` | `tests/ui/*` | process, plugin, table, scan, debug |
 | ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `script_editor.hpp` (`ScriptEditor`, `set_class_fields`), `script_highlighter.hpp` (`ScriptHighlighter`), `script_context.hpp` (`identifier_at`, `enclosing_call`, `document_names`, `instance_class`, `expression_instance_class`), `script_completion.hpp` (`ScriptCompletionPopup`, `ScriptCompletionModel`), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`, `datatype_icon`), `code_patch.hpp`, `address_table_view.hpp` (`AddressTableView`), `indent_delegate.hpp` (`IndentDelegate`, `kDepthRole`), `validating_delegate.hpp` (`ValidatingDelegate`: a cell editor that keeps the editor open while the model refuses its text), `elided_tooltip_delegate.hpp`, `reclass_view.hpp` (`ReClassView`), `project_view.hpp` (`ProjectView`), `row_menu.hpp`, `referenced_strings.hpp` (`ReferencedStringTable`) | `tests/ui/components/*` | ui, disasm |
-| ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `ReClassDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`, `ModuleChooserDialog`, `ReferencedStringsDialog`, `CppExportDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script, reclass |
+| ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `ReClassDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`, `ModuleChooserDialog`, `ReferencedStringsDialog`, `CppExportDialog`, `GenerateTrainerDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script, reclass, trainer |
 | ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `referenced_string_model.hpp`, `reclass_structure_model.hpp`, `reclass_value_model.hpp`, `reclass_proxy_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug, reclass, ui/components |
 | ui/panels | Docked panes (the address list's extended selection, its shared `Del` action and the multi-row delete included) | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
 | plugins/support | Shared bundled-plugin ABI plumbing, including the optional per-plugin `allocate`/`free`/`close_session` hooks, the `regions`/`modules`/`range_is_readable`/`read`/`write` introspection hooks and the optional `debug_excluded_threads` hook that keeps a plugin's own in-target threads running through a debug attach | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`), `validate.hpp` (ABI 1.7 chunked readability probe), `memory.hpp` (`AccessFault`, `MemoryResult`, the `MemAccess` error/method mapping) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
@@ -89,6 +94,7 @@ docs that hold the detail behind this map.
 
 - `src/main.cpp` → `slopkit::app::run()` (`src/app/cli.cpp`) handles argv: headless commands (`--version`, `--list-plugins`, `--list-processes`, scan), otherwise it hands a table path to a running instance (`src/app/instance*`) or builds `ui::App` / `MainWindow`.
 - Plugin discovery: `PluginHost::discover()` over `app::plugin_search_directories()`.
+- Trainer generation: the File menu's `Generate Trainer…` dialog and `slopkit generate-trainer` both call `trainer::generate`, which copies the installed runtime template from `SLOPKIT_TRAINER_DIR` (or `SLOPKIT_TRAINER_RELATIVE_DIR` next to the executable) and appends the payload; the generated file reads its own tail at startup (`trainer/runtime/payload_reader.cpp`) and never touches slopkit again.
 - Reads/writes: UI → `process::AccessWorker` job → `ProcessAccess` plugin session (`process_vm_*` then procfs for both bundled plugins; `wine-proton` never routes bytes through its resident agent) → `AccessWorker::drain()` applies results on the UI thread.
 - Scans: scanner panel → `scan::ScanEngine` worker thread → `MemorySource`; the UI polls `snapshot()`.
   With `Pause the game while scanning`, the panel suspends the target through the access worker before the engine starts and resumes it once the engine stops.
@@ -149,7 +155,12 @@ docs that hold the detail behind this map.
 - Generated/build-time files: icons, action glyphs and datatype glyphs (`cmake/EmbedIcon.cmake`),
   embedded fonts (`cmake/EmbedFont.cmake`), Qt resources, and
   `build/slopkit.desktop` from `assets/slopkit.desktop.in`. Never edit `build/`.
-- Must stay in sync: `assets/application-x-slopkit-table.xml` MIME magic (the ZIP
+- Must stay in sync: `SLOPKIT_TRAINER_DIR` / `SLOPKIT_TRAINER_RELATIVE_DIR` in
+  `CMakeLists.txt` with the generator's template lookup, the `Trainer.cmake`
+  install rules and the trainer runtime's own file name; the payload layout in
+  `src/trainer/payload.hpp` with the generator that writes it and the runtime
+  that reads it, so a field change bumps `kPayloadVersion` and both sides
+  together. `assets/application-x-slopkit-table.xml` MIME magic (the ZIP
   signature `PK\003\004`) with the bytes `src/table/table_zip.cpp` writes;
   `SLOPKIT_PLUGIN_RELATIVE_DIR` in
   `CMakeLists.txt`; `SLOPKIT_ACTION_ICON_NAMES` with `widgets::ActionIcon` and `SLOPKIT_DATATYPE_ICON_NAMES` with `ui::datatype_palette`; the
@@ -178,9 +189,11 @@ docs that hold the detail behind this map.
   `<table.skt>` path to the running instance over the per-user abstract socket in
   `src/app/instance*`, which then runs the same open flow as File > Open Table.
 - `slopkit_tests` compiles every app source except the `main.cpp` entry points
-  (`src/main.cpp`, `src/sandbox/main.cpp`), plus the sandbox sources minus
-  `src/sandbox/main.cpp`; the fixture plugins are separate libraries, so a change
-  anywhere can trigger a large rebuild.
+  (`src/main.cpp`, `src/sandbox/main.cpp`, `src/trainer/runtime/main.cpp`), plus
+  the sandbox sources minus `src/sandbox/main.cpp` and the trainer runtime sources
+  minus `main.cpp`, and depends on the `slopkit-trainer` target so the driver test
+  finds the template in the build tree; the fixture plugins are separate libraries,
+  so a change anywhere can trigger a large rebuild.
 - Widget tests run headless via `QT_QPA_PLATFORM=offscreen`; set it when running
   `slopkit_tests` directly. CTest enforces a 15s timeout per test.
 - A test fake driven from a worker thread keeps its state behind a lock and

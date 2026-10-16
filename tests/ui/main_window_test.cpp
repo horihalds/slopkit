@@ -6,6 +6,7 @@
 
 #include "support/ui_helpers.hpp"
 #include "ui/dialogs/add_script.hpp"
+#include "ui/dialogs/generate_trainer.hpp"
 #include "ui/dialogs/reclass.hpp"
 #include "ui/panels/debug_controls.hpp"
 
@@ -32,6 +33,7 @@ TEST_CASE("the main window shell is built", "[ui]")
                              QStringLiteral("Open Table"),
                              QStringLiteral("Save Table"),
                              QStringLiteral("Save Table As"),
+                             QStringLiteral("Generate Trainer…"),
                              QStringLiteral("Add Script…"),
                              QStringLiteral("Quit")});
 
@@ -58,7 +60,7 @@ TEST_CASE("the main window shell is built", "[ui]")
     }
 
     const QList<QAction*> file_actions = menus[0]->menu()->actions();
-    REQUIRE(file_actions.size() == 7);
+    REQUIRE(file_actions.size() == 8);
     CHECK(file_actions[0]->shortcut() == QKeySequence(QStringLiteral("Ctrl+T")));
     CHECK(file_actions[1]->shortcut() == QKeySequence(QKeySequence::Open));
     CHECK(file_actions[2]->shortcut() == QKeySequence(QKeySequence::Save));
@@ -70,8 +72,15 @@ TEST_CASE("the main window shell is built", "[ui]")
         CHECK(file_actions[index]->icon().availableSizes().contains(QSize(16, 16)));
     }
     CHECK(file_actions[2]->icon().pixmap(16).toImage() == file_actions[3]->icon().pixmap(16).toImage());
-    CHECK(file_actions[5]->isSeparator());
-    CHECK(file_actions[6]->icon().isNull());
+    CHECK(file_actions[6]->isSeparator());
+    CHECK(file_actions[7]->icon().isNull());
+
+    // Generation needs a table, so the action stays disabled until one is open and
+    // triggering it on an empty table only reports that.
+    CHECK(file_actions[4]->text() == QStringLiteral("Generate Trainer…"));
+    CHECK_FALSE(file_actions[4]->isEnabled());
+    file_actions[4]->trigger();
+    CHECK(window.findChildren<slopkit::ui::dialogs::GenerateTrainerDialog*>().isEmpty());
     for (QAction* action : menus[1]->menu()->actions())
     {
         CHECK(action->icon().isNull());
