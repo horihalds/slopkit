@@ -1367,6 +1367,84 @@ TEST_CASE("a hex cell's readings are edited in place one by one", "[reclass][ui]
     CHECK_FALSE(view.reading_rect(hint(), NodeReading::raw).has_value());
 }
 
+TEST_CASE("a small hex cell's readings are edited in place too", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+    QObject::connect(
+        &fixture.values, &ReclassValueModel::valuesChanged, &fixture.proxy, &ReclassProxyModel::refresh_values);
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex16, "word"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(1600, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QStringList messages;
+    QObject::connect(&fixture.values,
+                     &ReclassValueModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    fixture.resolve();
+    const std::uint64_t address = fixture.player_address() + 9;
+    fixture.put(address, {0x34, 0x12});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const auto hint = [&fixture]
+    {
+        return fixture.cell(fixture.node_id(2), ReclassStructureModel::hints);
+    };
+    CHECK(view.cell_text(hint()) == QStringLiteral("(4660) (0x1234)"));
+
+    // The small cell's width spells no float, so its field draws the signed value
+    // and the raw bits alone; a double-click on the field's other space opens
+    // nothing.
+    CHECK_FALSE(view.reading_rect(hint(), NodeReading::floating).has_value());
+    const auto run = [&view, &hint](NodeReading reading)
+    {
+        return view.reading_rect(hint(), reading);
+    };
+    REQUIRE(run(NodeReading::integer).has_value());
+    REQUIRE(run(NodeReading::raw).has_value());
+
+    const QRect field = view.cell_rect(hint()).value();
+    CHECK(field.contains(run(NodeReading::integer)->center()));
+    CHECK(run(NodeReading::integer)->right() < run(NodeReading::raw)->left());
+    CHECK(view.hover_tooltip(run(NodeReading::integer)->center()) == QStringLiteral("Int16"));
+    CHECK(view.hover_tooltip(run(NodeReading::raw)->center()) == QStringLiteral("Hex16"));
+
+    // A double-click on the raw bits opens the editor over that run with the
+    // reading's own text, and Return writes the cell's two bytes.
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    double_click_at(view, run(NodeReading::raw)->center());
+    QCoreApplication::processEvents();
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text() == QStringLiteral("0x1234"));
+    CHECK(editor->selectedText() == QStringLiteral("0x1234"));
+    CHECK(editor->geometry().left() == run(NodeReading::raw)->left());
+
+    editor->setText(QStringLiteral("FFFF"));
+    QApplication::sendEvent(editor, &enter);
+    REQUIRE(drain_until_idle(fixture.worker));
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(messages == QStringList {QStringLiteral("Reading written.")});
+    CHECK(fixture.holds(address, {0xFF, 0xFF}));
+    CHECK(view.cell_text(hint()) == QStringLiteral("(-1) (0xFFFF)"));
+}
+
 TEST_CASE("a Type cell without a bracketed number keeps its own rules", "[reclass][ui][view]")
 {
     application();

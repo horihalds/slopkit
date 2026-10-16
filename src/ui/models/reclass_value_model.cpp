@@ -213,13 +213,23 @@ namespace slopkit::ui::models
 
         // Each reading is named by the kind that spells it: the float and the
         // integer of the cell's own width, the raw bits by the cell's own kind.
-        const bool wide = kind == reclass::NodeKind::hex64;
         switch (reading)
         {
         case reclass::NodeReading::floating:
-            return to_qstring(reclass::describe(wide ? reclass::NodeKind::float64 : reclass::NodeKind::float32));
+            return to_qstring(reclass::describe(kind == reclass::NodeKind::hex64 ? reclass::NodeKind::float64
+                                                                                 : reclass::NodeKind::float32));
         case reclass::NodeReading::integer:
-            return to_qstring(reclass::describe(wide ? reclass::NodeKind::int64 : reclass::NodeKind::int32));
+            switch (reclass::kind_size(kind))
+            {
+            case 1:
+                return to_qstring(reclass::describe(reclass::NodeKind::int8));
+            case 2:
+                return to_qstring(reclass::describe(reclass::NodeKind::int16));
+            case 4:
+                return to_qstring(reclass::describe(reclass::NodeKind::int32));
+            default:
+                return to_qstring(reclass::describe(reclass::NodeKind::int64));
+            }
         case reclass::NodeReading::raw:
             return to_qstring(reclass::describe(kind));
         }

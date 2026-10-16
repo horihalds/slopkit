@@ -870,6 +870,79 @@ TEST_CASE("writing a reading submits the node's whole bytes", "[reclass][ui]")
     CHECK_FALSE(fixture.values.write_reading(fixture.row(0), NodeReading::raw, QStringLiteral("1")));
 }
 
+TEST_CASE("a small hex cell draws and writes its own two readings", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    REQUIRE(fixture.project.add_class("Bytes", "app+0x40") != 0);
+    Class& bytes = fixture.project.classes().back();
+    bytes.nodes.push_back(node_of(fixture.project, NodeKind::hex8, "head"));
+    bytes.nodes.push_back(node_of(fixture.project, NodeKind::hex16, "word"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(2);
+    fixture.resolve();
+
+    const std::uint64_t address = kAppBase + 0x40;
+    fixture.write(address, {0x7F, 0x34, 0x12});
+    fixture.pass();
+
+    QStringList messages;
+    QObject::connect(&fixture.values,
+                     &ReclassValueModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    // A hex8 cell has no float kind to spell its bytes as, so its hints field
+    // draws the signed value and the raw bits alone - each in its own parentheses.
+    const ReclassRow&                             head      = fixture.row(0);
+    const std::vector<ReclassValueModel::HintRun> head_runs = fixture.values.hint_parts(head);
+    REQUIRE(head_runs.size() == 2);
+    CHECK(head_runs[0].reading == NodeReading::integer);
+    CHECK(head_runs[0].text == QStringLiteral("(127)"));
+    CHECK(head_runs[1].reading == NodeReading::raw);
+    CHECK(head_runs[1].text == QStringLiteral("(0x7F)"));
+    CHECK(fixture.values.hint_text(head) == QStringLiteral("(127) (0x7F)"));
+    CHECK(fixture.values.reading_editable(head, NodeReading::integer));
+    CHECK(fixture.values.reading_editable(head, NodeReading::raw));
+    CHECK_FALSE(fixture.values.reading_editable(head, NodeReading::floating));
+
+    // A hover names the small cell's own widths, beside the cell's own kind.
+    CHECK(fixture.values.reading_datatype(head, NodeReading::integer) == QStringLiteral("Int8"));
+    CHECK(fixture.values.reading_datatype(head, NodeReading::raw) == QStringLiteral("Hex8"));
+    CHECK(fixture.values.reading_datatype(head, NodeReading::floating).isEmpty());
+
+    const ReclassRow& word = fixture.row(1);
+    CHECK(fixture.values.hint_text(word) == QStringLiteral("(4660) (0x1234)"));
+    CHECK(fixture.values.reading_datatype(word, NodeReading::integer) == QStringLiteral("Int16"));
+    CHECK(fixture.values.reading_datatype(word, NodeReading::raw) == QStringLiteral("Hex16"));
+
+    // Each reading writes the cell's own bytes and patches them at once, leaving
+    // the cell beside it alone.
+    REQUIRE(fixture.values.write_reading(head, NodeReading::integer, QStringLiteral("-1")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(messages.back() == QStringLiteral("Reading written."));
+    CHECK(fixture.holds(address, {0xFF, 0x34, 0x12}));
+    CHECK(fixture.values.hint_text(head) == QStringLiteral("(-1) (0xFF)"));
+
+    REQUIRE(fixture.values.write_reading(word, NodeReading::raw, QStringLiteral("FFFF")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(address + 1, {0xFF, 0xFF}));
+    CHECK(fixture.values.hint_text(word) == QStringLiteral("(-1) (0xFFFF)"));
+
+    // A float is refused - the width cannot spell one - and nothing is written.
+    CHECK_FALSE(fixture.values.write_reading(head, NodeReading::floating, QStringLiteral("1.5")));
+    CHECK(messages.back() == QStringLiteral("The Float reading cannot be written here."));
+    CHECK(fixture.holds(address, {0xFF, 0xFF, 0xFF}));
+
+    // A value too wide for the cell is refused with the cell's own kind.
+    CHECK_FALSE(fixture.values.write_reading(head, NodeReading::raw, QStringLiteral("0x1FF")));
+    CHECK(messages.back().startsWith(QStringLiteral("Bits: out of range")));
+    CHECK(fixture.holds(address, {0xFF, 0xFF, 0xFF}));
+}
+
 TEST_CASE("a value the node's kind cannot hold never reaches the target", "[reclass][ui]")
 {
     application();

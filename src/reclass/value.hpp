@@ -40,12 +40,12 @@ namespace slopkit::reclass
         bool                       label {};
     };
 
-    // The display text split into runs: the node's own bytes as the first, one
-    // reading run for a hex32/hex64 cell's float, integer and raw bits.
+    // The display text split into runs: the node's own bytes as the first, then
+    // one reading run holding the readings the kind draws beside them.
     [[nodiscard]] std::vector<ValuePart>
     format_node_value_parts(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
 
-    // The three readings a hex32/hex64 cell draws beside its bytes.
+    // The readings a hex cell draws beside its bytes.
     enum class NodeReading
     {
         floating,
@@ -53,16 +53,19 @@ namespace slopkit::reclass
         raw,
     };
 
-    // The readings a hex cell draws, in the order the hints field draws them;
-    // empty for every other kind.
+    // The readings a hex cell draws, in the order the hints field draws them:
+    // the float a `hex32`/`hex64` cell can spell, then the signed integer and the
+    // raw bits every hex size draws; empty for every other kind.
     [[nodiscard]] std::vector<NodeReading> node_readings(NodeKind kind);
 
     // One reading's text, as the hints field draws it between that reading's own
-    // parentheses: `0.000`, `-1`, `0xFFFFFFFF` (or `NaN`, `Inf`, `-Inf`).
+    // parentheses: `0.000`, `-1`, `0xFFFFFFFF` (or `NaN`, `Inf`, `-Inf`); empty
+    // when the bytes do not cover the kind or the kind draws no such reading.
     [[nodiscard]] std::string format_node_reading(NodeReading reading, NodeKind kind, std::span<const std::byte> bytes);
 
-    // Every reading of a hex32/hex64 cell, each in its own parentheses, one space
-    // apart: `(0.000) (42) (0x2A)`; empty for every other kind.
+    // Every reading of a hex cell, each in its own parentheses, one space apart:
+    // `(0.000) (42) (0x2A)` for a `hex32`/`hex64` cell, `(42) (0x2A)` for a
+    // `hex8`/`hex16` one; empty for every other kind.
     [[nodiscard]] std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes);
 
     // One reading read back in the base that reading is drawn in, so the text
@@ -71,14 +74,15 @@ namespace slopkit::reclass
     // run or `0x`, and the float a decimal float or the drawn `NaN`/`Inf`/`-Inf`.
     // `hex` reads a bare digit run of the integer reading as hex too, and is not
     // the node's own toggle, which governs the value cell alone. A reading of a
-    // kind that draws none, a value the node cannot hold and a text that is not a
-    // number are refused with the reason.
+    // kind that draws none, a reading the kind is without - a small hex cell's
+    // float - a value the node cannot hold and a text that is not a number are
+    // refused with the reason.
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
     parse_node_reading(NodeReading reading, NodeKind kind, std::string_view text, bool hex = false);
 
     // The same value as the grid draws it: the codec's text beside the readings
     // the reference shows next to it - an integer's parenthesised hex
-    // alternative, a hex node's float and integer readings, a pointer's target.
+    // alternative, a hex node's readings, a pointer's target.
     [[nodiscard]] std::string
     format_node_value_display(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
 

@@ -769,17 +769,21 @@ The cell's text and the text a write parses are deliberately two functions:
 address a hex node's bytes would point at when they land in a module — while the
 editor and the parser keep `format_node_value`'s single value, so what the user
 types is what the write reads back. A hex node's own readings are the one part of
-that text a write does read back: `node_readings` names the three a `hex32`/`hex64`
-cell draws, `format_node_reading` spells one — the float at three decimals or the
-`NaN`/`Inf`/`-Inf` its bytes hold, the sign-extended integer, and the raw bits
-behind a `0x` — and `format_node_readings` wraps each in its own parentheses one
-space apart, always all three, so a zero cell reads `(0.000) (0) (0x0)` and the
-reference's `#####` is gone. `parse_node_reading` reads one typed reading back in
-the base that reading is drawn in, never in the node's own `Hex` toggle's, and
-the value model hands the grid one `HintRun` per reading whose editor commits
-through `write_reading()`, which parses that one reading and writes the node's
-whole bytes. `reading_datatype` names a reading after the kind that spells it,
-which the view shows on its hover over that run.
+that text a write does read back: `node_readings` names the readings a hex cell
+draws — the three a `hex32`/`hex64` cell spells, the two a `hex8`/`hex16` cell
+does (the sign-extended integer and the raw bits, since its width has no float
+kind to spell: `(127) (0x7F)`) — `format_node_reading` spells one, the float at
+three decimals or the `NaN`/`Inf`/`-Inf` its bytes hold, the sign-extended
+integer, and the raw bits behind a `0x`, and `format_node_readings` wraps each in
+its own parentheses one space apart, always every reading the kind draws, so a
+zero cell reads `(0.000) (0) (0x0)` and the reference's `#####` is gone.
+`parse_node_reading` reads one typed reading back in the base that reading is
+drawn in, never in the node's own `Hex` toggle's, and refuses a reading the kind
+draws none of — a `hex8`/`hex16` cell's float. The value model hands the grid one
+`HintRun` per reading whose editor commits through `write_reading()`, which
+parses that one reading and writes the node's whole bytes. `reading_datatype`
+names a reading after the kind that spells it, which the view shows on its hover
+over that run.
 `Dissect` guesses a better kind for a `hexN` node from its live bytes — a
 plausible pointer first, then a small `f32`, a small `i32` and an aligned `f64` —
 and re-types the node with the padding rule that keeps the following offsets

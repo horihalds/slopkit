@@ -305,13 +305,18 @@ TEST_CASE("the hint and pointer fields draw the row's readings and its address",
     Fixture fixture;
     fixture.resolve();
 
-    // A hex32 node after Player's own fields, its bytes naming the module.
+    // A hex32 node after Player's own fields, its bytes naming the module, and a
+    // hex16 and a hex8 behind it, which spell a signed value and the raw bits
+    // but no float.
     Class& player = fixture.project.classes()[0];
     player.nodes.push_back(node_of(fixture.project, NodeKind::hex32, "raw"));
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex16, "word"));
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex8, "head"));
     fixture.structure.set_project(fixture.project);
     fixture.structure.set_class(0);
 
     fixture.stage(fixture.player_address(), {1, 2, 0, 0, 0, 0x00, 0x00, 0x40, 0x00});
+    fixture.stage(fixture.player_address() + 9, {0x34, 0x12, 0x7F});
     fixture.pass();
 
     const slopkit::ui::Theme& theme   = slopkit::ui::active_theme();
@@ -331,6 +336,15 @@ TEST_CASE("the hint and pointer fields draw the row's readings and its address",
     CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::hints), Qt::DisplayRole).toString().isEmpty());
     CHECK(fixture.proxy->data(fixture.index(0, ReclassStructureModel::pointer), Qt::DisplayRole).toString().isEmpty());
     CHECK(fixture.proxy->data(fixture.index(2, ReclassStructureModel::type), Qt::DisplayRole).toString().isEmpty());
+
+    // The small hex cells draw their two readings in the same field, in the same
+    // colour.
+    const QModelIndex word = fixture.index(3, ReclassStructureModel::hints);
+    const QModelIndex head = fixture.index(4, ReclassStructureModel::hints);
+    CHECK(fixture.proxy->data(word, Qt::DisplayRole).toString() == QStringLiteral("(4660) (0x1234)"));
+    CHECK(fixture.proxy->data(word, Qt::ForegroundRole).value<QColor>() == theme.datatype_readout);
+    CHECK(fixture.proxy->data(head, Qt::DisplayRole).toString() == QStringLiteral("(127) (0x7F)"));
+    CHECK(fixture.proxy->data(head, Qt::ForegroundRole).value<QColor>() == theme.datatype_readout);
 }
 
 TEST_CASE("a reading that moved repaints the hint field", "[reclass][ui]")

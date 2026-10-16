@@ -561,17 +561,43 @@ namespace slopkit::reclass
 
     std::vector<NodeReading> node_readings(NodeKind kind)
     {
-        if (kind != NodeKind::hex32 && kind != NodeKind::hex64)
+        // A `hex8`/`hex16` cell has no float kind to spell its bytes as, so it
+        // draws the integer and the raw bits alone.
+        switch (kind)
         {
-            return {};
+        case NodeKind::hex8:
+        case NodeKind::hex16:
+            return {NodeReading::integer, NodeReading::raw};
+        case NodeKind::hex32:
+        case NodeKind::hex64:
+            return {NodeReading::floating, NodeReading::integer, NodeReading::raw};
+        default:
+            break;
         }
-        return {NodeReading::floating, NodeReading::integer, NodeReading::raw};
+        return {};
+    }
+
+    namespace
+    {
+        // Whether a kind draws that reading at all: a `hex8`/`hex16` cell draws
+        // no float one, and no kind outside the hex sizes draws any.
+        bool draws_reading(NodeKind kind, NodeReading reading)
+        {
+            for (const NodeReading drawn : node_readings(kind))
+            {
+                if (drawn == reading)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     std::string format_node_reading(NodeReading reading, NodeKind kind, std::span<const std::byte> bytes)
     {
         const std::size_t size = kind_size(kind);
-        if (size == 0 || bytes.size() < size || node_readings(kind).empty())
+        if (size == 0 || bytes.size() < size || !draws_reading(kind, reading))
         {
             return {};
         }
@@ -620,7 +646,6 @@ namespace slopkit::reclass
         {
         case NodeKind::hex8:
         case NodeKind::hex16:
-            return hex_byte_parts(bytes, size);
         case NodeKind::hex32:
         case NodeKind::hex64:
         {
@@ -894,6 +919,10 @@ namespace slopkit::reclass
         if (size == 0 || node_readings(kind).empty())
         {
             return std::unexpected(std::string {"this kind draws no readings"});
+        }
+        if (!draws_reading(kind, reading))
+        {
+            return std::unexpected(std::format("{} draws no such reading", describe(kind)));
         }
 
         switch (reading)

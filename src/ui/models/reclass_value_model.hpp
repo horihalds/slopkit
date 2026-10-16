@@ -78,17 +78,17 @@ namespace slopkit::ui::models
         // runs' concatenation.
         [[nodiscard]] std::vector<reclass::ValuePart> value_parts(const ReclassRow& row) const;
 
-        // One bracketed reading of a hex32/hex64 cell as the hints field draws
-        // it, in the order the field draws them.
+        // One bracketed reading of a hex cell as the hints field draws it, in the
+        // order the field draws them.
         struct HintRun
         {
             reclass::NodeReading reading;
             QString              text;
         };
 
-        // The readings a hex32/hex64 cell draws beside its bytes, as the hints
-        // field shows them: one run per reading, each already in its own
-        // parentheses. Empty for every other kind.
+        // The readings a hex cell draws beside its bytes, as the hints field
+        // shows them: one run per reading, each already in its own parentheses.
+        // Empty for every other kind.
         [[nodiscard]] std::vector<HintRun> hint_parts(const ReclassRow& row) const;
         [[nodiscard]] QString              hint_text(const ReclassRow& row) const;
 
@@ -157,9 +157,9 @@ namespace slopkit::ui::models
         [[nodiscard]] bool reading_editable(const ReclassRow& row, reclass::NodeReading reading) const;
 
         // The data type one of this node's readings shows, in the wording the
-        // Type cell gives the kind that spells it: `Float`/`Double`, `Int32`/
-        // `Int64` and the node's own `Hex32`/`Hex64`. Empty when the row draws
-        // no such reading.
+        // Type cell gives the kind that spells it: `Float`/`Double`, `Int8`..`Int64`
+        // and the node's own `Hex8`..`Hex64`. Empty when the row draws no such
+        // reading.
         [[nodiscard]] QString reading_datatype(const ReclassRow& row, reclass::NodeReading reading) const;
 
         // Parses the text for the node's kind and writes one value into the

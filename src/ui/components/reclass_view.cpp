@@ -174,17 +174,27 @@ namespace slopkit::ui::components
             return any_moved ? active_theme().warning : primary;
         }
 
-        // The widest readings a hex cell can draw: a float at three decimals, the
-        // signed value's longest text and the raw bits at full width, each in its
-        // own parentheses. A reading only arrives on a live pass, when the columns
-        // are not measured again, so the hints field is sized for this and never
-        // for what the node currently reads.
+        // The widest readings a hex cell can draw: the float at three decimals,
+        // the signed value's longest text and the raw bits at full width, each in
+        // its own parentheses - the two a `hex8`/`hex16` cell draws without a
+        // float, since it has none to spell. A reading only arrives on a live pass,
+        // when the columns are not measured again, so the hints field is sized for
+        // this and never for what the node currently reads.
         QString widest_readings(reclass::NodeKind kind)
         {
-            const bool wide = reclass::kind_size(kind) == 8;
-            return QStringLiteral("(-999998.999) (%1) (%2)")
-                .arg(wide ? QStringLiteral("-9223372036854775808") : QStringLiteral("-2147483648"),
-                     wide ? QStringLiteral("0xFFFFFFFFFFFFFFFF") : QStringLiteral("0xFFFFFFFF"));
+            switch (reclass::kind_size(kind))
+            {
+            case 1:
+                return QStringLiteral("(-128) (0xFF)");
+            case 2:
+                return QStringLiteral("(-32768) (0xFFFF)");
+            case 4:
+                return QStringLiteral("(-999998.999) (-2147483648) (0xFFFFFFFF)");
+            case 8:
+                return QStringLiteral("(-999998.999) (-9223372036854775808) (0xFFFFFFFFFFFFFFFF)");
+            default:
+                return {};
+            }
         }
 
         // The widest pointer field a row can draw: the value model's longest
@@ -442,7 +452,7 @@ namespace slopkit::ui::components
 
             const reclass::NodeKind kind      = node->kind();
             int                     hints_run = 0;
-            if (!entry.row->hidden && reclass::is_hex_kind(kind) && reclass::kind_size(kind) >= 4)
+            if (!entry.row->hidden && reclass::is_hex_kind(kind))
             {
                 hints_run   = mono.horizontalAdvance(widest_readings(kind));
                 hints_width = std::max(hints_width, hints_run);
