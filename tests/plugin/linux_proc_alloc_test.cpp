@@ -138,8 +138,8 @@ namespace
 
         struct Shared
         {
-            std::uint64_t marker {};
-            std::uint64_t counter {};
+            volatile std::uint64_t marker {};
+            volatile std::uint64_t counter {};
         };
 
         DecoyChild()
@@ -271,8 +271,8 @@ namespace
     public:
         struct Shared
         {
-            std::uint64_t counter {};
-            std::uint32_t word {};
+            volatile std::uint64_t counter {};
+            volatile std::uint32_t word {};
         };
 
         static constexpr std::uint64_t kInSyscall = 1;
@@ -372,9 +372,9 @@ namespace
 
         struct Shared
         {
-            std::uint64_t parked[kWorkers] {};
-            std::uint64_t progress {};
-            std::uint32_t word {};
+            volatile std::uint64_t parked[kWorkers] {};
+            volatile std::uint64_t progress {};
+            volatile std::uint32_t word {};
         };
 
         IdleWorkersChild()
@@ -488,9 +488,9 @@ namespace
 
         struct Shared
         {
-            std::uint64_t in_call {};
-            std::uint64_t progress {};
-            std::uint32_t word {};
+            volatile std::uint64_t in_call {};
+            volatile std::uint64_t progress {};
+            volatile std::uint32_t word {};
         };
 
         SleepingLeaderChild()
@@ -578,9 +578,9 @@ namespace
     public:
         struct Shared
         {
-            std::uint64_t ready {};
-            std::uint64_t handled {};
-            std::uint64_t counter {};
+            volatile std::uint64_t ready {};
+            volatile std::uint64_t handled {};
+            volatile std::uint64_t counter {};
         };
 
         SignalledChild()
@@ -662,8 +662,8 @@ namespace
     public:
         struct Shared
         {
-            std::uint64_t handled {};
-            std::uint64_t counter {};
+            volatile std::uint64_t handled {};
+            volatile std::uint64_t counter {};
         };
 
         static constexpr int kWorkers = 8;
@@ -760,12 +760,12 @@ namespace
 
         struct Shared
         {
-            std::uint64_t counter {};
-            std::uint64_t address {};
-            std::uint64_t size {};
-            std::uint64_t wanted {};
-            std::uint64_t done {};
-            std::uint64_t canary {};
+            volatile std::uint64_t counter {};
+            volatile std::uint64_t address {};
+            volatile std::uint64_t size {};
+            volatile std::uint64_t wanted {};
+            volatile std::uint64_t done {};
+            volatile std::uint64_t canary {};
         };
 
         ReclaimChild()

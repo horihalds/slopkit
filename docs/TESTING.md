@@ -85,6 +85,14 @@ stay: the regressions in [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md), the
 hazards [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes, and the hidden
 wine-agent cases below.
 
+A forked test child that must be seen making progress — a spinning counter, a
+request/answer flag — publishes it through a `volatile` (or atomic) access, not
+a plain field. At `-O2` an endless loop whose only side effect is a plain store
+may lose that store, so the parent never sees movement and times out. The
+symptom is `the target stopped making progress` or an `await_counter` that never
+answers, reproducibly and with no product code involved;
+`tests/plugin/linux_proc_alloc_test.cpp` carries the idiom.
+
 ## The Wine resident agent
 
 The agent is a cross-compiled PE, so it is part of the normal build: the
