@@ -78,6 +78,19 @@ namespace slopkit::reclass
             return out;
         }
 
+        // A note as one line, so a comment the user wrote over several lines
+        // cannot break the declaration it is written after.
+        std::string one_line(std::string_view text)
+        {
+            std::string out;
+            out.reserve(text.size());
+            for (const char c : text)
+            {
+                out.push_back(c == '\n' || c == '\r' ? ' ' : c);
+            }
+            return out;
+        }
+
         // The name a class or an enum is emitted under: the user's when it reads
         // as an identifier, the `fallback` otherwise.
         std::string type_name(std::string_view name, std::string_view fallback)
@@ -437,12 +450,13 @@ namespace slopkit::reclass
             }
 
             // The lines for `nodes` in declaration order, `offsets` holding each
-            // node's offset inside the structure. `comments` is off for the
-            // members of a union, which share the union's one address.
+            // node's offset inside the structure. `annotated` is off for a
+            // union's variant members: they share the union's one address and a
+            // union takes a default member initializer for at most one of them.
             void write_members(std::span<const NodePtr>     nodes,
                                std::span<const std::size_t> offsets,
                                std::string_view             indent,
-                               bool                         comments)
+                               bool                         annotated)
             {
                 std::vector<std::string> used;
                 std::size_t              index = 0;
@@ -450,11 +464,11 @@ namespace slopkit::reclass
                 {
                     if (is_hex_kind(nodes[index]->kind()))
                     {
-                        index = write_hex_run(nodes, offsets, index, indent, comments, used);
+                        index = write_hex_run(nodes, offsets, index, indent, annotated, used);
                         continue;
                     }
 
-                    write_member(*nodes[index], offsets[index], indent, comments, used);
+                    write_member(*nodes[index], offsets[index], indent, annotated, used);
                     ++index;
                 }
             }
@@ -487,14 +501,42 @@ namespace slopkit::reclass
             }
 
         private:
-            void write_line(std::string_view indent, bool comments, std::size_t offset, std::string_view declaration)
+            // One member: its declaration and the value initializer every field
+            // carries, then — when the member is annotated — the node's comment
+            // and its byte offset as a trailing line comment.
+            void write_line(std::string_view indent,
+                            bool             annotated,
+                            std::size_t      offset,
+                            std::string_view declaration,
+                            std::string_view comment)
             {
                 out_ += indent;
-                if (comments)
-                {
-                    out_ += std::format("/* {:#04x} */ ", offset);
-                }
                 out_ += declaration;
+                if (!annotated)
+                {
+                    out_ += ";\n";
+                    return;
+                }
+
+                out_ += " {}; // ";
+                if (!comment.empty())
+                {
+                    out_ += one_line(comment);
+                    out_ += ' ';
+                }
+                out_ += std::format("[{:#04x}]\n", offset);
+            }
+
+            // A line that is only a comment, standing where a member the header
+            // cannot declare would be; an annotated one still carries its offset.
+            void write_comment(std::string_view indent, bool annotated, std::size_t offset, std::string_view text)
+            {
+                out_ += indent;
+                out_ += std::format("// {}", text);
+                if (annotated)
+                {
+                    out_ += std::format(" [{:#04x}]", offset);
+                }
                 out_ += '\n';
             }
 
@@ -505,7 +547,7 @@ namespace slopkit::reclass
                                       std::span<const std::size_t> offsets,
                                       std::size_t                  start,
                                       std::string_view             indent,
-                                      bool                         comments,
+                                      bool                         annotated,
                                       std::vector<std::string>&    used)
             {
                 std::size_t bytes = 0;
@@ -529,26 +571,28 @@ namespace slopkit::reclass
                 {
                     write_line(
                         indent,
-                        comments,
+                        annotated,
                         offsets[start],
-                        std::format("{} {};",
+                        std::format("{} {}",
                                     scalar_type(nodes[start]->kind()),
-                                    member_name(*nodes[start], offsets[start], name_stem(nodes[start]->kind()), used)));
+                                    member_name(*nodes[start], offsets[start], name_stem(nodes[start]->kind()), used)),
+                        nodes[start]->comment);
                     return end;
                 }
 
                 write_line(
                     indent,
-                    comments,
+                    annotated,
                     offsets[start],
-                    std::format("uint8_t {}[{:#x}];", member_name(*nodes[start], offsets[start], "pad", used), bytes));
+                    std::format("uint8_t {}[{:#x}]", member_name(*nodes[start], offsets[start], "pad", used), bytes),
+                    nodes[start]->comment);
                 return end;
             }
 
             void write_member(const Node&               node,
                               std::size_t               offset,
                               std::string_view          indent,
-                              bool                      comments,
+                              bool                      annotated,
                               std::vector<std::string>& used)
             {
                 const std::string name = member_name(node, offset, name_stem(node.kind()), used);
@@ -557,10 +601,10 @@ namespace slopkit::reclass
                 switch (node.kind())
                 {
                 case NodeKind::array:
-                    write_array(node, name, offset, indent, comments);
+                    write_array(node, name, offset, indent, annotated);
                     return;
                 case NodeKind::union_value:
-                    write_union(node, name, offset, indent, comments);
+                    write_union(node, name, offset, indent, annotated);
                     return;
                 case NodeKind::bitfield:
                 {
@@ -569,13 +613,14 @@ namespace slopkit::reclass
                     const std::size_t width = integer_width(bytes);
                     if (width != bytes)
                     {
-                        write_raw_bytes(size, name, offset, indent, comments);
+                        write_raw_bytes(size, name, offset, indent, annotated, node.comment);
                         return;
                     }
                     write_line(indent,
-                               comments,
+                               annotated,
                                offset,
-                               std::format("{} {} : {};", integer_type(width, field.signed_bits), name, field.bits));
+                               std::format("{} {} : {}", integer_type(width, field.signed_bits), name, field.bits),
+                               node.comment);
                     return;
                 }
                 case NodeKind::utf8_text:
@@ -583,19 +628,20 @@ namespace slopkit::reclass
                 case NodeKind::utf32_text:
                     write_line(
                         indent,
-                        comments,
+                        annotated,
                         offset,
-                        std::format("{} {}[{:#x}];", character_type(node.kind()), name, node.extent().value_or(size)));
+                        std::format("{} {}[{:#x}]", character_type(node.kind()), name, node.extent().value_or(size)),
+                        node.comment);
                     return;
                 case NodeKind::enum_node:
                 {
                     const std::string type = named_type(node);
                     if (type.empty())
                     {
-                        write_raw_bytes(size, name, offset, indent, comments);
+                        write_raw_bytes(size, name, offset, indent, annotated, node.comment);
                         return;
                     }
-                    write_line(indent, comments, offset, std::format("{} {};", type, name));
+                    write_line(indent, annotated, offset, std::format("{} {}", type, name), node.comment);
                     return;
                 }
                 case NodeKind::class_instance:
@@ -603,10 +649,14 @@ namespace slopkit::reclass
                     const Class* target = inlined_class(project_, node);
                     if (target == nullptr)
                     {
-                        write_skipped(node, name, offset, indent, comments);
+                        write_skipped(node, name, offset, indent, annotated);
                         return;
                     }
-                    write_line(indent, comments, offset, std::format("{} {};", emitted_name(classes_, target), name));
+                    write_line(indent,
+                               annotated,
+                               offset,
+                               std::format("{} {}", emitted_name(classes_, target), name),
+                               node.comment);
                     return;
                 }
                 case NodeKind::class_wrapper_array:
@@ -614,21 +664,26 @@ namespace slopkit::reclass
                     const Class* target = inlined_class(project_, node);
                     if (target == nullptr)
                     {
-                        write_skipped(node, name, offset, indent, comments);
+                        write_skipped(node, name, offset, indent, annotated);
                         return;
                     }
                     write_line(
                         indent,
-                        comments,
+                        annotated,
                         offset,
-                        std::format("{} {}[{:#x}];", emitted_name(classes_, target), name, node.extent().value_or(1)));
+                        std::format("{} {}[{:#x}]", emitted_name(classes_, target), name, node.extent().value_or(1)),
+                        node.comment);
                     return;
                 }
                 // Both are one pointer wide: the instance array holds the
                 // address of the classes it counts, not the classes themselves.
                 case NodeKind::class_pointer:
                 case NodeKind::class_instance_array:
-                    write_line(indent, comments, offset, std::format("{} {};", pointer_type(node.class_name), name));
+                    write_line(indent,
+                               annotated,
+                               offset,
+                               std::format("{} {}", pointer_type(node.class_name), name),
+                               node.comment);
                     return;
                 default:
                     break;
@@ -642,33 +697,38 @@ namespace slopkit::reclass
                 const std::string_view type = scalar_type(node.kind());
                 if (type.empty() || size != kind_size(node.kind()))
                 {
-                    write_raw_bytes(size, name, offset, indent, comments);
+                    write_raw_bytes(size, name, offset, indent, annotated, node.comment);
                     return;
                 }
 
-                write_line(indent, comments, offset, std::format("{} {};", type, name));
+                write_line(indent, annotated, offset, std::format("{} {}", type, name), node.comment);
             }
 
             // An array of one repeated element maps to `T name[count]`; an array
             // whose elements differ is written as the bytes it holds.
             void write_array(
-                const Node& node, std::string_view name, std::size_t offset, std::string_view indent, bool comments)
+                const Node& node, std::string_view name, std::size_t offset, std::string_view indent, bool annotated)
             {
                 const std::span<const NodePtr> elements = node.children();
                 std::string                    element  = element_type(elements);
                 if (element.empty())
                 {
-                    write_raw_bytes(node_size(project_, node), name, offset, indent, comments);
+                    write_raw_bytes(node_size(project_, node), name, offset, indent, annotated, node.comment);
                     return;
                 }
 
-                write_line(indent, comments, offset, std::format("{} {}[{:#x}];", element, name, elements.size()));
+                write_line(indent,
+                           annotated,
+                           offset,
+                           std::format("{} {}[{:#x}]", element, name, elements.size()),
+                           node.comment);
             }
 
-            // A union's members all sit at the union's own address, so they are
-            // written without an offset of their own.
+            // A union's variant members all sit at the union's own address, so
+            // they carry neither an offset nor an initializer of their own; the
+            // named member the union is declared as carries both.
             void write_union(
-                const Node& node, std::string_view name, std::size_t offset, std::string_view indent, bool comments)
+                const Node& node, std::string_view name, std::size_t offset, std::string_view indent, bool annotated)
             {
                 const std::span<const NodePtr> children = node.children();
                 const std::vector<std::size_t> offsets(children.size(), 0);
@@ -683,32 +743,50 @@ namespace slopkit::reclass
                 // The members sit one level deeper than the member the union
                 // itself is declared as.
                 out_ += indent;
-                if (comments)
-                {
-                    out_ += std::format("/* {:#04x} */ ", offset);
-                }
-                out_ += std::format("union\n{}{{\n", indent);
+                out_ += "union\n";
+                out_ += indent;
+                out_ += "{\n";
                 out_ += inner.text();
-                out_ += std::format("{}}} {};\n", indent, name);
+                out_ += indent;
+                out_ += std::format("}} {}", name);
+                if (annotated)
+                {
+                    out_ += " {}; // ";
+                    if (!node.comment.empty())
+                    {
+                        out_ += one_line(node.comment);
+                        out_ += ' ';
+                    }
+                    out_ += std::format("[{:#04x}]", offset);
+                }
+                else
+                {
+                    out_ += ';';
+                }
+                out_ += '\n';
             }
 
             // A member the header cannot declare keeps its line, so the reader
             // sees which member the project held there.
             void write_skipped(
-                const Node& node, std::string_view name, std::size_t offset, std::string_view indent, bool comments)
+                const Node& node, std::string_view name, std::size_t offset, std::string_view indent, bool annotated)
             {
-                write_line(indent,
-                           comments,
-                           offset,
-                           std::format("// {}: class {} has no size of its own", name, node.class_name));
+                write_comment(indent,
+                              annotated,
+                              offset,
+                              std::format("{}: class {} has no size of its own", name, node.class_name));
             }
 
-            void write_raw_bytes(
-                std::size_t size, std::string_view name, std::size_t offset, std::string_view indent, bool comments)
+            void write_raw_bytes(std::size_t      size,
+                                 std::string_view name,
+                                 std::size_t      offset,
+                                 std::string_view indent,
+                                 bool             annotated,
+                                 std::string_view comment)
             {
                 if (size > 0)
                 {
-                    write_line(indent, comments, offset, std::format("uint8_t {}[{:#x}];", name, size));
+                    write_line(indent, annotated, offset, std::format("uint8_t {}[{:#x}]", name, size), comment);
                 }
             }
 

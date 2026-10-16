@@ -68,24 +68,41 @@ TEST_CASE("the scalar kinds keep their platform type", "[reclass][cpp_header]")
     const std::string text = cpp_header(project);
 
     CHECK(text.contains("struct Holder  // 0x4c bytes\n{\n"
-                        "    /* 0x00 */ int8_t a;\n"
-                        "    /* 0x01 */ int16_t b;\n"
-                        "    /* 0x03 */ int32_t c;\n"
-                        "    /* 0x07 */ int64_t d;\n"
-                        "    /* 0x0f */ uint8_t e;\n"
-                        "    /* 0x10 */ uint16_t f;\n"
-                        "    /* 0x12 */ uint32_t g;\n"
-                        "    /* 0x16 */ uint64_t h;\n"
-                        "    /* 0x1e */ float i;\n"
-                        "    /* 0x22 */ double j;\n"
-                        "    /* 0x2a */ bool k;\n"
-                        "    /* 0x2b */ char l;\n"
-                        "    /* 0x2c */ ptrdiff_t m;\n"
-                        "    /* 0x34 */ size_t n;\n"
-                        "    /* 0x3c */ void* o;\n"
-                        "    /* 0x44 */ void* p;\n"
+                        "    int8_t a {}; // [0x00]\n"
+                        "    int16_t b {}; // [0x01]\n"
+                        "    int32_t c {}; // [0x03]\n"
+                        "    int64_t d {}; // [0x07]\n"
+                        "    uint8_t e {}; // [0x0f]\n"
+                        "    uint16_t f {}; // [0x10]\n"
+                        "    uint32_t g {}; // [0x12]\n"
+                        "    uint64_t h {}; // [0x16]\n"
+                        "    float i {}; // [0x1e]\n"
+                        "    double j {}; // [0x22]\n"
+                        "    bool k {}; // [0x2a]\n"
+                        "    char l {}; // [0x2b]\n"
+                        "    ptrdiff_t m {}; // [0x2c]\n"
+                        "    size_t n {}; // [0x34]\n"
+                        "    void* o {}; // [0x3c]\n"
+                        "    void* p {}; // [0x44]\n"
                         "};\n"));
     CHECK(text.contains("static_assert(sizeof(Holder) == 0x4c, \"Holder\");"));
+}
+
+TEST_CASE("a member comment precedes its offset", "[reclass][cpp_header]")
+{
+    Project project;
+    auto&   holder = first_class(project);
+
+    holder.nodes.push_back(node_of(project, NodeKind::int32, "head"));
+
+    NodePtr health  = node_of(project, NodeKind::int32, "health");
+    health->comment = "the health";
+    holder.nodes.push_back(std::move(health));
+
+    const std::string text = cpp_header(project);
+
+    CHECK(text.contains("    int32_t head {}; // [0x00]\n"
+                        "    int32_t health {}; // the health [0x04]\n"));
 }
 
 TEST_CASE("the geometry kinds keep their helper type", "[reclass][cpp_header]")
@@ -102,12 +119,12 @@ TEST_CASE("the geometry kinds keep their helper type", "[reclass][cpp_header]")
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ Vector2 a;\n"
-                        "    /* 0x08 */ Vector3 b;\n"
-                        "    /* 0x14 */ Vector4 c;\n"
-                        "    /* 0x24 */ Matrix3x3 d;\n"
-                        "    /* 0x48 */ Matrix3x4 e;\n"
-                        "    /* 0x78 */ Matrix4x4 f;\n"));
+    CHECK(text.contains("    Vector2 a {}; // [0x00]\n"
+                        "    Vector3 b {}; // [0x08]\n"
+                        "    Vector4 c {}; // [0x14]\n"
+                        "    Matrix3x3 d {}; // [0x24]\n"
+                        "    Matrix3x4 e {}; // [0x48]\n"
+                        "    Matrix4x4 f {}; // [0x78]\n"));
     CHECK(text.contains("static_assert(sizeof(Shapes) == 0xb8, \"Shapes\");"));
 }
 
@@ -134,12 +151,12 @@ TEST_CASE("a text member carries its encoding", "[reclass][cpp_header]")
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ char u8[0x8];\n"
-                        "    /* 0x08 */ char16_t u16[0x4];\n"
-                        "    /* 0x10 */ char32_t u32[0x2];\n"
-                        "    /* 0x18 */ char* p8;\n"
-                        "    /* 0x20 */ char16_t* p16;\n"
-                        "    /* 0x28 */ char32_t* p32;\n"));
+    CHECK(text.contains("    char u8[0x8] {}; // [0x00]\n"
+                        "    char16_t u16[0x4] {}; // [0x08]\n"
+                        "    char32_t u32[0x2] {}; // [0x10]\n"
+                        "    char* p8 {}; // [0x18]\n"
+                        "    char16_t* p16 {}; // [0x20]\n"
+                        "    char32_t* p32 {}; // [0x28]\n"));
     CHECK(text.contains("static_assert(sizeof(Messages) == 0x30, \"Messages\");"));
 }
 
@@ -155,8 +172,8 @@ TEST_CASE("an array member brackets its element count", "[reclass][cpp_header]")
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ int32_t items[0x4];\n"
-                        "    /* 0x10 */ int32_t tail;\n"));
+    CHECK(text.contains("    int32_t items[0x4] {}; // [0x00]\n"
+                        "    int32_t tail {}; // [0x10]\n"));
     CHECK(text.contains("static_assert(sizeof(Lists) == 0x14, \"Lists\");"));
 }
 
@@ -175,7 +192,7 @@ TEST_CASE("an array whose elements differ falls back to its bytes", "[reclass][c
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ uint8_t mixed[0x9];\n"));
+    CHECK(text.contains("    uint8_t mixed[0x9] {}; // [0x00]\n"));
     CHECK(text.contains("static_assert(sizeof(Mixed) == 0x9, \"Mixed\");"));
 }
 
@@ -191,12 +208,12 @@ TEST_CASE("a union member lists its members at the union's address", "[reclass][
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ union\n"
+    CHECK(text.contains("    union\n"
                         "    {\n"
                         "        int32_t int32_0x0;\n"
                         "        float float_0x0;\n"
-                        "    } value;\n"
-                        "    /* 0x04 */ int8_t tail;\n"));
+                        "    } value {}; // [0x00]\n"
+                        "    int8_t tail {}; // [0x04]\n"));
     CHECK(text.contains("static_assert(sizeof(Bag) == 0x5, \"Bag\");"));
 }
 
@@ -218,9 +235,9 @@ TEST_CASE("a bit field keeps its width and its signedness", "[reclass][cpp_heade
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ uint8_t a : 3;\n"
-                        "    /* 0x01 */ int16_t b : 12;\n"
-                        "    /* 0x03 */ int8_t c;\n"));
+    CHECK(text.contains("    uint8_t a : 3 {}; // [0x00]\n"
+                        "    int16_t b : 12 {}; // [0x01]\n"
+                        "    int8_t c {}; // [0x03]\n"));
     CHECK(text.contains("static_assert(sizeof(Flags) == 0x4, \"Flags\");"));
 }
 
@@ -235,8 +252,8 @@ TEST_CASE("an enum member names the project enum", "[reclass][cpp_header]")
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ Kind kind;\n"
-                        "    /* 0x04 */ uint32_t gone;\n"));
+    CHECK(text.contains("    Kind kind {}; // [0x00]\n"
+                        "    uint32_t gone {}; // [0x04]\n"));
 }
 
 TEST_CASE("class references keep the class name", "[reclass][cpp_header]")
@@ -265,13 +282,13 @@ TEST_CASE("class references keep the class name", "[reclass][cpp_header]")
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ Point origin;\n"
-                        "    /* 0x08 */ Point* ptr;\n"
-                        "    /* 0x10 */ void* unknown;\n"
-                        "    /* 0x18 */ // missing: class Missing has no size of its own\n"
-                        "    /* 0x18 */ Point* points;\n"
-                        "    /* 0x20 */ Point row[0x2];\n"
-                        "    /* 0x30 */ int32_t tail;\n"));
+    CHECK(text.contains("    Point origin {}; // [0x00]\n"
+                        "    Point* ptr {}; // [0x08]\n"
+                        "    void* unknown {}; // [0x10]\n"
+                        "    // missing: class Missing has no size of its own [0x18]\n"
+                        "    Point* points {}; // [0x18]\n"
+                        "    Point row[0x2] {}; // [0x20]\n"
+                        "    int32_t tail {}; // [0x30]\n"));
     CHECK(text.contains("static_assert(sizeof(Holder) == 0x34, \"Holder\");"));
 }
 
@@ -288,9 +305,9 @@ TEST_CASE("a run of hex members collapses into one byte block", "[reclass][cpp_h
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ int32_t head;\n"
-                        "    /* 0x04 */ uint8_t pad_0x4[0x4];\n"
-                        "    /* 0x08 */ int32_t tail;\n"));
+    CHECK(text.contains("    int32_t head {}; // [0x00]\n"
+                        "    uint8_t pad_0x4[0x4] {}; // [0x04]\n"
+                        "    int32_t tail {}; // [0x08]\n"));
     CHECK(text.contains("static_assert(sizeof(Holder) == 0xc, \"Holder\");"));
 }
 
@@ -304,7 +321,7 @@ TEST_CASE("a named hex member lends its name to the run", "[reclass][cpp_header]
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ uint8_t reserved[0x5];\n"));
+    CHECK(text.contains("    uint8_t reserved[0x5] {}; // [0x00]\n"));
 }
 
 TEST_CASE("a lone hex member keeps its own width", "[reclass][cpp_header]")
@@ -320,11 +337,11 @@ TEST_CASE("a lone hex member keeps its own width", "[reclass][cpp_header]")
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ int32_t head;\n"
-                        "    /* 0x04 */ uint16_t unknown_0x4;\n"
-                        "    /* 0x06 */ int32_t middle;\n"
-                        "    /* 0x0a */ uint64_t raw;\n"
-                        "    /* 0x12 */ int32_t tail;\n"));
+    CHECK(text.contains("    int32_t head {}; // [0x00]\n"
+                        "    uint16_t unknown_0x4 {}; // [0x04]\n"
+                        "    int32_t middle {}; // [0x06]\n"
+                        "    uint64_t raw {}; // [0x0a]\n"
+                        "    int32_t tail {}; // [0x12]\n"));
 }
 
 TEST_CASE("an unnamed member is named after its kind and offset", "[reclass][cpp_header]")
@@ -338,9 +355,9 @@ TEST_CASE("an unnamed member is named after its kind and offset", "[reclass][cpp
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ int32_t int32_0x0;\n"
-                        "    /* 0x04 */ Vector3 vector3_0x4;\n"
-                        "    /* 0x10 */ void* pointer_0x10;\n"));
+    CHECK(text.contains("    int32_t int32_0x0 {}; // [0x00]\n"
+                        "    Vector3 vector3_0x4 {}; // [0x04]\n"
+                        "    void* pointer_0x10 {}; // [0x10]\n"));
 }
 
 TEST_CASE("a name that is not an identifier is sanitized and deduplicated", "[reclass][cpp_header]")
@@ -355,10 +372,10 @@ TEST_CASE("a name that is not an identifier is sanitized and deduplicated", "[re
 
     const std::string text = cpp_header(project);
 
-    CHECK(text.contains("    /* 0x00 */ int32_t same_name;\n"
-                        "    /* 0x04 */ int32_t same_name_1;\n"
-                        "    /* 0x08 */ int32_t class_;\n"
-                        "    /* 0x0c */ int32_t _1st;\n"));
+    CHECK(text.contains("    int32_t same_name {}; // [0x00]\n"
+                        "    int32_t same_name_1 {}; // [0x04]\n"
+                        "    int32_t class_ {}; // [0x08]\n"
+                        "    int32_t _1st {}; // [0x0c]\n"));
 }
 
 TEST_CASE("a class name that is not an identifier falls back to its index", "[reclass][cpp_header]")
@@ -458,15 +475,15 @@ TEST_CASE("the whole document keeps the guard around the enums and the classes",
                          "#pragma pack(push, 1)\n"
                          "struct Point  // 0x8 bytes\n"
                          "{\n"
-                         "    /* 0x00 */ int32_t x;\n"
-                         "    /* 0x04 */ int32_t y;\n"
+                         "    int32_t x {}; // [0x00]\n"
+                         "    int32_t y {}; // [0x04]\n"
                          "};\n"
                          "static_assert(sizeof(Point) == 0x8, \"Point\");\n"
                          "\n"
                          "struct Holder  // 0x10 bytes\n"
                          "{\n"
-                         "    /* 0x00 */ Point origin;\n"
-                         "    /* 0x08 */ Point* ptr;\n"
+                         "    Point origin {}; // [0x00]\n"
+                         "    Point* ptr {}; // [0x08]\n"
                          "};\n"
                          "static_assert(sizeof(Holder) == 0x10, \"Holder\");\n"
                          "\n"
@@ -504,8 +521,8 @@ TEST_CASE("a class that contains itself does not stop the export", "[reclass][cp
 
     CHECK(text.contains("struct Self  // the class contains itself by value\n"
                         "{\n"
-                        "    /* 0x00 */ // self: class Self has no size of its own\n"
-                        "    /* 0x00 */ int32_t x;\n"
+                        "    // self: class Self has no size of its own [0x00]\n"
+                        "    int32_t x {}; // [0x00]\n"
                         "};\n"));
     CHECK_FALSE(text.contains("static_assert(sizeof(Self)"));
     CHECK(text.ends_with("#endif  // SLOPKIT_RECLASS_HEADER\n"));

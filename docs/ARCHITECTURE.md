@@ -813,7 +813,9 @@ node as the width-correct `char16_t`/`char32_t` rather than the four-byte
 forward-declared and then defined in the order that leaves an embedded class
 complete before the class that holds it. Because the offsets are the unaligned
 ones `layout_class` derives, the definitions sit inside `#pragma pack(push, 1)`
-and each class carries a `static_assert(sizeof(X) == 0x…)`; a member keeps its
+and each class carries a `static_assert(sizeof(X) == 0x…)`; every member is
+value-initialized and, on its line, followed by the node's comment and its own
+bracketed `[0x…]` offset, while a member keeps its
 user name only when that name reads as an identifier (otherwise it is sanitized,
 and a keyword gains a trailing `_`), an unnamed member is named
 `<kind>_0x<offset>`, collisions take a `_1` suffix, and a run of bytes no member
