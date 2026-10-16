@@ -465,7 +465,7 @@ TEST_CASE("the leading fields are sized to the class and the row flows after the
     CHECK(rect(raw, ReclassStructureModel::value).left() == slot_left);
 
     // Widening a row's own value shifts that row's note with it, while the range
-    // the scrollbar spans stays what the class measured.
+    // the scrollbar spans stays put: the widest drawn row did not move.
     const int range       = view.horizontalScrollBar()->maximum();
     const int note_before = rect(tag, ReclassStructureModel::comment).left();
     fixture.put(fixture.player_address(), {0x7F, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01, 0x40, 0, 0, 0, 0, 0, 0x42});
@@ -1878,10 +1878,11 @@ TEST_CASE("a value keeps its measured width and the pane scrolls instead", "[rec
     CHECK(view.horizontalScrollBar()->maximum() == 0);
     CHECK(view.hover_full_text(view.cell_rect(value_cell).value().center()).isEmpty());
 
-    // A pane too narrow for the row no longer takes the value field down: the
-    // field keeps the width the class measured and the pane scrolls instead.
+    // A pane too narrow for the row the class draws no longer takes the value
+    // field down: the field keeps the width the class measured and the pane
+    // scrolls instead.
     const QRect value_rect = view.cell_rect(value_cell).value();
-    view.resize(900, 200);
+    view.resize(400, 200);
     QCoreApplication::processEvents();
 
     CHECK(view.cell_rect(fixture.cell(fixture.node_id(2), ReclassStructureModel::value)).value() == value_rect);
@@ -1896,9 +1897,11 @@ TEST_CASE("the pane scrolls the whole row without narrowing a field", "[reclass]
 
     Fixture fixture;
 
-    // A hex64 row makes the class wider than the pane.
+    // A hex64 row whose note runs past the pane makes the class wider than the
+    // pane.
     Class& player = fixture.project.classes()[1];
     player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    player.nodes[2]->comment = "the raw bytes of the record, padded to a full eight-byte word";
     fixture.structure.set_project(fixture.project);
     fixture.structure.set_class(1);
 
@@ -1974,6 +1977,7 @@ TEST_CASE("scrolling the pane closes the inline editor", "[reclass][ui][view]")
     Fixture fixture;
     Class&  player = fixture.project.classes()[1];
     player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    player.nodes[2]->comment = "the raw bytes of the record, padded to a full eight-byte word";
     fixture.structure.set_project(fixture.project);
     fixture.structure.set_class(1);
 
@@ -2203,6 +2207,7 @@ TEST_CASE("a field measured for its own text draws that text whole", "[reclass][
     player.nodes[0]->comment = "the score";
     player.nodes.push_back(node_of(fixture.project, NodeKind::float32, "ratio"));
     player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    player.nodes[2]->comment          = "the raw bytes of the record";
     slopkit::reclass::NodePtr skipped = node_of(fixture.project, NodeKind::uint8, "skipped");
     skipped->hidden                   = true;
     player.nodes.push_back(std::move(skipped));
@@ -2266,7 +2271,7 @@ TEST_CASE("a field measured for its own text draws that text whole", "[reclass][
     // A pane narrower than the class, but still wide enough to hold the row's
     // tail: the bar is up, and a flowed run keeps its measured width, so the
     // same row still reads in full.
-    view.resize(rect(score, ReclassStructureModel::comment).right() + 60, 200);
+    view.resize(rect(score, ReclassStructureModel::comment).right() + 30, 200);
     QCoreApplication::processEvents();
     REQUIRE(view.horizontalScrollBar()->maximum() > 0);
     REQUIRE(rect(score, ReclassStructureModel::comment).right() < view.viewport()->width());
@@ -2298,4 +2303,460 @@ TEST_CASE("a field measured for its own text draws that text whole", "[reclass][
     const auto clipped = ink_span(live, ratio_run);
     REQUIRE(clipped.has_value());
     CHECK(clipped->second - ratio_run.left() + 1 < mono.horizontalAdvance(ratio_full));
+}
+
+TEST_CASE("an unread class shows no bar while its drawn text fits", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    // A hex64 row reserves the room a full dump, its readings and a pointer can
+    // need, but with nothing read it draws only its name and its own value
+    // placeholder: the pane holds all of that, so there is no bar to give.
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const std::size_t raw = fixture.node_id(2);
+
+    // Nothing the class draws is cut off, so the bar is down and the row sits at
+    // its home offset.
+    CHECK(view.horizontalScrollBar()->maximum() == 0);
+    CHECK(view.horizontalScrollBar()->value() == 0);
+    CHECK(view.cell_rect(fixture.cell(raw, ReclassStructureModel::value)).value().right() < view.viewport()->width());
+}
+
+TEST_CASE("the bar's span ends behind the widest drawn field", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    player.nodes[2]->comment = "the raw bytes of the record, padded to a full eight-byte word";
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QScrollBar* bar = view.horizontalScrollBar();
+    REQUIRE(bar->maximum() > 0);
+
+    // The widest field of all the class draws, wherever it sits.
+    const auto widest_cell = [&]
+    {
+        QModelIndex widest;
+        int         right = -1;
+        for (const auto& node : player.nodes)
+        {
+            for (int column = 0; column < ReclassStructureModel::column_count; ++column)
+            {
+                const QModelIndex cell = fixture.cell(node->id, column);
+                if (!cell.isValid())
+                {
+                    continue;
+                }
+                const QRect cell_rect = view.cell_rect(cell).value();
+                if (cell_rect.width() > 0 && cell_rect.right() > right)
+                {
+                    right  = cell_rect.right();
+                    widest = cell;
+                }
+            }
+        }
+        return widest;
+    };
+
+    const QModelIndex widest = widest_cell();
+    REQUIRE(widest.isValid());
+    const int home_left = view.cell_rect(widest).value().left();
+
+    bar->setValue(bar->maximum());
+    QCoreApplication::processEvents();
+
+    // The span ends just behind that field: at full scroll its right edge leaves
+    // the pane's own margin behind it, and nothing of the class is beyond reach.
+    constexpr int kPaneMargin = 4;
+    CHECK(view.cell_rect(widest).value().right() == view.viewport()->width() - 1 - kPaneMargin);
+    CHECK(view.cell_rect(widest).value().left() < home_left);
+    CHECK(bar->value() == bar->maximum());
+}
+
+TEST_CASE("a reading that arrives becomes reachable through the bar", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    // A live pass repaints through the proxy's cache, which the dialog wires up
+    // the same way.
+    QObject::connect(
+        &fixture.values, &ReclassValueModel::valuesChanged, &fixture.proxy, &ReclassProxyModel::refresh_values);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(700, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    // The widest cell of all the class draws, wherever it sits.
+    const auto widest_cell = [&]
+    {
+        QModelIndex widest;
+        int         right = -1;
+        for (const auto& node : player.nodes)
+        {
+            for (int column = 0; column < ReclassStructureModel::column_count; ++column)
+            {
+                const QModelIndex cell = fixture.cell(node->id, column);
+                if (!cell.isValid())
+                {
+                    continue;
+                }
+                const QRect cell_rect = view.cell_rect(cell).value();
+                if (cell_rect.width() > 0 && cell_rect.right() > right)
+                {
+                    right  = cell_rect.right();
+                    widest = cell;
+                }
+            }
+        }
+        return widest;
+    };
+
+    // Nothing read yet: the class draws little and the bar is down.
+    CHECK(view.horizontalScrollBar()->maximum() == 0);
+
+    // A reading arrives on the widest row and widens the text the class draws.
+    fixture.resolve();
+    fixture.put(fixture.player_address() + 9, {0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    QScrollBar* bar = view.horizontalScrollBar();
+    REQUIRE(bar->maximum() > 0);
+    constexpr int kPaneMargin = 4;
+
+    const QModelIndex wide      = widest_cell();
+    const int         wide_home = view.cell_rect(wide).value().left();
+    const int         span      = bar->maximum();
+
+    // The range grew to cover exactly the new text.
+    CHECK(span == view.cell_rect(wide).value().right() + 1 + kPaneMargin - view.viewport()->width());
+
+    // A pass that moves only another row's value re-measures the same span and
+    // leaves every cell where it was.
+    fixture.put(fixture.player_address(), {0x7F});
+    fixture.pass();
+    QCoreApplication::processEvents();
+    CHECK(bar->maximum() == span);
+    CHECK(view.cell_rect(wide).value().left() == wide_home);
+
+    // Scrolled to the end, the widest cell is inside the pane and the bar cannot
+    // go further.
+    bar->setValue(bar->maximum());
+    QCoreApplication::processEvents();
+    CHECK(view.cell_rect(wide).value().right() == view.viewport()->width() - 1 - kPaneMargin);
+    CHECK(view.cell_rect(wide).value().left() < wide_home);
+    CHECK(bar->value() == bar->maximum());
+}
+
+TEST_CASE("a live value wider than its cap does not stretch the bar", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.clear();
+    player.nodes.push_back(node_of(fixture.project, NodeKind::float32, "ratio"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    // A live pass repaints through the proxy's cache, which the dialog wires up
+    // the same way.
+    QObject::connect(
+        &fixture.values, &ReclassValueModel::valuesChanged, &fixture.proxy, &ReclassProxyModel::refresh_values);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(1000, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    // The widest cell of all the class draws, wherever it sits.
+    const auto widest_cell = [&]
+    {
+        QModelIndex widest;
+        int         right = -1;
+        for (int column = 0; column < ReclassStructureModel::column_count; ++column)
+        {
+            const QModelIndex cell = fixture.cell(fixture.node_id(0), column);
+            if (!cell.isValid())
+            {
+                continue;
+            }
+            const QRect cell_rect = view.cell_rect(cell).value();
+            if (cell_rect.width() > 0 && cell_rect.right() > right)
+            {
+                right  = cell_rect.right();
+                widest = cell;
+            }
+        }
+        return widest;
+    };
+
+    // The value starts out readable and short, so the bar has a span to keep
+    // once the live pass widens it.
+    fixture.resolve();
+    fixture.put(fixture.player_address(), {0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QRect baseline = view.cell_rect(widest_cell()).value();
+    view.resize(baseline.right() - 20, 200);
+    QCoreApplication::processEvents();
+
+    QScrollBar* bar = view.horizontalScrollBar();
+    REQUIRE(bar->maximum() > 0);
+    constexpr int kPaneMargin = 4;
+
+    // A live value wider than the cap its kind was measured for arrives, elides
+    // and keeps its whole text in the tooltip.
+    fixture.put(fixture.player_address(), {0xFF, 0xFF, 0x7F, 0x7F});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const QModelIndex  ratio_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::value);
+    const QRect        ratio_run  = view.cell_rect(ratio_cell).value();
+    const QString      ratio_full = view.cell_text(ratio_cell);
+    const QFontMetrics mono(slopkit::ui::mono_font());
+    REQUIRE(mono.horizontalAdvance(ratio_full) > ratio_run.width());
+    CHECK(view.hover_full_text(ratio_run.center()) == ratio_full);
+
+    // The bar's span is measured from the run's capped width, not from the wider
+    // text it holds: it ends exactly behind the widest cell the class draws, so
+    // the live text cannot stretch the pane past the cap.
+    const QRect widest = view.cell_rect(widest_cell()).value();
+    CHECK(bar->maximum() == widest.right() + 1 + kPaneMargin - view.viewport()->width());
+}
+
+TEST_CASE("a span-only range change keeps the inline editor open", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.clear();
+    player.nodes.push_back(node_of(fixture.project, NodeKind::float32, "ratio"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    // A live pass repaints through the proxy's cache, which the dialog wires up
+    // the same way.
+    QObject::connect(
+        &fixture.values, &ReclassValueModel::valuesChanged, &fixture.proxy, &ReclassProxyModel::refresh_values);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(1000, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    // A short reading first, so the bar is up with a range the wider reading can
+    // still grow.
+    fixture.resolve();
+    fixture.put(fixture.player_address(), {0x00, 0x00, 0x00, 0x00});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const auto widest_right = [&]
+    {
+        int right = 0;
+        for (int column = 0; column < ReclassStructureModel::column_count; ++column)
+        {
+            const QModelIndex cell = fixture.cell(fixture.node_id(0), column);
+            if (cell.isValid())
+            {
+                const int cell_right = view.cell_rect(cell).value().right();
+                if (cell_right > right)
+                {
+                    right = cell_right;
+                }
+            }
+        }
+        return right;
+    };
+
+    view.resize(widest_right() - 20, 200);
+    QCoreApplication::processEvents();
+
+    QScrollBar* bar = view.horizontalScrollBar();
+    REQUIRE(bar->maximum() > 0);
+
+    // The editor opens on the name cell, which the wider reading will not move.
+    const QModelIndex name_cell = fixture.cell(fixture.node_id(0), ReclassStructureModel::name);
+    const QRect       name_home = view.cell_rect(name_cell).value();
+    double_click(view, name_cell);
+    QCoreApplication::processEvents();
+    REQUIRE(view.editor() != nullptr);
+    REQUIRE(view.editor()->isVisible());
+
+    // A wider live reading grows the widest drawn row, so the range moves while
+    // the fields stay where they are: the editor stays open rather than closing
+    // over a cell that did not move.
+    const int span = bar->maximum();
+    fixture.put(fixture.player_address(), {0xFF, 0xFF, 0x7F, 0x7F});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    CHECK(bar->maximum() > span);
+    CHECK(view.cell_rect(name_cell).value() == name_home);
+    CHECK(view.editor() != nullptr);
+    CHECK(view.editor()->isVisible());
+}
+
+TEST_CASE("the bar follows the pane across the exact fit", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(2400, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const std::size_t raw     = fixture.node_id(2);
+    const auto        left_of = [&](int column)
+    {
+        return view.cell_rect(fixture.cell(raw, column)).value().left();
+    };
+    const int offset_home  = left_of(ReclassStructureModel::offset);
+    const int address_home = left_of(ReclassStructureModel::address);
+    const int ascii_home   = left_of(ReclassStructureModel::ascii);
+
+    QScrollBar* bar = view.horizontalScrollBar();
+
+    // A pane wider than every drawn row: no bar, nothing scrolled.
+    CHECK(bar->maximum() == 0);
+    CHECK(bar->value() == 0);
+
+    // Narrowed past the widest drawn row, the bar comes up and the aligned
+    // fields keep their x.
+    view.resize(500, 200);
+    QCoreApplication::processEvents();
+    REQUIRE(bar->maximum() > 0);
+    CHECK(bar->value() == 0);
+    CHECK(left_of(ReclassStructureModel::offset) == offset_home);
+    CHECK(left_of(ReclassStructureModel::address) == address_home);
+    CHECK(left_of(ReclassStructureModel::ascii) == ascii_home);
+
+    // Narrower still, the range grows; the offset stays inside it.
+    const int range = bar->maximum();
+    view.resize(400, 200);
+    QCoreApplication::processEvents();
+    CHECK(bar->maximum() > range);
+    CHECK(bar->value() <= bar->maximum());
+
+    // Scrolled to the end and then widened so the span shrinks, the offset is
+    // clamped under the new maximum instead of left past the end.
+    bar->setValue(bar->maximum());
+    QCoreApplication::processEvents();
+    REQUIRE(bar->value() > 0);
+    view.resize(495, 200);
+    QCoreApplication::processEvents();
+    CHECK(bar->maximum() > 0);
+    CHECK(bar->value() <= bar->maximum());
+
+    // Widened past the widest drawn row, the bar hides, the offset returns home
+    // and the aligned fields are back where they started.
+    view.resize(2400, 200);
+    QCoreApplication::processEvents();
+    CHECK(bar->maximum() == 0);
+    CHECK(bar->value() == 0);
+    CHECK(left_of(ReclassStructureModel::offset) == offset_home);
+    CHECK(left_of(ReclassStructureModel::address) == address_home);
+    CHECK(left_of(ReclassStructureModel::ascii) == ascii_home);
+}
+
+TEST_CASE("a class of hidden rows reserves only its placeholder", "[reclass][ui][view]")
+{
+    application();
+
+    using slopkit::ui::models::ReclassStructureModel;
+
+    Fixture fixture;
+    Class&  player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    // Every row collapses, so each draws only the `...` placeholder.
+    for (const auto& node : player.nodes)
+    {
+        node->hidden = true;
+    }
+    fixture.structure.rebuild();
+    QCoreApplication::processEvents();
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(500, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    const std::size_t raw = fixture.node_id(2);
+
+    // A collapsed row paints the `...` placeholder in its name field.
+    CHECK(view.cell_rect(fixture.cell(raw, ReclassStructureModel::name)).value().width()
+          == QFontMetrics(slopkit::ui::ui_font()).horizontalAdvance(QStringLiteral("...")));
+    // No room is spared for the fields a collapsed row does not draw.
+    CHECK(view.cell_rect(fixture.cell(raw, ReclassStructureModel::value)).value().width() == 0);
+    CHECK(view.cell_rect(fixture.cell(raw, ReclassStructureModel::hints)).value().width() == 0);
+    CHECK(view.cell_rect(fixture.cell(raw, ReclassStructureModel::pointer)).value().width() == 0);
+    CHECK(view.horizontalScrollBar()->maximum() == 0);
+}
+
+TEST_CASE("no class selected shows no bar", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+    // An index past the project's classes leaves the model with nothing to draw,
+    // which is what the window shows before a class is chosen.
+    fixture.structure.set_class(99);
+    QCoreApplication::processEvents();
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(500, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    CHECK(view.row_count() == 0);
+    CHECK(view.horizontalScrollBar()->maximum() == 0);
 }

@@ -174,10 +174,15 @@ namespace slopkit::ui::components
         // the pointer field from the kinds rather than from what a live pass
         // happens to read. A structure change, never a live pass.
         void update_content_widths();
+        // Re-measures the horizontal bar's span from the text the flattened rows
+        // draw now: the widest row's last drawn field. A structure change and a
+        // moved live cell both re-run this.
+        void measure_drawn_extent();
         void update_view();
         // Places the measured columns at their on-screen x for the current pane
-        // and horizontal offset, showing the bar when the row overflows the pane;
-        // a resize, a scroll and a structure change all re-run this.
+        // and horizontal offset, showing the bar whenever the widest drawn row
+        // overflows the pane; a resize, a scroll and a structure change all
+        // re-run this.
         void update_columns();
         void flatten(const QModelIndex& parent, std::size_t depth);
         void resolve_identity();
@@ -187,6 +192,13 @@ namespace slopkit::ui::components
         [[nodiscard]] int                       visual_index_of(std::size_t node_id) const;
         [[nodiscard]] QModelIndex               index_for(const models::ReclassRow& row, int column) const;
         [[nodiscard]] std::optional<Hit>        hit_test(const QPoint& position) const;
+        // The width one flowing field draws now: its display text's advance in
+        // the face the paint uses, capped by the column's measured width; nothing
+        // for an empty field. layout_row() and the bar's span share it.
+        [[nodiscard]] int                       flowed_field_width(const VisualRow& entry, int column) const;
+        // The end of the last field a row draws, measured from the head of the
+        // content slot; nothing when the row draws no flowing field.
+        [[nodiscard]] int                       drawn_flow_end(const VisualRow& entry) const;
         // Lays a row's nine fields out for the row's own text: the three aligned
         // fields on their measured columns, then type, name, value, comment,
         // hints and pointer flowing one behind the other from the head of the
@@ -259,9 +271,12 @@ namespace slopkit::ui::components
         // clipped at; update_content_widths() owns every entry.
         int                    column_width_[models::ReclassStructureModel::column_count] {};
         // The head of the row's content slot, right after the ascii field, and
-        // the widest row's end - the horizontal scrollbar's range.
+        // the widest row's last drawn field - the horizontal scrollbar's span.
         int                    content_x_ {};
         int                    content_width_ {};
+        // Whether the horizontal bar is up, so a range change can tell a
+        // visibility flip from a span-only change.
+        bool                   bar_up_ {};
 
         std::vector<std::size_t> selected_;
         std::size_t              current_ {};

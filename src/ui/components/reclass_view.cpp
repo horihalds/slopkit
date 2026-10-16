@@ -245,28 +245,33 @@ namespace slopkit::ui::components
         update_rows();
 
         // The bar's offset is part of the columns' on-screen x, so a scroll
-        // re-places the row; the bar appearing or hiding resizes the viewport,
-        // which changes how many rows fit. The editor and the tooltip were
-        // pinned to the cells as they stood, so both close.
-        const auto follow_scroll = [this]
-        {
-            QToolTip::hideText();
-            close_editor();
-            update_view();
-        };
+        // re-places every row: the editor and the tooltip were pinned to the
+        // cells as they stood, so both close and the view repaints.
         connect(horizontalScrollBar(),
                 &QScrollBar::valueChanged,
                 this,
-                [follow_scroll](int)
+                [this](int)
                 {
-                    follow_scroll();
+                    QToolTip::hideText();
+                    close_editor();
+                    update_view();
                 });
+        // A range change can move only the bar's span - a live pass widens the
+        // widest drawn row while the fields stay put - so the editor closes only
+        // when the bar appears or hides, which reflows the viewport and moves the
+        // cells under it; an offset clamped by the new range emits valueChanged,
+        // which has already closed it.
         connect(horizontalScrollBar(),
                 &QScrollBar::rangeChanged,
                 this,
-                [follow_scroll](int, int)
+                [this](int, int)
                 {
-                    follow_scroll();
+                    QToolTip::hideText();
+                    if (bar_up_ != (horizontalScrollBar()->maximum() > 0))
+                    {
+                        close_editor();
+                    }
+                    update_view();
                 });
 
         // The model resets itself when a pass rebuilds the tree, so the rows are
@@ -282,7 +287,7 @@ namespace slopkit::ui::components
                     using models::ReclassStructureModel;
                     // A rename, a note and an address that resolves or retargets
                     // are the changes that can move a column boundary; a value
-                    // pass never re-measures.
+                    // pass never re-measures a column.
                     const bool retyped = top_left.column() == bottom_right.column()
                                       && (top_left.column() == ReclassStructureModel::name
                                           || top_left.column() == ReclassStructureModel::comment);
@@ -303,6 +308,15 @@ namespace slopkit::ui::components
                         {
                             update_columns();
                         }
+                    }
+                    else if (top_left.column() <= ReclassStructureModel::pointer
+                             && bottom_right.column() >= ReclassStructureModel::value)
+                    {
+                        // A reading that arrives is text the class draws now, so
+                        // re-measure only the bar's span - never a column, which
+                        // would move the fields the pass just left alone.
+                        measure_drawn_extent();
+                        update_columns();
                     }
                     viewport()->update();
                 });
@@ -372,8 +386,8 @@ namespace slopkit::ui::components
         // draws, so a list of small nodes does not sit in a grid sized for the
         // widest kind in the language. Each flowing field keeps a cap - the
         // widest text the class draws, or the widest its kinds can draw - which
-        // the run is clipped at and which the scrollbar's end is measured from.
-        // This follows the flattened rows, which a live pass never rebuilds.
+        // the run is clipped at. This follows the flattened rows, which a live
+        // pass never rebuilds.
         int address_width = 0;
         int offset_width  = 0;
         int ascii_width   = 0;
@@ -383,7 +397,6 @@ namespace slopkit::ui::components
         int comment_width = 0;
         int hints_width   = 0;
         int pointer_width = 0;
-        int content       = 0;
         for (const VisualRow& entry : rows_)
         {
             const reclass::Node* node = entry.row->node;
@@ -440,33 +453,6 @@ namespace slopkit::ui::components
                 pointer_run   = mono.horizontalAdvance(widest_pointer());
                 pointer_width = std::max(pointer_width, pointer_run);
             }
-
-            // The widest row's end, measured from the head of the content slot:
-            // every field that row draws at the width it can reach. A live pass
-            // is bounded by the same widths, so the range never has to grow.
-            int        end = kTextPadding + static_cast<int>(entry.depth) * kIndentStep
-                           + (expandable(*entry.row) ? kTriangleWidth : 0);
-            const auto add = [&end](int width, int column)
-            {
-                if (width > 0)
-                {
-                    end += width + gap_after(column);
-                }
-            };
-            if (!entry.row->hidden)
-            {
-                add(prose.horizontalAdvance(type_text), ReclassStructureModel::type);
-                add(prose.horizontalAdvance(name_text), ReclassStructureModel::name);
-                add(value_run, ReclassStructureModel::value);
-                add(prose.horizontalAdvance(comment_text), ReclassStructureModel::comment);
-                add(hints_run, ReclassStructureModel::hints);
-                add(pointer_run, ReclassStructureModel::pointer);
-            }
-            else
-            {
-                add(prose.horizontalAdvance(name_text), ReclassStructureModel::name);
-            }
-            content = std::max(content, end + kMargin);
         }
 
         column_width_[ReclassStructureModel::address] = address_width;
@@ -478,7 +464,65 @@ namespace slopkit::ui::components
         column_width_[ReclassStructureModel::comment] = comment_width;
         column_width_[ReclassStructureModel::hints]   = hints_width;
         column_width_[ReclassStructureModel::pointer] = pointer_width;
-        content_width_                                = content;
+        measure_drawn_extent();
+    }
+
+    void ReClassView::measure_drawn_extent()
+    {
+        int widest = 0;
+        for (const VisualRow& entry : rows_)
+        {
+            widest = std::max(widest, drawn_flow_end(entry));
+        }
+        content_width_ = widest;
+    }
+
+    int ReClassView::flowed_field_width(const VisualRow& entry, int column) const
+    {
+        using models::ReclassStructureModel;
+
+        const QString text = entry.row->hidden
+                               ? (column == ReclassStructureModel::name ? QStringLiteral("...") : QString())
+                               : model_->data(index_for(*entry.row, column), Qt::DisplayRole).toString();
+        if (text.isEmpty())
+        {
+            return 0;
+        }
+        const bool         prose_column = column == ReclassStructureModel::type || column == ReclassStructureModel::name
+                                       || column == ReclassStructureModel::comment;
+        const QFontMetrics metrics      = prose_column ? QFontMetrics(ui_font()) : QFontMetrics(mono_font());
+        return std::min(metrics.horizontalAdvance(text), column_width_[column]);
+    }
+
+    int ReClassView::drawn_flow_end(const VisualRow& entry) const
+    {
+        using models::ReclassStructureModel;
+
+        int end =
+            kTextPadding + static_cast<int>(entry.depth) * kIndentStep + (expandable(*entry.row) ? kTriangleWidth : 0);
+        int  last_column = -1;
+        bool drawn       = false;
+        for (const int column : {ReclassStructureModel::type,
+                                 ReclassStructureModel::name,
+                                 ReclassStructureModel::value,
+                                 ReclassStructureModel::comment,
+                                 ReclassStructureModel::hints,
+                                 ReclassStructureModel::pointer})
+        {
+            const int width = flowed_field_width(entry, column);
+            if (width <= 0)
+            {
+                continue;
+            }
+            if (drawn)
+            {
+                end += gap_after(last_column);
+            }
+            end += width;
+            last_column = column;
+            drawn       = true;
+        }
+        return drawn ? end : 0;
     }
 
     void ReClassView::update_columns()
@@ -486,15 +530,19 @@ namespace slopkit::ui::components
         using models::ReclassStructureModel;
 
         // The three aligned fields sit on their measured columns and every row's
-        // own content starts right behind them; the bar spans exactly the width
-        // the widest row overflows the pane, and its offset is baked into the
+        // own content starts right behind them; the bar is up only while the
+        // widest drawn row overflows the pane, and its offset is baked into the
         // fields' x, so every paint, hit-test and editor path keeps reading view
         // coordinates.
-        const int content = kMargin + column_width_[ReclassStructureModel::offset]
-                          + column_width_[ReclassStructureModel::address] + column_width_[ReclassStructureModel::ascii]
-                          + content_width_;
-        QScrollBar* bar   = horizontalScrollBar();
-        bar->setRange(0, std::max(0, content - viewport()->width()));
+        const int   head = kMargin + column_width_[ReclassStructureModel::offset]
+                         + column_width_[ReclassStructureModel::address] + column_width_[ReclassStructureModel::ascii];
+        const int   end  = head + content_width_;
+        const int   pane = viewport()->width();
+        QScrollBar* bar  = horizontalScrollBar();
+        bar->setRange(0, end > pane ? end + kMargin - pane : 0);
+        // Recorded after the range change, so the rangeChanged handler can tell
+        // the bar appearing or hiding from a span-only move.
+        bar_up_ = bar->maximum() > 0;
         bar->setPageStep(viewport()->width());
         bar->setSingleStep(std::max(1, row_height_));
 
@@ -967,26 +1015,6 @@ namespace slopkit::ui::components
     {
         using models::ReclassStructureModel;
 
-        const QFontMetrics mono(mono_font());
-        const QFontMetrics prose(ui_font());
-        // The width a field's text takes in the face the paint uses for it: the
-        // type, name and comment fields are the ones the model leaves to the
-        // grid's UI font.
-        const auto         advance = [&mono, &prose](int column, const QString& text)
-        {
-            const bool prose_column = column == ReclassStructureModel::type || column == ReclassStructureModel::name
-                                   || column == ReclassStructureModel::comment;
-            return (prose_column ? prose : mono).horizontalAdvance(text);
-        };
-        const auto text_for = [this, &entry](int column)
-        {
-            if (entry.row->hidden)
-            {
-                return column == models::ReclassStructureModel::name ? QStringLiteral("...") : QString();
-            }
-            return model_->data(index_for(*entry.row, column), Qt::DisplayRole).toString();
-        };
-
         const int y = kMargin + (row_index - first_row_) * row_height_;
         RowLayout layout;
         layout.rects[ReclassStructureModel::offset] = QRect(
@@ -1008,13 +1036,12 @@ namespace slopkit::ui::components
                                  ReclassStructureModel::hints,
                                  ReclassStructureModel::pointer})
         {
-            const QString text = text_for(column);
-            if (text.isEmpty())
+            const int width = flowed_field_width(entry, column);
+            if (width <= 0)
             {
                 layout.rects[column] = QRect(x, y, 0, row_height_);
                 continue;
             }
-            const int width      = std::min(advance(column, text), column_width_[column]);
             layout.rects[column] = QRect(x, y, width, row_height_);
             x += width + gap_after(column);
         }

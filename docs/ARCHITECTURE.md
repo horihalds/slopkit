@@ -814,6 +814,6 @@ grid. The grid itself is `ui::components::ReClassView`, a
 custom-painted scroll area: it flattens the model's rows in pre-order, keeps the
 cursor and the selection as node ids so a rebuild never drops them, paints no
 header band, and caps each field at the width the class draws - so nothing can
-resize or drag anything and a pass that moves a value never walks the rows to
-re-lay-out the view. The field widths and the grid's horizontal scrollbar are the
-layout rule of [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md).
+resize or drag anything - while a pass that moves a value re-measures only the
+span the bar covers, never a column. The field widths and the grid's horizontal
+scrollbar are the layout rule of [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md).
