@@ -45,10 +45,36 @@ namespace slopkit::reclass
     [[nodiscard]] std::vector<ValuePart>
     format_node_value_parts(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
 
-    // The readings a hex32/hex64 cell draws beside its bytes - the float, the
-    // integer and the raw bits - without the space the value cell prefixes them
-    // with; empty for every other kind.
+    // The three readings a hex32/hex64 cell draws beside its bytes.
+    enum class NodeReading
+    {
+        floating,
+        integer,
+        raw,
+    };
+
+    // The readings a hex cell draws, in the order the hints field draws them;
+    // empty for every other kind.
+    [[nodiscard]] std::vector<NodeReading> node_readings(NodeKind kind);
+
+    // One reading's text, as the hints field draws it between that reading's own
+    // parentheses: `0.000`, `-1`, `0xFFFFFFFF` (or `NaN`, `Inf`, `-Inf`).
+    [[nodiscard]] std::string format_node_reading(NodeReading reading, NodeKind kind, std::span<const std::byte> bytes);
+
+    // Every reading of a hex32/hex64 cell, each in its own parentheses, one space
+    // apart: `(0.000) (42) (0x2A)`; empty for every other kind.
     [[nodiscard]] std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes);
+
+    // One reading read back in the base that reading is drawn in, so the text
+    // format_node_reading drew writes the same bytes back: the integer reading
+    // takes bare decimal digits or an `0x` prefix, the raw bits take a bare hex
+    // run or `0x`, and the float a decimal float or the drawn `NaN`/`Inf`/`-Inf`.
+    // `hex` reads a bare digit run of the integer reading as hex too, and is not
+    // the node's own toggle, which governs the value cell alone. A reading of a
+    // kind that draws none, a value the node cannot hold and a text that is not a
+    // number are refused with the reason.
+    [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
+    parse_node_reading(NodeReading reading, NodeKind kind, std::string_view text, bool hex = false);
 
     // The same value as the grid draws it: the codec's text beside the readings
     // the reference shows next to it - an integer's parenthesised hex

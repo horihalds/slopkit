@@ -178,6 +178,25 @@ namespace slopkit::ui::models
         return block_view(row.block).readable && node_address(row).has_value();
     }
 
+    bool ReclassValueModel::reading_editable(const ReclassRow& row, reclass::NodeReading reading) const
+    {
+        if (!attached() || row.hidden)
+        {
+            return false;
+        }
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        const std::vector<reclass::NodeReading> readings = reclass::node_readings(node->kind());
+        if (std::ranges::find(readings, reading) == readings.end())
+        {
+            return false;
+        }
+        return block_view(row.block).readable && node_address(row).has_value();
+    }
+
     bool ReclassValueModel::write_byte(const ReclassRow& row, std::size_t byte_offset, const QString& text)
     {
         const reclass::Node* node = node_of(row);
@@ -351,6 +370,108 @@ namespace slopkit::ui::models
                     emit valuesChanged();
                 }
                 emit statusChanged(tr("Value written."), false);
+            });
+        if (!submitted)
+        {
+            write_job_.reset();
+            emit statusChanged(tr("The write was refused."), true);
+            return false;
+        }
+        return true;
+    }
+
+    QString ReclassValueModel::reading_name(reclass::NodeReading reading)
+    {
+        switch (reading)
+        {
+        case reclass::NodeReading::floating:
+            return tr("Float");
+        case reclass::NodeReading::integer:
+            return tr("Integer");
+        case reclass::NodeReading::raw:
+            return tr("Bits");
+        }
+        return {};
+    }
+
+    bool ReclassValueModel::write_reading(const ReclassRow& row, reclass::NodeReading reading, const QString& text)
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        if (!attached())
+        {
+            emit statusChanged(tr("Not attached; cannot write."), true);
+            return false;
+        }
+        if (!reading_editable(row, reading))
+        {
+            emit statusChanged(tr("The %1 reading cannot be written here.").arg(reading_name(reading)), true);
+            return false;
+        }
+        if (write_job_.has_value())
+        {
+            emit statusChanged(tr("A write is already in progress."), true);
+            return false;
+        }
+
+        const std::optional<std::uint64_t> address = node_address(row);
+        if (!address.has_value())
+        {
+            emit statusChanged(tr("The node's address is unknown; cannot write."), true);
+            return false;
+        }
+        if (!block_view(row.block).readable)
+        {
+            emit statusChanged(tr("The node's block was not read; cannot write."), true);
+            return false;
+        }
+
+        const auto parsed = reclass::parse_node_reading(
+            reading, node->kind(), text.toStdString(), reading == reclass::NodeReading::raw);
+        if (!parsed)
+        {
+            emit statusChanged(tr("%1: %2").arg(reading_name(reading), to_qstring(parsed.error())), true);
+            return false;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        write_job_                  = job_id;
+
+        const std::vector<std::byte>     written   = *parsed;
+        const std::optional<CachedRange> range     = cached_range(row, 0);
+        const bool                       submitted = worker_.submit_write(
+            job_id,
+            row.node_id,
+            *address,
+            written,
+            [this, job_id, range, written](process::JobResult&& result)
+            {
+                if (write_job_ != job_id)
+                {
+                    return;
+                }
+                write_job_.reset();
+
+                if (!std::holds_alternative<process::WriteResult>(result))
+                {
+                    emit statusChanged(tr("The write did not complete."), true);
+                    return;
+                }
+                if (const auto& complete = std::get<process::WriteResult>(result); complete.error.has_value())
+                {
+                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*complete.error))),
+                                       true);
+                    return;
+                }
+                if (range.has_value())
+                {
+                    patch_cached_bytes(*range, written);
+                    emit valuesChanged();
+                }
+                emit statusChanged(tr("Reading written."), false);
             });
         if (!submitted)
         {
@@ -869,7 +990,7 @@ namespace slopkit::ui::models
         };
     }
 
-    std::vector<reclass::ValuePart> ReclassValueModel::hint_parts(const ReclassRow& row) const
+    std::vector<ReclassValueModel::HintRun> ReclassValueModel::hint_parts(const ReclassRow& row) const
     {
         if (!attached())
         {
@@ -881,19 +1002,32 @@ namespace slopkit::ui::models
             return {};
         }
 
-        const std::string readings = reclass::format_node_readings(node->kind(), node_bytes(row));
-        if (readings.empty())
+        const std::span<const std::byte> bytes = node_bytes(row);
+        std::vector<HintRun>             runs;
+        for (const reclass::NodeReading reading : reclass::node_readings(node->kind()))
         {
-            return {};
+            const std::string text = reclass::format_node_reading(reading, node->kind(), bytes);
+            if (text.empty())
+            {
+                continue;
+            }
+            runs.push_back({.reading = reading, .text = QLatin1Char('(') + to_qstring(text) + QLatin1Char(')')});
         }
-        return {
-            {"(" + readings + ")", true}
-        };
+        return runs;
     }
 
     QString ReclassValueModel::hint_text(const ReclassRow& row) const
     {
-        return joined(hint_parts(row));
+        QString text;
+        for (const HintRun& run : hint_parts(row))
+        {
+            if (!text.isEmpty())
+            {
+                text += QLatin1Char(' ');
+            }
+            text += run.text;
+        }
+        return text;
     }
 
     QString ReclassValueModel::pointer_text(const ReclassRow& row) const

@@ -44,6 +44,7 @@ namespace
     using slopkit::process::AttachedTarget;
     using slopkit::reclass::Class;
     using slopkit::reclass::NodeKind;
+    using slopkit::reclass::NodeReading;
     using slopkit::reclass::Project;
     using slopkit::test::array_of;
     using slopkit::test::attach_session;
@@ -1193,6 +1194,155 @@ TEST_CASE("the Type cell's bracketed number is edited in place", "[reclass][ui][
 
     QApplication::sendEvent(editor, &escape);
     CHECK_FALSE(editor->isVisible());
+}
+
+TEST_CASE("a hex cell's readings are edited in place one by one", "[reclass][ui][view]")
+{
+    application();
+
+    Fixture fixture;
+    // The window repaints the live fields through the proxy's cache, which the
+    // dialog wires up the same way.
+    QObject::connect(
+        &fixture.values, &ReclassValueModel::valuesChanged, &fixture.proxy, &ReclassProxyModel::refresh_values);
+
+    Class& player = fixture.project.classes()[1];
+    player.nodes.push_back(node_of(fixture.project, NodeKind::hex64, "raw"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(1);
+
+    ReClassView view {fixture.proxy, fixture.structure, fixture.values};
+    view.resize(1600, 200);
+    view.show();
+    QCoreApplication::processEvents();
+
+    QStringList messages;
+    QObject::connect(&fixture.values,
+                     &ReclassValueModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    fixture.resolve();
+    const std::uint64_t address = fixture.player_address() + 9;
+    fixture.put(address, {0x2A, 0, 0, 0, 0, 0, 0, 0});
+    fixture.pass();
+    QCoreApplication::processEvents();
+
+    const std::size_t raw  = fixture.node_id(2);
+    const auto        hint = [&fixture, raw]
+    {
+        return fixture.cell(raw, ReclassStructureModel::hints);
+    };
+    CHECK(view.cell_text(hint()) == QStringLiteral("(0.000) (42) (0x2A)"));
+
+    const auto run = [&view, &hint](NodeReading reading)
+    {
+        return view.reading_rect(hint(), reading);
+    };
+    REQUIRE(run(NodeReading::floating).has_value());
+    REQUIRE(run(NodeReading::integer).has_value());
+    REQUIRE(run(NodeReading::raw).has_value());
+
+    // Each run stands inside the field, in the order the field draws them and
+    // one space apart, so the three readings never share a box.
+    const QRect field = view.cell_rect(hint()).value();
+    CHECK(field.contains(run(NodeReading::floating)->center()));
+    CHECK(run(NodeReading::floating)->right() < run(NodeReading::integer)->left());
+    CHECK(run(NodeReading::integer)->right() < run(NodeReading::raw)->left());
+
+    QKeyEvent enter {QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier};
+    QKeyEvent escape {QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier};
+
+    // A double-click on the integer reading opens the editor over that run, with
+    // the reading's own text selected, and Return writes the node's whole bytes.
+    double_click_at(view, run(NodeReading::integer)->center());
+    QCoreApplication::processEvents();
+    QLineEdit* editor = view.editor();
+    REQUIRE(editor != nullptr);
+    CHECK(editor->isVisible());
+    CHECK(editor->text() == QStringLiteral("42"));
+    CHECK(editor->selectedText() == QStringLiteral("42"));
+    CHECK(editor->geometry().left() == run(NodeReading::integer)->left());
+    CHECK(editor->geometry().contains(run(NodeReading::integer)->center()));
+
+    editor->setText(QStringLiteral("-1"));
+    QApplication::sendEvent(editor, &enter);
+    REQUIRE(drain_until_idle(fixture.worker));
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(editor->isVisible());
+    CHECK(messages == QStringList {QStringLiteral("Reading written.")});
+    CHECK(fixture.holds(address, {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
+    // The field shows the new readings at once, without a live pass.
+    CHECK(view.cell_text(hint()) == QStringLiteral("(NaN) (-1) (0xFFFFFFFFFFFFFFFF)"));
+
+    // The raw bits take bare hex as hex and write the exact bytes back.
+    double_click_at(view, run(NodeReading::raw)->center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    CHECK(editor->text() == QStringLiteral("0xFFFFFFFFFFFFFFFF"));
+    editor->setText(QStringLiteral("2A"));
+    QApplication::sendEvent(editor, &enter);
+    REQUIRE(drain_until_idle(fixture.worker));
+    QCoreApplication::processEvents();
+    CHECK(fixture.holds(address, {0x2A, 0, 0, 0, 0, 0, 0, 0}));
+
+    // The float reading takes a decimal float.
+    double_click_at(view, run(NodeReading::floating)->center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    CHECK(editor->text() == QStringLiteral("0.000"));
+    editor->setText(QStringLiteral("2.5"));
+    QApplication::sendEvent(editor, &enter);
+    REQUIRE(drain_until_idle(fixture.worker));
+    QCoreApplication::processEvents();
+    CHECK(fixture.holds(address, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x40}));
+
+    // Escape discards what was typed and writes nothing.
+    double_click_at(view, run(NodeReading::integer)->center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("99"));
+    QApplication::sendEvent(editor, &escape);
+    CHECK_FALSE(editor->isVisible());
+    CHECK(fixture.holds(address, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x40}));
+
+    // A typo is refused with the reading's name, and the editor stays open with
+    // the text selected.
+    messages.clear();
+    double_click_at(view, run(NodeReading::integer)->center());
+    QCoreApplication::processEvents();
+    REQUIRE(editor->isVisible());
+    editor->setText(QStringLiteral("twelve"));
+    QApplication::sendEvent(editor, &enter);
+    QCoreApplication::processEvents();
+    CHECK(editor->isVisible());
+    CHECK(editor->selectedText() == QStringLiteral("twelve"));
+    CHECK(messages == QStringList {QStringLiteral("Integer: malformed number")});
+    CHECK(fixture.holds(address, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x40}));
+    QApplication::sendEvent(editor, &escape);
+
+    // A hints field that elides its text puts no run at a fixed place, so a
+    // double-click on it offers no reading editor.
+    fixture.put(address, {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xEF, 0x7F});
+    fixture.pass();
+    QCoreApplication::processEvents();
+    CHECK_FALSE(view.reading_rect(hint(), NodeReading::integer).has_value());
+    double_click_at(view, view.cell_rect(hint()).value().center());
+    QCoreApplication::processEvents();
+    CHECK_FALSE(editor->isVisible());
+
+    // Nor does a row with no target attached.
+    fixture.put(address, {0x2A, 0, 0, 0, 0, 0, 0, 0});
+    fixture.pass();
+    QCoreApplication::processEvents();
+    REQUIRE(run(NodeReading::raw).has_value());
+    fixture.target.clear();
+    fixture.pass();
+    QCoreApplication::processEvents();
+    CHECK_FALSE(view.reading_rect(hint(), NodeReading::raw).has_value());
 }
 
 TEST_CASE("a Type cell without a bracketed number keeps its own rules", "[reclass][ui][view]")

@@ -765,11 +765,20 @@ open editor would hand up to its parent is taken in the view's own filter, where
 dialog would otherwise press its default button.
 The cell's text and the text a write parses are deliberately two functions:
 `format_node_value_display` adds the readings the reference draws beside a value
-— an integer's hex form, a float at three decimals, a hex node's float and
-integer readings, a pointer's target, and the address a hex node's bytes would
-point at when they land in a module — while the editor and the parser keep
-`format_node_value`'s single value, so what the user types is what the write
-reads back.
+— an integer's hex form, a float at three decimals, a pointer's target, and the
+address a hex node's bytes would point at when they land in a module — while the
+editor and the parser keep `format_node_value`'s single value, so what the user
+types is what the write reads back. A hex node's own readings are the one part of
+that text a write does read back: `node_readings` names the three a `hex32`/`hex64`
+cell draws, `format_node_reading` spells one — the float at three decimals or the
+`NaN`/`Inf`/`-Inf` its bytes hold, the sign-extended integer, and the raw bits
+behind a `0x` — and `format_node_readings` wraps each in its own parentheses one
+space apart, always all three, so a zero cell reads `(0.000) (0) (0x0)` and the
+reference's `#####` is gone. `parse_node_reading` reads one typed reading back in
+the base that reading is drawn in, never in the node's own `Hex` toggle's, and
+the value model hands the grid one `HintRun` per reading whose editor commits
+through `write_reading()`, which parses that one reading and writes the node's
+whole bytes.
 `Dissect` guesses a better kind for a `hexN` node from its live bytes — a
 plausible pointer first, then a small `f32`, a small `i32` and an aligned `f64` —
 and re-types the node with the padding rule that keeps the following offsets

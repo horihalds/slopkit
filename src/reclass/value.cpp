@@ -1,6 +1,7 @@
 #include "reclass/value.hpp"
 
 #include <charconv>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <limits>
@@ -226,16 +227,22 @@ namespace slopkit::reclass
             return value;
         }
 
-        // The float a hex node's bytes would read as: the reference draws it at
-        // three decimals, or as "#####" when the value is not a usable float.
-        std::string hex_float_comment(std::span<const std::byte> bytes)
+        // The float a hex node's bytes would read as: three decimals, or the
+        // spelling of a value that is not a number at all. The reference draws
+        // "#####" there, which names neither what the bytes hold nor a text the
+        // user could type back.
+        std::string hex_float_comment(std::span<const std::byte> bytes, bool wide)
         {
-            const float value = read_float(bytes);
-            if (value > -999999.0F && value < 999999.0F)
+            const double value = wide ? read_double(bytes) : static_cast<double>(read_float(bytes));
+            if (std::isnan(value))
             {
-                return std::format("{:.3f}", value);
+                return std::string {"NaN"};
             }
-            return std::string {"#####"};
+            if (std::isinf(value))
+            {
+                return std::string {value < 0.0 ? "-Inf" : "Inf"};
+            }
+            return std::format("{:.3f}", value);
         }
 
         std::string out_of_range(NodeKind kind)
@@ -552,27 +559,51 @@ namespace slopkit::reclass
         }
     }
 
-    std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes)
+    std::vector<NodeReading> node_readings(NodeKind kind)
     {
         if (kind != NodeKind::hex32 && kind != NodeKind::hex64)
         {
             return {};
         }
+        return {NodeReading::floating, NodeReading::integer, NodeReading::raw};
+    }
+
+    std::string format_node_reading(NodeReading reading, NodeKind kind, std::span<const std::byte> bytes)
+    {
         const std::size_t size = kind_size(kind);
-        if (bytes.size() < size)
+        if (size == 0 || bytes.size() < size || node_readings(kind).empty())
         {
             return {};
         }
 
-        const std::uint64_t raw      = read_bytes(bytes, size);
-        std::string         readings = hex_float_comment(bytes);
-        if (raw == 0)
+        switch (reading)
         {
-            readings += "  0";
+        case NodeReading::floating:
+            return hex_float_comment(bytes, kind == NodeKind::hex64);
+        case NodeReading::integer:
+            return std::format("{}", sign_extend(read_bytes(bytes, size), size * 8));
+        case NodeReading::raw:
+            return std::format("0x{:X}", read_bytes(bytes, size));
         }
-        else
+        return {};
+    }
+
+    std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes)
+    {
+        const std::size_t size = kind_size(kind);
+        if (size == 0 || bytes.size() < size)
         {
-            readings += std::format("  {}  0x{:X}", sign_extend(raw, size * 8), raw);
+            return {};
+        }
+
+        std::string readings;
+        for (const NodeReading reading : node_readings(kind))
+        {
+            if (!readings.empty())
+            {
+                readings += ' ';
+            }
+            readings += std::format("({})", format_node_reading(reading, kind, bytes));
         }
         return readings;
     }
@@ -854,6 +885,139 @@ namespace slopkit::reclass
             break;
         }
         return std::unexpected(std::string {"a class instance has no value"});
+    }
+
+    std::expected<std::vector<std::byte>, std::string>
+    parse_node_reading(NodeReading reading, NodeKind kind, std::string_view text, bool hex)
+    {
+        const std::size_t size = kind_size(kind);
+        if (size == 0 || node_readings(kind).empty())
+        {
+            return std::unexpected(std::string {"this kind draws no readings"});
+        }
+
+        switch (reading)
+        {
+        case NodeReading::floating:
+        {
+            const std::string_view trimmed = trim(text);
+            if (trimmed.empty())
+            {
+                return std::unexpected(std::string {"empty value"});
+            }
+
+            const std::string spelling = lower_case(trimmed);
+            double            value    = 0.0;
+            if (spelling == "nan")
+            {
+                value = std::numeric_limits<double>::quiet_NaN();
+            }
+            else if (spelling == "inf" || spelling == "+inf" || spelling == "infinity" || spelling == "+infinity")
+            {
+                value = std::numeric_limits<double>::infinity();
+            }
+            else if (spelling == "-inf" || spelling == "-infinity")
+            {
+                value = -std::numeric_limits<double>::infinity();
+            }
+            else
+            {
+                const auto [end, error] =
+                    std::from_chars(trimmed.data(), trimmed.data() + trimmed.size(), value, std::chars_format::general);
+                if (error == std::errc::result_out_of_range)
+                {
+                    return std::unexpected(out_of_range(kind));
+                }
+                if (error != std::errc {} || end != trimmed.data() + trimmed.size())
+                {
+                    return std::unexpected(std::string {"malformed floating-point number"});
+                }
+            }
+
+            if (kind == NodeKind::hex32)
+            {
+                const float real = static_cast<float>(value);
+                if (!std::isfinite(real) && std::isfinite(value))
+                {
+                    return std::unexpected(out_of_range(kind));
+                }
+                std::vector<std::byte> bytes(sizeof(real));
+                std::memcpy(bytes.data(), &real, sizeof(real));
+                return bytes;
+            }
+            std::vector<std::byte> bytes(sizeof(value));
+            std::memcpy(bytes.data(), &value, sizeof(value));
+            return bytes;
+        }
+        case NodeReading::integer:
+        {
+            const auto literal = parse_literal(text, hex);
+            if (!literal)
+            {
+                return std::unexpected(literal.error());
+            }
+
+            const std::size_t bits  = size * 8;
+            std::int64_t      value = 0;
+            if (literal->negative)
+            {
+                const std::uint64_t limit = std::uint64_t {1} << (bits - 1);
+                if (literal->magnitude > limit)
+                {
+                    return std::unexpected(out_of_range(kind));
+                }
+                if (bits == 64 && literal->magnitude == limit)
+                {
+                    value = std::numeric_limits<std::int64_t>::min();
+                }
+                else
+                {
+                    value = -static_cast<std::int64_t>(literal->magnitude);
+                }
+            }
+            else if (literal->hex)
+            {
+                // A hex run covers the whole width, so it is the bytes once
+                // sign-extended; a run too long for the width is no value of it.
+                if (bits < 64 && literal->magnitude >= (std::uint64_t {1} << bits))
+                {
+                    return std::unexpected(out_of_range(kind));
+                }
+                value = sign_extend(literal->magnitude, bits);
+            }
+            else
+            {
+                const std::uint64_t maximum = (std::uint64_t {1} << (bits - 1)) - 1;
+                if (literal->magnitude > maximum)
+                {
+                    return std::unexpected(out_of_range(kind));
+                }
+                value = static_cast<std::int64_t>(literal->magnitude);
+            }
+            return little_endian(static_cast<std::uint64_t>(value), size);
+        }
+        case NodeReading::raw:
+        {
+            const auto literal = parse_literal(text, true);
+            if (!literal)
+            {
+                return std::unexpected(literal.error());
+            }
+            if (literal->negative)
+            {
+                return std::unexpected(std::format("{} is unsigned", describe(kind)));
+            }
+
+            const std::uint64_t mask =
+                size >= 8 ? std::numeric_limits<std::uint64_t>::max() : (std::uint64_t {1} << (size * 8)) - 1;
+            if (literal->magnitude > mask)
+            {
+                return std::unexpected(out_of_range(kind));
+            }
+            return little_endian(literal->magnitude, size);
+        }
+        }
+        return std::unexpected(std::string {"this kind draws no readings"});
     }
 
 }

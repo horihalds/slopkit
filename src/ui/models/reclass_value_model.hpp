@@ -78,11 +78,19 @@ namespace slopkit::ui::models
         // runs' concatenation.
         [[nodiscard]] std::vector<reclass::ValuePart> value_parts(const ReclassRow& row) const;
 
+        // One bracketed reading of a hex32/hex64 cell as the hints field draws
+        // it, in the order the field draws them.
+        struct HintRun
+        {
+            reclass::NodeReading reading;
+            QString              text;
+        };
+
         // The readings a hex32/hex64 cell draws beside its bytes, as the hints
-        // field shows them: the float, the integer and the raw bits in
+        // field shows them: one run per reading, each already in its own
         // parentheses. Empty for every other kind.
-        [[nodiscard]] std::vector<reclass::ValuePart> hint_parts(const ReclassRow& row) const;
-        [[nodiscard]] QString                         hint_text(const ReclassRow& row) const;
+        [[nodiscard]] std::vector<HintRun> hint_parts(const ReclassRow& row) const;
+        [[nodiscard]] QString              hint_text(const ReclassRow& row) const;
 
         // The pointer field: the address a pointer node holds, or the address a
         // hex cell's bytes plausibly name. Empty when the value is not an
@@ -144,6 +152,10 @@ namespace slopkit::ui::models
         // the row's and the block was read.
         [[nodiscard]] bool byte_editable(const ReclassRow& row) const;
 
+        // Whether one of this node's readings can be typed into: the cell draws
+        // that reading, a target is attached and the node's block was read.
+        [[nodiscard]] bool reading_editable(const ReclassRow& row, reclass::NodeReading reading) const;
+
         // Parses the text for the node's kind and writes one value into the
         // target; the outcome is reported on statusChanged.
         bool write_value(const ReclassRow& row, const QString& text);
@@ -152,6 +164,10 @@ namespace slopkit::ui::models
         // bytes, leaving the node's other bytes alone; the outcome is reported
         // on statusChanged.
         bool write_byte(const ReclassRow& row, std::size_t byte_offset, const QString& text);
+
+        // Parses one reading of the node and writes the node's whole bytes;
+        // the outcome is reported on statusChanged.
+        bool write_reading(const ReclassRow& row, reclass::NodeReading reading, const QString& text);
 
         [[nodiscard]] bool attached() const;
 
@@ -202,6 +218,9 @@ namespace slopkit::ui::models
         [[nodiscard]] std::span<const std::uint8_t> block_changed(std::size_t block) const;
 
         [[nodiscard]] const reclass::Node* node_of(const ReclassRow& row) const;
+
+        // A reading's name as the status line spells a refused one.
+        [[nodiscard]] static QString reading_name(reclass::NodeReading reading);
 
         // Where a node's bytes lie inside the cached bytes of a block that was
         // read: the reading they belong to and the offset in it.

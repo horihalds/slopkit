@@ -10,6 +10,7 @@
 #include <QRect>
 #include <QString>
 
+#include "reclass/value.hpp"
 #include "ui/components/neutral_scroller.hpp"
 #include "ui/models/reclass_structure_model.hpp"
 
@@ -71,6 +72,9 @@ namespace slopkit::ui::components
         // The rect the `[N]` run of a Type cell draws in, when the cell offers
         // one: a text node's length or an array's element count.
         [[nodiscard]] std::optional<QRect> extent_rect(const QModelIndex& index) const;
+        // The rect the bracketed run of one reading draws in, when a hex cell
+        // draws that reading and its hints field fits the whole text.
+        [[nodiscard]] std::optional<QRect> reading_rect(const QModelIndex& index, reclass::NodeReading reading) const;
 
         // The rects an array's Type cell draws its index control in: the arrow
         // that steps back, the bracketed index the editor takes over and the
@@ -139,23 +143,26 @@ namespace slopkit::ui::components
 
         struct Hit
         {
-            const models::ReclassRow* row {};
-            int                       row_index {-1};
-            int                       column {-1};
-            bool                      on_triangle {false};
-            QRect                     rect;
+            const models::ReclassRow*           row {};
+            int                                 row_index {-1};
+            int                                 column {-1};
+            bool                                on_triangle {false};
+            QRect                               rect;
             // The byte of a hex dump or of the Ascii column the point stands
             // for, when a double-click resolved one; -1 for a whole field.
-            int                       byte_index {-1};
+            int                                 byte_index {-1};
             // The point fell on the Type cell's bracketed run, which the editor
             // opens on and which the commit routes to the structure model.
-            bool                      extent {false};
+            bool                                extent {false};
+            // The reading whose bracketed run of the hints field the point fell
+            // on, which the editor opens on.
+            std::optional<reclass::NodeReading> reading;
             // The point fell on the array's bracketed index between the two
             // arrows, which the editor opens on.
-            bool                      element {false};
+            bool                                element {false};
             // The step the arrow under the point takes - back or on - and zero
             // when no arrow is under it.
-            int                       element_step {0};
+            int                                 element_step {0};
         };
 
         // Where each of the row's nine fields stands once the row's own content
@@ -231,6 +238,9 @@ namespace slopkit::ui::components
         // Opens the one editor over the array's bracketed index, anchored on the
         // rect the number draws in.
         void open_element_editor(int row_index, const QRect& run);
+        // Opens the one editor over one reading's bracketed run of the hints
+        // field, anchored on the rect the run draws in.
+        void open_reading_editor(int row_index, reclass::NodeReading reading, const QRect& run);
         // The rect the `byte_index`th byte of a value cell's hex dump draws in,
         // or of the character the Ascii column draws for it; nothing when the
         // cell elides its text, so no byte sits at a fixed place.
@@ -240,6 +250,11 @@ namespace slopkit::ui::components
         // and the text it sits in is drawn whole.
         [[nodiscard]] std::optional<QRect>
         extent_rect_in(const VisualRow& entry, int row_index, const QPoint& position) const;
+        // The rect the bracketed run of one reading draws in, when the row draws
+        // that reading and the hints field's whole text fits its rect - an
+        // elided field draws its runs nowhere in particular.
+        [[nodiscard]] std::optional<QRect>
+        hint_rect_in(const VisualRow& entry, int row_index, reclass::NodeReading reading) const;
         // The rects the array's index control draws in, when the row offers one
         // and the text it sits in is drawn whole: the arrow that steps back, the
         // bracketed index the editor takes over and the arrow that steps on.
@@ -285,16 +300,18 @@ namespace slopkit::ui::components
 
         // What an open editor edits: one cell, or one byte of a hex dump or of
         // the Ascii column when `byte_index` is not -1, or the Type cell's
-        // bracketed run when `extent` is set, or the array's bracketed index
-        // when `element` is set.
+        // bracketed run when `extent` is set, or one reading of the hints field
+        // when `reading` is set, or the array's bracketed index when `element`
+        // is set.
         struct EditTarget
         {
-            std::size_t node_id {};
-            int         column {};
-            int         byte_index {-1};
-            bool        extent {false};
-            bool        element {false};
-            QRect       rect;
+            std::size_t                         node_id {};
+            int                                 column {};
+            int                                 byte_index {-1};
+            bool                                extent {false};
+            std::optional<reclass::NodeReading> reading;
+            bool                                element {false};
+            QRect                               rect;
         };
 
         QLineEdit* editor_ {};

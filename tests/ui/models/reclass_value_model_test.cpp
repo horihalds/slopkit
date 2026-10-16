@@ -26,6 +26,7 @@ namespace
     using slopkit::process::AttachedTarget;
     using slopkit::reclass::Class;
     using slopkit::reclass::NodeKind;
+    using slopkit::reclass::NodeReading;
     using slopkit::reclass::Project;
     using slopkit::test::attach_session;
     using slopkit::test::drain_until_idle;
@@ -276,9 +277,7 @@ TEST_CASE("a hex node whose bytes name a module address fills the pointer field"
     // The readings are the hints field's and the plausible pointer is the
     // pointer field's.
     const QString hints = fixture.values.hint_text(fixture.row(2));
-    CHECK(hints.startsWith(QStringLiteral("(")));
-    CHECK(hints.endsWith(QStringLiteral(")")));
-    CHECK(hints.contains(QStringLiteral("400040")));
+    CHECK(hints == QStringLiteral("(0.000) (4194368) (0x400040)"));
     CHECK(fixture.values.pointer_text(fixture.row(2)) == QStringLiteral("-> <CODE>400040"));
     CHECK(fixture.values.hint_text(fixture.row(1)).isEmpty());
     CHECK(fixture.values.pointer_text(fixture.row(0)).isEmpty());
@@ -295,7 +294,7 @@ TEST_CASE("a hex node whose bytes name a module address fills the pointer field"
     // with the readings still in the hints field.
     fixture.write(fixture.player_address() + 9, {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x00});
     fixture.pass();
-    CHECK(fixture.values.hint_text(fixture.row(2)).contains(QStringLiteral("77665544332211")));
+    CHECK(fixture.values.hint_text(fixture.row(2)) == QStringLiteral("(0.000) (33608038631023121) (0x77665544332211)"));
     CHECK(fixture.values.pointer_text(fixture.row(2)).isEmpty());
     CHECK_FALSE(fixture.values.value_text(fixture.row(2)).contains(QStringLiteral("->")));
 }
@@ -755,6 +754,112 @@ TEST_CASE("writing one byte submits one byte at the node's own offset", "[reclas
     fixture.target.clear();
     CHECK_FALSE(fixture.values.byte_editable(row));
     CHECK_FALSE(fixture.values.write_byte(row, 0, QStringLiteral("1")));
+}
+
+TEST_CASE("writing a reading submits the node's whole bytes", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    REQUIRE(fixture.project.add_class("Flags", "app+0x40") != 0);
+    fixture.project.classes().back().nodes.push_back(node_of(fixture.project, NodeKind::hex32, "bits"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(2);
+    fixture.resolve();
+    fixture.pass();
+
+    const std::uint64_t address = kAppBase + 0x40;
+    fixture.write(address, {0x2A, 0x00, 0x00, 0x00});
+    fixture.pass();
+
+    QStringList messages;
+    QObject::connect(&fixture.values,
+                     &ReclassValueModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    const ReclassRow& row = fixture.row(0);
+    // A hex cell's whole value is the byte dump's, while each of its readings is
+    // typed into on its own.
+    CHECK_FALSE(fixture.values.editable(row));
+    CHECK(fixture.values.reading_editable(row, NodeReading::integer));
+    CHECK(fixture.values.reading_editable(row, NodeReading::raw));
+    CHECK(fixture.values.reading_editable(row, NodeReading::floating));
+
+    // The hints field answers one bracketed run per reading, in the order it
+    // draws them.
+    const std::vector<ReclassValueModel::HintRun> runs = fixture.values.hint_parts(row);
+    REQUIRE(runs.size() == 3);
+    CHECK(runs[0].reading == NodeReading::floating);
+    CHECK(runs[0].text == QStringLiteral("(0.000)"));
+    CHECK(runs[1].reading == NodeReading::integer);
+    CHECK(runs[1].text == QStringLiteral("(42)"));
+    CHECK(runs[2].reading == NodeReading::raw);
+    CHECK(runs[2].text == QStringLiteral("(0x2A)"));
+    CHECK(fixture.values.hint_text(row) == QStringLiteral("(0.000) (42) (0x2A)"));
+
+    // Each reading writes the node's whole bytes, reports itself and patches the
+    // cached bytes at once.
+    REQUIRE(fixture.values.write_reading(row, NodeReading::integer, QStringLiteral("-1")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(messages == QStringList {QStringLiteral("Reading written.")});
+    CHECK(fixture.holds(address, {0xFF, 0xFF, 0xFF, 0xFF}));
+    CHECK(fixture.values.hint_text(row) == QStringLiteral("(NaN) (-1) (0xFFFFFFFF)"));
+
+    REQUIRE(fixture.values.write_reading(row, NodeReading::raw, QStringLiteral("0x2A")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(address, {0x2A, 0x00, 0x00, 0x00}));
+
+    REQUIRE(fixture.values.write_reading(row, NodeReading::floating, QStringLiteral("2.5")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(address, {0x00, 0x00, 0x20, 0x40}));
+
+    // The node's own Show-as-hex toggle is the value cell's: a bare integer is
+    // still decimal and the raw bits are still hex.
+    fixture.project.classes().back().nodes.back()->hex = true;
+    REQUIRE(fixture.values.write_reading(row, NodeReading::integer, QStringLiteral("30")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(address, {0x1E, 0x00, 0x00, 0x00}));
+
+    REQUIRE(fixture.values.write_reading(row, NodeReading::raw, QStringLiteral("30")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(fixture.holds(address, {0x30, 0x00, 0x00, 0x00}));
+    fixture.project.classes().back().nodes.back()->hex = false;
+
+    // A text the reading cannot read is refused before the target is touched.
+    CHECK_FALSE(fixture.values.write_reading(row, NodeReading::raw, QStringLiteral("0xZZ")));
+    CHECK(messages.back() == QStringLiteral("Bits: malformed number"));
+    CHECK_FALSE(fixture.values.write_reading(row, NodeReading::integer, QStringLiteral("twelve")));
+    CHECK(messages.back() == QStringLiteral("Integer: malformed number"));
+    CHECK_FALSE(fixture.values.write_reading(row, NodeReading::integer, QStringLiteral("0x1FFFFFFFF")));
+    CHECK(messages.back().startsWith(QStringLiteral("Integer: out of range")));
+    CHECK(fixture.holds(address, {0x30, 0x00, 0x00, 0x00}));
+
+    // A row that draws no reading has nothing to type into; the pointer's own
+    // row is one.
+    fixture.structure.set_class(1);
+    CHECK(fixture.values.hint_parts(fixture.row(1)).empty());
+    CHECK_FALSE(fixture.values.reading_editable(fixture.row(1), NodeReading::integer));
+    CHECK_FALSE(fixture.values.write_reading(fixture.row(1), NodeReading::integer, QStringLiteral("1")));
+
+    // Nor does a detached target or a block that was not read.
+    fixture.structure.set_class(2);
+    fixture.target.clear();
+    CHECK_FALSE(fixture.values.reading_editable(fixture.row(0), NodeReading::integer));
+    CHECK_FALSE(fixture.values.write_reading(fixture.row(0), NodeReading::integer, QStringLiteral("1")));
+    CHECK(fixture.values.hint_parts(fixture.row(0)).empty());
+
+    fixture.target = slopkit::test::fake_target();
+    fixture.resolve();
+    static_cast<void>(fixture.values.requests());
+    fixture.values.apply_readings(std::vector<LiveReading> {
+        LiveReading {.id = 0, .readable = false, .bytes = {}}
+    });
+    CHECK(fixture.values.hint_parts(fixture.row(0)).empty());
+    CHECK_FALSE(fixture.values.reading_editable(fixture.row(0), NodeReading::raw));
+    CHECK_FALSE(fixture.values.write_reading(fixture.row(0), NodeReading::raw, QStringLiteral("1")));
 }
 
 TEST_CASE("a value the node's kind cannot hold never reaches the target", "[reclass][ui]")

@@ -176,15 +176,16 @@ TEST_CASE("the grid's reading of a value adds the reference's alternatives", "[r
         format_node_value_display(NodeKind::float64, bytes_of({0x1F, 0x85, 0xEB, 0x51, 0xB8, 0x1E, 0x09, 0x40}), false)
         == "3.140");
 
-    // A hex node shows what its bytes would read as: the float, then the signed
-    // value and the raw bits. A null one stops after the float.
+    // A hex node shows what its bytes would read as: the float, the signed
+    // value and the raw bits, each in its own parentheses. A null cell draws
+    // all three too.
     REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false)
-            == "2A 00 00 00  0.000  42  0x2A");
+            == "2A 00 00 00  (0.000) (42) (0x2A)");
     REQUIRE(
         format_node_value_display(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), false)
-        == "40 00 40 00 00 00 00 00  0.000  4194368  0x400040");
+        == "40 00 40 00 00 00 00 00  (0.000) (4194368) (0x400040)");
     REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00}), false)
-            == "00 00 00 00  0.000  0");
+            == "00 00 00 00  (0.000) (0) (0x0)");
 
     // The small kinds read as they always did.
     REQUIRE(format_node_value_display(NodeKind::hex8, bytes_of({0x0F}), false) == "0F");
@@ -223,7 +224,7 @@ TEST_CASE("the grid's hex read-outs are the shortest digits of their kind", "[re
     // same `0x` prefix as an integer's hex alternative.
     REQUIRE(format_node_value_display(NodeKind::pointer, bytes_of({0x00, 0x00, 0x10, 0, 0, 0, 0, 0}), false)
             == "-> 100000");
-    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "0.000  42  0x2A");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "(0.000) (42) (0x2A)");
 }
 
 TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]")
@@ -240,7 +241,7 @@ TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]
     REQUIRE(hex32[1].byte == 1);
     REQUIRE(hex32[3].text == " 00");
     REQUIRE(hex32[3].byte == 3);
-    REQUIRE(hex32[4].text == "  0.000  42  0x2A");
+    REQUIRE(hex32[4].text == "  (0.000) (42) (0x2A)");
     REQUIRE(hex32[4].reading);
     REQUIRE_FALSE(hex32[4].byte.has_value());
 
@@ -276,25 +277,48 @@ TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]
 
 TEST_CASE("a hex node's readings are its float, its value and its raw bits", "[reclass]")
 {
+    using slopkit::reclass::format_node_reading;
     using slopkit::reclass::format_node_readings;
+    using slopkit::reclass::node_readings;
+    using slopkit::reclass::NodeReading;
 
-    // The reading the grid shows beside a hex node's bytes, without the space
-    // the value cell prefixes it with.
-    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "0.000  42  0x2A");
+    // The readings the grid shows beside a hex node's bytes, each in its own
+    // parentheses, one space apart.
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "(0.000) (42) (0x2A)");
     REQUIRE(format_node_readings(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}))
-            == "0.000  4194368  0x400040");
+            == "(0.000) (4194368) (0x400040)");
 
-    // A null value stops after the float, a negative one is signed, and a float
-    // that is not usable reads as the reference's "#####".
-    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00})) == "0.000  0");
-    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0xFF, 0xFF, 0xFF, 0xFF})) == "#####  -1  0xFFFFFFFF");
+    // Every reading is always drawn: a null cell spells out all three, a
+    // negative value is signed, a large float still spells itself at three
+    // decimals, and one that is not a number names itself.
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00})) == "(0.000) (0) (0x0)");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0xFF, 0xFF, 0xFF, 0xFF})) == "(NaN) (-1) (0xFFFFFFFF)");
     REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x80, 0x4F}))
-            == "#####  1333788672  0x4F800000");
+            == "(4294967296.000) (1333788672) (0x4F800000)");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x80, 0x7F}))
+            == "(Inf) (2139095040) (0x7F800000)");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x80, 0xFF}))
+            == "(-Inf) (-8388608) (0xFF800000)");
+
+    // The readings in the order the hints field draws them, and each one on its
+    // own.
+    REQUIRE(node_readings(NodeKind::hex32)
+            == std::vector<NodeReading> {NodeReading::floating, NodeReading::integer, NodeReading::raw});
+    REQUIRE(node_readings(NodeKind::hex64)
+            == std::vector<NodeReading> {NodeReading::floating, NodeReading::integer, NodeReading::raw});
+    REQUIRE(node_readings(NodeKind::int32).empty());
+
+    const auto bytes = bytes_of({0xFF, 0xFF, 0xFF, 0xFF});
+    REQUIRE(format_node_reading(NodeReading::floating, NodeKind::hex32, bytes) == "NaN");
+    REQUIRE(format_node_reading(NodeReading::integer, NodeKind::hex32, bytes) == "-1");
+    REQUIRE(format_node_reading(NodeReading::raw, NodeKind::hex32, bytes) == "0xFFFFFFFF");
 
     // Only a hex32/hex64 cell has readings, and a span that does not cover the
     // kind has none.
     REQUIRE(format_node_readings(NodeKind::int32, bytes_of({0x2A, 0x00, 0x00, 0x00})).empty());
     REQUIRE(format_node_readings(NodeKind::hex64, bytes_of({0x01, 0x02})).empty());
+    REQUIRE(format_node_reading(NodeReading::raw, NodeKind::int32, bytes_of({0x2A, 0x00, 0x00, 0x00})).empty());
+    REQUIRE(format_node_reading(NodeReading::raw, NodeKind::hex64, bytes_of({0x01, 0x02})).empty());
 }
 
 TEST_CASE("malformed values are refused with a reason", "[reclass]")
@@ -306,4 +330,69 @@ TEST_CASE("malformed values are refused with a reason", "[reclass]")
     const auto out_of_range = parse_node_value(NodeKind::int16, "99999");
     REQUIRE_FALSE(out_of_range.has_value());
     REQUIRE(out_of_range.error().find("Int16") != std::string::npos);
+}
+
+TEST_CASE("a typed reading is written in the base that reading is drawn in", "[reclass]")
+{
+    using slopkit::reclass::NodeReading;
+    using slopkit::reclass::parse_node_reading;
+
+    const auto read = [](NodeReading reading, NodeKind kind, std::string_view text, bool hex = false)
+    {
+        const auto bytes = parse_node_reading(reading, kind, text, hex);
+        REQUIRE(bytes.has_value());
+        return *bytes;
+    };
+
+    // Each reading writes back the text it is drawn with: the integer's sign
+    // extension, the raw bits' full width and the float's own spelling.
+    REQUIRE(read(NodeReading::integer, NodeKind::hex32, "42") == bytes_of({0x2A, 0x00, 0x00, 0x00}));
+    REQUIRE(read(NodeReading::integer, NodeKind::hex32, "-1") == bytes_of({0xFF, 0xFF, 0xFF, 0xFF}));
+    REQUIRE(read(NodeReading::integer, NodeKind::hex64, "-9223372036854775808")
+            == bytes_of({0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80}));
+    REQUIRE(read(NodeReading::raw, NodeKind::hex32, "0x2A") == bytes_of({0x2A, 0x00, 0x00, 0x00}));
+    REQUIRE(read(NodeReading::raw, NodeKind::hex64, "0xFFFFFFFFFFFFFFFF")
+            == bytes_of({0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex32, "3.14") == bytes_of({0xC3, 0xF5, 0x48, 0x40}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex64, "3.14")
+            == bytes_of({0x1F, 0x85, 0xEB, 0x51, 0xB8, 0x1E, 0x09, 0x40}));
+
+    // 0x means hex everywhere, an integer's bare digits are decimal, and the
+    // raw bits read bare digits as hex whatever the node's own toggle says.
+    REQUIRE(read(NodeReading::integer, NodeKind::hex32, "0x2A") == read(NodeReading::integer, NodeKind::hex32, "42"));
+    REQUIRE(read(NodeReading::integer, NodeKind::hex32, "0x30") == bytes_of({0x30, 0x00, 0x00, 0x00}));
+    REQUIRE(read(NodeReading::integer, NodeKind::hex32, "30") == bytes_of({0x1E, 0x00, 0x00, 0x00}));
+    for (const bool hex : {false, true})
+    {
+        REQUIRE(read(NodeReading::raw, NodeKind::hex32, "30", hex) == bytes_of({0x30, 0x00, 0x00, 0x00}));
+    }
+
+    // A float the bytes cannot spell is typed back as the drawn name of the
+    // value, in any case.
+    REQUIRE(read(NodeReading::floating, NodeKind::hex32, "NaN") == bytes_of({0x00, 0x00, 0xC0, 0x7F}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex32, "nan") == bytes_of({0x00, 0x00, 0xC0, 0x7F}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex32, "INF") == bytes_of({0x00, 0x00, 0x80, 0x7F}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex32, "-Infinity") == bytes_of({0x00, 0x00, 0x80, 0xFF}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex64, "Inf")
+            == bytes_of({0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0x7F}));
+
+    // What is not a reading's text, and what the node cannot hold, is refused.
+    REQUIRE_FALSE(parse_node_reading(NodeReading::integer, NodeKind::hex32, "twelve").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::integer, NodeKind::hex32, "").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::raw, NodeKind::hex32, "0xZZ").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::raw, NodeKind::hex32, "-1").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::floating, NodeKind::hex32, "half").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::integer, NodeKind::hex32, "2147483648").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::integer, NodeKind::hex32, "-2147483649").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::integer, NodeKind::hex32, "0x1FFFFFFFF").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::floating, NodeKind::hex32, "1e40").has_value());
+
+    const auto too_wide = parse_node_reading(NodeReading::raw, NodeKind::hex32, "0x1FFFFFFFF");
+    REQUIRE_FALSE(too_wide.has_value());
+    REQUIRE(too_wide.error().find("Hex32") != std::string::npos);
+    REQUIRE_FALSE(parse_node_reading(NodeReading::raw, NodeKind::hex64, "0x1FFFFFFFFFFFFFFFF").has_value());
+
+    // A kind that draws no readings has none to write.
+    REQUIRE_FALSE(parse_node_reading(NodeReading::raw, NodeKind::int32, "2A").has_value());
+    REQUIRE_FALSE(parse_node_reading(NodeReading::integer, NodeKind::hex16, "2A").has_value());
 }

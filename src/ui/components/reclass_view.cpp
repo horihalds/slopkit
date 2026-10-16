@@ -174,15 +174,15 @@ namespace slopkit::ui::components
             return any_moved ? active_theme().warning : primary;
         }
 
-        // The widest readings a hex cell can draw: the longest float three
-        // decimals can spell, the signed value's longest text and the raw bits
-        // at full width. A reading only arrives on a live pass, when the columns
+        // The widest readings a hex cell can draw: a float at three decimals, the
+        // signed value's longest text and the raw bits at full width, each in its
+        // own parentheses. A reading only arrives on a live pass, when the columns
         // are not measured again, so the hints field is sized for this and never
         // for what the node currently reads.
         QString widest_readings(reclass::NodeKind kind)
         {
             const bool wide = reclass::kind_size(kind) == 8;
-            return QStringLiteral("(-999998.999  %1  %2)")
+            return QStringLiteral("(-999998.999) (%1) (%2)")
                 .arg(wide ? QStringLiteral("-9223372036854775808") : QStringLiteral("-2147483648"),
                      wide ? QStringLiteral("0xFFFFFFFFFFFFFFFF") : QStringLiteral("0xFFFFFFFF"));
         }
@@ -805,6 +805,22 @@ namespace slopkit::ui::components
         return element_rects_in(rows_[static_cast<std::size_t>(visual)], visual);
     }
 
+    std::optional<QRect> ReClassView::reading_rect(const QModelIndex& index, reclass::NodeReading reading) const
+    {
+        using models::ReclassStructureModel;
+        const models::ReclassRow* row = row_of(index);
+        if (row == nullptr || index.column() != ReclassStructureModel::hints)
+        {
+            return std::nullopt;
+        }
+        const int visual = visual_index_of(row->node_id);
+        if (visual < 0)
+        {
+            return std::nullopt;
+        }
+        return hint_rect_in(rows_[static_cast<std::size_t>(visual)], visual, reading);
+    }
+
     std::optional<QRect>
     ReClassView::byte_rect_in(const VisualRow& entry, int row_index, int column, std::size_t byte_index) const
     {
@@ -893,6 +909,47 @@ namespace slopkit::ui::components
             return std::nullopt;
         }
         return run;
+    }
+
+    std::optional<QRect>
+    ReClassView::hint_rect_in(const VisualRow& entry, int row_index, reclass::NodeReading reading) const
+    {
+        using models::ReclassStructureModel;
+        const QModelIndex  hints = index_for(*entry.row, ReclassStructureModel::hints);
+        const QRect        cell  = cell_rect_at(row_index, ReclassStructureModel::hints);
+        const QFontMetrics metrics(cell_font(hints, *model_));
+        if (cell.isEmpty())
+        {
+            return std::nullopt;
+        }
+
+        // The field draws one bracketed run per reading, one space apart. The
+        // field's whole text must fit its rect, or the runs are elided and none
+        // of them sits at a fixed place - the same whole-text fit the paint
+        // makes, since measuring the runs one by one rounds each one off; the
+        // space between two runs belongs to the run after it.
+        const std::vector<models::ReclassValueModel::HintRun> runs = values_->hint_parts(*entry.row);
+        if (runs.empty())
+        {
+            return std::nullopt;
+        }
+        if (metrics.horizontalAdvance(model_->data(hints, Qt::DisplayRole).toString()) > cell.width())
+        {
+            return std::nullopt;
+        }
+
+        const int space = metrics.horizontalAdvance(QLatin1Char(' '));
+        int       x     = cell.x();
+        for (const models::ReclassValueModel::HintRun& run : runs)
+        {
+            const int width = metrics.horizontalAdvance(run.text);
+            if (run.reading == reading)
+            {
+                return QRect(x, cell.y(), width, cell.height());
+            }
+            x += width + space;
+        }
+        return std::nullopt;
     }
 
     std::optional<ReClassView::ElementRects> ReClassView::element_rects_in(const VisualRow& entry, int row_index) const
@@ -1238,7 +1295,8 @@ namespace slopkit::ui::components
         }
         // The run writes through the structure model, which owns the node's own
         // number; one byte writes through the value model, the only path that
-        // can address a part of a cell; a whole cell writes through the model.
+        // can address a part of a cell; a reading writes the node's whole bytes
+        // through the value model too; a whole cell writes through the model.
         bool applied = false;
         if (target_.element)
         {
@@ -1247,6 +1305,10 @@ namespace slopkit::ui::components
         else if (target_.extent)
         {
             applied = structure_->set_node_extent(*row, editor_->text());
+        }
+        else if (target_.reading.has_value())
+        {
+            applied = values_->write_reading(*row, *target_.reading, editor_->text());
         }
         else if (target_.byte_index >= 0)
         {
@@ -1664,6 +1726,25 @@ namespace slopkit::ui::components
             }
         }
 
+        // A hex cell's readings are typed into one by one: a double-click on one
+        // bracketed run of the hints field opens the editor over it, while a
+        // click elsewhere in the field keeps the rules below.
+        if (hit->column == models::ReclassStructureModel::hints)
+        {
+            const VisualRow& entry = rows_[static_cast<std::size_t>(hit->row_index)];
+            for (const models::ReclassValueModel::HintRun& run : values_->hint_parts(*hit->row))
+            {
+                const std::optional<QRect> reading = hint_rect_in(entry, hit->row_index, run.reading);
+                if (reading.has_value() && reading->contains(event->position().toPoint())
+                    && values_->reading_editable(*hit->row, run.reading))
+                {
+                    open_reading_editor(hit->row_index, run.reading, *reading);
+                    event->accept();
+                    return;
+                }
+            }
+        }
+
         if (model_->flags(index_for(*hit->row, hit->column)).testFlag(Qt::ItemIsEditable))
         {
             // Either a value the write path accepts or the node's own name.
@@ -1715,6 +1796,7 @@ namespace slopkit::ui::components
                                .column     = hit.column,
                                .byte_index = hit.byte_index,
                                .extent     = hit.extent,
+                               .reading    = hit.reading,
                                .element    = hit.element,
                                .rect       = hit.rect};
         editor_->setFont(cell_font(index, *model_));
@@ -1740,11 +1822,12 @@ namespace slopkit::ui::components
             const QFontMetrics metrics(cell_font(index, *model_));
             rect.setWidth(std::max(rect.width(), metrics.horizontalAdvance(QStringLiteral("0000"))));
         }
-        else if (hit.extent || hit.element)
+        else if (hit.extent || hit.element || hit.reading.has_value())
         {
-            // The run's own box is as wide as its brackets, and the index's as
-            // wide as its digits; a number needs the room a hex pair is given,
-            // so typing past a single digit is never clipped.
+            // The run's own box is as wide as its brackets, the index's as wide
+            // as its digits and a reading's as wide as the reading itself; a
+            // number needs the room a hex pair is given, so typing past a single
+            // digit is never clipped.
             const QFontMetrics metrics(cell_font(index, *model_));
             rect.setWidth(std::max(rect.width(), metrics.horizontalAdvance(QStringLiteral("0000"))));
         }
@@ -1756,6 +1839,19 @@ namespace slopkit::ui::components
 
     QString ReClassView::edit_text(const models::ReclassRow& row) const
     {
+        if (target_.reading.has_value())
+        {
+            // The run draws its own parentheses; the editor edits what stands
+            // between them, which is what the reading's parse takes back.
+            for (const models::ReclassValueModel::HintRun& run : values_->hint_parts(row))
+            {
+                if (run.reading == *target_.reading)
+                {
+                    return run.text.mid(1, run.text.size() - 2);
+                }
+            }
+            return {};
+        }
         if (target_.element)
         {
             return QString::number(structure_->element_index(row.node_id));
@@ -1830,6 +1926,24 @@ namespace slopkit::ui::components
         hit.column    = models::ReclassStructureModel::type;
         hit.rect      = run;
         hit.element   = true;
+        open_editor(hit);
+    }
+
+    void ReClassView::open_reading_editor(int row_index, reclass::NodeReading reading, const QRect& run)
+    {
+        if (row_index < 0 || row_index >= static_cast<int>(rows_.size()))
+        {
+            return;
+        }
+        ensure_visible(row_index);
+        const VisualRow& entry = rows_[static_cast<std::size_t>(row_index)];
+
+        Hit hit;
+        hit.row       = entry.row;
+        hit.row_index = row_index;
+        hit.column    = models::ReclassStructureModel::hints;
+        hit.rect      = run;
+        hit.reading   = reading;
         open_editor(hit);
     }
 
