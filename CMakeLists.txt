@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
-project(slopkit VERSION 0.1.0 LANGUAGES CXX)
+# C is enabled for the fetched Lua VM, whose sources upstream writes in C.
+project(slopkit VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -144,24 +145,14 @@ set(CMAKE_AUTOMOC ON)
 
 # --- system dependencies ---------------------------------------------------
 #
-# Zydis comes from the system repositories (e.g. Fedora `zydis-devel`) and ships
-# a pkg-config file but no CMake package config. libzip backs the `.skt` archive
-# container and is found the same way (e.g. Fedora `libzip-devel`).
+# libzip backs the `.skt` archive container and comes from the system
+# repositories (e.g. Fedora `libzip-devel`). sol2, Lua and Zydis are fetched at
+# pinned revisions instead (see cmake/Dependencies.cmake).
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(ZYDIS REQUIRED IMPORTED_TARGET zydis)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
-# Lua scripting: sol2 is header-only, Lua provides the VM.
-pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua)
-pkg_check_modules(SOL2 REQUIRED IMPORTED_TARGET sol2)
 
-# sol2 is a large template library; treat its headers as system so its own
-# diagnostics never break the warning-free build stage of tools/verify.sh.
-get_target_property(SLOPKIT_SOL2_INCLUDE_DIRS PkgConfig::SOL2 INTERFACE_INCLUDE_DIRECTORIES)
-if(SLOPKIT_SOL2_INCLUDE_DIRS)
-    set_target_properties(PkgConfig::SOL2 PROPERTIES
-        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${SLOPKIT_SOL2_INCLUDE_DIRS}")
-endif()
+include(${CMAKE_SOURCE_DIR}/cmake/Dependencies.cmake)
 
 # --- assets ----------------------------------------------------------------
 
@@ -296,10 +287,10 @@ target_link_libraries(slopkit PRIVATE
     slopkit_assets
     slopkit_native
     Qt6::Widgets
-    PkgConfig::ZYDIS
+    Zydis
+    sol2::sol2
+    slopkit_lua
     PkgConfig::LIBZIP
-    PkgConfig::LUA
-    PkgConfig::SOL2
     ${CMAKE_DL_LIBS})
 
 # Every generated icon size is embedded as :/icons/<N>x<N>/apps/slopkit.png,
@@ -330,27 +321,14 @@ slopkit_add_icon_resources(slopkit-sandbox)
 
 # The Qt-free console trainer `Generate Trainer…` copies and appends a payload to.
 # The same sources are cross-compiled into the Windows template by
-# cmake/Trainer.cmake; only the portable pieces shared with the app are linked, so
-# the result needs nothing but the C++ runtime on the target machine. The build
-# tree copy is itself the Linux template (SLOPKIT_TRAINER_DIR).
+# cmake/Trainer.cmake, and the script engine and its Qt-free dependencies are
+# shared verbatim with the application, so a table's scripts behave the same in
+# both. Lua, sol2 and Zydis link statically, so the result needs nothing but the
+# C++ runtime on the target machine. The build tree copy is itself the Linux
+# template (SLOPKIT_TRAINER_DIR).
 
-set(SLOPKIT_TRAINER_RUNTIME_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/console.cpp
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/payload_reader.cpp
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/resolve.cpp
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/target_linux.cpp)
-
-set(SLOPKIT_TRAINER_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/trainer/payload.cpp
-    ${SLOPKIT_TRAINER_RUNTIME_SOURCES}
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/main.cpp
-    # The shared codec and expression evaluator the app uses as well, so the two
-    # cannot drift apart; log.cpp is inert until a sink is installed.
-    ${CMAKE_SOURCE_DIR}/src/core/log.cpp
-    ${CMAKE_SOURCE_DIR}/src/expr/expression.cpp
-    ${CMAKE_SOURCE_DIR}/src/expr/resolver.cpp
-    ${CMAKE_SOURCE_DIR}/src/scan/types.cpp
-    ${CMAKE_SOURCE_DIR}/src/scan/value.cpp)
+set(SLOPKIT_SOURCE_ROOT ${CMAKE_SOURCE_DIR})
+include(${CMAKE_SOURCE_DIR}/cmake/TrainerSources.cmake)
 
 # The native target is not named after the file it produces: CMake resolves the
 # Windows template's `slopkit-trainer.exe` output to the target `slopkit-trainer`
@@ -358,7 +336,7 @@ set(SLOPKIT_TRAINER_SOURCES
 add_executable(slopkit-trainer-native ${SLOPKIT_TRAINER_SOURCES})
 target_include_directories(slopkit-trainer-native PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit-trainer-native PRIVATE -Wall -Wextra)
-target_link_libraries(slopkit-trainer-native PRIVATE slopkit_native)
+target_link_libraries(slopkit-trainer-native PRIVATE slopkit_native Zydis sol2::sol2 slopkit_lua)
 set_target_properties(slopkit-trainer-native PROPERTIES
     OUTPUT_NAME slopkit-trainer
     RUNTIME_OUTPUT_DIRECTORY "${SLOPKIT_TRAINER_DIR}")
@@ -375,7 +353,7 @@ add_library(slopkit_platform STATIC ${SLOPKIT_PLATFORM_SOURCES})
 target_include_directories(slopkit_platform PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit_platform PRIVATE -Wall -Wextra -fvisibility=hidden)
 set_target_properties(slopkit_platform PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(slopkit_platform PRIVATE slopkit_native PkgConfig::ZYDIS)
+target_link_libraries(slopkit_platform PRIVATE slopkit_native Zydis)
 
 # The Process List classifies applications through the platform desktop-entry
 # index, so the application links the shared platform library too.
@@ -548,10 +526,10 @@ target_link_libraries(slopkit_tests PRIVATE
     slopkit_native
     slopkit_plugin_support
     Qt6::Widgets
-    PkgConfig::ZYDIS
+    Zydis
+    sol2::sol2
+    slopkit_lua
     PkgConfig::LIBZIP
-    PkgConfig::LUA
-    PkgConfig::SOL2
     ${CMAKE_DL_LIBS})
 slopkit_add_icon_resources(slopkit_tests)
 target_compile_options(slopkit_tests PRIVATE -Wall -Wextra)

@@ -33,7 +33,7 @@ namespace slopkit::ui::dialogs
             {
                 if (entry.kind == table::EntryKind::script)
                 {
-                    ++skipped_scripts_;
+                    ++script_entries_;
                 }
                 else
                 {
@@ -152,7 +152,7 @@ namespace slopkit::ui::dialogs
 
     QString GenerateTrainerDialog::summary_text() const
     {
-        return tr("%1 value entries, %2 script entries skipped").arg(value_entries_).arg(skipped_scripts_);
+        return tr("%1 value entries, %2 script entries").arg(value_entries_).arg(script_entries_);
     }
 
     bool GenerateTrainerDialog::can_generate() const

@@ -30,16 +30,18 @@ offers to cancel, overwrite the open table or merge the file.
 | Access Watch | Record every instruction that writes or accesses a watched address, and resolve an instruction's memory operands from live registers. The "find out what writes/accesses" commands attach the debug session on demand after a confirmation, so the Memory Viewer does not have to be opened first. | Implemented (Access Watch window) |
 | Referenced strings | Analyze a loaded module for the ASCII and UTF-16LE strings its code directly references and show each as a comment on the referencing disassembly line, with a filterable, per-module list in the Referenced strings window. | Implemented (Referenced strings window) |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
-| Standalone trainer | Turn the open table into self-contained console trainers (`File > Generate Trainer…`) that reproduce its live values and frozen writes on a machine with no slopkit, Qt or plugin installed; a Linux executable and a 64-bit Windows one are written, each with the table's value entries appended to a runtime template rather than a sidecar file. | Implemented (Generate Trainer…) |
+| Standalone trainer | Turn the open table into self-contained console trainers (`File > Generate Trainer…`) that reproduce its live values, frozen writes and Lua scripts on a machine with no slopkit, Qt or plugin installed; a Linux executable and a 64-bit Windows one are written, each with the table's value entries, scripts and ReClass classes appended to a runtime template rather than a sidecar file. | Implemented (Generate Trainer…) |
 
 ## Quick start
 
 Dependencies (from the system repositories): CMake and Ninja, a C++23 compiler,
-the Zydis development package (e.g. Fedora's `zydis-devel`) and the libzip
-development package (e.g. Fedora's `libzip-devel`) with `pkg-config`, the Lua
-development package and sol2 (e.g. Fedora's `lua-devel` and `sol2-devel`), Catch2,
-Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick (build-time
-only, for the icon set). The Wine/Proton resident agent is cross-compiled and
+the libzip development package (e.g. Fedora's `libzip-devel`) with `pkg-config`,
+Catch2, Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick
+(build-time only, for the icon set). Lua, sol2 and Zydis are not system packages:
+CMake fetches them at pinned revisions with `FetchContent`, so the first
+configure needs network access and downloads each repository once into
+`build/_deps`, which the Windows trainer template's cross-build reuses. The
+Wine/Proton resident agent is cross-compiled and
 needs the mingw-w64 compilers for both bitnesses (`x86_64-w64-mingw32-gcc` and
 `i686-w64-mingw32-gcc`); without them the build uses a prebuilt agent under
 `src/plugins/wine_proton/agent/prebuilt/<bitness>` and otherwise fails the
@@ -78,9 +80,10 @@ These flags work headlessly, with no display or GPU required.
 ### Standalone trainers
 
 `File > Generate Trainer…` turns the open table into executables that carry its
-value entries inside themselves and reproduce their behaviour — live values plus
-frozen writes — on a machine that has neither slopkit, Qt nor any plugin
-installed. The same generation is reachable headlessly:
+value entries and Lua scripts inside themselves and reproduce their behaviour —
+live values, frozen writes and scripted effects — on a machine that has neither
+slopkit, Qt nor any plugin installed. The same generation is reachable
+headlessly:
 
 ```sh
 ./build/slopkit generate-trainer --table game.skt --target both --out ~/trainer
@@ -98,25 +101,39 @@ Windows one; each is a copy of a runtime template with the payload appended, so
 it is one self-contained file with no sidecars and no plugin. Every produced path
 is printed on stdout, a target whose template is missing is reported on stderr
 while the other target is still written, and the command exits non-zero only when
-no file was produced at all. Script (Lua) entries are never embedded and the
-count of skipped ones is reported.
+no file was produced at all. Script (Lua) entries and the table's ReClass classes
+travel in that payload too, so the generated trainer runs the table's scripts
+against the target through slopkit's own scripting engine, and the number of
+script entries is reported beside the value entries.
 
 A generated trainer attaches to `--pid`, else `--name`, else the process name
 recorded when it was generated:
 
 ```sh
-./game.trainer                       # interactive console, four refreshes a second
-./game.trainer --pid 4711 --list     # one-shot: print the entries and exit
+./game.trainer                            # interactive console, four refreshes a second
+./game.trainer --pid 4711 --list          # one-shot: print the rows and exit
 ./game.trainer --pid 4711 --set 1=250 --freeze 1 --wait 900 --list
+./game.trainer --pid 4711 --activate 1 --wait 500 --list
 ```
 
-The console lists index, description, resolved address, type, value and a frozen
-marker; `f<N>` toggles freeze, `s <N> <value>` writes a value (hex honouring the
-entry's hex flag), `r` re-resolves, `l` re-lists, `q` quits. Frozen entries are
-re-written on every tick. An entry whose expression cannot resolve shows the
-address recorded at generation time with an `unresolved` marker and is never
-written to. Exit codes: `0` success, `1` usage error, `2` no embedded data, `3`
-target process not found, `4` memory access failure.
+The console lists the value entries as `1..N` — index, description, resolved
+address, type, value and a frozen marker — and then the scripts as `S1..Sm`, with
+each script's state (`idle`, `active` or `error`), tick interval and last
+message. `f<N>` toggles freeze, `s <N> <value>` writes a value (hex honouring the
+entry's hex flag), `a<N>` activates script `S<N>` and `d<N>` deactivates it (each
+running the script's `activate` / `deactivate` hook), `r` re-resolves, `l`
+re-lists, `q` quits. The two numberings are independent, so `f1` never touches
+`S1`. Frozen entries are re-written on every tick, and an active script's
+`update` hook runs on the interval it asks for, else `--interval` (250 ms by
+default), both inside `--wait` and in the interactive console. `--activate N` is
+repeatable and ticks a script before the requested actions run, so a headless run
+starts only the scripts it trusts — scripts always start idle otherwise. An entry
+whose expression cannot resolve shows the address recorded at generation time
+with an `unresolved` marker and is never written to; a symbol a script published
+resolves such expressions until that script is deactivated. A script's own
+failure marks that one script `error`, is reported on stderr and leaves the
+other scripts and the exit code alone. Exit codes: `0` success, `1` usage error,
+`2` no embedded data, `3` target process not found, `4` memory access failure.
 
 `./tools/install.sh` configures, builds and installs slopkit with its desktop entry and
 hicolor icons into `~/.local` by default, with no root needed; override the

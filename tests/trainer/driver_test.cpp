@@ -171,7 +171,7 @@ namespace
         return std::format("0x{:x}", address);
     }
 
-    void generate_trainer(const std::vector<AddressEntry>& entries, std::string_view name)
+    void generate_trainer(const std::vector<AddressEntry>& entries, std::string_view name, std::string_view script = {})
     {
         const std::filesystem::path directory = std::filesystem::path {SLOPKIT_TMP_DIR} / "trainer_driver" / name;
         std::error_code             error;
@@ -183,6 +183,10 @@ namespace
         for (const auto& entry : entries)
         {
             table.add(entry);
+        }
+        if (!script.empty())
+        {
+            static_cast<void>(table.add_script("Sneaky", std::string {script}));
         }
 
         Request request;
@@ -307,4 +311,100 @@ TEST_CASE("the trainer reports a target it cannot find", "[trainer][driver]")
 
     const auto usage = run_trainer(generated_trainer("missing"), {"--nonsense"});
     CHECK(usage.exit_code == 1);
+}
+
+TEST_CASE("an activated script writes into the running process and publishes a symbol", "[trainer][driver]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    const auto target  = spawn_target(0);
+    const auto address = literal_address(target.address);
+    // The value entry names the symbol the script publishes, so a resolved row
+    // proves the two halves of the run met.
+    generate_trainer({value_entry("Health", "base")},
+                     "script",
+                     std::format(R"(
+function activate()
+    ssymbol("base", {})
+    mem.write({}, "i32", 4242)
+end
+
+function deactivate()
+    usymbol("base")
+end
+)",
+                                 address,
+                                 address));
+
+    const auto result = run_trainer(
+        generated_trainer("script"),
+        {"--pid", std::to_string(target.pid), "--activate", "1", "--wait", "300", "--interval", "50", "--list"});
+    CHECK(result.exit_code == 0);
+    CHECK(result.output.find("4 Bytes    4242") != std::string::npos);
+    CHECK(result.output.find("unresolved") == std::string::npos);
+    CHECK(result.output.find("S1") != std::string::npos);
+    CHECK(result.output.find("active") != std::string::npos);
+    CHECK(target.read() == 4242);
+}
+
+TEST_CASE("a script stays idle until it is activated", "[trainer][driver]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    const auto target  = spawn_target(0);
+    const auto address = literal_address(target.address);
+    generate_trainer({value_entry("Health", "base")},
+                     "script_idle",
+                     std::format(R"(
+function activate()
+    ssymbol("base", {})
+    mem.write({}, "i32", 4242)
+end
+)",
+                                 address,
+                                 address));
+
+    const auto result = run_trainer(generated_trainer("script_idle"), {"--pid", std::to_string(target.pid), "--list"});
+    CHECK(result.exit_code == 0);
+    CHECK(result.output.find("idle") != std::string::npos);
+    CHECK(result.output.find("unresolved") != std::string::npos);
+    CHECK(result.output.find("active") == std::string::npos);
+    CHECK(target.read() == kInitial);
+}
+
+TEST_CASE("a script that fails does not fail the trainer", "[trainer][driver]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    const auto target = spawn_target(0);
+    generate_trainer({value_entry("Health", literal_address(target.address))},
+                     "script_refused",
+                     R"(
+function activate()
+    return false, "the target is not ready"
+end
+)");
+
+    const auto result = run_trainer(generated_trainer("script_refused"),
+                                    {"--pid", std::to_string(target.pid), "--activate", "1", "--list"});
+    CHECK(result.exit_code == 0);
+    CHECK(result.output.find("the target is not ready") != std::string::npos);
+    CHECK(result.output.find("error") != std::string::npos);
+
+    const auto usage = run_trainer(generated_trainer("script_refused"),
+                                   {"--pid", std::to_string(target.pid), "--activate", "9", "--list"});
+    CHECK(usage.exit_code == 1);
+    CHECK(usage.output.find("no script 9") != std::string::npos);
 }

@@ -2,51 +2,48 @@
 #
 # `Generate Trainer…` copies an installed runtime template and appends the table's
 # payload to it, so the Windows target needs the trainer as a Windows binary. The
-# sources are the same ones the Linux `slopkit-trainer` target builds; only the
-# target backend differs (`src/trainer/runtime/target_windows.cpp`), and the C++
-# runtime is linked statically so the result runs on a machine with nothing but
-# the operating system installed.
+# sources are the same ones the native `slopkit-trainer` target builds (see
+# cmake/TrainerSources.cmake); only the target backend differs, and the fetched
+# Lua, sol2 and Zydis libraries are cross-compiled by the nested project
+# (cmake/TrainerTemplate.cmake) this rule configures and builds with the mingw
+# toolchain (cmake/toolchain-mingw64.cmake).
 #
-# A missing `x86_64-w64-mingw32-g++` never fails the configure: it warns, no
-# template is produced, and `trainer::generate` then reports the windows target on
-# its own while the Linux one still works.
+# A missing mingw compiler never fails the configure: it warns, no template is
+# produced, and `trainer::generate` then reports the windows target on its own
+# while the Linux one still works.
 #
-# Expected to be included after `SLOPKIT_TRAINER_DIR` and `SLOPKIT_TRAINER_SOURCES`
-# are defined (see CMakeLists.txt).
+# Expected to be included after `SLOPKIT_TRAINER_DIR`, `SLOPKIT_TRAINER_SOURCES`
+# and `SLOPKIT_FETCHCONTENT_BASE_DIR` are defined (see CMakeLists.txt).
 
+find_program(SLOPKIT_MINGW_X86_64_C_EXECUTABLE NAMES x86_64-w64-mingw32-gcc)
 find_program(SLOPKIT_MINGW_X86_64_CXX_EXECUTABLE NAMES x86_64-w64-mingw32-g++)
 
-set(SLOPKIT_TRAINER_WINDOWS_SOURCES ${SLOPKIT_TRAINER_SOURCES})
-list(REMOVE_ITEM SLOPKIT_TRAINER_WINDOWS_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/target_linux.cpp)
-list(APPEND SLOPKIT_TRAINER_WINDOWS_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/target_windows.cpp)
-
-set(SLOPKIT_TRAINER_WINDOWS_HEADERS
-    ${CMAKE_SOURCE_DIR}/src/trainer/payload.hpp
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/target.hpp
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/payload_reader.hpp
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/resolve.hpp
-    ${CMAKE_SOURCE_DIR}/src/trainer/runtime/console.hpp)
-
 set(SLOPKIT_TRAINER_WINDOWS_TEMPLATE ${SLOPKIT_TRAINER_DIR}/slopkit-trainer.exe)
+set(SLOPKIT_TRAINER_TEMPLATE_BUILD_DIR ${CMAKE_BINARY_DIR}/trainer-template)
 
-# Static libstdc++/libgcc and the console subsystem: no mingw DLL may be needed on
-# the target machine, and the trainer is a console program by definition.
-set(SLOPKIT_TRAINER_WINDOWS_FLAGS
-    -std=c++23 -O2 -Wall -Wextra
-    -static -static-libgcc -static-libstdc++
-    -Wl,--subsystem,console)
+file(GLOB_RECURSE SLOPKIT_TRAINER_WINDOWS_HEADERS CONFIGURE_DEPENDS
+    ${CMAKE_SOURCE_DIR}/src/trainer/*.hpp
+    ${CMAKE_SOURCE_DIR}/src/script/*.hpp
+    ${CMAKE_SOURCE_DIR}/src/reclass/*.hpp
+    ${CMAKE_SOURCE_DIR}/src/disasm/*.hpp
+    ${CMAKE_SOURCE_DIR}/src/scan/*.hpp
+    ${CMAKE_SOURCE_DIR}/src/expr/*.hpp)
 
-if(SLOPKIT_MINGW_X86_64_CXX_EXECUTABLE)
+if(SLOPKIT_MINGW_X86_64_C_EXECUTABLE AND SLOPKIT_MINGW_X86_64_CXX_EXECUTABLE)
+    # The nested configure is a real CMake project because the template links the
+    # fetched Lua, sol2 and Zydis libraries; it reuses the host build's downloads
+    # through SLOPKIT_SHARED_SOURCE_DIR.
     add_custom_command(OUTPUT ${SLOPKIT_TRAINER_WINDOWS_TEMPLATE}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SLOPKIT_TRAINER_DIR}
-        COMMAND ${SLOPKIT_MINGW_X86_64_CXX_EXECUTABLE}
-            ${SLOPKIT_TRAINER_WINDOWS_FLAGS}
-            -I${CMAKE_SOURCE_DIR}/src
-            -o ${SLOPKIT_TRAINER_WINDOWS_TEMPLATE}
-            ${SLOPKIT_TRAINER_WINDOWS_SOURCES}
-            -lpsapi
+        COMMAND ${CMAKE_COMMAND}
+            -S ${CMAKE_SOURCE_DIR}/cmake/trainer-template
+            -B ${SLOPKIT_TRAINER_TEMPLATE_BUILD_DIR}
+            -G "${CMAKE_GENERATOR}"
+            -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchain-mingw64.cmake
+            -DCMAKE_BUILD_TYPE=Release
+            -DSLOPKIT_SHARED_SOURCE_DIR=${SLOPKIT_FETCHCONTENT_BASE_DIR}
+            -DSLOPKIT_TRAINER_OUTPUT_DIR=${SLOPKIT_TRAINER_DIR}
+        COMMAND ${CMAKE_COMMAND} --build ${SLOPKIT_TRAINER_TEMPLATE_BUILD_DIR} --parallel
         DEPENDS ${SLOPKIT_TRAINER_WINDOWS_SOURCES} ${SLOPKIT_TRAINER_WINDOWS_HEADERS}
         COMMENT "Cross-compiling the Windows trainer template"
         VERBATIM)

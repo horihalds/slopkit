@@ -18,7 +18,7 @@ namespace slopkit::trainer
     // `kFingerSize` bytes of the file, and gives the payload's size.
     inline constexpr std::string_view kPayloadMagic {"SLPKTRN1"};
     inline constexpr std::string_view kFingerMagic {"SLPKTRN2"};
-    inline constexpr std::uint32_t    kPayloadVersion {1};
+    inline constexpr std::uint32_t    kPayloadVersion {2};
     inline constexpr std::size_t      kFingerSize {16};
 
     inline constexpr std::uint32_t kTargetLinux {0};
@@ -51,12 +51,26 @@ namespace slopkit::trainer
         std::uint64_t          last_address {0};
     };
 
+    struct PayloadScript
+    {
+        std::string description;
+        std::string source;
+    };
+
+    struct PayloadClass
+    {
+        std::string name;
+        std::string text;
+    };
+
     struct Payload
     {
-        std::uint32_t             target_os {kTargetLinux};
-        std::uint32_t             pointer_size {8};
-        std::string               process_name;
-        std::vector<PayloadEntry> entries;
+        std::uint32_t              target_os {kTargetLinux};
+        std::uint32_t              pointer_size {8};
+        std::string                process_name;
+        std::vector<PayloadEntry>  entries;
+        std::vector<PayloadScript> scripts;
+        std::vector<PayloadClass>  classes;
     };
 
     [[nodiscard]] std::string_view target_name(TargetOs target) noexcept;

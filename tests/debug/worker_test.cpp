@@ -158,7 +158,7 @@ TEST_CASE("worker is idle only once its completion has been drained", "[debug][w
     // In flight: the job has not reached its completion yet.
     CHECK_FALSE(worker.idle());
 
-    backend.interrupt(7);
+    static_cast<void>(backend.interrupt(7));
     // Finished or not, the completion is still undelivered, so the worker is not
     // quiescent and a caller must not read the state the completion produces.
     CHECK_FALSE(worker.idle());

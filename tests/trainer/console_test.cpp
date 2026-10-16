@@ -15,6 +15,8 @@ namespace
     using slopkit::trainer::LiveEntry;
     using slopkit::trainer::Payload;
     using slopkit::trainer::PayloadEntry;
+    using slopkit::trainer::PayloadScript;
+    using slopkit::trainer::ScriptState;
     using slopkit::trainer::console::CommandKind;
     using slopkit::trainer::console::parse_command;
     using slopkit::trainer::console::render_rows;
@@ -106,7 +108,7 @@ TEST_CASE("rows carry the value, the freeze marker and the unresolved marker", "
     live.resolved = true;
     live.bytes    = bytes;
 
-    const auto resolved = render_rows(payload, std::span {&live, 1});
+    const auto resolved = render_rows(payload, std::span {&live, 1}, {});
     CHECK(resolved.find("Health") != std::string::npos);
     CHECK(resolved.find("0x7f2a12345678") != std::string::npos);
     CHECK(resolved.find("4 Bytes") != std::string::npos);
@@ -115,12 +117,12 @@ TEST_CASE("rows carry the value, the freeze marker and the unresolved marker", "
     CHECK(resolved.find("frozen") == std::string::npos);
 
     live.frozen       = true;
-    const auto frozen = render_rows(payload, std::span {&live, 1});
+    const auto frozen = render_rows(payload, std::span {&live, 1}, {});
     CHECK(frozen.find("frozen") != std::string::npos);
 
     live.resolved         = false;
     live.note             = "unknown module or literal 'missing'";
-    const auto unresolved = render_rows(payload, std::span {&live, 1});
+    const auto unresolved = render_rows(payload, std::span {&live, 1}, {});
     CHECK(unresolved.find("unresolved") != std::string::npos);
     CHECK(unresolved.find("missing") != std::string::npos);
 }
@@ -136,4 +138,82 @@ TEST_CASE("the header names the target and the pointer size", "[trainer][console
     CHECK(header.find("4242") != std::string::npos);
     CHECK(header.find("1 entry") != std::string::npos);
     CHECK(header.find("8-byte") != std::string::npos);
+}
+
+TEST_CASE("the header counts the scripts too", "[trainer][console]")
+{
+    auto payload = single_entry_table();
+    payload.scripts.push_back(PayloadScript {"No reload", "return true"});
+
+    const auto header = slopkit::trainer::console::render_header(payload, 4242);
+    CHECK(header.find("1 script") != std::string::npos);
+}
+
+TEST_CASE("activate and deactivate commands accept both spellings", "[trainer][console]")
+{
+    CHECK(parse_command("a1").kind == CommandKind::activate_script);
+    CHECK(parse_command("a1").index == 1);
+    CHECK(parse_command("a 2").kind == CommandKind::activate_script);
+    CHECK(parse_command("a 2").index == 2);
+    CHECK(parse_command("activate 3").kind == CommandKind::activate_script);
+    CHECK(parse_command("activate 3").index == 3);
+    CHECK(parse_command("d4").kind == CommandKind::deactivate_script);
+    CHECK(parse_command("d4").index == 4);
+    CHECK(parse_command("d 5").kind == CommandKind::deactivate_script);
+    CHECK(parse_command("d 5").index == 5);
+
+    // Missing or unusable indices are reported like the other commands.
+    CHECK(parse_command("a").kind == CommandKind::invalid);
+    CHECK(parse_command("a x").kind == CommandKind::invalid);
+    CHECK(parse_command("a x").text == "x");
+    CHECK(parse_command("a0").kind == CommandKind::invalid);
+    CHECK(parse_command("d").kind == CommandKind::invalid);
+
+    // `d` never means "deactivate the value entry": the two spaces are apart.
+    CHECK(parse_command("f1").kind == CommandKind::freeze);
+    CHECK(parse_command("s 1 42").kind == CommandKind::set_value);
+}
+
+TEST_CASE("the script block shows each script's state, interval and message", "[trainer][console]")
+{
+    auto payload = single_entry_table();
+    payload.scripts.push_back(PayloadScript {"No reload", "return true"});
+    payload.scripts.push_back(PayloadScript {"Armour", "return true"});
+
+    std::vector<std::byte> bytes(4, std::byte {0});
+    LiveEntry              live;
+    live.address  = 0x7f2a12345678;
+    live.resolved = true;
+    live.bytes    = bytes;
+
+    std::vector<ScriptState> states(2);
+    states[1].active      = true;
+    states[1].interval_ms = 250;
+
+    const auto rows = render_rows(payload, std::span {&live, 1}, states);
+    CHECK(rows.find("Health") != std::string::npos);
+    CHECK(rows.find("S1") != std::string::npos);
+    CHECK(rows.find("No reload") != std::string::npos);
+    CHECK(rows.find("idle") != std::string::npos);
+    CHECK(rows.find("S2") != std::string::npos);
+    CHECK(rows.find("Armour") != std::string::npos);
+    CHECK(rows.find("active") != std::string::npos);
+    CHECK(rows.find("250 ms") != std::string::npos);
+
+    states[1].active  = false;
+    states[1].failed  = true;
+    states[1].message = "hp went negative";
+    const auto failed = render_rows(payload, std::span {&live, 1}, states);
+    CHECK(failed.find("error") != std::string::npos);
+    CHECK(failed.find("hp went negative") != std::string::npos);
+}
+
+TEST_CASE("the help and usage text document the script commands", "[trainer][console]")
+{
+    const auto help = slopkit::trainer::console::render_help();
+    CHECK(help.find("a<N>") != std::string::npos);
+    CHECK(help.find("d<N>") != std::string::npos);
+    CHECK(help.find("independent") != std::string::npos);
+
+    CHECK(slopkit::trainer::console::render_usage().find("--activate N") != std::string::npos);
 }

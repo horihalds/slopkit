@@ -104,13 +104,16 @@ TEST_CASE("the generate-trainer command writes a trainer and prints its path", "
     CHECK(out.str() == produced.string() + "\n");
     REQUIRE(std::filesystem::is_regular_file(produced));
 
-    // The payload carries the recorded process name and the table's value entries,
-    // while the script entry stays out of it.
+    // The payload carries the recorded process name, the table's value entries
+    // and its script entry.
     const auto payload = slopkit::trainer::decode_payload(read_file(produced));
     REQUIRE(payload.has_value());
     CHECK(payload->process_name == "practice");
     REQUIRE(payload->entries.size() == 1);
     CHECK(payload->entries.front().description == "Health");
+    REQUIRE(payload->scripts.size() == 1);
+    CHECK(payload->scripts.front().description == "No reload");
+    CHECK(payload->scripts.front().source == "return true");
 }
 
 TEST_CASE("the command defaults to both targets and to the table's own name", "[app][trainer]")
@@ -137,7 +140,7 @@ TEST_CASE("the command defaults to both targets and to the table's own name", "[
     }
 }
 
-TEST_CASE("the command reports a table without value entries", "[app][trainer]")
+TEST_CASE("the command generates a trainer for a table that carries only scripts", "[app][trainer]")
 {
     const auto fixture = prepare("scripts", script_only_table());
 
@@ -149,10 +152,18 @@ TEST_CASE("the command reports a table without value entries", "[app][trainer]")
         std::vector<std::string_view> {
             "--table", fixture.table.string(), "--target", "linux", "--out", fixture.directory.string()});
 
-    CHECK(code == 1);
-    CHECK(out.str().empty());
-    CHECK(err.str().find("value entries") != std::string::npos);
-    CHECK_FALSE(std::filesystem::exists(fixture.directory / "practice.trainer"));
+    const auto produced = fixture.directory / "practice.trainer";
+    CHECK(code == 0);
+    CHECK(err.str().empty());
+    CHECK(out.str() == produced.string() + "\n");
+    REQUIRE(std::filesystem::is_regular_file(produced));
+
+    const auto payload = slopkit::trainer::decode_payload(read_file(produced));
+    REQUIRE(payload.has_value());
+    CHECK(payload->entries.empty());
+    REQUIRE(payload->scripts.size() == 1);
+    CHECK(payload->scripts.front().description == "No reload");
+    CHECK(payload->scripts.front().source == "return true");
 }
 
 TEST_CASE("the command rejects bad usage and an unreadable table", "[app][trainer]")

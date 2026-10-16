@@ -39,7 +39,7 @@ namespace slopkit::trainer
     {
         std::vector<Written>     written;
         std::size_t              value_entries {0};
-        std::size_t              skipped_scripts {0};
+        std::size_t              script_entries {0};
         std::vector<std::string> errors;
     };
 

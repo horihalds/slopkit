@@ -19,6 +19,7 @@
 #include "trainer/runtime/console.hpp"
 #include "trainer/runtime/payload_reader.hpp"
 #include "trainer/runtime/resolve.hpp"
+#include "trainer/runtime/scripts.hpp"
 #include "trainer/runtime/target.hpp"
 
 namespace slopkit::trainer
@@ -35,6 +36,7 @@ namespace slopkit::trainer
             bool                                             list {false};
             std::vector<std::size_t>                         freeze;
             std::vector<std::pair<std::size_t, std::string>> set_values;
+            std::vector<std::size_t>                         activate;
             bool                                             help {false};
 
             [[nodiscard]] bool has_actions() const
@@ -172,6 +174,16 @@ namespace slopkit::trainer
                     options.set_values.emplace_back(*number, std::string {value->substr(equals + 1)});
                     continue;
                 }
+                if (argument == "--activate")
+                {
+                    const auto number = number_value(index, argc, argv, argument);
+                    if (!number)
+                    {
+                        return std::unexpected(number.error());
+                    }
+                    options.activate.push_back(*number);
+                    continue;
+                }
                 return std::unexpected(std::format("unknown option \"{}\"", argument));
             }
             return options;
@@ -211,6 +223,32 @@ namespace slopkit::trainer
             }
         }
 
+        // Ticks the scripts and hands the symbols they published to the resolver, so
+        // an entry whose expression names one resolves in the same refresh.
+        void tick_scripts(ScriptHost& scripts, Resolver& resolver)
+        {
+            scripts.tick(std::chrono::steady_clock::now());
+            resolver.set_symbols(scripts.symbols());
+        }
+
+        // Activates or deactivates one script and prints whatever its hook said.
+        // A failing hook never leaves the console or changes the exit code.
+        void run_script_command(ScriptHost& scripts, Resolver& resolver, bool activating, std::size_t index)
+        {
+            const auto        outcome = activating ? scripts.activate(index - 1) : scripts.deactivate(index - 1);
+            std::ostream&     stream  = outcome.has_value() ? std::cout : std::cerr;
+            const std::string text    = scripts.output_text(index - 1);
+            if (!text.empty())
+            {
+                stream << text;
+            }
+            else if (!outcome.has_value())
+            {
+                stream << std::format("{}\n", outcome.error());
+            }
+            resolver.set_symbols(scripts.symbols());
+        }
+
         std::optional<std::string>
         apply_set(Resolver& resolver, const PayloadEntry& entry, LiveEntry& live, std::string_view text)
         {
@@ -235,12 +273,14 @@ namespace slopkit::trainer
         void pump(std::uint32_t           wait_ms,
                   std::uint32_t           interval_ms,
                   const Payload&          payload,
+                  ScriptHost&             scripts,
                   Resolver&               resolver,
                   std::vector<LiveEntry>& live)
         {
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds {wait_ms};
             while (std::chrono::steady_clock::now() < deadline)
             {
+                tick_scripts(scripts, resolver);
                 rewrite_frozen(payload, resolver, live);
                 refresh_all(payload, resolver, live);
 
@@ -254,6 +294,7 @@ namespace slopkit::trainer
         }
 
         int interactive(const Payload&          payload,
+                        ScriptHost&             scripts,
                         Resolver&               resolver,
                         std::vector<LiveEntry>& live,
                         std::uint32_t           pid,
@@ -266,12 +307,14 @@ namespace slopkit::trainer
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= next_draw)
                 {
+                    tick_scripts(scripts, resolver);
                     rewrite_frozen(payload, resolver, live);
                     refresh_all(payload, resolver, live);
 
                     clear_screen();
-                    std::cout << console::render_header(payload, pid) << console::render_rows(payload, live)
-                              << "slopkit-trainer> " << std::flush;
+                    std::cout << console::render_header(payload, pid)
+                              << console::render_rows(payload, live, scripts.states()) << "slopkit-trainer> "
+                              << std::flush;
                     next_draw = now + std::chrono::milliseconds {interval_ms};
                 }
 
@@ -303,6 +346,8 @@ namespace slopkit::trainer
                     break;
                 case console::CommandKind::freeze:
                 case console::CommandKind::set_value:
+                case console::CommandKind::activate_script:
+                case console::CommandKind::deactivate_script:
                 case console::CommandKind::invalid:
                     break;
                 }
@@ -310,6 +355,24 @@ namespace slopkit::trainer
                 if (command.kind == console::CommandKind::invalid)
                 {
                     std::cout << std::format("unrecognized input \"{}\"; press ? for help\n", command.text);
+                    next_draw = {};
+                    continue;
+                }
+                if (command.kind == console::CommandKind::activate_script
+                    || command.kind == console::CommandKind::deactivate_script)
+                {
+                    if (command.index == 0 || command.index > scripts.size())
+                    {
+                        std::cout << std::format("this trainer carries {} script{}, so there is no script {}\n",
+                                                 scripts.size(),
+                                                 scripts.size() == 1 ? "" : "s",
+                                                 command.index);
+                    }
+                    else
+                    {
+                        run_script_command(
+                            scripts, resolver, command.kind == console::CommandKind::activate_script, command.index);
+                    }
                     next_draw = {};
                     continue;
                 }
@@ -362,9 +425,9 @@ namespace slopkit::trainer
                 std::cerr << "slopkit-trainer: " << payload.error() << "\n";
                 return kExitNoPayload;
             }
-            if (payload->entries.empty())
+            if (payload->entries.empty() && payload->scripts.empty())
             {
-                std::cerr << "slopkit-trainer: this trainer carries no entries\n";
+                std::cerr << "slopkit-trainer: this trainer carries no entries and no scripts\n";
                 return kExitNoPayload;
             }
 
@@ -390,6 +453,33 @@ namespace slopkit::trainer
 
             Resolver               resolver {**target, payload->pointer_size};
             std::vector<LiveEntry> live = seed(*payload);
+            ScriptHost             scripts {**target, *payload, options.interval_ms};
+
+            if (!scripts.class_error().empty())
+            {
+                // `structs` is the only thing a class project backs, so a project
+                // that cannot be read is reported once and nothing else changes.
+                std::cerr << std::format("slopkit-trainer: script structs are unavailable: {}\n",
+                                         scripts.class_error());
+            }
+
+            // `--activate N` ticks script S<N> exactly as `a<N>` does interactively,
+            // before the requested actions run.
+            for (const auto index : options.activate)
+            {
+                if (index == 0 || index > scripts.size())
+                {
+                    std::cerr << std::format(
+                        "slopkit-trainer: this trainer carries {} script{}, so there is no script {}\n",
+                        scripts.size(),
+                        scripts.size() == 1 ? "" : "s",
+                        index);
+                    return kExitUsage;
+                }
+                run_script_command(scripts, resolver, true, index);
+            }
+            resolver.set_symbols(scripts.symbols());
+
             refresh_all(*payload, resolver, live);
 
             for (const auto index : options.freeze)
@@ -425,16 +515,17 @@ namespace slopkit::trainer
 
             if (options.wait_ms > 0)
             {
-                pump(options.wait_ms, options.interval_ms, *payload, resolver, live);
+                pump(options.wait_ms, options.interval_ms, *payload, scripts, resolver, live);
             }
 
             if (options.has_actions() || !stdin_is_terminal())
             {
-                std::cout << console::render_header(*payload, (*target)->pid()) << console::render_rows(*payload, live);
+                std::cout << console::render_header(*payload, (*target)->pid())
+                          << console::render_rows(*payload, live, scripts.states());
                 return kExitOk;
             }
 
-            return interactive(*payload, resolver, live, (*target)->pid(), options.interval_ms);
+            return interactive(*payload, scripts, resolver, live, (*target)->pid(), options.interval_ms);
         }
     }
 

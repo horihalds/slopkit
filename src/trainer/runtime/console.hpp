@@ -8,6 +8,7 @@
 
 #include "trainer/payload.hpp"
 #include "trainer/runtime/resolve.hpp"
+#include "trainer/runtime/scripts.hpp"
 
 namespace slopkit::trainer::console
 {
@@ -16,6 +17,8 @@ namespace slopkit::trainer::console
         none,
         freeze,
         set_value,
+        activate_script,
+        deactivate_script,
         refresh,
         list,
         quit,
@@ -31,12 +34,15 @@ namespace slopkit::trainer::console
         std::string text;     // the offending input for `invalid`
     };
 
-    // `f<N>` / `f <N>` freeze, `s <N> <value>` set, `r` re-resolve, `l` re-list,
-    // `q` quit and `?` help; anything else is `invalid`.
+    // `f<N>` / `f <N>` freeze, `s <N> <value>` set, `a<N>` / `a <N>` activate a
+    // script, `d<N>` / `d <N>` deactivate one, `r` re-resolve, `l` re-list,
+    // `q` quit and `?` help; anything else is `invalid`. Value entries and scripts
+    // are numbered independently.
     [[nodiscard]] Command parse_command(std::string_view line);
 
     [[nodiscard]] std::string render_header(const Payload& payload, std::uint32_t pid);
-    [[nodiscard]] std::string render_rows(const Payload& payload, std::span<const LiveEntry> live);
+    [[nodiscard]] std::string
+    render_rows(const Payload& payload, std::span<const LiveEntry> live, std::span<const ScriptState> scripts);
     [[nodiscard]] std::string render_help();
     [[nodiscard]] std::string render_usage();
 

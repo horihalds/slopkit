@@ -125,6 +125,14 @@ namespace slopkit::trainer::console
             return command;
         }
 
+        Command script_command(CommandKind kind, std::size_t index)
+        {
+            Command command;
+            command.kind  = kind;
+            command.index = index;
+            return command;
+        }
+
         std::string shorten(std::string_view text)
         {
             if (text.size() <= kDescriptionWidth)
@@ -151,6 +159,37 @@ namespace slopkit::trainer::console
                 if (!live.note.empty())
                 {
                     text += std::format(" ({})", live.note);
+                }
+            }
+            return text;
+        }
+
+        std::string script_state(const ScriptState& state)
+        {
+            if (state.failed)
+            {
+                return "error";
+            }
+            return state.active ? "active" : "idle";
+        }
+
+        std::string script_interval(const ScriptState& state)
+        {
+            return state.interval_ms > 0 ? std::format("{} ms", state.interval_ms) : std::string {"-"};
+        }
+
+        std::string script_message(const ScriptState& state)
+        {
+            if (state.message.empty())
+            {
+                return "-";
+            }
+            std::string text = state.message;
+            for (char& character : text)
+            {
+                if (character == '\n' || character == '\r')
+                {
+                    character = ' ';
                 }
             }
             return text;
@@ -201,6 +240,28 @@ namespace slopkit::trainer::console
             return invalid(head);
         }
 
+        if (head.front() == 'a' || head.front() == 'd')
+        {
+            const bool activating = head.front() == 'a';
+            const auto kind       = activating ? CommandKind::activate_script : CommandKind::deactivate_script;
+            const auto long_form  = activating ? std::string_view {"activate"} : std::string_view {"deactivate"};
+
+            std::size_t index = 0;
+            if (parse_index(head.substr(1), index))
+            {
+                return script_command(kind, index);
+            }
+            if (head.size() == 1 || head == long_form)
+            {
+                if (parts.size() < 2 || !parse_index(parts[1], index))
+                {
+                    return invalid(parts.size() < 2 ? head : parts[1]);
+                }
+                return script_command(kind, index);
+            }
+            return invalid(head);
+        }
+
         if (head.front() == 's')
         {
             const auto rest = head.substr(1);
@@ -240,15 +301,18 @@ namespace slopkit::trainer::console
     std::string render_header(const Payload& payload, std::uint32_t pid)
     {
         const auto name = payload.process_name.empty() ? std::string {"the target"} : payload.process_name;
-        return std::format("slopkit-trainer: {} (pid {}), {} entr{}, {}-byte pointers\n",
+        return std::format("slopkit-trainer: {} (pid {}), {} entr{}, {} script{}, {}-byte pointers\n",
                            name,
                            pid,
                            payload.entries.size(),
                            payload.entries.size() == 1 ? "y" : "ies",
+                           payload.scripts.size(),
+                           payload.scripts.size() == 1 ? "" : "s",
                            payload.pointer_size);
     }
 
-    std::string render_rows(const Payload& payload, std::span<const LiveEntry> live)
+    std::string
+    render_rows(const Payload& payload, std::span<const LiveEntry> live, std::span<const ScriptState> scripts)
     {
         std::string text;
         for (std::size_t position = 0; position < payload.entries.size() && position < live.size(); ++position)
@@ -268,6 +332,23 @@ namespace slopkit::trainer::console
                                 value,
                                 annotations(entry, state));
         }
+
+        // Scripts are a second numbering space: the rows above stay 1..N and a
+        // script is always addressed as S<n>, never by the value-entry number.
+        if (!scripts.empty() && !payload.entries.empty())
+        {
+            text += '\n';
+        }
+        for (std::size_t position = 0; position < scripts.size() && position < payload.scripts.size(); ++position)
+        {
+            const auto& state = scripts[position];
+            text += std::format("S{}  {:<24}  {:<14}  {:<9}  {}\n",
+                                position + 1,
+                                shorten(payload.scripts[position].description),
+                                script_state(state),
+                                script_interval(state),
+                                script_message(state));
+        }
         return text;
     }
 
@@ -275,19 +356,26 @@ namespace slopkit::trainer::console
     {
         return "  f<N>          freeze or unfreeze entry N\n"
                "  s <N> <value> write a value (hex honouring the entry's hex flag)\n"
+               "  a<N>          activate script S<N> (runs its activate hook)\n"
+               "  d<N>          deactivate script S<N> (runs its deactivate hook)\n"
                "  r             re-resolve every expression\n"
                "  l             redraw the list\n"
-               "  q             quit\n";
+               "  q             quit\n"
+               "\n"
+               "Value entries are numbered 1..N and scripts S1..Sm; the two spaces are\n"
+               "independent, so `f1` never touches script S1.\n";
     }
 
     std::string render_usage()
     {
         return "usage: slopkit-trainer [--pid N | --name NAME] [--interval MS] [--list]\n"
                "                       [--wait MS] [--set N=VALUE]... [--freeze N]...\n"
+               "                       [--activate N]...\n"
                "\n"
                "Without attachment flags the trainer attaches to the process name recorded\n"
                "when it was generated. Actions run before the list is printed; without any\n"
-               "action flag an interactive console is shown when stdin is a terminal.\n";
+               "action flag an interactive console is shown when stdin is a terminal.\n"
+               "Scripts start idle; --activate N ticks script S<N> before the actions run.\n";
     }
 
 }

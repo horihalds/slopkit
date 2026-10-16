@@ -82,7 +82,7 @@ TEST_CASE("the dialog summarises what will be embedded", "[ui][trainer]")
     GenerateTrainerDialog dialog {request_for(table)};
     dialog.show();
 
-    CHECK(dialog.summary_text() == QStringLiteral("2 value entries, 1 script entries skipped"));
+    CHECK(dialog.summary_text() == QStringLiteral("2 value entries, 1 script entries"));
     CHECK(dialog.linux_target());
     CHECK_FALSE(dialog.windows_target());
     CHECK(dialog.can_generate());
@@ -90,7 +90,7 @@ TEST_CASE("the dialog summarises what will be embedded", "[ui][trainer]")
     // The summary line carries the recorded pointer size and target name too.
     auto* summary = dialog.findChild<QLabel*>(QStringLiteral("generate_trainer_summary"));
     REQUIRE(summary != nullptr);
-    CHECK(summary->text().contains(QStringLiteral("2 value entries, 1 script entries skipped")));
+    CHECK(summary->text().contains(QStringLiteral("2 value entries, 1 script entries")));
     CHECK(summary->text().contains(QStringLiteral("8-byte")));
     CHECK(summary->text().contains(QStringLiteral("practice")));
 

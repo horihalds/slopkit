@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "app/cli.hpp"
+#include "reclass/serialize.hpp"
 #include "table/address_table.hpp"
 #include "table/entry_name.hpp"
 #include "trainer/payload.hpp"
@@ -186,7 +187,11 @@ namespace slopkit::trainer
         {
             if (entry.kind == table::EntryKind::script)
             {
-                ++result.skipped_scripts;
+                PayloadScript script;
+                script.description = entry.description;
+                script.source      = entry.script;
+                payload.scripts.push_back(std::move(script));
+                ++result.script_entries;
                 continue;
             }
 
@@ -202,7 +207,12 @@ namespace slopkit::trainer
             ++result.value_entries;
         }
 
-        if (result.value_entries == 0)
+        for (const auto& member : reclass::to_members(request.table->structures()))
+        {
+            payload.classes.push_back(PayloadClass {member.name, member.text});
+        }
+
+        if (result.value_entries == 0 && payload.scripts.empty())
         {
             return std::unexpected(std::string {"the table has no value entries to embed"});
         }

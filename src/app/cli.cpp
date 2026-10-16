@@ -349,10 +349,10 @@ namespace slopkit::app
         }
 
         log::info(log::category::app,
-                  std::format("command generate-trainer: done, {} file(s), {} value entr(ies), {} skipped script(s)",
+                  std::format("command generate-trainer: done, {} file(s), {} value entr(ies), {} script entr(ies)",
                               generated->written.size(),
                               generated->value_entries,
-                              generated->skipped_scripts));
+                              generated->script_entries));
         return generated->written.empty() ? 1 : 0;
     }
 

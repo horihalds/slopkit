@@ -58,6 +58,11 @@ namespace slopkit::trainer
         }
     }
 
+    void Resolver::set_symbols(std::span<const expr::SymbolRef> symbols)
+    {
+        symbols_.assign(symbols.begin(), symbols.end());
+    }
+
     void Resolver::refresh(const PayloadEntry& entry, LiveEntry& live) const
     {
         const auto expression = expr::parse(entry.expression);
@@ -72,7 +77,7 @@ namespace slopkit::trainer
         const auto evaluated = expr::evaluate(
             *expression,
             modules_,
-            {},
+            symbols_,
             [this](std::uint64_t address)
             {
                 return read_pointer(target_, pointer_size_, address);

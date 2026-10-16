@@ -3,7 +3,7 @@
 A **script entry** is an address-table row that holds Lua source instead of a
 value: its Type column reads `script`, its Address and Value cells stay blank, and
 the source travels inside the `.skt` file (`entries/<name>.lua`). Scripts run
-against the attached target through a small memory API over the system Lua slopkit
+against the attached target through a small memory API over the Lua VM slopkit
 links against; everything else is ordinary Lua.
 
 ## Hooks
@@ -372,6 +372,37 @@ function update()
     end
 end
 ```
+
+## Scripts in a generated trainer
+
+`File > Generate Trainer…` embeds every script entry — description and source —
+into the trainer it writes, and the trainer runs it through the same engine
+slopkit uses, so a script that reproduces a table's behaviour here reproduces it
+there:
+
+- Scripts start **idle**: nothing runs until one is activated. The console's
+  `a<N>` activates script `S<N>` and `d<N>` deactivates it, and the repeatable
+  `--activate N` does the same before the requested actions run.
+- `activate`, `deactivate` and `update` behave as described above, with the
+  trainer's `--interval` (250 ms by default) as the fallback cadence;
+  `update_interval` still wins, and its "due every pass" floor is the trainer's own
+  interval.
+- The table's value entries keep the numbers `1..N` and its scripts are `S1..Sm`;
+  the two numbering spaces are independent.
+- `mem.*`, `aobscan`, `assemble`, `expression`, `validate`, the global symbols
+  (`rsymbol` / `ssymbol` / `usymbol`) and `structs` views all work, and a symbol a
+  script publishes resolves the table's own value-entry expressions exactly as it
+  does in the app.
+- The class project travels with the trainer, so `structs.get(name)` reads the same
+  definitions; a project the trainer cannot parse is reported once and leaves only
+  `structs` unavailable.
+- `alloc` / `dealloc` and `hook.install` / `hook.remove` are **unavailable** there:
+  a self-contained trainer cannot map memory inside the target, so they raise
+  `the trainer cannot allocate in the target` instead of corrupting it.
+- Output and failure are per script: its `print` lines and the last hook's message
+  are shown beside it, and a script whose source does not compile or whose hook
+  fails is marked `error`, stops ticking and never affects the others. Nothing a
+  script does changes the trainer's exit code.
 
 ## Where to look next
 

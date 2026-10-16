@@ -37,6 +37,10 @@ namespace slopkit::trainer
 
         void refresh_modules();
 
+        // The symbols the active scripts published; an expression may name one
+        // exactly as it names a module, and dropping the script drops them again.
+        void set_symbols(std::span<const expr::SymbolRef> symbols);
+
         void refresh(const PayloadEntry& entry, LiveEntry& live) const;
 
         [[nodiscard]] std::expected<void, std::string>
@@ -46,6 +50,7 @@ namespace slopkit::trainer
         const Target&                target_;
         std::size_t                  pointer_size_ {8};
         std::vector<expr::ModuleRef> modules_;
+        std::vector<expr::SymbolRef> symbols_;
     };
 
 }

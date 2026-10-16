@@ -40,7 +40,7 @@ namespace slopkit::ui::dialogs
         void               set_linux_target(bool enabled);
         void               set_windows_target(bool enabled);
 
-        // What will be embedded: `N value entries, M script entries skipped`.
+        // What will be embedded: `N value entries, M script entries`.
         [[nodiscard]] QString summary_text() const;
 
         // The Generate button's state: at least one target, a directory and a name.
@@ -61,7 +61,7 @@ namespace slopkit::ui::dialogs
 
         trainer::Request      request_;
         std::size_t           value_entries_ {};
-        std::size_t           skipped_scripts_ {};
+        std::size_t           script_entries_ {};
         QCheckBox*            linux_box_ {};
         QCheckBox*            windows_box_ {};
         QLineEdit*            directory_edit_ {};

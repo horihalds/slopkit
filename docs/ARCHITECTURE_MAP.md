@@ -26,8 +26,8 @@ docs that hold the detail behind this map.
 | `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
 | `src/script` | Lua scripting engine: a sol2 state, the `mem` and `structs` APIs, the type-token codec, the process-wide symbol registry and the hook-script generator |
 | `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
-| `src/trainer` | Qt-free trainer generation: the payload format and the generator that appends a table's entries to a copy of a runtime template |
-| `src/trainer/runtime` | Self-contained console trainer (the Linux backend is built natively, the Windows backend is cross-compiled) |
+| `src/trainer` | Qt-free trainer generation: the payload format and the generator that appends a table's value entries, scripts and ReClass classes to a copy of a runtime template |
+| `src/trainer/runtime` | Self-contained console trainer and its Lua script host (the Linux backend is built natively, the Windows backend is cross-compiled) |
 | `src/ui` | Qt main window and shared UI infrastructure |
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, ReClass project tree, script editor, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
@@ -56,7 +56,7 @@ docs that hold the detail behind this map.
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 | `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `icons/datatypes/*.svg` (node-kind glyphs), `fonts/*.ttf` with `OFL.txt` |
-| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair) and `Trainer.cmake` (cross-compiles the Windows trainer template with mingw-w64 g++, or warns and leaves the Linux-only build working) |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair), `Dependencies.cmake` (fetches sol2, Lua and Zydis at pinned revisions for every build), `TrainerSources.cmake` (the trainer source lists) and `Trainer.cmake` (drives the Windows trainer cross-build, or warns and leaves the Linux-only build working) |
 | `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `SCRIPTING.md`, `WINE_AGENT.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
 | `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |
@@ -73,11 +73,11 @@ docs that hold the detail behind this map.
 | table | Address table (it also owns the ReClass class project), `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, reclass, libzip |
 | expr | Address expression parsing (`base + offset...` and bracket pointer chains) and resolution with an injected per-level validator; a dependency-free leaf (it includes nothing outside `expr/`) | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | — |
 | reclass | ReClass structure model: the polymorphic `Node` hierarchy and its kinds, the derived class layout, the value codec, the dissect ladder and the archive member text; a dependency-free leaf (it includes nothing outside `reclass/`) | `reclass/nodes/{node,number,hex,text,vector,container,function}.hpp` (`Node`, `NodePtr`, `make_node`), `reclass/node.hpp` (`NodeKind`), `reclass/node_menu.hpp` (`node_menu_groups`, `node_menu_label`), `project.hpp`, `enum.hpp` (`EnumDescription`, `EnumValue`), `value.hpp`, `edit.hpp`, `dissect.hpp`, `serialize.hpp`, `cpp_header.hpp` (`cpp_header`) | `tests/reclass/*` | — |
-| trainer | Trainer payload format and the Qt-free generator: template discovery, the per-target copy-and-append write path and the skipped-script count | `trainer/payload.hpp` (`Payload`, `PayloadEntry`, `TargetOs`, `encode_payload`, `decode_payload`), `trainer/generate.hpp` (`Request`, `Result`, `generate`, `template_directories`, `output_name`) | `tests/trainer/generate_test.cpp` | table, app, core |
-| trainer/runtime | Self-contained console trainer: attach by pid or name, module list of basenames, memory read/write, expression resolution and the refresh loop | `trainer/runtime/main.cpp`, `target.hpp` (`Target`, `attach`, `read_line`), `target_linux.cpp`, `target_windows.cpp`, `payload_reader.hpp` (`load_own_payload`), `resolve.hpp` (`Resolver`, `LiveEntry`), `console.hpp` (`parse_command`, `render_rows`) | `tests/trainer/console_test.cpp`, `tests/trainer/driver_test.cpp` | expr, scan, core |
+| trainer | Trainer payload format and the Qt-free generator: template discovery, the per-target copy-and-append write path and the reported script-entry count | `trainer/payload.hpp` (`Payload`, `PayloadEntry`, `PayloadScript`, `PayloadClass`, `TargetOs`, `encode_payload`, `decode_payload`), `trainer/generate.hpp` (`Request`, `Result`, `generate`, `template_directories`, `output_name`) | `tests/trainer/generate_test.cpp` | table, app, reclass, core |
+| trainer/runtime | Self-contained console trainer: attach by pid or name, module list of basenames, memory read/write, expression resolution, the refresh loop and the Lua script host | `trainer/runtime/main.cpp`, `target.hpp` (`Target`, `attach`, `read_line`), `target_linux.cpp`, `target_windows.cpp`, `payload_reader.hpp` (`load_own_payload`), `resolve.hpp` (`Resolver`, `LiveEntry`), `console.hpp` (`parse_command`, `render_rows`), `scripts.hpp` (`ScriptHost`, `ScriptState`) | `tests/trainer/console_test.cpp`, `tests/trainer/scripts_test.cpp`, `tests/trainer/driver_test.cpp` | expr, scan, core, script, reclass |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
 | analysis | Module string-reference sweep over an injected read seam | `analysis/string_references.hpp` (`find_string_references`, `StringReference`, `ModuleRange`, `StringScanResult`, `StringScanReport`, `describe`) | `tests/analysis/*` | disasm, process/types, core |
-| script | Lua scripting engine over the system Lua and sol2 | `script/engine.hpp` (`Engine`, `run_lifecycle`, `run_update`, `UpdateResult`, `check_syntax`), `script/types.hpp` (`RunResult`, `LifecycleResult`, `SymbolApi`), `script/symbols.hpp` (`SymbolTable`), `script/codec.hpp`, `script/hook_script.hpp` (`HookTarget`, `build_hook`, `render`), `script/hook.hpp` (`Spec`, `hook::install`, `hook::remove`), `script/api_catalog.hpp` (`api_catalog`, `ApiEntry`, `lua_standard_globals`, `lua_library_members`), `script/structs.hpp` (`install_structs`, `StructsContext`), `script/structs_view.hpp` (`build_class_index`, `class_index_of`, `ClassIndex`, `ClassDef`, `FieldDef`, `FieldValue`, `read_field`, `write_field`, `ByteSource`, `BufferSource`) | `tests/script/*` | Lua, sol2, scan, expr, disasm, reclass |
+| script | Lua scripting engine over the fetched Lua and sol2 (the trainer links it verbatim) | `script/engine.hpp` (`Engine`, `run_lifecycle`, `run_update`, `UpdateResult`, `check_syntax`), `script/types.hpp` (`RunResult`, `LifecycleResult`, `SymbolApi`), `script/symbols.hpp` (`SymbolTable`), `script/codec.hpp`, `script/hook_script.hpp` (`HookTarget`, `build_hook`, `render`), `script/hook.hpp` (`Spec`, `hook::install`, `hook::remove`), `script/api_catalog.hpp` (`api_catalog`, `ApiEntry`, `lua_standard_globals`, `lua_library_members`), `script/structs.hpp` (`install_structs`, `StructsContext`), `script/structs_view.hpp` (`build_class_index`, `class_index_of`, `ClassIndex`, `ClassDef`, `FieldDef`, `FieldValue`, `read_field`, `write_field`, `ByteSource`, `BufferSource`) | `tests/script/*` | Lua, sol2, scan, expr, disasm, reclass |
 | debug | Debugger core: controller, worker, backends, breakpoints | `debug/controller.hpp` (`Controller`; `controller*.cpp` holds the per-concern definitions), `worker.hpp`, `backend.hpp`, `plugin_backend.hpp`, `breakpoints.hpp`, `step_over.hpp`, `access_watch.hpp` | `tests/debug/*` | process, plugin, platform |
 | platform/linux | Linux primitives shared with plugins | `platform/linux/debug_session.hpp` (`DebugSession`), `ptrace.hpp`, `procfs.hpp`, `memory.hpp`, `process_control.hpp`, `module_entry.hpp`, `proc_text.hpp`, `desktop_entry.hpp`, `wine.hpp` | `tests/platform/linux/*` | core |
 | sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
@@ -168,6 +168,12 @@ docs that hold the detail behind this map.
   `src/plugins/wine_proton/agent/slopkit_agent_protocol.h` with both the
   mingw-w64 agent and the Linux plugin, so a layout change bumps its
   `SLOPKIT_AGENT_PROTOCOL_VERSION` and both static-assert sets together.
+- The trainer's source lists live in `cmake/TrainerSources.cmake` and feed the
+  native trainer target and the Windows cross-build alike, so a script-engine
+  source added there must stay out of `SLOPKIT_TRAINER_RUNTIME_SOURCES`:
+  `slopkit_tests` compiles those through the app-source glob and would define them
+  twice. The trainer keeps two row namespaces apart — value entries stay `1..N`,
+  scripts are `S1..Sm` — so a new console command must say which one it addresses.
 - A `.skt` archive is versioned by `version.txt`: the writer emits
   `slopkit-table 6` (value and script entries with nesting, plus the class
   project); the reader also accepts `slopkit-table 5`, `slopkit-table 4` (no
@@ -217,8 +223,12 @@ docs that hold the detail behind this map.
   answers `false`, and stops the key — and the custom-painted `ReClassView` and
   `MemoryView` do the same in their own `eventFilter`; put a new cell editor on
   that path rather than on the line editor's `returnPressed`.
-- Configure fails without ImageMagick, the Zydis, libzip, Lua and sol2 dev
-  packages and `pkg-config`.
+- Configure fails without ImageMagick, the libzip dev package and `pkg-config`.
+  Lua, sol2 and Zydis are not system packages: `cmake/Dependencies.cmake` fetches
+  them at pinned revisions, so the first configure needs network access and the
+  nested Windows trainer cross-build reuses the host build's checkouts through
+  `SLOPKIT_SHARED_SOURCE_DIR` — only the source trees are shared, because object
+  files compiled by one toolchain must never be linked by the other.
 - The `slopkit-agent` target cross-compiles the Wine resident agent with
   `x86_64-w64-mingw32-gcc` and `i686-w64-mingw32-gcc`; without them it copies a
   prebuilt pair from `src/plugins/wine_proton/agent/prebuilt/<bitness>` and
