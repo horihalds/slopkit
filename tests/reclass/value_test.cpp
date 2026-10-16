@@ -122,12 +122,24 @@ TEST_CASE("hex nodes render and parse as bare upper-case hex", "[reclass]")
 
 TEST_CASE("floats render decimal by default and raw hex on request", "[reclass]")
 {
-    REQUIRE(format_node_value(NodeKind::float32, bytes_of({0x00, 0x00, 0xC0, 0x3F}), false) == "1.5");
+    // A 32-bit float's text carries the `f` that names its width, while a double
+    // stays bare and a value that is no usable number keeps its own spelling.
+    REQUIRE(format_node_value(NodeKind::float32, bytes_of({0x00, 0x00, 0xC0, 0x3F}), false) == "1.5f");
     REQUIRE(format_node_value(NodeKind::float32, bytes_of({0x00, 0x00, 0xC0, 0x3F}), true) == "3FC00000");
+    REQUIRE(format_node_value(NodeKind::float64, bytes_of({0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x3F}), false)
+            == "1.5");
+    REQUIRE(format_node_value(NodeKind::float32, bytes_of({0x00, 0x00, 0x80, 0x7F}), false) == "inf");
+    REQUIRE(format_node_value(NodeKind::float32, bytes_of({0x00, 0x00, 0xC0, 0x7F}), false) == "nan");
 
+    // The marker is read back in either case, so the drawn text writes the same
+    // bytes; a hex-mode float keeps an `F` as the digit it is.
     REQUIRE(parsed(NodeKind::float32, "1.5") == bytes_of({0x00, 0x00, 0xC0, 0x3F}));
-    REQUIRE(parsed(NodeKind::float32, "-2.25") == bytes_of({0x00, 0x00, 0x10, 0xC0}));
+    REQUIRE(parsed(NodeKind::float32, "1.5f") == bytes_of({0x00, 0x00, 0xC0, 0x3F}));
+    REQUIRE(parsed(NodeKind::float32, "1.5F") == bytes_of({0x00, 0x00, 0xC0, 0x3F}));
+    REQUIRE(parsed(NodeKind::float64, "1.5f") == bytes_of({0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x3F}));
+    REQUIRE(parsed(NodeKind::float32, "-2.25f") == bytes_of({0x00, 0x00, 0x10, 0xC0}));
     REQUIRE(parsed(NodeKind::float32, "3FC00000", true) == bytes_of({0x00, 0x00, 0xC0, 0x3F}));
+    REQUIRE(parsed(NodeKind::float32, "4F80000F", true) == bytes_of({0x0F, 0x00, 0x80, 0x4F}));
     REQUIRE_FALSE(parse_node_value(NodeKind::float32, "1.5.5").has_value());
 
     require_round_trip(NodeKind::float32, bytes_of({0x00, 0x00, 0xC0, 0x3F}), false);
@@ -169,8 +181,9 @@ TEST_CASE("the grid's reading of a value adds the reference's alternatives", "[r
             == "4294967295 (0xFFFFFFFF)");
     REQUIRE(format_node_value_display(NodeKind::uint16, bytes_of({0x10, 0x27}), true) == "0x2710 (10000)");
 
-    // A float reads at three decimals, or as its bits when shown as hex.
-    REQUIRE(format_node_value_display(NodeKind::float32, bytes_of({0xC3, 0xF5, 0x48, 0x40}), false) == "3.140");
+    // A float reads at three decimals with the marker its width is spelled with,
+    // or as its bits when shown as hex; a double takes no marker.
+    REQUIRE(format_node_value_display(NodeKind::float32, bytes_of({0xC3, 0xF5, 0x48, 0x40}), false) == "3.140f");
     REQUIRE(format_node_value_display(NodeKind::float32, bytes_of({0xC3, 0xF5, 0x48, 0x40}), true) == "4048F5C3");
     REQUIRE(
         format_node_value_display(NodeKind::float64, bytes_of({0x1F, 0x85, 0xEB, 0x51, 0xB8, 0x1E, 0x09, 0x40}), false)
@@ -180,12 +193,13 @@ TEST_CASE("the grid's reading of a value adds the reference's alternatives", "[r
     // value and the raw bits, each in its own parentheses. A null cell draws
     // all three too.
     REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00}), false)
-            == "2A 00 00 00  (0.000) (42) (0x2A)");
+            == "2A 00 00 00  (0.000f) (42) (0x2A)");
+    // A hex64 cell's float reading is a double, so it takes no marker.
     REQUIRE(
         format_node_value_display(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), false)
         == "40 00 40 00 00 00 00 00  (0.000) (4194368) (0x400040)");
     REQUIRE(format_node_value_display(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00}), false)
-            == "00 00 00 00  (0.000) (0) (0x0)");
+            == "00 00 00 00  (0.000f) (0) (0x0)");
 
     // The small kinds read their bytes, their signed value and their raw bits.
     REQUIRE(format_node_value_display(NodeKind::hex8, bytes_of({0x0F}), false) == "0F  (15) (0xF)");
@@ -224,7 +238,7 @@ TEST_CASE("the grid's hex read-outs are the shortest digits of their kind", "[re
     // same `0x` prefix as an integer's hex alternative.
     REQUIRE(format_node_value_display(NodeKind::pointer, bytes_of({0x00, 0x00, 0x10, 0, 0, 0, 0, 0}), false)
             == "-> 100000");
-    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "(0.000) (42) (0x2A)");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "(0.000f) (42) (0x2A)");
 }
 
 TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]")
@@ -241,7 +255,7 @@ TEST_CASE("a value's display text splits into byte and reading runs", "[reclass]
     REQUIRE(hex32[1].byte == 1);
     REQUIRE(hex32[3].text == " 00");
     REQUIRE(hex32[3].byte == 3);
-    REQUIRE(hex32[4].text == "  (0.000) (42) (0x2A)");
+    REQUIRE(hex32[4].text == "  (0.000f) (42) (0x2A)");
     REQUIRE(hex32[4].reading);
     REQUIRE_FALSE(hex32[4].byte.has_value());
 
@@ -291,17 +305,17 @@ TEST_CASE("a hex node's readings are drawn one to a pair of parentheses", "[recl
 
     // The readings the grid shows beside a hex node's bytes, each in its own
     // parentheses, one space apart.
-    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "(0.000) (42) (0x2A)");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x2A, 0x00, 0x00, 0x00})) == "(0.000f) (42) (0x2A)");
     REQUIRE(format_node_readings(NodeKind::hex64, bytes_of({0x40, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}))
             == "(0.000) (4194368) (0x400040)");
 
     // Every reading is always drawn: a null cell spells out all three, a
     // negative value is signed, a large float still spells itself at three
     // decimals, and one that is not a number names itself.
-    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00})) == "(0.000) (0) (0x0)");
+    REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x00, 0x00})) == "(0.000f) (0) (0x0)");
     REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0xFF, 0xFF, 0xFF, 0xFF})) == "(NaN) (-1) (0xFFFFFFFF)");
     REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x80, 0x4F}))
-            == "(4294967296.000) (1333788672) (0x4F800000)");
+            == "(4294967296.000f) (1333788672) (0x4F800000)");
     REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x80, 0x7F}))
             == "(Inf) (2139095040) (0x7F800000)");
     REQUIRE(format_node_readings(NodeKind::hex32, bytes_of({0x00, 0x00, 0x80, 0xFF}))
@@ -328,6 +342,14 @@ TEST_CASE("a hex node's readings are drawn one to a pair of parentheses", "[recl
     REQUIRE(format_node_reading(NodeReading::floating, NodeKind::hex32, bytes) == "NaN");
     REQUIRE(format_node_reading(NodeReading::integer, NodeKind::hex32, bytes) == "-1");
     REQUIRE(format_node_reading(NodeReading::raw, NodeKind::hex32, bytes) == "0xFFFFFFFF");
+
+    // The float reading carries the marker of its own width: a `hex32` cell one,
+    // a `hex64` cell none, since it spells a double.
+    const auto tenth = bytes_of({0xCD, 0xCC, 0xCC, 0x3D});
+    REQUIRE(format_node_reading(NodeReading::floating, NodeKind::hex32, tenth) == "0.100f");
+    REQUIRE(format_node_reading(
+                NodeReading::floating, NodeKind::hex64, bytes_of({0x9A, 0x99, 0x99, 0x99, 0x99, 0x99, 0xB9, 0x3F}))
+            == "0.100");
 
     // A reading the kind draws none of has no text: a small hex cell has no
     // float reading, and no kind outside the hex sizes has any.
@@ -373,6 +395,8 @@ TEST_CASE("a typed reading is written in the base that reading is drawn in", "[r
     REQUIRE(read(NodeReading::raw, NodeKind::hex64, "0xFFFFFFFFFFFFFFFF")
             == bytes_of({0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}));
     REQUIRE(read(NodeReading::floating, NodeKind::hex32, "3.14") == bytes_of({0xC3, 0xF5, 0x48, 0x40}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex32, "3.140f") == bytes_of({0xC3, 0xF5, 0x48, 0x40}));
+    REQUIRE(read(NodeReading::floating, NodeKind::hex32, "3.140F") == bytes_of({0xC3, 0xF5, 0x48, 0x40}));
     REQUIRE(read(NodeReading::floating, NodeKind::hex64, "3.14")
             == bytes_of({0x1F, 0x85, 0xEB, 0x51, 0xB8, 0x1E, 0x09, 0x40}));
 

@@ -174,12 +174,13 @@ namespace slopkit::ui::components
             return any_moved ? active_theme().warning : primary;
         }
 
-        // The widest readings a hex cell can draw: the float at three decimals,
-        // the signed value's longest text and the raw bits at full width, each in
-        // its own parentheses - the two a `hex8`/`hex16` cell draws without a
-        // float, since it has none to spell. A reading only arrives on a live pass,
-        // when the columns are not measured again, so the hints field is sized for
-        // this and never for what the node currently reads.
+        // The widest readings a hex cell can draw: the float at three decimals with
+        // the marker its width is spelled with, the signed value's longest text and
+        // the raw bits at full width, each in its own parentheses - the two a
+        // `hex8`/`hex16` cell draws without a float, since it has none to spell. A
+        // reading only arrives on a live pass, when the columns are not measured
+        // again, so the hints field is sized for this and never for what the node
+        // currently reads.
         QString widest_readings(reclass::NodeKind kind)
         {
             switch (reclass::kind_size(kind))
@@ -189,7 +190,7 @@ namespace slopkit::ui::components
             case 2:
                 return QStringLiteral("(-32768) (0xFFFF)");
             case 4:
-                return QStringLiteral("(-999998.999) (-2147483648) (0xFFFFFFFF)");
+                return QStringLiteral("(-999998.999f) (-2147483648) (0xFFFFFFFF)");
             case 8:
                 return QStringLiteral("(-999998.999) (-9223372036854775808) (0xFFFFFFFFFFFFFFFF)");
             default:

@@ -324,9 +324,10 @@ TEST_CASE("the hint and pointer fields draw the row's readings and its address",
     const QModelIndex         pointer = fixture.index(2, ReclassStructureModel::pointer);
 
     const QString hint_text = fixture.proxy->data(hints, Qt::DisplayRole).toString();
-    // One bracketed reading per reading: the float the node's bytes spell, the
-    // signed value and the raw bits, one space apart.
-    CHECK(hint_text == QStringLiteral("(0.000) (4194304) (0x400000)"));
+    // One bracketed reading per reading: the float the node's bytes spell, with
+    // the marker a single-precision value takes, the signed value and the raw
+    // bits, one space apart.
+    CHECK(hint_text == QStringLiteral("(0.000f) (4194304) (0x400000)"));
     CHECK(fixture.proxy->data(hints, slopkit::ui::widgets::kFullTextRole).toString() == hint_text);
     CHECK(fixture.proxy->data(pointer, Qt::DisplayRole).toString() == QStringLiteral("-> <CODE>400000"));
     CHECK(fixture.proxy->data(hints, Qt::ForegroundRole).value<QColor>() == theme.datatype_readout);

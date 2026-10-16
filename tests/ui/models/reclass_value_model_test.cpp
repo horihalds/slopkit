@@ -251,6 +251,42 @@ TEST_CASE("each node's value is sliced out of its block at its offset", "[reclas
     CHECK(fixture.values.node_address(fixture.row(1)) == fixture.player_address() + 1);
 }
 
+TEST_CASE("a float32 node's value and its prefill carry the marker", "[reclass][ui]")
+{
+    application();
+
+    Fixture fixture;
+    REQUIRE(fixture.project.add_class("Ratio", "app+0x40") != 0);
+    fixture.project.classes().back().nodes.push_back(node_of(fixture.project, NodeKind::float32, "ratio"));
+    fixture.structure.set_project(fixture.project);
+    fixture.structure.set_class(2);
+    fixture.resolve();
+
+    const std::uint64_t address = kAppBase + 0x40;
+    fixture.write(address, {0xC3, 0xF5, 0x48, 0x40});
+    fixture.pass();
+
+    QStringList messages;
+    QObject::connect(&fixture.values,
+                     &ReclassValueModel::statusChanged,
+                     [&messages](const QString& message, bool)
+                     {
+                         messages.push_back(message);
+                     });
+
+    // The cell spells the single-precision value with its marker at three
+    // decimals, while the editor starts from the shortest text that writes those
+    // bytes back, marker and all.
+    const ReclassRow& row = fixture.row(0);
+    CHECK(fixture.values.value_text(row) == QStringLiteral("= 3.140f"));
+    CHECK(fixture.values.edit_text(row) == QStringLiteral("3.14f"));
+
+    REQUIRE(fixture.values.write_value(row, QStringLiteral("3.14f")));
+    REQUIRE(drain_until_idle(fixture.worker));
+    CHECK(messages == QStringList {QStringLiteral("Value written.")});
+    CHECK(fixture.holds(address, {0xC3, 0xF5, 0x48, 0x40}));
+}
+
 TEST_CASE("a hex node whose bytes name a module address fills the pointer field", "[reclass][ui]")
 {
     application();
@@ -793,12 +829,12 @@ TEST_CASE("writing a reading submits the node's whole bytes", "[reclass][ui]")
     const std::vector<ReclassValueModel::HintRun> runs = fixture.values.hint_parts(row);
     REQUIRE(runs.size() == 3);
     CHECK(runs[0].reading == NodeReading::floating);
-    CHECK(runs[0].text == QStringLiteral("(0.000)"));
+    CHECK(runs[0].text == QStringLiteral("(0.000f)"));
     CHECK(runs[1].reading == NodeReading::integer);
     CHECK(runs[1].text == QStringLiteral("(42)"));
     CHECK(runs[2].reading == NodeReading::raw);
     CHECK(runs[2].text == QStringLiteral("(0x2A)"));
-    CHECK(fixture.values.hint_text(row) == QStringLiteral("(0.000) (42) (0x2A)"));
+    CHECK(fixture.values.hint_text(row) == QStringLiteral("(0.000f) (42) (0x2A)"));
 
     // A hover on one of those runs names the data type it shows, in the wording
     // the Type cell gives a kind: the float and the integer of the cell's own
@@ -819,9 +855,12 @@ TEST_CASE("writing a reading submits the node's whole bytes", "[reclass][ui]")
     REQUIRE(drain_until_idle(fixture.worker));
     CHECK(fixture.holds(address, {0x2A, 0x00, 0x00, 0x00}));
 
-    REQUIRE(fixture.values.write_reading(row, NodeReading::floating, QStringLiteral("2.5")));
+    // The marker the float's own text carries is read back, and the field shows
+    // the marked reading at once.
+    REQUIRE(fixture.values.write_reading(row, NodeReading::floating, QStringLiteral("2.5f")));
     REQUIRE(drain_until_idle(fixture.worker));
     CHECK(fixture.holds(address, {0x00, 0x00, 0x20, 0x40}));
+    CHECK(fixture.values.hint_text(row) == QStringLiteral("(2.500f) (1075838976) (0x40200000)"));
 
     // The node's own Show-as-hex toggle is the value cell's: a bare integer is
     // still decimal and the raw bits are still hex.

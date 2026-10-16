@@ -74,6 +74,17 @@ namespace slopkit::reclass
             return literal;
         }
 
+        // The `f` C spells a single-precision float with, taken off a typed text
+        // so the marker the field draws reads back as the same value.
+        std::string_view drop_float_marker(std::string_view text)
+        {
+            if (!text.empty() && (text.back() == 'f' || text.back() == 'F'))
+            {
+                text.remove_suffix(1);
+            }
+            return text;
+        }
+
         std::uint64_t read_bytes(std::span<const std::byte> bytes, std::size_t width)
         {
             std::uint64_t value = 0;
@@ -172,6 +183,19 @@ namespace slopkit::reclass
             return value;
         }
 
+        // A 32-bit float's text carries the `f` C spells a single-precision value
+        // with, so the field names the width a value sits at. A value that is not a
+        // number has no literal spelling, so it keeps its own and takes no marker.
+        std::string marked_float(float value, std::string text)
+        {
+            if (!std::isfinite(value))
+            {
+                return text;
+            }
+            text += 'f';
+            return text;
+        }
+
         // A run of floats, broken into rows of `columns` (zero for one row).
         std::string format_float_run(std::span<const std::byte> bytes, std::size_t count, std::size_t columns)
         {
@@ -182,7 +206,8 @@ namespace slopkit::reclass
                 {
                     text += columns != 0 && index % columns == 0 ? " | " : ", ";
                 }
-                text += std::format("{:.3f}", read_float_at(bytes, index * 4));
+                const float value = read_float_at(bytes, index * 4);
+                text += marked_float(value, std::format("{:.3f}", value));
             }
             return text;
         }
@@ -227,10 +252,10 @@ namespace slopkit::reclass
             return value;
         }
 
-        // The float a hex node's bytes would read as: three decimals, or the
-        // spelling of a value that is not a number at all. The reference draws
-        // "#####" there, which names neither what the bytes hold nor a text the
-        // user could type back.
+        // The float a hex node's bytes would read as: three decimals - marked for a
+        // 32-bit cell, whose bytes spell that width - or the spelling of a value
+        // that is not a number at all. The reference draws "#####" there, which
+        // names neither what the bytes hold nor a text the user could type back.
         std::string hex_float_comment(std::span<const std::byte> bytes, bool wide)
         {
             const double value = wide ? read_double(bytes) : static_cast<double>(read_float(bytes));
@@ -242,7 +267,8 @@ namespace slopkit::reclass
             {
                 return std::string {value < 0.0 ? "-Inf" : "Inf"};
             }
-            return std::format("{:.3f}", value);
+            const std::string text = std::format("{:.3f}", value);
+            return wide ? text : marked_float(static_cast<float>(value), text);
         }
 
         std::string out_of_range(NodeKind kind)
@@ -313,9 +339,8 @@ namespace slopkit::reclass
                 std::memcpy(&raw, &bits, sizeof(raw));
                 return std::format("{:08X}", raw);
             }
-            float value {};
-            std::memcpy(&value, bytes.data(), sizeof(value));
-            return std::format("{}", value);
+            const float value = read_float(bytes);
+            return marked_float(value, std::format("{}", value));
         }
         case NodeKind::float64:
         {
@@ -516,7 +541,10 @@ namespace slopkit::reclass
                 return hex ? std::format("{} ({})", hexes, decimal) : std::format("{} ({})", decimal, hexes);
             }
             case NodeKind::float32:
-                return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_float(bytes));
+            {
+                const float value = read_float(bytes);
+                return hex ? format_node_value(kind, bytes, true) : marked_float(value, std::format("{:.3f}", value));
+            }
             case NodeKind::float64:
                 return hex ? format_node_value(kind, bytes, true) : std::format("{:.3f}", read_double(bytes));
             case NodeKind::pointer:
@@ -763,7 +791,7 @@ namespace slopkit::reclass
                 return little_endian(literal->magnitude & mask, size);
             }
 
-            const std::string_view trimmed = trim(text);
+            const std::string_view trimmed = drop_float_marker(trim(text));
             if (trimmed.empty())
             {
                 return std::unexpected(std::string {"empty value"});
@@ -951,13 +979,16 @@ namespace slopkit::reclass
             }
             else
             {
+                // The marker comes off only here, so the `Inf` above is matched as
+                // itself rather than cut down to `In`.
+                const std::string_view number = drop_float_marker(trimmed);
                 const auto [end, error] =
-                    std::from_chars(trimmed.data(), trimmed.data() + trimmed.size(), value, std::chars_format::general);
+                    std::from_chars(number.data(), number.data() + number.size(), value, std::chars_format::general);
                 if (error == std::errc::result_out_of_range)
                 {
                     return std::unexpected(out_of_range(kind));
                 }
-                if (error != std::errc {} || end != trimmed.data() + trimmed.size())
+                if (error != std::errc {} || end != number.data() + number.size())
                 {
                     return std::unexpected(std::string {"malformed floating-point number"});
                 }

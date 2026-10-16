@@ -21,7 +21,8 @@ namespace slopkit::reclass
     [[nodiscard]] std::string
     format_node_value_text(const Node& node, const Project& project, std::span<const std::byte> bytes);
     // The text the grid's Value column shows for the bytes read at the node's
-    // address.
+    // address, and the text a write parses back: a 32-bit float is spelled with
+    // the `f` that names its width.
     [[nodiscard]] std::string format_node_value(NodeKind kind, std::span<const std::byte> bytes, bool hex = false);
 
     // One run of a value's display text: the node's own bytes, or a reading the
@@ -59,19 +60,21 @@ namespace slopkit::reclass
     [[nodiscard]] std::vector<NodeReading> node_readings(NodeKind kind);
 
     // One reading's text, as the hints field draws it between that reading's own
-    // parentheses: `0.000`, `-1`, `0xFFFFFFFF` (or `NaN`, `Inf`, `-Inf`); empty
-    // when the bytes do not cover the kind or the kind draws no such reading.
+    // parentheses: `0.000f`, `-1`, `0xFFFFFFFF`, or `NaN`, `Inf` and `-Inf` where
+    // a float is no usable number; empty when the bytes do not cover the kind or
+    // the kind draws no such reading.
     [[nodiscard]] std::string format_node_reading(NodeReading reading, NodeKind kind, std::span<const std::byte> bytes);
 
     // Every reading of a hex cell, each in its own parentheses, one space apart:
-    // `(0.000) (42) (0x2A)` for a `hex32`/`hex64` cell, `(42) (0x2A)` for a
+    // `(0.000f) (42) (0x2A)` for a `hex32`/`hex64` cell, `(42) (0x2A)` for a
     // `hex8`/`hex16` one; empty for every other kind.
     [[nodiscard]] std::string format_node_readings(NodeKind kind, std::span<const std::byte> bytes);
 
     // One reading read back in the base that reading is drawn in, so the text
     // format_node_reading drew writes the same bytes back: the integer reading
     // takes bare decimal digits or an `0x` prefix, the raw bits take a bare hex
-    // run or `0x`, and the float a decimal float or the drawn `NaN`/`Inf`/`-Inf`.
+    // run or `0x`, and the float a decimal float - with or without the `f` its
+    // text is drawn with - or the drawn `NaN`/`Inf`/`-Inf`.
     // `hex` reads a bare digit run of the integer reading as hex too, and is not
     // the node's own toggle, which governs the value cell alone. A reading of a
     // kind that draws none, a reading the kind is without - a small hex cell's
@@ -92,7 +95,8 @@ namespace slopkit::reclass
     [[nodiscard]] std::uint64_t read_node_value(NodeKind kind, std::span<const std::byte> bytes);
 
     // The bytes a typed value is written back as; `hex` is the node's own base
-    // toggle, so bare digits in hex mode read as hexadecimal.
+    // toggle, so bare digits in hex mode read as hexadecimal. A float takes the
+    // `f` a 32-bit value is spelled with, so the drawn text writes back as itself.
     [[nodiscard]] std::expected<std::vector<std::byte>, std::string>
     parse_node_value(NodeKind kind, std::string_view text, bool hex = false);
 
