@@ -195,6 +195,19 @@ namespace
         return nullptr;
     }
 
+    // A listing entry for a practice target a test's launcher claims to have
+    // started, so the by-pid lookup resolves.
+    [[maybe_unused]] slopkit::process::ProcessInfo launched_sandbox(std::int64_t pid)
+    {
+        slopkit::process::ProcessInfo info;
+        info.pid       = static_cast<slopkit::process::ProcessId>(pid);
+        info.name      = "slopkit-sandbox";
+        info.exe_path  = "/usr/lib/slopkit/slopkit-sandbox";
+        info.plugin_id = "fake";
+        info.claimants = {"fake"};
+        return info;
+    }
+
     [[maybe_unused]] void attach_app_session(slopkit::process::AccessWorker& worker)
     {
         bool attached = false;

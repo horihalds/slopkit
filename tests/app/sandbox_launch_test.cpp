@@ -37,6 +37,54 @@ TEST_CASE("launching the sandbox returns a live pid", "[app][sandbox]")
     static_cast<void>(::waitpid(pid, nullptr, 0));
 }
 
+TEST_CASE("the sandbox identifier predicate matches the practice target only", "[app][sandbox]")
+{
+    CHECK(slopkit::app::is_sandbox_identifier("slopkit-sandbox"));
+    CHECK(slopkit::app::is_sandbox_identifier("SLOPKIT-SANDBOX"));
+    CHECK(slopkit::app::is_sandbox_identifier("/usr/lib/slopkit/slopkit-sandbox"));
+
+    CHECK_FALSE(slopkit::app::is_sandbox_identifier("slopkit"));
+    CHECK_FALSE(slopkit::app::is_sandbox_identifier("slopkit-sandbox-2"));
+    CHECK_FALSE(slopkit::app::is_sandbox_identifier(""));
+}
+
+TEST_CASE("a launched practice target is stopped and reaped", "[app][sandbox]")
+{
+    REQUIRE(slopkit::app::sandbox_binary_path().has_value());
+
+    const auto launched = slopkit::app::launch_sandbox();
+    REQUIRE(launched.has_value());
+    REQUIRE(*launched > 0);
+
+    const auto result = slopkit::app::terminate_sandbox(*launched);
+    CHECK(result.has_value());
+
+    const auto pid = static_cast<pid_t>(*launched);
+    CHECK(::waitpid(pid, nullptr, WNOHANG) == -1);
+}
+
+TEST_CASE("stopping an already gone practice target succeeds", "[app][sandbox]")
+{
+    REQUIRE(slopkit::app::sandbox_binary_path().has_value());
+
+    const auto launched = slopkit::app::launch_sandbox();
+    REQUIRE(launched.has_value());
+    REQUIRE(*launched > 0);
+
+    const auto pid = static_cast<pid_t>(*launched);
+    static_cast<void>(::kill(pid, SIGKILL));
+    static_cast<void>(::waitpid(pid, nullptr, 0));
+
+    const auto result = slopkit::app::terminate_sandbox(*launched);
+    CHECK(result.has_value());
+}
+
+TEST_CASE("an invalid practice target pid is rejected", "[app][sandbox]")
+{
+    CHECK_FALSE(slopkit::app::terminate_sandbox(0).has_value());
+    CHECK_FALSE(slopkit::app::terminate_sandbox(-1).has_value());
+}
+
 TEST_CASE("a launched practice target's memory is readable and scannable", "[app][sandbox]")
 {
     REQUIRE(slopkit::app::sandbox_binary_path().has_value());

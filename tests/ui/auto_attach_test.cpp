@@ -2,6 +2,19 @@
 
 #include "support/ui_helpers.hpp"
 
+namespace
+{
+    using slopkit::process::ProcessId;
+
+    slopkit::ui::widgets::StatusLabel& address_status(slopkit::ui::MainWindow& window)
+    {
+        auto* status =
+            window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
+        REQUIRE(status != nullptr);
+        return *status;
+    }
+}
+
 TEST_CASE("loading a table auto attaches to its target process", "[ui]")
 {
     application();
@@ -227,4 +240,283 @@ TEST_CASE("auto attach needs the flag and a target name", "[ui]")
         CHECK(target.pid == 0);
         CHECK(access.list_calls.load() == 0);
     }
+}
+
+TEST_CASE("a sandbox table launches a fresh practice target and attaches to it", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("sandbox_table.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    int launches = 0;
+    window.set_sandbox_launcher(
+        [&]
+        {
+            ++launches;
+            access.processes.push_back(launched_sandbox(55));
+            return std::expected<std::int64_t, std::string> {std::int64_t {55}};
+        });
+
+    bool prompted = false;
+    window.set_sandbox_attach_prompt(
+        [&](QWidget*, ProcessId)
+        {
+            prompted = true;
+            return true;
+        });
+
+    const QString path = scratch_settings_file("sandbox_table.skt");
+    write_table_with_settings(path, "slopkit-sandbox", true, false);
+
+    CHECK(address_list->load_table(path));
+    CHECK(address_status(window).text().contains(QStringLiteral("Practice target started (pid 55)")));
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 55 && target.session_live;
+                    }));
+
+    CHECK(launches == 1);
+    CHECK_FALSE(prompted);
+    CHECK(access.list_calls.load() == 1);
+    CHECK(target.name == "slopkit-sandbox");
+    CHECK(address_status(window).text().contains(QStringLiteral("Attached to slopkit-sandbox")));
+}
+
+TEST_CASE("a sandbox table always launches a fresh practice target", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    // A sandbox is already running, but the table must still get its own.
+    access.processes.push_back(launched_sandbox(30));
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("sandbox_table_fresh.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    int launches = 0;
+    window.set_sandbox_launcher(
+        [&]
+        {
+            ++launches;
+            access.processes.push_back(launched_sandbox(55));
+            return std::expected<std::int64_t, std::string> {std::int64_t {55}};
+        });
+
+    const QString path = scratch_settings_file("sandbox_table_fresh.skt");
+    write_table_with_settings(path, "slopkit-sandbox", true, false);
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 55 && target.session_live;
+                    }));
+
+    CHECK(launches == 1);
+}
+
+TEST_CASE("a path-mode table naming the practice target launches it", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("sandbox_table_path.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    int launches = 0;
+    window.set_sandbox_launcher(
+        [&]
+        {
+            ++launches;
+            access.processes.push_back(launched_sandbox(55));
+            return std::expected<std::int64_t, std::string> {std::int64_t {55}};
+        });
+
+    const QString path = scratch_settings_file("sandbox_table_path.skt");
+    write_table_with_settings(path, "", true, true, "/usr/lib/slopkit/slopkit-sandbox");
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 55 && target.session_live;
+                    }));
+
+    CHECK(launches == 1);
+}
+
+TEST_CASE("a path-mode table naming another binary keeps the normal lookup", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("sandbox_table_path_other.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    int launches = 0;
+    window.set_sandbox_launcher(
+        [&]
+        {
+            ++launches;
+            return std::expected<std::int64_t, std::string> {std::int64_t {55}};
+        });
+
+    const QString path = scratch_settings_file("sandbox_table_path_other.skt");
+    write_table_with_settings(path, "", true, true, "/usr/bin/beta");
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 20 && target.session_live;
+                    }));
+
+    CHECK(launches == 0);
+}
+
+TEST_CASE("a table naming a slopkit-like non-sandbox process attaches normally", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    auto other       = launched_sandbox(30);
+    other.name       = "slopkit-sandbox-2";
+    access.processes.push_back(other);
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("sandbox_table_other.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    int launches = 0;
+    window.set_sandbox_launcher(
+        [&]
+        {
+            ++launches;
+            return std::expected<std::int64_t, std::string> {std::int64_t {55}};
+        });
+
+    const QString path = scratch_settings_file("sandbox_table_other.skt");
+    write_table_with_settings(path, "slopkit-sandbox-2", true, false);
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 30 && target.session_live;
+                    }));
+
+    CHECK(launches == 0);
+}
+
+TEST_CASE("a failed sandbox table launch reports the error without prompting", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("sandbox_table_fail.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    window.set_sandbox_launcher(
+        []
+        {
+            return std::expected<std::int64_t, std::string> {
+                std::unexpected(std::string {"slopkit-sandbox was not found"})};
+        });
+
+    bool prompted = false;
+    window.set_sandbox_attach_prompt(
+        [&](QWidget*, ProcessId)
+        {
+            prompted = true;
+            return true;
+        });
+
+    const QString path = scratch_settings_file("sandbox_table_fail.skt");
+    write_table_with_settings(path, "slopkit-sandbox", true, false);
+
+    CHECK(address_list->load_table(path));
+    QCoreApplication::processEvents();
+
+    CHECK_FALSE(prompted);
+    CHECK_FALSE(target.valid());
+    CHECK(access.list_calls.load() == 0);
+    CHECK(address_status(window).text().contains(QStringLiteral("slopkit-sandbox was not found")));
+}
+
+TEST_CASE("a launched practice target missing from the listing stays detached", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("sandbox_table_missing.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    // The launcher never injects the pid it returns into the listing.
+    window.set_sandbox_launcher(
+        []
+        {
+            return std::expected<std::int64_t, std::string> {std::int64_t {99}};
+        });
+
+    const QString path = scratch_settings_file("sandbox_table_missing.skt");
+    write_table_with_settings(path, "slopkit-sandbox", true, false);
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return address_status(window).text().contains(QStringLiteral("was not found"));
+                    }));
+
+    CHECK_FALSE(target.valid());
 }

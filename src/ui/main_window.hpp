@@ -94,9 +94,11 @@ namespace slopkit::ui
 
         using SandboxLauncher     = std::function<std::expected<std::int64_t, std::string>()>;
         using SandboxAttachPrompt = std::function<bool(QWidget* parent, process::ProcessId pid)>;
+        using SandboxTerminator   = std::function<std::expected<void, std::string>(std::int64_t pid)>;
 
         void set_sandbox_launcher(SandboxLauncher launcher);
         void set_sandbox_attach_prompt(SandboxAttachPrompt prompt);
+        void set_sandbox_terminator(SandboxTerminator terminator);
 
         // The detached Memory Viewer, or nullptr before build_dialogs(); it is a
         // top-level window with no parent widget, so the compositor stacks it
@@ -141,6 +143,8 @@ namespace slopkit::ui
         void on_add_address_requested();
         void on_edit_entry_requested(std::size_t row);
         void on_table_loaded();
+        void start_sandbox_for_table();
+        void stop_owned_sandbox();
 
         using ProcessMatcher =
             std::function<const process::ProcessInfo*(std::span<const process::ProcessInfo> processes)>;
@@ -187,6 +191,11 @@ namespace slopkit::ui
 
         SandboxLauncher     sandbox_launcher_;
         SandboxAttachPrompt sandbox_attach_prompt_;
+        SandboxTerminator   sandbox_terminator_;
+
+        // The practice target this window launched for a table, if any; only it
+        // is stopped on a clean shutdown.
+        std::optional<std::int64_t> owned_sandbox_pid_;
 
         table::AddressTable address_table_;
 

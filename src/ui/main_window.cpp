@@ -81,6 +81,10 @@ namespace slopkit::ui
         {
             return ask_sandbox_attach(parent, pid);
         };
+        sandbox_terminator_ = [](std::int64_t pid)
+        {
+            return app::terminate_sandbox(pid);
+        };
 
         setWindowTitle(QStringLiteral("slopkit"));
         setWindowIcon(widgets::application_icon());
@@ -104,7 +108,10 @@ namespace slopkit::ui
         tick_timer_->start(50);
     }
 
-    MainWindow::~MainWindow() = default;
+    MainWindow::~MainWindow()
+    {
+        stop_owned_sandbox();
+    }
 
     bool MainWindow::open_table_request(const QString& path)
     {
@@ -155,6 +162,11 @@ namespace slopkit::ui
     void MainWindow::set_sandbox_attach_prompt(SandboxAttachPrompt prompt)
     {
         sandbox_attach_prompt_ = std::move(prompt);
+    }
+
+    void MainWindow::set_sandbox_terminator(SandboxTerminator terminator)
+    {
+        sandbox_terminator_ = std::move(terminator);
     }
 
     dialogs::MemoryViewerDialog* MainWindow::memory_viewer() const noexcept
@@ -849,6 +861,12 @@ namespace slopkit::ui
         const std::string identifier     = use_path ? settings.exe_path : settings.target_process;
         const bool        match_exe_path = settings.match_exe_path;
 
+        if (app::is_sandbox_identifier(identifier))
+        {
+            start_sandbox_for_table();
+            return;
+        }
+
         lookup_and_attach(
             [use_path, match_exe_path, identifier](std::span<const process::ProcessInfo> processes)
             {
@@ -859,6 +877,53 @@ namespace slopkit::ui
             std::format("Table auto attach: no process matching {} '{}'.",
                         use_path ? "executable path" : "process name",
                         identifier));
+    }
+
+    void MainWindow::start_sandbox_for_table()
+    {
+        const auto launched = sandbox_launcher_();
+        if (!launched)
+        {
+            log::warning(log::category::ui, std::format("launch practice target failed: {}", launched.error()));
+            address_list_->report_status(launched.error(), true);
+            return;
+        }
+
+        owned_sandbox_pid_ = *launched;
+        log::info(log::category::ui, std::format("practice target started (pid {})", *launched));
+        address_list_->report_status(std::format("Practice target started (pid {}).", *launched), false);
+
+        const auto pid = static_cast<process::ProcessId>(*launched);
+        lookup_and_attach(
+            [pid](std::span<const process::ProcessInfo> processes)
+            {
+                const auto found = std::ranges::find(processes, pid, &process::ProcessInfo::pid);
+                return found == processes.end() ? nullptr : &*found;
+            },
+            "Table auto",
+            std::string {"Table auto attach: the launched practice target was not found."});
+    }
+
+    void MainWindow::stop_owned_sandbox()
+    {
+        if (!owned_sandbox_pid_.has_value())
+        {
+            return;
+        }
+        if (!target_.valid() || target_.pid != static_cast<process::ProcessId>(*owned_sandbox_pid_))
+        {
+            return;
+        }
+
+        const std::int64_t pid    = *owned_sandbox_pid_;
+        const auto         result = sandbox_terminator_(pid);
+        if (result)
+        {
+            log::info(log::category::app, std::format("practice target (pid {}) stopped", pid));
+            return;
+        }
+        log::warning(log::category::app,
+                     std::format("stopping practice target (pid {}) failed: {}", pid, result.error()));
     }
 
     void MainWindow::lookup_and_attach(ProcessMatcher match, std::string_view context, std::string missing)
