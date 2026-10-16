@@ -13,12 +13,15 @@
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMenuBar>
 #include <QMouseEvent>
+#include <QPlainTextEdit>
 #include <QTimer>
 #include <QWidget>
 
 #include "process/access_worker.hpp"
 #include "process/attachment.hpp"
+#include "reclass/cpp_header.hpp"
 #include "reclass/edit.hpp"
 #include "reclass/node.hpp"
 #include "reclass/project.hpp"
@@ -28,6 +31,7 @@
 #include "ui/components/input_box.hpp"
 #include "ui/components/project_view.hpp"
 #include "ui/components/reclass_view.hpp"
+#include "ui/dialogs/cpp_export.hpp"
 #include "ui/dialogs/reclass.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
 #include "ui/models/reclass_structure_model.hpp"
@@ -1247,6 +1251,67 @@ TEST_CASE("a Ctrl+digit key retypes only the cursor row", "[reclass][ui]")
     CHECK(player.nodes[cursor_row]->kind() == NodeKind::hex64);
     CHECK(player.nodes[other_row]->kind() == other_kind);
     CHECK(dialog.status_label()->text() == QStringLiteral("Type changed to Hex64."));
+
+    dialog.close();
+}
+
+TEST_CASE("the Project menu exports the class definitions as a C++ header", "[reclass][ui]")
+{
+    application();
+
+    Fixture       fixture;
+    ReClassDialog dialog {fixture.project, fixture.worker, fixture.target};
+    fixture.dialog = &dialog;
+    dialog.show();
+    QCoreApplication::processEvents();
+
+    QMenu* project_menu = nullptr;
+    for (QAction* menu : dialog.menu_bar()->actions())
+    {
+        if (menu->menu() != nullptr && menu->menu()->title() == QStringLiteral("Project"))
+        {
+            project_menu = menu->menu();
+        }
+    }
+    REQUIRE(project_menu != nullptr);
+
+    QAction* export_header = nullptr;
+    for (QAction* action : project_menu->actions())
+    {
+        if (action->objectName() == QStringLiteral("reclass_export_cpp_header"))
+        {
+            export_header = action;
+        }
+    }
+    REQUIRE(export_header != nullptr);
+    CHECK(export_header->text() == QStringLiteral("Export C++ Header…"));
+
+    // The preview is modal, so its text is read from inside its own event loop
+    // and the loop is closed again.
+    QString shown;
+    QTimer::singleShot(0,
+                       [&shown]
+                       {
+                           for (QWidget* widget : QApplication::topLevelWidgets())
+                           {
+                               auto* preview = qobject_cast<slopkit::ui::dialogs::CppExportDialog*>(widget);
+                               if (preview == nullptr || !preview->isVisible())
+                               {
+                                   continue;
+                               }
+                               if (auto* view = preview->findChild<QPlainTextEdit*>(QStringLiteral("cpp_export_view")))
+                               {
+                                   shown = view->toPlainText();
+                               }
+                               preview->close();
+                           }
+                       });
+
+    export_header->trigger();
+
+    CHECK(shown == QString::fromStdString(slopkit::reclass::cpp_header(fixture.project)));
+    CHECK(shown.contains(QStringLiteral("struct Point  // 0x8 bytes")));
+    CHECK(shown.contains(QStringLiteral("struct Player  // 0x9 bytes")));
 
     dialog.close();
 }

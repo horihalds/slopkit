@@ -798,6 +798,30 @@ and re-types the node with the padding rule that keeps the following offsets
 where they were, while `Follow Pointer` sets a pointer node's referenced class and
 inlines it. A class project rides in the `.skt` archive as its own member group
 (see the map's `.skt` gotcha).
+`Project > Export C++ Header…` reads no target and writes no file by itself: it
+renders the whole project — every class and every enum — as C++ source text with
+`reclass::cpp_header`, which walks the project and its derived layout only, and
+shows the text in a modal preview (`ui::dialogs::CppExportDialog`) whose `Copy`
+takes it to the clipboard and whose `Save As…` writes it. The text is the project
+as a translation unit a target's own source tree can include: the platform type of
+each member's kind (`uint8_t`, `int32_t`, `size_t`, `ptrdiff_t`, `bool`, `char`,
+…) under one whole-file include guard, the helper types a target may already own
+(`Vector2/3/4`, `Matrix3x3/3x4/4x4`) each inside its own `#ifndef
+<TYPE>_DEFINED` block so the target's own definitions win, a `utf16`/`utf32` text
+node as the width-correct `char16_t`/`char32_t` rather than the four-byte
+`wchar_t`, the project's enums before the classes, and the classes
+forward-declared and then defined in the order that leaves an embedded class
+complete before the class that holds it. Because the offsets are the unaligned
+ones `layout_class` derives, the definitions sit inside `#pragma pack(push, 1)`
+and each class carries a `static_assert(sizeof(X) == 0x…)`; a member keeps its
+user name only when that name reads as an identifier (otherwise it is sanitized,
+and a keyword gains a trailing `_`), an unnamed member is named
+`<kind>_0x<offset>`, collisions take a `_1` suffix, and a run of bytes no member
+names collapses into one `uint8_t pad_0x…[N]` member so the class stays
+byte-exact. Nothing the project holds can fail the export: a pointer into a class
+it does not define is a `void*`, a class that contains itself by value is written
+without the recursive member and without a size assertion, and a member the header
+cannot declare leaves a comment where it stood.
 
 The window itself is shaped after the reference's `MainForm`: a menu strip, a
 toolbar, a horizontal splitter and a status strip, with

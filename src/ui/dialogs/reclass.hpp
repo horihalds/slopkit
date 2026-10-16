@@ -173,6 +173,9 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] bool                 remove_enum(const QString& name);
         [[nodiscard]] std::vector<QString> enum_names() const;
 
+        // Shows the whole project as a C++ header the user can copy or save.
+        void export_cpp_header();
+
         [[nodiscard]] std::optional<std::size_t> current_node_id() const;
         [[nodiscard]] std::vector<std::size_t>   selected_node_ids() const;
 
@@ -300,6 +303,10 @@ namespace slopkit::ui::dialogs
 
         std::optional<process::JobId> dissect_job_;
         std::vector<DissectTarget>    dissect_targets_;
+
+        // The directory the last header was written into, so the next save
+        // dialog opens where that one left off.
+        QString export_directory_;
     };
 
 }

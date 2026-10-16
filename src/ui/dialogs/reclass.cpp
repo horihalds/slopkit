@@ -17,6 +17,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
@@ -34,6 +35,7 @@
 #include <QVBoxLayout>
 
 #include "expr/expression.hpp"
+#include "reclass/cpp_header.hpp"
 #include "reclass/dissect.hpp"
 #include "reclass/edit.hpp"
 #include "reclass/node_menu.hpp"
@@ -43,6 +45,7 @@
 #include "ui/components/reclass_view.hpp"
 #include "ui/components/row_menu.hpp"
 #include "ui/components/widgets.hpp"
+#include "ui/dialogs/cpp_export.hpp"
 #include "ui/fonts.hpp"
 #include "ui/models/reclass_proxy_model.hpp"
 #include "ui/models/reclass_structure_model.hpp"
@@ -210,6 +213,12 @@ namespace slopkit::ui::dialogs
         project->addSeparator();
         QAction* add_enum = widgets::described_action(*project, tr("Add Enum…"), tr("Add an enum to the project."));
         connect(add_enum, &QAction::triggered, this, &ReClassDialog::add_enum);
+
+        project->addSeparator();
+        QAction* export_header =
+            widgets::described_action(*project, tr("Export C++ Header…"), tr("Write the classes as a C++ header."));
+        export_header->setObjectName(QStringLiteral("reclass_export_cpp_header"));
+        connect(export_header, &QAction::triggered, this, &ReClassDialog::export_cpp_header);
     }
 
     void ReClassDialog::build_tool_bar()
@@ -2085,6 +2094,20 @@ namespace slopkit::ui::dialogs
         const QString name = to_qstring(project_.enums()[index].name);
         project_.remove_enum(index);
         report(tr("Enum '%1' removed.").arg(name), false);
+    }
+
+    void ReClassDialog::export_cpp_header()
+    {
+        CppExportDialog dialog {to_qstring(reclass::cpp_header(project_)), this};
+        dialog.set_dialog_directory(export_directory_);
+        connect(&dialog,
+                &CppExportDialog::headerSaved,
+                this,
+                [this](const QString& path)
+                {
+                    export_directory_ = QFileInfo(path).absolutePath();
+                });
+        dialog.exec();
     }
 
 }
