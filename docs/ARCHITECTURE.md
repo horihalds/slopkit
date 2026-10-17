@@ -928,9 +928,14 @@ PE's machine field rather than from the loader's ELF class, so `Target::pointer_
 is the target's own — 4 for a 32-bit game whose wine loader is 64-bit. Name lookup
 keeps the comm/executable match for everything else and only walks guest images for
 a name ending in `.exe`, so no native target changes. Modules and regions come from
-`platform::read_maps` alone, and memory access is the same
-`process_vm_*`/`/proc/<pid>/mem` path as for a native target, subject to the same
-kernel ptrace policy.
+`platform::read_maps` alone, and a region is named after the module whose address
+span owns it rather than after the path it was mapped with
+(`process::owning_module_name`, the rule the app's own memory map already used):
+Wine maps a PE image's executable page anonymously, so the path alone would leave
+the very bytes a module-scoped `aobscan` has to sweep labelled `[anon]` and the
+trainer would report the pattern missing where slopkit finds it. Memory access is
+the same `process_vm_*`/`/proc/<pid>/mem` path as for a native target, subject to
+the same kernel ptrace policy.
 
 The table's scripts run through the application's own `script::Engine`
 (`src/trainer/runtime/scripts.cpp`), linked verbatim rather than re-bound, so

@@ -56,15 +56,9 @@ namespace slopkit::process
 
         std::string module_name_for(const RegionInfo& region, std::span<const ModuleInfo> modules)
         {
-            const auto owner =
-                std::ranges::find_if(modules,
-                                     [&region](const ModuleInfo& module)
-                                     {
-                                         return module.base <= region.start && region.start - module.base < module.size;
-                                     });
-            if (owner != modules.end() && !owner->name.empty())
+            if (const std::string owner = owning_module_name(region.start, modules); !owner.empty())
             {
-                return owner->name;
+                return owner;
             }
             if (!region.path.empty())
             {

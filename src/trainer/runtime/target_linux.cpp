@@ -220,14 +220,24 @@ namespace slopkit::trainer
             return modules;
         }
 
-        std::vector<Region> to_regions(const std::vector<platform::MappedRegion>& mapped)
+        // A region is named after the module that owns its address, as the app
+        // names it; the mapped path only decides what a region outside every
+        // module's span is called. A Wine/Proton PE image maps its code section
+        // without a backing path, so the path alone would leave the very pages a
+        // script scans anonymous.
+        std::vector<Region> to_regions(const std::vector<platform::MappedRegion>& mapped,
+                                       std::span<const process::ModuleInfo>       modules)
         {
             std::vector<Region> regions;
             regions.reserve(mapped.size());
             for (const auto& region : mapped)
             {
-                regions.push_back(
-                    Region {region.start, region.end, region.readable, region.writable, platform::region_name(region)});
+                std::string name = process::owning_module_name(region.start, modules);
+                if (name.empty())
+                {
+                    name = platform::region_name(region);
+                }
+                regions.push_back(Region {region.start, region.end, region.readable, region.writable, std::move(name)});
             }
             return regions;
         }
@@ -384,7 +394,8 @@ namespace slopkit::trainer
                 AttachError {std::format("cannot read the memory map of pid {}; is it still running?", pid), true});
         }
 
-        return std::make_unique<LinuxTarget>(pid, to_modules(platform::modules_from_maps(mapped)), to_regions(mapped));
+        const auto infos = platform::modules_from_maps(mapped);
+        return std::make_unique<LinuxTarget>(pid, to_modules(infos), to_regions(mapped, infos));
     }
 
     std::filesystem::path own_executable_path()

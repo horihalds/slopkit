@@ -53,6 +53,12 @@ namespace slopkit::process
         return module.kind != ModuleKind::anonymous && module.size != 0;
     }
 
+    // The name of the module whose address span holds `address`, or empty when no
+    // module does. A PE image a Wine/Proton process runs maps its code section
+    // without a backing path, so the owning module — not the mapped path — is what
+    // names such a region. `modules` must be sorted by base.
+    [[nodiscard]] std::string owning_module_name(std::uint64_t address, std::span<const ModuleInfo> modules) noexcept;
+
     struct ThreadInfo
     {
         std::uint32_t tid {};

@@ -53,6 +53,23 @@ namespace slopkit::process
         return lowest;
     }
 
+    std::string owning_module_name(std::uint64_t address, std::span<const ModuleInfo> modules) noexcept
+    {
+        const ModuleInfo* owner = nullptr;
+        for (const ModuleInfo& module : modules)
+        {
+            if (module.base > address || address - module.base >= module.size)
+            {
+                continue;
+            }
+            if (owner == nullptr || module.base < owner->base)
+            {
+                owner = &module;
+            }
+        }
+        return owner == nullptr ? std::string {} : owner->name;
+    }
+
     const ProcessInfo*
     match_process_by_name(std::span<const ProcessInfo> processes, std::string_view name, bool match_exe_path) noexcept
     {
