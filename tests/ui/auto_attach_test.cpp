@@ -53,6 +53,64 @@ TEST_CASE("loading a table auto attaches to its target process", "[ui]")
     CHECK(address_status->text().contains(QStringLiteral("Attached to alpha")));
 }
 
+TEST_CASE("a trainer auto attaches again after its target exits and returns", "[ui]")
+{
+    application();
+
+    FakeAccess access;
+    access.processes = sample_processes();
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::plugin::PluginHost      host;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("auto_attach_return.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* address_list = window.findChild<slopkit::ui::panels::AddressListPanel*>();
+    REQUIRE(address_list != nullptr);
+
+    const QString path = scratch_settings_file("auto_attach_return.skt");
+    write_table_with_settings(path, "alpha", true, false);
+
+    CHECK(address_list->load_table(path));
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 10 && target.session_live;
+                    }));
+
+    access.processes.erase(std::remove_if(access.processes.begin(),
+                                          access.processes.end(),
+                                          [](const slopkit::process::ProcessInfo& info)
+                                          {
+                                              return info.pid == 10;
+                                          }),
+                           access.processes.end());
+
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return !target.valid();
+                    }));
+
+    access.processes = sample_processes();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return target.pid == 10 && target.session_live;
+                    }));
+
+    QCoreApplication::processEvents();
+    auto* process_label = window.statusBar()->findChild<QLabel*>(QStringLiteral("process_label"));
+    REQUIRE(process_label != nullptr);
+    CHECK(process_label->text().contains(QStringLiteral("alpha")));
+
+    auto* address_status =
+        window.statusBar()->findChild<slopkit::ui::widgets::StatusLabel*>(QStringLiteral("address_status"));
+    REQUIRE(address_status != nullptr);
+    CHECK(address_list->findChildren<slopkit::ui::widgets::StatusLabel*>().isEmpty());
+    CHECK(address_status->text().contains(QStringLiteral("Attached to alpha")));
+}
+
 TEST_CASE("an auto attach is skipped while a session is live", "[ui]")
 {
     application();

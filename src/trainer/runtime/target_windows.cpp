@@ -249,6 +249,11 @@ namespace slopkit::trainer
                 return pointer_size_;
             }
 
+            [[nodiscard]] bool alive() const override
+            {
+                return ::WaitForSingleObject(process_, 0) == WAIT_TIMEOUT;
+            }
+
             [[nodiscard]] const std::vector<Module>& modules() const override
             {
                 return modules_;

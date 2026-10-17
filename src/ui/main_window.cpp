@@ -801,6 +801,8 @@ namespace slopkit::ui
         run_freeze_pass();
         refresh_target_label();
         live_values_->poll();
+        check_target_liveness();
+        reattach_exited_trainer();
     }
 
     void MainWindow::on_found_values_requested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes)
@@ -905,6 +907,17 @@ namespace slopkit::ui
         const table::TableSettings& settings = address_table_.settings();
 
         const bool use_path = settings.match_exe_path && !settings.exe_path.empty();
+
+        trainer_identifier_.clear();
+        trainer_match_exe_path_ = settings.match_exe_path;
+        if (settings.auto_attach && (use_path || !settings.target_process.empty()))
+        {
+            const std::string identifier = use_path ? settings.exe_path : settings.target_process;
+            if (!app::is_sandbox_identifier(identifier))
+            {
+                trainer_identifier_ = identifier;
+            }
+        }
 
         if (!settings.auto_attach)
         {
@@ -1116,6 +1129,115 @@ namespace slopkit::ui
             auto_attach_pending_.reset();
             log::warning(log::category::ui, std::format("{} attach unavailable", prefix));
             address_list_->report_status(std::format("{} attach unavailable.", prefix), true);
+        }
+    }
+
+    void MainWindow::check_target_liveness()
+    {
+        constexpr int kTicksPerCheck = 20;
+
+        if (!target_.valid() || target_liveness_pending_.has_value())
+        {
+            liveness_ticks_ = 0;
+            return;
+        }
+        if (++liveness_ticks_ < kTicksPerCheck)
+        {
+            return;
+        }
+        liveness_ticks_ = 0;
+
+        const process::ProcessId pid    = target_.pid;
+        const process::JobId     job_id = worker_.next_job_id();
+        target_liveness_pending_        = job_id;
+        const bool submitted            = worker_.submit_target_liveness(
+            job_id,
+            pid,
+            [this, job_id, pid](process::JobResult&& result)
+            {
+                if (target_liveness_pending_ != job_id)
+                {
+                    return;
+                }
+                target_liveness_pending_.reset();
+
+                if (std::get<process::TargetLivenessResult>(result).alive)
+                {
+                    return;
+                }
+                if (!target_.valid() || target_.pid != pid)
+                {
+                    return;
+                }
+
+                log::warning(log::category::process, std::format("target pid {} exited; scripts deactivated", pid));
+
+                const process::JobId detach_id = worker_.next_job_id();
+                static_cast<void>(worker_.submit_detach(detach_id, [](process::JobResult&&) {}));
+                target_.clear();
+                refresh_target_label();
+                address_list_->refresh();
+                address_list_->report_status(std::format("Target pid {} exited; scripts deactivated.", pid), false);
+            });
+        if (!submitted)
+        {
+            target_liveness_pending_.reset();
+        }
+    }
+
+    void MainWindow::reattach_exited_trainer()
+    {
+        constexpr int kTicksPerAttempt = 20;
+
+        if (target_.valid() || trainer_identifier_.empty() || trainer_reattach_pending_.has_value()
+            || target_lookup_pending_.has_value() || auto_attach_pending_.has_value())
+        {
+            trainer_reattach_ticks_ = 0;
+            return;
+        }
+        if (++trainer_reattach_ticks_ < kTicksPerAttempt)
+        {
+            return;
+        }
+        trainer_reattach_ticks_ = 0;
+
+        const std::string    identifier     = trainer_identifier_;
+        const bool           match_exe_path = trainer_match_exe_path_;
+        const process::JobId job_id         = worker_.next_job_id();
+        trainer_reattach_pending_           = job_id;
+
+        const bool submitted =
+            worker_.submit_list(job_id,
+                                [this, job_id, identifier, match_exe_path](process::JobResult&& result)
+                                {
+                                    if (trainer_reattach_pending_ != job_id)
+                                    {
+                                        return;
+                                    }
+                                    trainer_reattach_pending_.reset();
+
+                                    const auto& listed = std::get<process::ListResult>(result);
+                                    if (listed.error || target_.valid())
+                                    {
+                                        return;
+                                    }
+
+                                    const process::ProcessInfo* found =
+                                        match_exe_path
+                                            ? process::match_process_by_exe_path(listed.processes, identifier)
+                                            : process::match_process_by_name(listed.processes, identifier, true);
+                                    if (found == nullptr)
+                                    {
+                                        return;
+                                    }
+
+                                    log::info(log::category::process,
+                                              std::format("trainer target '{}' reappeared; re-attaching", identifier));
+                                    submit_process_attach(*found, "Trainer re");
+                                });
+        if (!submitted)
+        {
+            trainer_reattach_pending_.reset();
         }
     }
 

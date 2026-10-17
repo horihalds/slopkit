@@ -43,16 +43,24 @@ namespace slopkit::trainer
     }
 
     Resolver::Resolver(const Target& target, std::size_t pointer_size)
-        : target_ {target},
+        : target_ {&target},
           pointer_size_ {pointer_size == 4 || pointer_size == 8 ? pointer_size : target.pointer_size()}
     {
+        refresh_modules();
+    }
+
+    void Resolver::rebind(const Target& target)
+    {
+        target_       = &target;
+        pointer_size_ = target.pointer_size();
+        symbols_.clear();
         refresh_modules();
     }
 
     void Resolver::refresh_modules()
     {
         modules_.clear();
-        for (const auto& module : target_.modules())
+        for (const auto& module : target_->modules())
         {
             modules_.push_back(expr::ModuleRef {module.name, module.base});
         }
@@ -80,12 +88,12 @@ namespace slopkit::trainer
             symbols_,
             [this](std::uint64_t address)
             {
-                return read_pointer(target_, pointer_size_, address);
+                return read_pointer(*target_, pointer_size_, address);
             },
             expr::Options {pointer_size_},
             [this](std::uint64_t address, std::size_t size)
             {
-                return target_.readable(address, size);
+                return target_->readable(address, size);
             });
         if (!evaluated)
         {
@@ -104,7 +112,7 @@ namespace slopkit::trainer
             return;
         }
 
-        const auto bytes = target_.read(*evaluated, size);
+        const auto bytes = target_->read(*evaluated, size);
         if (!bytes)
         {
             live.resolved = false;
@@ -127,7 +135,7 @@ namespace slopkit::trainer
             return std::unexpected(
                 std::format("the address of entry \"{}\" is unresolved; refusing to write", entry.description));
         }
-        return target_.write(live.address, bytes);
+        return target_->write(live.address, bytes);
     }
 
 }

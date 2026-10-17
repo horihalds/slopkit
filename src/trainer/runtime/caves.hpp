@@ -27,10 +27,19 @@ namespace slopkit::trainer
     class CaveAllocator
     {
     public:
-        explicit CaveAllocator(const Target& target) noexcept : target_ {target} {}
+        explicit CaveAllocator(const Target& target) noexcept : target_ {&target} {}
 
         CaveAllocator(const CaveAllocator&)            = delete;
         CaveAllocator& operator=(const CaveAllocator&) = delete;
+
+        // Points the allocator at a new run of the target. The caves handed out
+        // for the old one mean nothing there, so they are forgotten.
+        void rebind(const Target& target) noexcept
+        {
+            target_ = &target;
+            loans_.clear();
+            refused_.clear();
+        }
 
         // Hands out `size` bytes the *target* may write: what a script's `alloc`
         // returns for a hook to store into. `near` is the site whose instructions
@@ -77,7 +86,7 @@ namespace slopkit::trainer
         [[nodiscard]] bool taken(std::uint64_t address, std::size_t size) const noexcept;
         [[nodiscard]] bool refused(const Region& region) const noexcept;
 
-        const Target&              target_;
+        const Target*              target_;
         std::vector<Loan>          loans_;
         std::vector<std::uint64_t> refused_;
     };

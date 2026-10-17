@@ -52,8 +52,8 @@ namespace slopkit::trainer
     }
 
     ScriptHost::ScriptHost(const Target& target, const Payload& payload, std::uint64_t fallback_interval_ms)
-        : target_ {target}, scripts_ {payload.scripts}, fallback_interval_ms_ {fallback_interval_ms}, caves_ {target},
-          engine_ {memory_api(), symbols_.api()}
+        : target_ {&target}, scripts_ {payload.scripts}, fallback_interval_ms_ {fallback_interval_ms}, caves_ {target},
+          engine_ {std::make_unique<script::Engine>(memory_api(), symbols_.api())}
     {
         states_.resize(scripts_.size());
         log::info(log::category::script,
@@ -75,7 +75,7 @@ namespace slopkit::trainer
             class_error_ = project.error();
             log::warning(log::category::script, std::format("class project unavailable: {}", class_error_));
         }
-        engine_.set_classes(script::class_index_of(project_));
+        engine_->set_classes(script::class_index_of(project_));
     }
 
     std::size_t ScriptHost::size() const noexcept
@@ -108,20 +108,20 @@ namespace slopkit::trainer
         script::MemoryApi api;
         api.pointer_size = [this]()
         {
-            return static_cast<std::size_t>(target_.pointer_size());
+            return static_cast<std::size_t>(target_->pointer_size());
         };
         api.read = [this](std::uint64_t address, std::size_t size)
         {
-            return target_.read(address, size);
+            return target_->read(address, size);
         };
         api.write = [this](std::uint64_t address, std::span<const std::byte> bytes)
         {
-            return target_.write(address, bytes);
+            return target_->write(address, bytes);
         };
         api.regions = [this]() -> std::expected<std::vector<script::MemoryRegion>, std::string>
         {
             std::vector<script::MemoryRegion> regions;
-            for (const Region& region : target_.regions())
+            for (const Region& region : target_->regions())
             {
                 regions.push_back(script::MemoryRegion {region.start,
                                                         region.end > region.start ? region.end - region.start : 0,
@@ -146,12 +146,12 @@ namespace slopkit::trainer
         };
         api.validate = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
         {
-            return target_.readable(address, size);
+            return target_->readable(address, size);
         };
         api.modules = [this]() -> std::expected<std::vector<expr::ModuleRef>, std::string>
         {
             std::vector<expr::ModuleRef> modules;
-            for (const Module& module : target_.modules())
+            for (const Module& module : target_->modules())
             {
                 modules.push_back(expr::ModuleRef {module.name, module.base});
             }
@@ -183,6 +183,30 @@ namespace slopkit::trainer
         state.failed       = failed;
     }
 
+    void ScriptHost::rebind(const Target& target)
+    {
+        target_ = &target;
+        caves_.rebind(target);
+        symbols_.clear();
+        engine_ = std::make_unique<script::Engine>(memory_api(), symbols_.api());
+        engine_->set_classes(script::class_index_of(project_));
+
+        for (ScriptState& state : states_)
+        {
+            state = ScriptState {};
+        }
+    }
+
+    void ScriptHost::disable_all() noexcept
+    {
+        for (ScriptState& state : states_)
+        {
+            state.active      = false;
+            state.interval_ms = 0;
+            state.next_update = {};
+        }
+    }
+
     std::expected<void, std::string> ScriptHost::activate(std::size_t index)
     {
         ScriptState& state = states_[index];
@@ -193,7 +217,7 @@ namespace slopkit::trainer
 
         const auto                    now = std::chrono::steady_clock::now();
         const script::LifecycleResult outcome =
-            engine_.run_lifecycle(scripts_[index].source, std::string {script::kActivateHook});
+            engine_->run_lifecycle(scripts_[index].source, std::string {script::kActivateHook});
         state.active = outcome.ok;
         if (!outcome.ok)
         {
@@ -223,7 +247,7 @@ namespace slopkit::trainer
         }
 
         const script::LifecycleResult outcome =
-            engine_.run_lifecycle(scripts_[index].source, std::string {script::kDeactivateHook});
+            engine_->run_lifecycle(scripts_[index].source, std::string {script::kDeactivateHook});
         state.active      = false;
         state.interval_ms = 0;
         state.next_update = {};
@@ -249,7 +273,7 @@ namespace slopkit::trainer
                 continue;
             }
 
-            const script::UpdateResult outcome = engine_.run_update(scripts_[index].source);
+            const script::UpdateResult outcome = engine_->run_update(scripts_[index].source);
             if (!outcome.ok)
             {
                 // A failing update stops this script alone: the others keep ticking

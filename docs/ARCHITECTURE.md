@@ -595,7 +595,9 @@ target.
   (a tick submits the `activate` job, an untick the `deactivate` one), the flag is
   written only when the verdict accepts, and a refusal snaps the box back and
   reaches the status line as `Activate failed: <message>` / `Deactivate failed:
-  <message>`. A run or toggle without an attached target is refused.
+  <message>`. A run or toggle without an attached target is refused, and
+  `Edit Script…` is refused while the row is active, so an active script can
+  only be changed after deactivating it.
 - The ticked scripts' per-interval hooks are one more worker job
   (`JobKind::script_update` → `ScriptUpdatesResult`): `submit_script_updates` runs
   `Engine::run_update` for every remembered script in activation order inside one
@@ -625,6 +627,17 @@ target.
   the session and the engine's globals are still alive. The verdict is ignored — no
   retry and no box to write on the way out — and each result is logged once under
   `script`, so an activated script is undone before the target is released.
+- An attached target is checked once a second through `JobKind::target_liveness`
+  (`submit_target_liveness` → `TargetLivenessResult`), which lists processes on the
+  worker thread; only a successful listing that no longer carries the pid proves an
+  exit, so a listing failure never detaches a live target. On that proof the window
+  submits `detach` (whose completion clears the remembered scripts), clears
+  `AttachedTarget`, refreshes the address list and reports the exit in the status
+  line, which turns every active script row inactive without running its
+  `deactivate` hook against a dead process. A table with an auto-attach identity
+  also keeps that identity after the exit and, once a process matching it appears
+  again, submits the same listing-driven attach about once a second, so a
+  trainer resumes on the reappearing target.
 
 A script entry has no address and no value, never takes part in the freeze pass
 (its `Active` flag drives the lifecycle hooks and the per-interval `update`
@@ -977,6 +990,19 @@ refresh ahead, so an entry whose expression names one resolves in the same pass,
 deactivating the script takes them away again. Every hook's output is printed, and a
 failing hook marks that one script `error` and stops ticking it: no script can abort
 the trainer or change its exit code.
+
+A trainer follows its process instead of ending with it. `Target::alive()` is the
+platform's cheap liveness probe (`/proc/<pid>` on Linux, a zero-time wait on the
+process handle on Windows), checked before every tick, refresh and action. When it
+reports the process gone, the session marks every script inactive without running a
+`deactivate` hook against the dead handle, drops the target and retries the attach
+once a second; the payload's recorded process name is used when the trainer was
+started with `--pid`. A successful re-attach rebinds `Resolver` and `ScriptHost` to
+the new target — fresh modules, symbol table, engine and caves — re-resolves and
+re-freezes the entries, and runs `activate` again for the scripts that were active,
+so a trainer outlives a game restart. The interactive header reads the current pid
+for every draw, and actions submitted while the target is absent answer that the
+trainer is waiting for it to reappear.
 
 The list shows the value entries as `1..N` — index, description, resolved
 address, value type, value and the frozen and unresolved markers — and then the

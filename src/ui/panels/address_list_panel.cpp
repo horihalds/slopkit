@@ -737,6 +737,12 @@ namespace slopkit::ui::panels
         {
             return;
         }
+        if (table_.entries()[row].active)
+        {
+            log::warning(log::category::script, "edit script refused: the script is active");
+            set_status(tr("Deactivate the script before editing it."), true);
+            return;
+        }
         log::debug(log::category::ui, std::format("edit script dialog opened on row {}", row));
         ensure_script_dialog();
         script_dialog_->edit_entry(row);

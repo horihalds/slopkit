@@ -160,6 +160,11 @@ namespace slopkit::process
         std::optional<AccessError> error;
     };
 
+    struct TargetLivenessResult
+    {
+        bool alive {};
+    };
+
     struct StringRefsResult
     {
         std::string                            module;
@@ -180,6 +185,7 @@ namespace slopkit::process
                                    ScriptUpdatesResult,
                                    FreezeResult,
                                    SuspendResult,
+                                   TargetLivenessResult,
                                    MemoryMapResult,
                                    ResolveResult,
                                    StringRefsResult>;
@@ -230,6 +236,7 @@ namespace slopkit::process
         bool submit_suspend(JobId id, ProcessId pid, JobCallback on_done);
         bool submit_resume(JobId id, ProcessId pid, JobCallback on_done);
         bool submit_detach(JobId id, JobCallback on_done);
+        bool submit_target_liveness(JobId id, ProcessId pid, JobCallback on_done);
 
         std::size_t drain(std::size_t max_jobs = 64);
 
@@ -264,6 +271,7 @@ namespace slopkit::process
             suspend,
             resume,
             detach,
+            target_liveness,
             resolve_expressions,
             string_references,
         };
@@ -337,6 +345,7 @@ namespace slopkit::process
         SuspendResult           do_suspend(const Request& request);
         SuspendResult           do_resume(const Request& request);
         AttachResult            do_detach();
+        TargetLivenessResult    do_target_liveness(const Request& request);
         ResolveResult           do_resolve(const Request& request);
         StringRefsResult        do_string_references(const Request& request);
 

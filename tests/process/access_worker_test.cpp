@@ -1805,3 +1805,38 @@ TEST_CASE("the string-reference job sweeps the module over the fake plugin", "[p
     CHECK(result.report.strings == 1);
     CHECK(result.report.instructions > 0);
 }
+
+TEST_CASE("target liveness follows the process listing", "[process][worker]")
+{
+    GatedAccess  access {false};
+    AccessWorker worker {access};
+
+    const auto probe = [&]()
+    {
+        slopkit::process::TargetLivenessResult result;
+        bool                                   done = false;
+        worker.submit_target_liveness(worker.next_job_id(),
+                                      7,
+                                      [&](JobResult&& job)
+                                      {
+                                          result = std::get<slopkit::process::TargetLivenessResult>(std::move(job));
+                                          done   = true;
+                                      });
+        REQUIRE(pump(worker,
+                     [&]
+                     {
+                         return done;
+                     }));
+        return result;
+    };
+
+    CHECK(probe().alive);
+
+    access.target_present = false;
+    CHECK_FALSE(probe().alive);
+
+    // A listing failure says nothing about the target, so it must not be
+    // mistaken for an exit.
+    access.list_error = AccessError::permission_denied;
+    CHECK(probe().alive);
+}

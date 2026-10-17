@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -59,6 +60,14 @@ namespace slopkit::trainer
         [[nodiscard]] std::expected<void, std::string> activate(std::size_t index);
         [[nodiscard]] std::expected<void, std::string> deactivate(std::size_t index);
 
+        // Points the host at a new run of the target, dropping the old engine's
+        // state. Scripts are left inactive; the caller decides which to activate.
+        void rebind(const Target& target);
+
+        // Marks every script inactive without running its `deactivate` hook. Used
+        // when the target is already gone, so a hook could not succeed anyway.
+        void disable_all() noexcept;
+
         // Runs the `update` hook of every active script whose interval has elapsed.
         void tick(std::chrono::steady_clock::time_point now);
 
@@ -75,15 +84,15 @@ namespace slopkit::trainer
                             const std::optional<std::uint64_t>&   interval,
                             std::chrono::steady_clock::time_point now);
 
-        const Target&              target_;
-        std::vector<PayloadScript> scripts_;
-        std::uint64_t              fallback_interval_ms_ {250};
-        script::SymbolTable        symbols_;
-        CaveAllocator              caves_;
-        script::Engine             engine_;
-        std::vector<ScriptState>   states_;
-        reclass::Project           project_;
-        std::string                class_error_;
+        const Target*                   target_;
+        std::vector<PayloadScript>      scripts_;
+        std::uint64_t                   fallback_interval_ms_ {250};
+        script::SymbolTable             symbols_;
+        CaveAllocator                   caves_;
+        std::unique_ptr<script::Engine> engine_;
+        std::vector<ScriptState>        states_;
+        reclass::Project                project_;
+        std::string                     class_error_;
     };
 
 }

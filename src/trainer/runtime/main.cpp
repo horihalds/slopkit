@@ -281,9 +281,118 @@ namespace slopkit::trainer
             return std::nullopt;
         }
 
+        // Owns the target handle and the reconnect policy. A trainer follows the
+        // process it was built for: when that process exits its scripts are
+        // switched off, and once a process of the recorded name runs again the
+        // session re-attaches and restores the scripts and frozen entries.
+        class Session
+        {
+        public:
+            Session(std::unique_ptr<Target> target,
+                    AttachRequest           request,
+                    const Payload&          payload,
+                    ScriptHost&             scripts,
+                    Resolver&               resolver,
+                    std::vector<LiveEntry>& live)
+                : target_ {std::move(target)}, request_ {std::move(request)}, payload_ {payload}, scripts_ {scripts},
+                  resolver_ {resolver}, live_ {live}
+            {
+            }
+
+            [[nodiscard]] bool attached() const noexcept
+            {
+                return target_ != nullptr;
+            }
+
+            [[nodiscard]] std::uint32_t pid() const noexcept
+            {
+                return target_ ? target_->pid() : 0;
+            }
+
+            // True when the target is live. When it is gone, switches the scripts
+            // off and tries a re-attach at most once a second.
+            bool ensure()
+            {
+                if (target_ && target_->alive())
+                {
+                    return true;
+                }
+
+                if (target_)
+                {
+                    log::warning(log::category::process,
+                                 std::format("target pid {} exited; scripts deactivated", target_->pid()));
+                    active_.clear();
+                    const auto states = scripts_.states();
+                    for (std::size_t index = 0; index < states.size(); ++index)
+                    {
+                        if (states[index].active)
+                        {
+                            active_.push_back(index);
+                        }
+                    }
+                    scripts_.disable_all();
+                    target_.reset();
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                if (now < next_attempt_)
+                {
+                    return false;
+                }
+                next_attempt_ = now + std::chrono::seconds {1};
+
+                AttachRequest request = request_;
+                if (request.pid != 0 && request.name.empty() && !payload_.process_name.empty())
+                {
+                    // A recording names the process it was made against; that is
+                    // what re-attaching has to look for once the pid is gone.
+                    request.pid  = 0;
+                    request.name = payload_.process_name;
+                }
+
+                auto attached = attach(request);
+                if (!attached)
+                {
+                    log::debug(log::category::process, std::format("re-attach failed: {}", attached.error().message));
+                    return false;
+                }
+
+                target_ = std::move(*attached);
+                log::info(log::category::process,
+                          std::format("re-attached to pid {}; restoring scripts", target_->pid()));
+
+                resolver_.rebind(*target_);
+                scripts_.rebind(*target_);
+
+                refresh_all(payload_, resolver_, live_);
+                rewrite_frozen(payload_, resolver_, live_);
+
+                for (const std::size_t index : active_)
+                {
+                    run_script_command(scripts_, resolver_, true, index + 1);
+                }
+                active_.clear();
+                resolver_.set_symbols(scripts_.symbols());
+                refresh_all(payload_, resolver_, live_);
+                return true;
+            }
+
+        private:
+            std::unique_ptr<Target>               target_;
+            AttachRequest                         request_;
+            const Payload&                        payload_;
+            ScriptHost&                           scripts_;
+            Resolver&                             resolver_;
+            std::vector<LiveEntry>&               live_;
+            std::vector<std::size_t>              active_;
+            std::chrono::steady_clock::time_point next_attempt_ {};
+        };
+
         void pump(std::uint32_t           wait_ms,
                   std::uint32_t           interval_ms,
                   const Payload&          payload,
+                  Session&                session,
                   ScriptHost&             scripts,
                   Resolver&               resolver,
                   std::vector<LiveEntry>& live)
@@ -291,9 +400,12 @@ namespace slopkit::trainer
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds {wait_ms};
             while (std::chrono::steady_clock::now() < deadline)
             {
-                tick_scripts(scripts, resolver);
-                rewrite_frozen(payload, resolver, live);
-                refresh_all(payload, resolver, live);
+                if (session.ensure())
+                {
+                    tick_scripts(scripts, resolver);
+                    rewrite_frozen(payload, resolver, live);
+                    refresh_all(payload, resolver, live);
+                }
 
                 const auto left =
                     std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now())
@@ -394,24 +506,42 @@ namespace slopkit::trainer
         }
 
         int interactive(const Payload&          payload,
+                        Session&                session,
                         ScriptHost&             scripts,
                         Resolver&               resolver,
                         std::vector<LiveEntry>& live,
-                        std::uint32_t           pid,
                         std::uint32_t           interval_ms)
         {
             const auto perform = [&](const tui::Action& action)
             {
+                if (!session.ensure())
+                {
+                    return std::string {"the target has exited; waiting for it to reappear"};
+                }
                 return apply_action(action, payload, scripts, resolver, live);
             };
             const auto step = [&]
             {
+                if (!session.ensure())
+                {
+                    return;
+                }
                 tick_scripts(scripts, resolver);
                 rewrite_frozen(payload, resolver, live);
                 refresh_all(payload, resolver, live);
             };
 
-            return tui::run_tui(payload, live, scripts.states(), pid, interval_ms, perform, step);
+            return tui::run_tui(
+                payload,
+                live,
+                scripts.states(),
+                [&session]
+                {
+                    return session.pid();
+                },
+                interval_ms,
+                perform,
+                step);
         }
 
         // `--verbose` is the only way a trainer writes a log, so start it before
@@ -471,7 +601,7 @@ namespace slopkit::trainer
             log::info(log::category::process,
                       request.pid != 0 ? std::format("attaching to pid {}", request.pid)
                                        : std::format("attaching to \"{}\"", request.name));
-            const auto target = attach(request);
+            auto target = attach(request);
             if (!target)
             {
                 log::error(log::category::process, target.error().message);
@@ -488,6 +618,7 @@ namespace slopkit::trainer
             Resolver               resolver {**target, payload->pointer_size};
             std::vector<LiveEntry> live = seed(*payload);
             ScriptHost             scripts {**target, *payload, options.interval_ms};
+            Session                session {std::move(*target), request, *payload, scripts, resolver, live};
 
             if (!scripts.class_error().empty())
             {
@@ -549,17 +680,17 @@ namespace slopkit::trainer
 
             if (options.wait_ms > 0)
             {
-                pump(options.wait_ms, options.interval_ms, *payload, scripts, resolver, live);
+                pump(options.wait_ms, options.interval_ms, *payload, session, scripts, resolver, live);
             }
 
             if (options.has_actions() || !stdin_is_terminal())
             {
-                std::cout << console::render_header(*payload, (*target)->pid())
+                std::cout << console::render_header(*payload, session.pid())
                           << console::render_rows(*payload, live, scripts.states());
                 return kExitOk;
             }
 
-            return interactive(*payload, scripts, resolver, live, (*target)->pid(), options.interval_ms);
+            return interactive(*payload, session, scripts, resolver, live, options.interval_ms);
         }
     }
 

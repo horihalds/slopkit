@@ -112,13 +112,14 @@ namespace slopkit::trainer::tui
 
     // Runs the full-screen interactive mode until the user quits. `perform`
     // applies one action to the session and answers with the message to show
-    // (empty clears it); `step` is the periodic target work. Both run on the
+    // (empty clears it); `step` is the periodic target work and `pid` is read
+    // for every draw, since a re-attach changes it. All of them run on the
     // loop's own thread, which is also the one reading the keyboard, so the
     // target is only ever touched from there.
     int run_tui(const Payload&                                   payload,
                 std::span<const LiveEntry>                       live,
                 std::span<const ScriptState>                     scripts,
-                std::uint32_t                                    pid,
+                const std::function<std::uint32_t()>&            pid,
                 std::uint32_t                                    interval_ms,
                 const std::function<std::string(const Action&)>& perform,
                 const std::function<void()>&                     step);

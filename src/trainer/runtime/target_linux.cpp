@@ -262,6 +262,13 @@ namespace slopkit::trainer
                 return pointer_size_;
             }
 
+            [[nodiscard]] bool alive() const override
+            {
+                std::error_code error;
+                const bool      running = std::filesystem::exists(proc_entry(pid_, ""), error);
+                return error ? true : running;
+            }
+
             [[nodiscard]] const std::vector<Module>& modules() const override
             {
                 return modules_;

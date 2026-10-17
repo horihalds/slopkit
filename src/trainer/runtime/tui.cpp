@@ -328,7 +328,7 @@ namespace slopkit::trainer::tui
     int run_tui(const Payload&                                   payload,
                 std::span<const LiveEntry>                       live,
                 std::span<const ScriptState>                     scripts,
-                std::uint32_t                                    pid,
+                const std::function<std::uint32_t()>&            pid,
                 std::uint32_t                                    interval_ms,
                 const std::function<std::string(const Action&)>& perform,
                 const std::function<void()>&                     step)
@@ -389,7 +389,7 @@ namespace slopkit::trainer::tui
                     lines.push_back(std::move(element) | ftxui::reflect(boxes[offset]));
                 }
 
-                auto header = ftxui::text(trim_newline(console::render_header(payload, pid))) | ftxui::bold;
+                auto header = ftxui::text(trim_newline(console::render_header(payload, pid()))) | ftxui::bold;
                 auto list   = ftxui::vbox(std::move(lines)) | ftxui::yflex_grow;
                 auto prompt =
                     ftxui::hbox({ftxui::text("slopkit-trainer> "), ftxui::text(model.input()), ftxui::text("_")});

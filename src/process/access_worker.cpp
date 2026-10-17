@@ -456,6 +456,16 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_target_liveness(JobId id, ProcessId pid, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::target_liveness;
+        request.id      = id;
+        request.pid     = pid;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     std::string_view AccessWorker::job_kind_name(JobKind kind) noexcept
     {
         switch (kind)
@@ -490,6 +500,8 @@ namespace slopkit::process
             return "resume";
         case JobKind::detach:
             return "detach";
+        case JobKind::target_liveness:
+            return "target-liveness";
         case JobKind::resolve_expressions:
             return "resolve-expressions";
         case JobKind::string_references:
@@ -532,6 +544,8 @@ namespace slopkit::process
             return do_resume(request);
         case JobKind::detach:
             return do_detach();
+        case JobKind::target_liveness:
+            return do_target_liveness(request);
         case JobKind::resolve_expressions:
             return do_resolve(request);
         case JobKind::string_references:
@@ -1275,6 +1289,20 @@ namespace slopkit::process
         clear_active_scripts();
         attached_ = false;
         return AttachResult {};
+    }
+
+    TargetLivenessResult AccessWorker::do_target_liveness(const Request& request)
+    {
+        TargetLivenessResult result {.alive = true};
+
+        // A failed listing says nothing about the target, so only a listing that
+        // succeeded without the pid proves the process is gone.
+        if (const auto listed = access_.list_processes(); listed.has_value())
+        {
+            const auto found = std::ranges::find(*listed, request.pid, &ProcessInfo::pid);
+            result.alive     = found != listed->end();
+        }
+        return result;
     }
 
     ResolveResult AccessWorker::do_resolve(const Request& request)

@@ -97,7 +97,7 @@ namespace slopkit::trainer
         }
 
         std::vector<const Region*> candidates;
-        for (const Region& region : target_.regions())
+        for (const Region& region : target_->regions())
         {
             if (!usable(region, use) || region.end <= region.start || refused(region) || out_of_reach(near, region))
             {
@@ -129,7 +129,7 @@ namespace slopkit::trainer
             // is not searched again. That path forces a read-only page, so the region
             // flags above, not this probe, decide whether the target may use the cave.
             const std::vector<std::byte> zeros(size, kFree);
-            if (const auto wrote = target_.write(*found, zeros); !wrote)
+            if (const auto wrote = target_->write(*found, zeros); !wrote)
             {
                 log::debug(log::category::script,
                            std::format("alloc: region 0x{:x} ({}) refuses the write probe: {}",
@@ -161,7 +161,7 @@ namespace slopkit::trainer
         }
 
         const std::vector<std::byte>           zeros(loan->size, kFree);
-        const std::expected<void, std::string> wrote = target_.write(address, zeros);
+        const std::expected<void, std::string> wrote = target_->write(address, zeros);
         loans_.erase(loan);
         if (!wrote)
         {
@@ -199,7 +199,7 @@ namespace slopkit::trainer
         while (address < to && budget > 0)
         {
             const auto chunk = static_cast<std::size_t>(std::min<std::uint64_t>(kChunk, to - address));
-            const auto bytes = target_.read(address, chunk);
+            const auto bytes = target_->read(address, chunk);
             if (!bytes)
             {
                 // Nothing past a page the target will not read is the trainer's to

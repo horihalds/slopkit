@@ -81,12 +81,23 @@ namespace
         }
 
         std::optional<AccessError> read_error;
+        std::optional<AccessError> list_error;
+        bool                       target_present {true};
         bool                       can_suspend {false};
         bool                       can_allocate {false};
 
         std::expected<std::vector<slopkit::process::ProcessInfo>, AccessError> list_processes() override
         {
             enter();
+
+            if (list_error)
+            {
+                return std::unexpected(*list_error);
+            }
+            if (!target_present)
+            {
+                return std::vector<slopkit::process::ProcessInfo> {};
+            }
 
             slopkit::process::ProcessInfo info;
             info.pid       = 7;

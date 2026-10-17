@@ -2374,3 +2374,36 @@ TEST_CASE("the address list keeps the value cell out of inline editing", "[ui]")
     view->edit(value);
     CHECK(view->viewport()->findChild<QLineEdit*>() == nullptr);
 }
+
+TEST_CASE("an active script cannot be edited", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+
+    slopkit::table::AddressTable table;
+    REQUIRE(table.add_script("helper", "return 1") == 0);
+    table.entries()[0].active = true;
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+
+    QString status;
+    bool    is_error = false;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     &panel,
+                     [&](const QString& text, bool error)
+                     {
+                         status   = text;
+                         is_error = error;
+                     });
+
+    panel.edit_script(0);
+
+    CHECK(is_error);
+    CHECK(status == QStringLiteral("Deactivate the script before editing it."));
+    CHECK(panel.findChild<slopkit::ui::dialogs::AddScriptDialog*>() == nullptr);
+    CHECK(table.entries()[0].active);
+}

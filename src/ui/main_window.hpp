@@ -136,6 +136,8 @@ namespace slopkit::ui
         void apply_tab_order();
         void refresh_target_label();
         void run_freeze_pass();
+        void check_target_liveness();
+        void reattach_exited_trainer();
 
         void on_memory_view_requested(quint64 address);
 
@@ -249,6 +251,19 @@ namespace slopkit::ui
         // share them, so only one attach runs at a time.
         std::optional<process::JobId> target_lookup_pending_;
         std::optional<process::JobId> auto_attach_pending_;
+
+        std::optional<process::JobId> target_liveness_pending_;
+        std::optional<process::JobId> trainer_reattach_pending_;
+
+        // The table's auto-attach identity, kept after the target exits so a
+        // trainer can re-attach when the same process shows up again.
+        std::string trainer_identifier_;
+        bool        trainer_match_exe_path_ {false};
+
+        // on_tick runs every 50 ms; these count ticks so liveness and trainer
+        // re-attach checks stay at roughly one second.
+        int liveness_ticks_ {};
+        int trainer_reattach_ticks_ {};
     };
 
 }

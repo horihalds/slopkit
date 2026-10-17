@@ -35,6 +35,10 @@ namespace slopkit::trainer
     public:
         Resolver(const Target& target, std::size_t pointer_size);
 
+        // Points the resolver at a new run of the target, dropping module and
+        // symbol addresses that only meant something to the old one.
+        void rebind(const Target& target);
+
         void refresh_modules();
 
         // The symbols the active scripts published; an expression may name one
@@ -47,7 +51,7 @@ namespace slopkit::trainer
         write(const PayloadEntry& entry, const LiveEntry& live, std::span<const std::byte> bytes) const;
 
     private:
-        const Target&                target_;
+        const Target*                target_;
         std::size_t                  pointer_size_ {8};
         std::vector<expr::ModuleRef> modules_;
         std::vector<expr::SymbolRef> symbols_;

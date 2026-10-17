@@ -38,10 +38,19 @@ namespace slopkit::trainer
         Target& operator=(const Target&) = delete;
         virtual ~Target()                = default;
 
-        [[nodiscard]] virtual std::uint32_t              pid() const          = 0;
-        [[nodiscard]] virtual std::uint32_t              pointer_size() const = 0;
-        [[nodiscard]] virtual const std::vector<Module>& modules() const      = 0;
-        [[nodiscard]] virtual const std::vector<Region>& regions() const      = 0;
+        [[nodiscard]] virtual std::uint32_t pid() const          = 0;
+        [[nodiscard]] virtual std::uint32_t pointer_size() const = 0;
+
+        // Whether the process behind this handle is still running. A target that
+        // cannot say keeps the previous answer, so an inconclusive probe never
+        // detaches a live trainer.
+        [[nodiscard]] virtual bool alive() const
+        {
+            return true;
+        }
+
+        [[nodiscard]] virtual const std::vector<Module>& modules() const = 0;
+        [[nodiscard]] virtual const std::vector<Region>& regions() const = 0;
 
         [[nodiscard]] virtual std::expected<std::vector<std::byte>, std::string> read(std::uint64_t address,
                                                                                       std::size_t   size) const = 0;
