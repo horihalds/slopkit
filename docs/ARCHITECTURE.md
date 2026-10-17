@@ -1058,6 +1058,13 @@ as console input and calling the same `step` on the interval. A native Windows
 console and a Wine console that already has a visible window run FTXUI directly,
 and the Linux build's `ensure_console_window` does nothing.
 
+The handle `attach` opens for the target carries `SYNCHRONIZE` on top of the
+query and VM rights, because `WindowsTarget::alive` asks `WaitForSingleObject`
+and Wine refuses that call for a handle opened without it. A failed wait must not
+read as an exit either: only a signalled handle ends the session, so an
+inconclusive probe leaves a live target attached instead of cycling between the
+waiting state and the same pid.
+
 A trainer installs no log sink of its own, so an ordinary run writes nothing.
 `--verbose` (`src/trainer/runtime/logging.cpp`) raises slopkit's logger to `debug`,
 adds the application's rolling file sink with a 1 MiB cap, and points it at the

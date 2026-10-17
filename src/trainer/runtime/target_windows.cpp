@@ -251,7 +251,7 @@ namespace slopkit::trainer
 
             [[nodiscard]] bool alive() const override
             {
-                return ::WaitForSingleObject(process_, 0) == WAIT_TIMEOUT;
+                return ::WaitForSingleObject(process_, 0) != WAIT_OBJECT_0;
             }
 
             [[nodiscard]] const std::vector<Module>& modules() const override
@@ -332,8 +332,12 @@ namespace slopkit::trainer
             pid = *found;
         }
 
-        HANDLE process = ::OpenProcess(
-            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, FALSE, pid);
+        // SYNCHRONIZE is what `WindowsTarget::alive` waits on; without it
+        // `WaitForSingleObject` fails and a live target looks exited.
+        HANDLE process = ::OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE
+                                           | PROCESS_VM_OPERATION | SYNCHRONIZE,
+                                       FALSE,
+                                       pid);
         if (process == nullptr)
         {
             const auto error = static_cast<unsigned long>(::GetLastError());
