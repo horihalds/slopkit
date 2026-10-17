@@ -118,6 +118,13 @@ recorded when it was generated:
 ./game.trainer --pid 4711 --activate 1 --wait 500 --list
 ```
 
+A game running under Proton/Wine is a target like any other on Linux: the name a
+table records for it is the guest executable's (`game.exe`, not the wine loader
+running it), and the trainer finds it through the guest's own images. The guest's
+image also decides the pointer width, so a 32-bit game's pointer chains resolve
+with 4-byte pointers even though the loader hosting it is 64-bit. Reading and
+writing that memory follows the same kernel ptrace policy as any other target.
+
 With a terminal it opens a full-screen list: click a row to toggle it, or select
 it and press Enter — a click on a value entry freezes or unfreezes it and a click
 on a script row activates or deactivates it. Arrow keys, Page Up/Down, Home and

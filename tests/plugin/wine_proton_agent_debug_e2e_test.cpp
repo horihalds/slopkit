@@ -20,6 +20,7 @@
 #include "plugins/wine_proton/agent_client.hpp"
 #include "plugins/wine_proton/agent_service.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
+#include "support/wine_helpers.hpp"
 
 namespace
 {
@@ -46,19 +47,6 @@ namespace
             }
         }
     };
-
-    std::filesystem::path find_wine()
-    {
-        for (const auto* candidate : {"/usr/bin/wine64", "/usr/bin/wine"})
-        {
-            std::error_code error;
-            if (std::filesystem::exists(candidate, error))
-            {
-                return candidate;
-            }
-        }
-        return {};
-    }
 
     // Talks to the debug control block directly: one command at a time, each
     // published last and answered by the agent with the matching sequence.
@@ -115,7 +103,7 @@ TEST_CASE("wine-proton debugs a target through the resident agent", "[wine-proto
     }
 
     const auto      wine  = find_wine();
-    const auto      probe = std::filesystem::path(SLOPKIT_AGENT_PROBE_DIR) / "slopkit-probe-x86_64.exe";
+    const auto      probe = wine_probe();
     std::error_code error;
     if (wine.empty() || !std::filesystem::exists(probe, error))
     {

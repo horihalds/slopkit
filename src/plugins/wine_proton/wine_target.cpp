@@ -14,7 +14,6 @@
 
 #include <unistd.h>
 
-#include "platform/linux/module_entry.hpp"
 #include "platform/linux/procfs.hpp"
 #include "platform/linux/wine.hpp"
 
@@ -22,56 +21,6 @@ namespace slopkit::plugins::wine_proton
 {
     namespace
     {
-        struct GuestImage
-        {
-            std::string   path;
-            std::uint32_t pointer_size {0};
-        };
-
-        std::optional<std::string> guest_image_path(process::ProcessId pid)
-        {
-            auto modules = platform::modules_from_maps(platform::read_maps(pid));
-            if (!platform::flag_main_pe_image(pid, modules))
-            {
-                return std::nullopt;
-            }
-            const auto* main = process::main_module(modules);
-            if (main == nullptr || main->path.empty() || main->path.front() != '/')
-            {
-                return std::nullopt;
-            }
-            return main->path;
-        }
-
-        std::optional<GuestImage> guest_image(process::ProcessId pid)
-        {
-            const auto path = guest_image_path(pid);
-            if (!path)
-            {
-                return std::nullopt;
-            }
-
-            const auto image_path = std::filesystem::path(*path);
-            const auto root       = std::filesystem::path("/proc") / std::to_string(pid) / "root";
-            const auto machine    = platform::read_pe_machine(root / image_path.relative_path());
-            if (!machine)
-            {
-                return std::nullopt;
-            }
-
-            switch (*machine)
-            {
-            case 0x8664:
-            case 0xAA64:
-                return GuestImage {*path, 8};
-            case 0x014C:
-            case 0x01C4:
-                return GuestImage {*path, 4};
-            default:
-                return std::nullopt;
-            }
-        }
-
         std::vector<std::filesystem::path> wine_candidates(process::ProcessId                pid,
                                                            const std::optional<std::string>& exe)
         {
@@ -188,18 +137,12 @@ namespace slopkit::plugins::wine_proton
 
     std::optional<std::string> guest_image_name(process::ProcessId pid)
     {
-        const auto path = guest_image_path(pid);
-        if (!path)
-        {
-            return std::nullopt;
-        }
-        return std::filesystem::path(*path).filename().string();
+        return platform::guest_image_name(pid);
     }
 
     std::uint32_t guest_pointer_size(process::ProcessId pid)
     {
-        const auto image = guest_image(pid);
-        return image ? image->pointer_size : 0;
+        return platform::guest_pointer_size(pid);
     }
 
     std::string linux_path_to_windows(const std::string& path)
@@ -295,7 +238,7 @@ namespace slopkit::plugins::wine_proton
 
     std::expected<WineTarget, std::string> derive_wine_target(process::ProcessId pid)
     {
-        const auto image = guest_image(pid);
+        const auto image = platform::guest_image(pid);
         if (!image)
         {
             return std::unexpected(std::string("the target's main PE image could not be identified"));

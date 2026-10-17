@@ -13,6 +13,7 @@
 
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
+#include "platform/linux/module_entry.hpp"
 #include "platform/linux/proc_text.hpp"
 #include "platform/linux/procfs.hpp"
 
@@ -211,6 +212,68 @@ namespace slopkit::platform
             }
         }
         return result;
+    }
+
+    std::optional<GuestImage> guest_image(process::ProcessId pid)
+    {
+        auto modules = modules_from_maps(read_maps(pid));
+        if (!flag_main_pe_image(pid, modules))
+        {
+            return std::nullopt;
+        }
+
+        const auto* main = process::main_module(modules);
+        if (main == nullptr || main->path.empty() || main->path.front() != '/')
+        {
+            return std::nullopt;
+        }
+
+        // Wine maps the guest's images from their host path, which the prefix's
+        // mount namespace hides from this process. `/proc/<pid>/root` is the
+        // target's own view and resolves either way.
+        const auto machine = read_pe_machine(proc_entry(pid, "root" + main->path));
+        if (!machine)
+        {
+            return std::nullopt;
+        }
+
+        const auto width = pe_pointer_size(*machine);
+        if (!width)
+        {
+            return std::nullopt;
+        }
+        return GuestImage {main->path, *width};
+    }
+
+    std::optional<std::uint32_t> pe_pointer_size(std::uint32_t machine)
+    {
+        switch (machine)
+        {
+        case 0x8664: // IMAGE_FILE_MACHINE_AMD64
+        case 0xAA64: // IMAGE_FILE_MACHINE_ARM64
+            return 8;
+        case 0x014C: // IMAGE_FILE_MACHINE_I386
+        case 0x01C4: // IMAGE_FILE_MACHINE_ARMNT
+            return 4;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    std::optional<std::string> guest_image_name(process::ProcessId pid)
+    {
+        const auto image = guest_image(pid);
+        if (!image)
+        {
+            return std::nullopt;
+        }
+        return std::filesystem::path(image->path).filename().string();
+    }
+
+    std::uint32_t guest_pointer_size(process::ProcessId pid)
+    {
+        const auto image = guest_image(pid);
+        return image ? image->pointer_size : 0;
     }
 
 }

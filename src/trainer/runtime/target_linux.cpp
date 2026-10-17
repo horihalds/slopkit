@@ -13,7 +13,6 @@
 #include <format>
 #include <fstream>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,12 +25,14 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#include "platform/linux/module_entry.hpp"
+#include "platform/linux/procfs.hpp"
+#include "platform/linux/wine.hpp"
+
 namespace slopkit::trainer
 {
     namespace
     {
-        constexpr std::uint8_t kElfClass64 {2};
-
         std::string trim(std::string_view text)
         {
             while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == '\n'))
@@ -90,9 +91,21 @@ namespace slopkit::trainer
             return lowercase(candidate) == lowercase(wanted);
         }
 
+        std::optional<std::uint32_t> parse_pid(std::string_view text)
+        {
+            std::uint32_t pid    = 0;
+            const auto    parsed = std::from_chars(text.data(), text.data() + text.size(), pid);
+            if (parsed.ec != std::errc {} || parsed.ptr != text.data() + text.size())
+            {
+                return std::nullopt;
+            }
+            return pid;
+        }
+
         // The recorded name is the one slopkit read from /proc/<pid>/comm; the
         // executable's basename is accepted as well, since the two differ for
-        // interpreters and wrappers.
+        // interpreters and wrappers. A process whose guest name is longer than the
+        // kernel's fifteen-character `comm` needs find_wine_process below.
         std::optional<std::uint32_t> find_process(std::string_view name)
         {
             const auto self = static_cast<std::uint32_t>(::getpid());
@@ -100,10 +113,8 @@ namespace slopkit::trainer
             std::error_code error;
             for (const auto& entry : std::filesystem::directory_iterator {"/proc", error})
             {
-                const auto    pid_text = entry.path().filename().string();
-                std::uint32_t pid      = 0;
-                const auto    parsed   = std::from_chars(pid_text.data(), pid_text.data() + pid_text.size(), pid);
-                if (parsed.ec != std::errc {} || parsed.ptr != pid_text.data() + pid_text.size() || pid == self)
+                const auto pid = parse_pid(entry.path().filename().string());
+                if (!pid || *pid == self)
                 {
                     continue;
                 }
@@ -112,7 +123,7 @@ namespace slopkit::trainer
                 {
                     return pid;
                 }
-                if (const auto executable = process_executable(pid);
+                if (const auto executable = process_executable(*pid);
                     executable && same_name(executable->filename().string(), name))
                 {
                     return pid;
@@ -121,36 +132,104 @@ namespace slopkit::trainer
             return std::nullopt;
         }
 
+        // A cheap screen before the full Wine classification: every Wine process
+        // runs a wine loader, and Wine renames it after the guest executable. A
+        // process that is neither would only be rejected by reading and parsing
+        // its whole memory map, which a scan of every pid cannot afford.
+        bool wine_candidate(std::uint32_t pid, std::string_view wanted)
+        {
+            if (const auto executable = process_executable(pid);
+                executable && lowercase(executable->filename().string()).starts_with("wine"))
+            {
+                return true;
+            }
+
+            const auto comm = read_text_file(proc_entry(pid, "comm"));
+            if (!comm)
+            {
+                return false;
+            }
+            const auto name = lowercase(trim(*comm));
+            return !name.empty() && lowercase(wanted).starts_with(name);
+        }
+
+        // A Wine target is named after its guest executable, and the guest's own
+        // images are the only place that name exists: the kernel's `comm` is
+        // truncated and `/proc/<pid>/exe` is the loader. A table made from a Wine
+        // target therefore only matches here.
+        std::optional<std::uint32_t> find_wine_process(std::string_view name)
+        {
+            if (!lowercase(name).ends_with(".exe"))
+            {
+                return std::nullopt;
+            }
+
+            const auto self = static_cast<std::uint32_t>(::getpid());
+
+            std::error_code error;
+            for (const auto& entry : std::filesystem::directory_iterator {"/proc", error})
+            {
+                const auto pid = parse_pid(entry.path().filename().string());
+                if (!pid || *pid == self || !wine_candidate(*pid, name)
+                    || !platform::classify_wine_process(*pid).claimed())
+                {
+                    continue;
+                }
+
+                const auto guest = platform::guest_image_name(*pid);
+                if (guest && same_name(*guest, name))
+                {
+                    return pid;
+                }
+            }
+            return std::nullopt;
+        }
+
+        // The width of the image the target actually runs: the pointer chains an
+        // expression resolves are the guest's, and a Wine process's loader is a
+        // 64-bit ELF even when the game is 32-bit. Sixty-four bits when neither
+        // image can be read, as before.
         std::uint32_t read_pointer_size(std::uint32_t pid)
         {
-            const auto executable = process_executable(pid);
-            if (!executable)
+            std::uint32_t width = 0;
+            if (platform::classify_wine_process(pid).claimed())
             {
-                return 8;
+                width = platform::guest_pointer_size(pid);
             }
-
-            std::ifstream stream {*executable, std::ios::binary};
-            unsigned char identity[5] {};
-            if (!stream.read(reinterpret_cast<char*>(identity), sizeof(identity)))
+            if (width == 0)
             {
-                return 8;
+                if (const auto executable = process_executable(pid))
+                {
+                    width = platform::read_elf_pointer_size(*executable).value_or(0);
+                }
             }
-            return identity[4] == kElfClass64 ? 8 : 4;
+            return width == 0 ? 8 : width;
         }
 
-        std::string region_name(std::string_view path)
+        std::vector<Module> to_modules(const std::vector<process::ModuleInfo>& infos)
         {
-            if (path.empty() || path.front() == '[')
+            std::vector<Module> modules;
+            for (const auto& info : infos)
             {
-                return "[anon]";
+                if (process::is_file_backed(info))
+                {
+                    modules.push_back(Module {info.name, info.base});
+                }
             }
-            return std::filesystem::path {path}.filename().string();
+            std::ranges::sort(modules, {}, &Module::base);
+            return modules;
         }
 
-        bool parse_hex(std::string_view text, std::uint64_t& value)
+        std::vector<Region> to_regions(const std::vector<platform::MappedRegion>& mapped)
         {
-            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value, 16);
-            return parsed.ec == std::errc {} && parsed.ptr == text.data() + text.size();
+            std::vector<Region> regions;
+            regions.reserve(mapped.size());
+            for (const auto& region : mapped)
+            {
+                regions.push_back(
+                    Region {region.start, region.end, region.readable, region.writable, platform::region_name(region)});
+            }
+            return regions;
         }
 
         class LinuxTarget : public Target
@@ -281,65 +360,6 @@ namespace slopkit::trainer
             std::vector<Region> regions_;
         };
 
-        void parse_maps(std::string_view maps, std::vector<Module>& modules, std::vector<Region>& regions)
-        {
-            std::map<std::string, std::size_t> module_by_path;
-
-            std::size_t offset = 0;
-            while (offset < maps.size())
-            {
-                const auto end  = maps.find('\n', offset);
-                const auto line = maps.substr(offset, end - offset);
-                offset          = end == std::string_view::npos ? maps.size() : end + 1;
-                if (line.empty())
-                {
-                    continue;
-                }
-
-                const auto dash = line.find('-');
-                const auto gap  = line.find(' ');
-                if (dash == std::string_view::npos || gap == std::string_view::npos)
-                {
-                    continue;
-                }
-
-                std::uint64_t start = 0;
-                std::uint64_t stop  = 0;
-                if (!parse_hex(line.substr(0, dash), start) || !parse_hex(line.substr(dash + 1, gap - dash - 1), stop))
-                {
-                    continue;
-                }
-
-                const auto path_start = line.find('/');
-                const auto path_text =
-                    path_start == std::string_view::npos ? std::string_view {} : line.substr(path_start);
-
-                Region region;
-                region.start    = start;
-                region.end      = stop;
-                region.readable = line.size() > gap + 1 && line[gap + 1] == 'r';
-                region.writable = line.size() > gap + 2 && line[gap + 2] == 'w';
-                region.name     = region_name(path_text);
-
-                if (!path_text.empty())
-                {
-                    const auto found = module_by_path.find(std::string {path_text});
-                    if (found == module_by_path.end())
-                    {
-                        module_by_path.emplace(std::string {path_text}, modules.size());
-                        modules.push_back(Module {region.name, start});
-                    }
-                    else
-                    {
-                        auto& module = modules[found->second];
-                        module.base  = std::min(module.base, start);
-                    }
-                }
-                regions.push_back(std::move(region));
-            }
-
-            std::ranges::sort(modules, {}, &Module::base);
-        }
     }
 
     std::expected<std::unique_ptr<Target>, AttachError> attach(const AttachRequest& request)
@@ -348,26 +368,23 @@ namespace slopkit::trainer
         if (pid == 0)
         {
             const auto found = find_process(request.name);
-            if (!found)
+            const auto guest = found ? std::nullopt : find_wine_process(request.name);
+            if (!found && !guest)
             {
                 return std::unexpected(AttachError {
                     std::format("no running process is named \"{}\"; pass --pid or --name", request.name), true});
             }
-            pid = *found;
+            pid = found ? *found : *guest;
         }
 
-        const auto maps = read_text_file(proc_entry(pid, "maps"));
-        if (!maps)
+        const auto mapped = platform::read_maps(pid);
+        if (mapped.empty())
         {
             return std::unexpected(
                 AttachError {std::format("cannot read the memory map of pid {}; is it still running?", pid), true});
         }
 
-        std::vector<Module> modules;
-        std::vector<Region> regions;
-        parse_maps(*maps, modules, regions);
-
-        return std::make_unique<LinuxTarget>(pid, std::move(modules), std::move(regions));
+        return std::make_unique<LinuxTarget>(pid, to_modules(platform::modules_from_maps(mapped)), to_regions(mapped));
     }
 
     std::filesystem::path own_executable_path()

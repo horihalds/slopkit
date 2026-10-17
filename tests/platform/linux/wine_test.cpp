@@ -133,6 +133,17 @@ TEST_CASE("wine detection classifies synthetic processes", "[wine]")
     }
 }
 
+TEST_CASE("a PE machine decides the pointer width", "[wine]")
+{
+    // A Wine loader is a 64-bit host binary even when the guest is 32-bit, so the
+    // guest's own header is the only source of its width.
+    CHECK(slopkit::platform::pe_pointer_size(0x8664) == 8); // AMD64
+    CHECK(slopkit::platform::pe_pointer_size(0xAA64) == 8); // ARM64
+    CHECK(slopkit::platform::pe_pointer_size(0x014C) == 4); // I386
+    CHECK(slopkit::platform::pe_pointer_size(0x01C4) == 4); // ARMNT
+    CHECK_FALSE(slopkit::platform::pe_pointer_size(0x0200).has_value());
+}
+
 TEST_CASE("both bundled plugins are discovered in precedence order", "[wine]")
 {
     slopkit::plugin::PluginHost host;

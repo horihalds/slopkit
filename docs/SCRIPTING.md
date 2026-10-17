@@ -380,6 +380,10 @@ into the trainer it writes, and the trainer runs it through the same engine
 slopkit uses, so a script that reproduces a table's behaviour here reproduces it
 there:
 
+- The target can be a game running under Proton/Wine: the trainer finds it by the
+  guest executable's name and resolves expressions against the guest's own modules
+  with the guest's pointer width, so `expression("game.exe+1A2B40")` means there
+  what it means here.
 - Scripts start **idle**: nothing runs until one is activated. In the trainer's
   interactive list a click on a script's row toggles it, and a typed `a<N>`
   activates script `S<N>` while `d<N>` deactivates it; the repeatable

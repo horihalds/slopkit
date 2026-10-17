@@ -43,6 +43,10 @@ namespace
 
     constexpr std::size_t kPageSize = 4096;
 
+    // IMAGE_FILE_MACHINE_AMD64 and IMAGE_FILE_MACHINE_I386.
+    constexpr std::uint16_t kMachineAmd64 = 0x8664;
+    constexpr std::uint16_t kMachineI386  = 0x014C;
+
     struct ChildGuard
     {
         pid_t pid {-1};
@@ -179,14 +183,13 @@ namespace
         return child;
     }
 
-    // A minimal PE header (kind and bitness) so the guest-image walk can read a
-    // mapped file's image kind.
-    std::vector<std::byte> make_pe(bool is_dll)
+    // A minimal PE header (kind, machine and bitness) so the guest-image walk can
+    // read a mapped file's image kind and pointer width.
+    std::vector<std::byte> make_pe(bool is_dll, std::uint16_t machine = kMachineAmd64)
     {
         constexpr std::size_t   lfanew              = 0x40;
         constexpr std::size_t   characteristics_off = 22;
         constexpr std::uint16_t image_file_dll      = 0x2000;
-        constexpr std::uint16_t machine_amd64       = 0x8664;
 
         std::vector<std::byte> bytes(lfanew + 44, std::byte {0});
         bytes[0]          = std::byte {'M'};
@@ -196,8 +199,8 @@ namespace
         bytes[lfanew]     = std::byte {'P'};
         bytes[lfanew + 1] = std::byte {'E'};
 
-        bytes[lfanew + 4] = static_cast<std::byte>(machine_amd64 & 0xff);
-        bytes[lfanew + 5] = static_cast<std::byte>((machine_amd64 >> 8) & 0xff);
+        bytes[lfanew + 4] = static_cast<std::byte>(machine & 0xff);
+        bytes[lfanew + 5] = static_cast<std::byte>((machine >> 8) & 0xff);
 
         const auto characteristics              = static_cast<std::uint16_t>(is_dll ? image_file_dll : 0);
         bytes[lfanew + characteristics_off]     = static_cast<std::byte>(characteristics & 0xff);
@@ -350,6 +353,57 @@ TEST_CASE("a wine target's guest image name is its executable's file name", "[wi
         }
 
         CHECK_FALSE(slopkit::plugins::wine_proton::guest_image_name(static_cast<ProcessId>(child)).has_value());
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("a wine target's pointer width is its guest executable's", "[wine_proton]")
+{
+    const auto dir = std::filesystem::temp_directory_path() / ("slopkit-wine-width-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(dir);
+    const auto game_dir = dir / "wine" / "drive_c" / "game";
+    std::filesystem::create_directories(game_dir);
+
+    // The loader a Wine process runs is a 64-bit host binary whatever the guest is,
+    // so this is the only place a 32-bit game's width can come from.
+    SECTION("an AMD64 image is eight bytes wide")
+    {
+        const auto image = game_dir / "game64.exe";
+        write_bytes(image, make_pe(false, kMachineAmd64));
+
+        const pid_t child = spawn_mapping_child(image);
+        REQUIRE(child >= 0);
+        ChildGuard guard(child);
+        REQUIRE(wait_for_mapping(static_cast<ProcessId>(child), image.string()));
+
+        CHECK(slopkit::platform::guest_pointer_size(static_cast<ProcessId>(child)) == 8);
+    }
+
+    SECTION("an i386 image is four bytes wide")
+    {
+        const auto image = game_dir / "game32.exe";
+        write_bytes(image, make_pe(false, kMachineI386));
+
+        const pid_t child = spawn_mapping_child(image);
+        REQUIRE(child >= 0);
+        ChildGuard guard(child);
+        REQUIRE(wait_for_mapping(static_cast<ProcessId>(child), image.string()));
+
+        CHECK(slopkit::platform::guest_pointer_size(static_cast<ProcessId>(child)) == 4);
+    }
+
+    SECTION("an unhandled machine has no width")
+    {
+        const auto image = game_dir / "game_arm.exe";
+        write_bytes(image, make_pe(false, 0x5064));
+
+        const pid_t child = spawn_mapping_child(image);
+        REQUIRE(child >= 0);
+        ChildGuard guard(child);
+        REQUIRE(wait_for_mapping(static_cast<ProcessId>(child), image.string()));
+
+        CHECK(slopkit::platform::guest_pointer_size(static_cast<ProcessId>(child)) == 0);
     }
 
     std::filesystem::remove_all(dir);

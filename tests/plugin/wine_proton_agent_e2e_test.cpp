@@ -31,6 +31,7 @@
 #include "plugins/wine_proton/agent_regions.hpp"
 #include "plugins/wine_proton/agent_service.hpp"
 #include "plugins/wine_proton/wine_target.hpp"
+#include "support/wine_helpers.hpp"
 
 namespace
 {
@@ -83,19 +84,6 @@ namespace
         ChildGuard  guard;
         std::string output;
     };
-
-    std::filesystem::path find_wine()
-    {
-        for (const auto* candidate : {"/usr/bin/wine64", "/usr/bin/wine"})
-        {
-            std::error_code error;
-            if (std::filesystem::exists(candidate, error))
-            {
-                return candidate;
-            }
-        }
-        return {};
-    }
 
     // Starts `wine <arguments...>` with the ambient environment and waits,
     // bounded, for the probe's ready line, which also proves the target is up
@@ -232,7 +220,7 @@ TEST_CASE("the resident agent allocates inside a real wine target", "[wine-proto
     }
 
     const auto      wine  = find_wine();
-    const auto      probe = std::filesystem::path(SLOPKIT_AGENT_PROBE_DIR) / "slopkit-probe-x86_64.exe";
+    const auto      probe = wine_probe();
     std::error_code error;
     if (wine.empty() || !std::filesystem::exists(probe, error))
     {
@@ -473,7 +461,7 @@ TEST_CASE("a target that inherited a wineserver socket is still injectable", "[w
     }
 
     const auto      wine  = find_wine();
-    const auto      probe = std::filesystem::path(SLOPKIT_AGENT_PROBE_DIR) / "slopkit-probe-x86_64.exe";
+    const auto      probe = wine_probe();
     std::error_code error;
     if (wine.empty() || !std::filesystem::exists(probe, error))
     {
@@ -541,7 +529,7 @@ TEST_CASE("a module fetch that meets a bring-up in flight waits for it", "[wine-
     }
 
     const auto      wine  = find_wine();
-    const auto      probe = std::filesystem::path(SLOPKIT_AGENT_PROBE_DIR) / "slopkit-probe-x86_64.exe";
+    const auto      probe = wine_probe();
     std::error_code error;
     if (wine.empty() || !std::filesystem::exists(probe, error))
     {

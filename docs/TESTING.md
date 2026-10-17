@@ -152,6 +152,20 @@ injector runs with has no `WINESERVERSOCKET` and that injection, `alloc` and
 `wine: Bad server socket <fd> : Bad file descriptor` failure: without the filter
 that same check fails with that exact message.
 
+The generated trainer's Wine target handling is gated the same way, and is not an
+agent case:
+
+```sh
+SLOPKIT_WINE_E2E=1 ./build/slopkit_tests "the trainer attaches to a wine target by its guest name"
+```
+
+It runs the probe under wine and points a generated trainer at it by the probe's
+own executable name, which is longer than the kernel's fifteen-character `comm`, so
+that name can only come from the guest's images. The trainer must find that pid and
+report the guest's width (`8-byte pointers`); whether it may then read the guest is
+the kernel's ptrace policy, so the row has to show an address inside the guest image
+either way.
+
 ## Manually verify allocation against a Proton game
 
 The allocation window's blast radius against a real Proton target cannot be
@@ -233,6 +247,27 @@ For a **32-bit game** the same steps apply: the plugin reads the guest's COFF
 machine and stages `slopkit-agent-i686.dll` with `slopkit-injector-i686.exe`
 instead. No second host architecture is involved — the i686 agent is a PE for a
 32-bit Windows process.
+
+## Manually verify a trainer against a Proton game
+
+The gated case above covers an ordinary wine process; a Steam-launched Proton game
+is the real target, and its check is manual because whether one process may read
+another's memory is the kernel's decision (`/proc/sys/kernel/yama/ptrace_scope`)
+rather than the trainer's:
+
+1. `./build/slopkit generate-trainer --table <table>.skt --target linux --out tmp/trainer`.
+2. With the game running, start it by the name the table recorded, which is the
+   guest's own executable: `tmp/trainer/<table>.trainer --name <game>.exe --list`.
+3. The header must name the game's pid and the guest's width (`8-byte pointers` for
+   a 64-bit game, `4-byte` for a 32-bit one), and a value entry naming one of the
+   guest's modules must resolve to an address inside that image.
+
+Verified against Dying Light The Beast under GE-Proton11 through the trainer's own
+attachment path (`src/trainer/runtime/target_linux.cpp`): the name lookup found the
+guest by `DyingLightGame_TheBeast_x64_rwdi.exe`, its 304 modules were listed with
+the guest's bases, and the two bytes at the image base read `MZ` — where the
+process's `comm` (truncated to `DyingLightGame_`) and `/proc/<pid>/exe` (a wine
+preloader) both would have missed it.
 
 ## Diagnose a build or a run
 

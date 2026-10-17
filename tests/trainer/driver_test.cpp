@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <string>
@@ -18,6 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "support/wine_helpers.hpp"
 #include "table/address_table.hpp"
 #include "trainer/generate.hpp"
 #include "trainer/payload.hpp"
@@ -121,6 +123,27 @@ namespace
         target.address = address;
         return target;
     }
+
+    // Reaps a guest a case started; killing the wine process it was launched
+    // through takes the guest down with it.
+    struct GuestGuard
+    {
+        pid_t pid {-1};
+
+        explicit GuestGuard(pid_t child) : pid {child} {}
+
+        GuestGuard(const GuestGuard&)            = delete;
+        GuestGuard& operator=(const GuestGuard&) = delete;
+
+        ~GuestGuard()
+        {
+            if (pid > 0)
+            {
+                static_cast<void>(::kill(pid, SIGKILL));
+                static_cast<void>(::waitpid(pid, nullptr, 0));
+            }
+        }
+    };
 
     struct RunResult
     {
@@ -407,4 +430,77 @@ end
                                    {"--pid", std::to_string(target.pid), "--activate", "9", "--list"});
     CHECK(usage.exit_code == 1);
     CHECK(usage.output.find("no script 9") != std::string::npos);
+}
+
+// The only case that proves a Linux trainer reaches a game running under
+// Wine/Proton. The guest is a real wine process running the mingw-built probe,
+// and its name — `slopkit-probe-x86_64.exe` — is longer than the kernel's
+// fifteen-character `comm`, so the name slopkit records for a Wine target can
+// only be resolved through the guest's own images. Hidden and gated like the
+// wine agent cases, because it needs wine and a working wine prefix:
+//
+//   SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "attaches to a wine target" --timeout 600 --output-on-failure
+TEST_CASE("the trainer attaches to a wine target by its guest name", "[trainer][wine_proton][.]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    const char* enabled = std::getenv("SLOPKIT_WINE_E2E");
+    if (enabled == nullptr || std::string {enabled} != "1")
+    {
+        WARN("set SLOPKIT_WINE_E2E=1 to run the wine target case");
+        return;
+    }
+
+    const auto      wine  = find_wine();
+    const auto      probe = wine_probe();
+    std::error_code error;
+    if (wine.empty() || !std::filesystem::exists(probe, error))
+    {
+        WARN("wine or the 64-bit Windows probe is unavailable; the wine target case is skipped");
+        return;
+    }
+
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    const GuestGuard guard {child};
+    if (child == 0)
+    {
+        ::execl(wine.c_str(), wine.c_str(), probe.c_str(), nullptr);
+        ::_exit(127);
+    }
+
+    // The value entry names the guest's own module, so the row has to show an
+    // address inside that image — the only way to reach one is the guest module
+    // list this case exists to check. Whether the row then carries the value or
+    // reports a refused read is the kernel's call: one user process may read
+    // another's memory only when it is an ancestor.
+    generate_trainer({value_entry("Image", probe.filename().string())}, "wine_target");
+
+    // Wine needs a moment to map the guest; the lookup is retried until it does.
+    RunResult  result;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds {120};
+    do
+    {
+        result = run_trainer(generated_trainer("wine_target"), {"--name", probe.filename().string(), "--list"});
+        if (result.exit_code == 0)
+        {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds {500});
+    }
+    while (std::chrono::steady_clock::now() < deadline);
+
+    CHECK(result.exit_code == 0);
+    INFO(result.output);
+    CHECK(result.output.find(std::format("(pid {})", child)) != std::string::npos);
+    // The width of the guest's image, not of the 64-bit loader running it.
+    CHECK(result.output.find("8-byte pointers") != std::string::npos);
+    if (result.output.find("unresolved") != std::string::npos)
+    {
+        CHECK(result.output.find("cannot access 0x") != std::string::npos);
+    }
 }

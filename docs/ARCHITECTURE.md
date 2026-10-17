@@ -916,6 +916,22 @@ fails the expression, and the entry then keeps the address recorded at generatio
 time, is marked `unresolved` and is never written to; pointer reads and the final
 value both go through a readability check first.
 
+A game running under Proton/Wine is a Linux target with nothing where a native one
+keeps its identity: `/proc/<pid>/exe` is the wine loader, `comm` is truncated to
+fifteen characters, and the loader hosting a 32-bit guest is a 64-bit host binary.
+`target_linux.cpp` therefore builds its `Target` from the same Qt-free
+`platform/linux` units the `wine-proton` plugin uses (`procfs`, `module_entry`,
+`wine`), and the two facts a Wine target cannot be matched or measured without come
+from the guest's own images: `platform::guest_image_name` for the name a table
+recorded, and `platform::guest_pointer_size`, which reads the width from the guest
+PE's machine field rather than from the loader's ELF class, so `Target::pointer_size()`
+is the target's own — 4 for a 32-bit game whose wine loader is 64-bit. Name lookup
+keeps the comm/executable match for everything else and only walks guest images for
+a name ending in `.exe`, so no native target changes. Modules and regions come from
+`platform::read_maps` alone, and memory access is the same
+`process_vm_*`/`/proc/<pid>/mem` path as for a native target, subject to the same
+kernel ptrace policy.
+
 The table's scripts run through the application's own `script::Engine`
 (`src/trainer/runtime/scripts.cpp`), linked verbatim rather than re-bound, so
 `mem.*`, `aobscan`, published symbols, the `activate`/`deactivate`/`update` hooks
