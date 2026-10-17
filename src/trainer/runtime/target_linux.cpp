@@ -265,8 +265,24 @@ namespace slopkit::trainer
             [[nodiscard]] bool alive() const override
             {
                 std::error_code error;
-                const bool      running = std::filesystem::exists(proc_entry(pid_, ""), error);
-                return error ? true : running;
+                if (!std::filesystem::exists(proc_entry(pid_, ""), error))
+                {
+                    return error ? true : false;
+                }
+
+                // A zombie still has a /proc entry but cannot run a script, so
+                // the state field is what answers the question.
+                if (const auto stat = read_text_file(proc_entry(pid_, "stat")); stat.has_value())
+                {
+                    const auto close = stat->rfind(')');
+                    const auto state =
+                        close == std::string::npos ? std::string::npos : stat->find_first_not_of(' ', close + 1);
+                    if (state != std::string::npos && ((*stat)[state] == 'Z' || (*stat)[state] == 'X'))
+                    {
+                        return false;
+                    }
+                }
+                return true;
             }
 
             [[nodiscard]] const std::vector<Module>& modules() const override
