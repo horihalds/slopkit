@@ -8,6 +8,7 @@
 #include <expected>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -43,7 +44,7 @@ namespace
     public:
         explicit FakeTarget(std::size_t size = 0x100) : bytes_(size, std::byte {0})
         {
-            regions_.push_back(Region {kBase, kBase + size, true, true, "test.so"});
+            regions_.push_back(Region {kBase, kBase + size, true, true, true, "test.so"});
             modules_.push_back(Module {"test.so", kBase});
         }
 
@@ -104,6 +105,28 @@ namespace
             return value;
         }
 
+        [[nodiscard]] std::int32_t i32_at(std::size_t offset) const
+        {
+            std::int32_t value = 0;
+            std::memcpy(&value, bytes_.data() + offset, sizeof(value));
+            return value;
+        }
+
+        [[nodiscard]] std::byte byte_at(std::size_t offset) const
+        {
+            return bytes_[offset];
+        }
+
+        void put_bytes(std::size_t offset, const std::vector<std::byte>& bytes)
+        {
+            std::copy(bytes.begin(), bytes.end(), bytes_.begin() + static_cast<std::ptrdiff_t>(offset));
+        }
+
+        [[nodiscard]] std::size_t size() const
+        {
+            return bytes_.size();
+        }
+
     private:
         [[nodiscard]] bool mapped(std::uint64_t address, std::size_t size) const
         {
@@ -132,6 +155,14 @@ namespace
         entry.expression  = std::move(expression);
         entry.bytes.assign(4, std::byte {0});
         return entry;
+    }
+
+    [[nodiscard]] std::uint64_t symbol_value(const ScriptHost& host, std::string_view name)
+    {
+        const std::vector<slopkit::expr::SymbolRef> symbols = host.symbols();
+        const auto found = std::ranges::find(symbols, name, &slopkit::expr::SymbolRef::name);
+        REQUIRE(found != symbols.end());
+        return found->value;
     }
 }
 
@@ -341,24 +372,124 @@ end
     CHECK(host.states().front().message == "hp went negative");
 }
 
-TEST_CASE("the trainer cannot allocate in the target", "[trainer][scripts]")
+TEST_CASE("alloc hands a script a code cave in the target's own memory", "[trainer][scripts]")
 {
     FakeTarget target;
     ScriptHost host {
         target,
         payload_with({PayloadScript {"Cave", R"(
 function activate()
-    alloc("cave", 0x40)
+    local first = alloc("cave_a", 0x20)
+    local second = alloc("cave_b", 0x20)
+    ssymbol("first", first)
+    ssymbol("second", second)
+    dealloc("cave_a")
+    ssymbol("third", alloc("cave_c", 0x20))
 end
 )"}}
         ),
         250
     };
 
-    const auto refused = host.activate(0);
-    REQUIRE_FALSE(refused.has_value());
-    CHECK(refused.error().find("cannot allocate in the target") != std::string::npos);
-    CHECK(host.states().front().failed);
+    REQUIRE(host.activate(0).has_value());
+    CHECK_FALSE(host.states().front().failed);
+
+    // Both caves are inside the target's executable mapping, aligned the way a hook
+    // payload expects, because that is all a self-contained trainer can offer.
+    const std::uint64_t first  = symbol_value(host, "first");
+    const std::uint64_t second = symbol_value(host, "second");
+    for (const std::uint64_t cave : {first, second})
+    {
+        CHECK(cave >= kBase);
+        CHECK(cave + 0x20 <= kBase + target.size());
+        CHECK(cave % 16 == 0);
+    }
+    CHECK(first != second);
+
+    // `dealloc` gives the bytes back, so the next allocation reuses them.
+    CHECK(symbol_value(host, "third") == first);
+}
+
+TEST_CASE("hook.install takes its cave from the target's executable memory", "[trainer][scripts]")
+{
+    FakeTarget                   target;
+    // Whole instructions a disassembler decodes, followed by the zero padding an
+    // image has after its code: the jump lands on the first zero run.
+    const std::vector<std::byte> original {std::byte {0x48},
+                                           std::byte {0x83},
+                                           std::byte {0xEC},
+                                           std::byte {0x28},
+                                           std::byte {0x48},
+                                           std::byte {0x89},
+                                           std::byte {0xD8}};
+    target.put_bytes(0x20, original);
+
+    ScriptHost host {
+        target,
+        payload_with({PayloadScript {"Hook", R"(
+local kHook = {
+    site_name = "armour_site",
+    cave_name = "armour_cave",
+    pattern = "48 83 EC 28 48 89 D8",
+    original = string.char(0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8),
+    code = "nop",
+    trampoline = "SUB RSP, 0x28",
+}
+
+function activate()
+    return hook.install(kHook)
+end
+
+function deactivate()
+    return hook.remove(kHook)
+end
+)"}}
+        ),
+        250
+    };
+
+    const auto activated = host.activate(0);
+    INFO(host.states().front().message);
+    REQUIRE(activated.has_value());
+    CHECK_FALSE(host.states().front().failed);
+
+    // The site is patched with a jump to the cave and padded to the hook's window.
+    // A cave in the image's own neighbourhood is close enough for the shortest
+    // jump, so the width of the jump is what the encodings allow, not a constant.
+    const std::uint64_t site        = kBase + 0x20;
+    const std::size_t   site_offset = 0x20;
+    const std::byte     opcode      = target.byte_at(site_offset);
+    REQUIRE((opcode == std::byte {0xE9} || opcode == std::byte {0xEB}));
+    const bool          long_jump = opcode == std::byte {0xE9};
+    const std::size_t   jump_size = long_jump ? 5 : 2;
+    const std::uint64_t cave =
+        long_jump ? site + jump_size + static_cast<std::int64_t>(target.i32_at(site_offset + 1))
+                  : site + jump_size
+                        + static_cast<std::int64_t>(std::to_integer<std::int8_t>(target.byte_at(site_offset + 1)));
+    for (std::size_t offset = jump_size; offset < original.size(); ++offset)
+    {
+        CHECK(target.byte_at(site_offset + offset) == std::byte {0x90});
+    }
+
+    // The jump lands on an aligned cave in the same executable memory, and what the
+    // hook wrote there is its payload rather than the zeros that were.
+    REQUIRE(cave >= kBase);
+    REQUIRE(cave + 16 <= kBase + target.size());
+    CHECK(cave % 16 == 0);
+    CHECK(cave != site);
+    const auto cave_offset = static_cast<std::size_t>(cave - kBase);
+    CHECK(target.byte_at(cave_offset) == std::byte {0x90});
+    CHECK(target.i32_at(cave_offset + 1) == 0x28EC8348);
+    CHECK((target.byte_at(cave_offset + 5) == std::byte {0xE9} || target.byte_at(cave_offset + 5) == std::byte {0xEB}));
+
+    // Removing the hook puts the site's bytes back and frees the cave, so those
+    // bytes are a cave again for the next installation.
+    REQUIRE(host.deactivate(0).has_value());
+    for (std::size_t offset = 0; offset < original.size(); ++offset)
+    {
+        CHECK(target.byte_at(0x20 + offset) == original[offset]);
+    }
+    CHECK(target.i32_at(cave_offset) == 0);
 }
 
 TEST_CASE("the payload's class project gives scripts typed views", "[trainer][scripts]")

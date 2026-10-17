@@ -261,6 +261,12 @@ rather than the trainer's:
 3. The header must name the game's pid and the guest's width (`8-byte pointers` for
    a 64-bit game, `4-byte` for a 32-bit one), and a value entry naming one of the
    guest's modules must resolve to an address inside that image.
+4. A hook script must get past its scan and its allocation:
+   `tmp/trainer/<table>.trainer --name <game>.exe --activate <n> --wait 500 --list`
+   must leave the script `active` rather than `error`. A pattern that is not found
+   and a request no cave can satisfy are the two ways it stops, and both are
+   reported with the reason the script printed — the second as
+   `alloc: the target has no free code cave of <size> byte(s) in its executable memory`.
 
 Verified against Dying Light The Beast under GE-Proton11 through the trainer's own
 attachment path (`src/trainer/runtime/target_linux.cpp`): the name lookup found the
@@ -268,6 +274,12 @@ guest by `DyingLightGame_TheBeast_x64_rwdi.exe`, its 304 modules were listed wit
 the guest's bases, and the two bytes at the image base read `MZ` — where the
 process's `comm` (truncated to `DyingLightGame_`) and `/proc/<pid>/exe` (a wine
 preloader) both would have missed it.
+
+The cave side was checked the same way, against the same game: 234 of its regions are
+readable and executable, and asking for a 64-byte cave near a site inside
+`d3d12core.dll` returned one in that same module — its section padding, 4.6 MB from
+the site and so inside a near jump's reach — whose write probed clean, which is what
+shows a Wine PE's code pages accept the trainer's write path at all.
 
 ## Diagnose a build or a run
 

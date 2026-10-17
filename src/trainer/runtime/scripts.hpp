@@ -14,6 +14,7 @@
 #include "script/engine.hpp"
 #include "script/symbols.hpp"
 #include "trainer/payload.hpp"
+#include "trainer/runtime/caves.hpp"
 #include "trainer/runtime/target.hpp"
 
 namespace slopkit::trainer
@@ -65,7 +66,7 @@ namespace slopkit::trainer
         [[nodiscard]] std::string output_text(std::size_t index) const;
 
     private:
-        [[nodiscard]] script::MemoryApi memory_api() const;
+        [[nodiscard]] script::MemoryApi memory_api();
 
         // Records a hook outcome: what it printed, the interval it asked for, and
         // whether it failed.
@@ -78,6 +79,7 @@ namespace slopkit::trainer
         std::vector<PayloadScript> scripts_;
         std::uint64_t              fallback_interval_ms_ {250};
         script::SymbolTable        symbols_;
+        CaveAllocator              caves_;
         script::Engine             engine_;
         std::vector<ScriptState>   states_;
         reclass::Project           project_;

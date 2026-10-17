@@ -24,6 +24,7 @@ namespace slopkit::trainer
         std::uint64_t end {};
         bool          readable {false};
         bool          writable {false};
+        bool          executable {false};
         std::string   name;
     };
 

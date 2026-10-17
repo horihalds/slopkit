@@ -401,9 +401,15 @@ there:
 - The class project travels with the trainer, so `structs.get(name)` reads the same
   definitions; a project the trainer cannot parse is reported once and leaves only
   `structs` unavailable.
-- `alloc` / `dealloc` and `hook.install` / `hook.remove` are **unavailable** there:
-  a self-contained trainer cannot map memory inside the target, so they raise
-  `the trainer cannot allocate in the target` instead of corrupting it.
+- `alloc` / `dealloc` and `hook.install` / `hook.remove` work, but what a trainer
+  hands out is a **code cave**, not a fresh mapping: a run of zero bytes in a region
+  the target already mapped executable (an image pads its sections, so there is one
+  near the code). `alloc` hands one out at a 16-byte boundary, nearest the
+  `near_address` a hook passes, and `dealloc` zeroes it again so the same bytes can be
+  handed out by the next allocation; a request no run of zero bytes can satisfy raises
+  `alloc: the target has no free code cave of <size> byte(s) in its executable memory`.
+  Nothing is mapped or unmapped in the target, so an allocation there only writes the
+  target's own padding.
 - Output and failure are per script: its `print` lines and the last hook's message
   are shown beside it, and a script whose source does not compile or whose hook
   fails is marked `error`, stops ticking and never affects the others. Nothing a

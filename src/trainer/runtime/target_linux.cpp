@@ -237,7 +237,8 @@ namespace slopkit::trainer
                 {
                     name = platform::region_name(region);
                 }
-                regions.push_back(Region {region.start, region.end, region.readable, region.writable, std::move(name)});
+                regions.push_back(Region {
+                    region.start, region.end, region.readable, region.writable, region.executable, std::move(name)});
             }
             return regions;
         }

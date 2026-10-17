@@ -943,10 +943,20 @@ The table's scripts run through the application's own `script::Engine`
 and `structs` views behave in a trainer exactly as they do in slopkit.
 `trainer::ScriptHost` owns that engine, one `script::SymbolTable` and one
 `ScriptState` per payload script, and builds the engine's `MemoryApi` over `Target`
-(`read`, `write`, `validate` and the module names) while `allocate`/`deallocate`
-answer "the trainer cannot allocate in the target": a self-contained trainer has
-nowhere to put a code cave, so `alloc` and `hook.install` fail with a clear message
-instead of corrupting the target. The payload's class records are rebuilt with
+(`read`, `write`, `validate` and the module names) and its `allocate`/`deallocate`
+over `trainer::CaveAllocator` (`src/trainer/runtime/caves.cpp`). A trainer cannot map
+memory inside the target, so an allocation is a **code cave** instead: a run of zero
+bytes in a region the target already mapped executable — an image pads its sections,
+so there is one near the code — handed out at a 16-byte boundary, preferring the run
+nearest the `near` a hook passes so its jump stays short and only within a near jump's
+reach. Which regions those are is `Region::executable`, off the map permissions on
+Linux and the page protection on Windows. The cave is zeroed through the target's own
+write path before it is returned, which is also how a region the target refuses to
+write is ruled out, and `dealloc` zeroes it again so the run is a cave for the next
+allocation; only a cave of this session can be freed. `alloc` and `hook.install`
+therefore work in a trainer, in space the target already owns, and a request no run
+can satisfy reports `no free code cave of <size> byte(s)` rather than corrupting
+anything. The payload's class records are rebuilt with
 `reclass::from_members` and handed to the engine as its class fields, which is what
 makes `structs.get(name)` work; a project that cannot be parsed is reported once
 and leaves only `structs` unavailable. Scripts start idle — the `.skt` archive

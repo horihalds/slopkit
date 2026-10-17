@@ -8,7 +8,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -20,10 +19,6 @@ namespace slopkit::trainer
 {
     namespace
     {
-        // The trainer has no allocator inside the target, so the globals built on
-        // one (`alloc`, `hook.install`) fail with this instead of corrupting it.
-        constexpr std::string_view kNoAllocate {"the trainer cannot allocate in the target"};
-
         std::string reason_of(const std::string& message, const std::string& error)
         {
             return message.empty() ? error : message;
@@ -31,7 +26,7 @@ namespace slopkit::trainer
     }
 
     ScriptHost::ScriptHost(const Target& target, const Payload& payload, std::uint64_t fallback_interval_ms)
-        : target_ {target}, scripts_ {payload.scripts}, fallback_interval_ms_ {fallback_interval_ms},
+        : target_ {target}, scripts_ {payload.scripts}, fallback_interval_ms_ {fallback_interval_ms}, caves_ {target},
           engine_ {memory_api(), symbols_.api()}
     {
         states_.resize(scripts_.size());
@@ -79,7 +74,7 @@ namespace slopkit::trainer
         return class_error_;
     }
 
-    script::MemoryApi ScriptHost::memory_api() const
+    script::MemoryApi ScriptHost::memory_api()
     {
         script::MemoryApi api;
         api.pointer_size = [this]()
@@ -106,13 +101,13 @@ namespace slopkit::trainer
             }
             return regions;
         };
-        api.allocate = [](std::size_t, std::uint64_t) -> std::expected<std::uint64_t, std::string>
+        api.allocate = [this](std::size_t size, std::uint64_t near)
         {
-            return std::unexpected(std::string {kNoAllocate});
+            return caves_.allocate(size, near);
         };
-        api.deallocate = [](std::uint64_t) -> std::expected<void, std::string>
+        api.deallocate = [this](std::uint64_t address)
         {
-            return std::unexpected(std::string {kNoAllocate});
+            return caves_.deallocate(address);
         };
         api.validate = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
         {

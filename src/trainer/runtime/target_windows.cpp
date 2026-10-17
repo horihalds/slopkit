@@ -93,6 +93,20 @@ namespace slopkit::trainer
             }
         }
 
+        bool executable_protection(DWORD protect)
+        {
+            switch (protect & 0xFFu)
+            {
+            case PAGE_EXECUTE:
+            case PAGE_EXECUTE_READ:
+            case PAGE_EXECUTE_READWRITE:
+            case PAGE_EXECUTE_WRITECOPY:
+                return true;
+            default:
+                return false;
+            }
+        }
+
         std::optional<std::uint32_t> find_process(std::string_view name)
         {
             const auto wanted     = lowercase(name);
@@ -183,10 +197,11 @@ namespace slopkit::trainer
                 if (information.State == MEM_COMMIT && (information.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0)
                 {
                     Region region;
-                    region.start    = start;
-                    region.end      = end;
-                    region.readable = readable_protection(information.Protect);
-                    region.writable = writable_protection(information.Protect);
+                    region.start      = start;
+                    region.end        = end;
+                    region.readable   = readable_protection(information.Protect);
+                    region.writable   = writable_protection(information.Protect);
+                    region.executable = executable_protection(information.Protect);
                     regions.push_back(std::move(region));
                 }
 

@@ -10,6 +10,7 @@
 # `SLOPKIT_SOURCE_ROOT` must be set before this file is included.
 
 set(SLOPKIT_TRAINER_RUNTIME_SOURCES
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/caves.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/console.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/payload_reader.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/resolve.cpp
