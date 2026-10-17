@@ -36,15 +36,26 @@ namespace
 
     constexpr std::uint64_t kBase {0x1000};
 
-    // A target the script host can act on: one readable and writable mapping plus
-    // the module an expression can name. It is deliberately the whole of what the
-    // host's memory API touches.
+    // A target the script host can act on: one module and the memory the host's
+    // memory API touches. `FakeTarget::Image` gives it the shape a real image has,
+    // where code and data are mapped with different permissions.
     class FakeTarget : public Target
     {
     public:
+        struct Image
+        {
+        };
+
         explicit FakeTarget(std::size_t size = 0x100) : bytes_(size, std::byte {0})
         {
             regions_.push_back(Region {kBase, kBase + size, true, true, true, "test.so"});
+            modules_.push_back(Module {"test.so", kBase});
+        }
+
+        explicit FakeTarget(Image) : bytes_(0x1200, std::byte {0})
+        {
+            regions_.push_back(Region {kBase, kBase + 0x100, true, false, true, "test.so"});
+            regions_.push_back(Region {kBase + 0x1000, kBase + 0x1200, true, true, false, "test.so"});
             modules_.push_back(Module {"test.so", kBase});
         }
 
@@ -80,6 +91,8 @@ namespace
                                           bytes_.begin() + static_cast<std::ptrdiff_t>(offset + size));
         }
 
+        // Writes follow the trainer's own path, which forces a read-only page (that
+        // is how it patches code), so only mapping is what these writes check.
         [[nodiscard]] std::expected<void, std::string> write(std::uint64_t              address,
                                                              std::span<const std::byte> bytes) const override
         {
@@ -130,7 +143,16 @@ namespace
     private:
         [[nodiscard]] bool mapped(std::uint64_t address, std::size_t size) const
         {
-            return address >= kBase && address - kBase + size <= bytes_.size();
+            if (address < kBase || address - kBase + size > bytes_.size())
+            {
+                return false;
+            }
+            return std::ranges::any_of(regions_,
+                                       [address, size](const Region& region)
+                                       {
+                                           return region.readable && address >= region.start
+                                               && address + size <= region.end;
+                                       });
         }
 
         mutable std::vector<std::byte> bytes_;
@@ -490,6 +512,68 @@ end
         CHECK(target.byte_at(0x20 + offset) == original[offset]);
     }
     CHECK(target.i32_at(cave_offset) == 0);
+}
+
+TEST_CASE("a script's slot is writable memory while the hook's cave is executable", "[trainer][scripts]")
+{
+    FakeTarget                   target {FakeTarget::Image {}};
+    const std::vector<std::byte> original {std::byte {0x48},
+                                           std::byte {0x83},
+                                           std::byte {0xEC},
+                                           std::byte {0x28},
+                                           std::byte {0x48},
+                                           std::byte {0x89},
+                                           std::byte {0xD8}};
+    target.put_bytes(0x20, original);
+
+    ScriptHost host {
+        target,
+        payload_with({PayloadScript {"Slot", R"(
+local kHook = {
+    site_name = "slot_site",
+    cave_name = "slot_cave",
+    pattern = "48 83 EC 28 48 89 D8",
+    original = string.char(0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8),
+    code = "nop",
+    trampoline = "SUB RSP, 0x28",
+}
+
+function activate()
+    local slot = alloc("slot", 8, 0x1020)
+    kHook.code = string.format("MOV qword ptr [0x%X], RBX", slot)
+    if not hook.install(kHook) then
+        return false, "the hook was not installed"
+    end
+    ssymbol("slot", slot)
+end
+)"}}
+        ),
+        250
+    };
+
+    const auto activated = host.activate(0);
+    INFO(host.states().front().message);
+    REQUIRE(activated.has_value());
+
+    // The slot is in the image's data, where the target's own instructions may
+    // store, and not in the code page the trainer can only write by force.
+    const std::uint64_t slot = symbol_value(host, "slot");
+    CHECK(slot >= kBase + 0x1000);
+    CHECK(slot + 8 <= kBase + target.size());
+
+    // The cave is in the code page, and the site's jump lands on it.
+    const std::size_t site_offset = 0x20;
+    const std::byte   opcode      = target.byte_at(site_offset);
+    REQUIRE((opcode == std::byte {0xE9} || opcode == std::byte {0xEB}));
+    const bool          long_jump = opcode == std::byte {0xE9};
+    const std::size_t   jump_size = long_jump ? 5 : 2;
+    const std::uint64_t site      = kBase + 0x20;
+    const std::uint64_t cave =
+        long_jump ? site + jump_size + static_cast<std::int64_t>(target.i32_at(site_offset + 1))
+                  : site + jump_size
+                        + static_cast<std::int64_t>(std::to_integer<std::int8_t>(target.byte_at(site_offset + 1)));
+    CHECK(cave >= kBase);
+    CHECK(cave + 16 <= kBase + 0x100);
 }
 
 TEST_CASE("the payload's class project gives scripts typed views", "[trainer][scripts]")

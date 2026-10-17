@@ -11,13 +11,19 @@
 
 namespace slopkit::trainer
 {
-    // Where a script's `alloc` gets its memory from. A self-contained trainer
-    // cannot map memory inside the target the way the app's plugins do, so an
-    // allocation here is a *code cave*: a run of zero bytes in a region the target
-    // already mapped executable, which is what an image's section padding and
+    // Where a script's `alloc` and `hook.install` get their memory from. A
+    // self-contained trainer cannot map memory inside the target the way the app's
+    // plugins do, so an allocation here is a *cave*: a run of zero bytes in a
+    // mapping the target already has, which is what an image's section padding and
     // alignment gaps are. Handing one out changes no target state and needs no
     // in-target allocator, and freeing it hands the same bytes back, so a hook can
     // be installed and removed as often as it is in slopkit.
+    //
+    // The two uses are not interchangeable, because the trainer writes with
+    // `process_vm_writev`/`WriteProcessMemory`, which force a read-only page, while
+    // the target's own CPU cannot: a slot the target writes must be in memory the
+    // target itself may write, and code the target runs must be in memory it may
+    // execute.
     class CaveAllocator
     {
     public:
@@ -26,11 +32,18 @@ namespace slopkit::trainer
         CaveAllocator(const CaveAllocator&)            = delete;
         CaveAllocator& operator=(const CaveAllocator&) = delete;
 
-        // Hands out `size` bytes, preferring the cave nearest `near` (`0` accepts
-        // any) so a hook's own jump can reach it. The cave is zeroed through the
-        // target's own write path first, so the address returned is one the trainer
-        // has proven it may write.
+        // Hands out `size` bytes the *target* may write: what a script's `alloc`
+        // returns for a hook to store into. `near` is the site whose instructions
+        // have to reach the cave (`0` accepts any). The cave is zeroed through the
+        // trainer's write path first, so the address returned is one it has proven
+        // it may write.
         [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t size, std::uint64_t near);
+
+        // Hands out `size` bytes the target may *execute*: where `hook.install`
+        // writes its payload. A target that maps its allocations both ways need not
+        // tell this apart from `allocate`, so a missing seam falls back to it.
+        [[nodiscard]] std::expected<std::uint64_t, std::string> allocate_executable(std::size_t   size,
+                                                                                    std::uint64_t near);
 
         // Hands one allocation back, zeroing its bytes so the run is a free cave
         // again. An address this session did not hand out is refused, as the app's
@@ -45,6 +58,15 @@ namespace slopkit::trainer
             std::uint64_t address {};
             std::size_t   size {};
         };
+
+        enum class Use
+        {
+            writable,
+            executable,
+        };
+
+        [[nodiscard]] std::expected<std::uint64_t, std::string> take(Use use, std::size_t size, std::uint64_t near);
+        [[nodiscard]] static bool                               usable(const Region& region, Use use) noexcept;
 
         [[nodiscard]] std::optional<std::uint64_t>
         search(const Region& region, std::size_t size, std::uint64_t near, std::size_t& budget) const;

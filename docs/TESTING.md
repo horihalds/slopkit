@@ -265,8 +265,14 @@ rather than the trainer's:
    `tmp/trainer/<table>.trainer --name <game>.exe --activate <n> --wait 500 --list`
    must leave the script `active` rather than `error`. A pattern that is not found
    and a request no cave can satisfy are the two ways it stops, and both are
-   reported with the reason the script printed — the second as
-   `alloc: the target has no free code cave of <size> byte(s) in its executable memory`.
+   reported with the reason the script printed — the second as `alloc: the target
+   has no free data cave of <size> byte(s) in its writable memory`.
+
+   Trigger the hook in game and the game must keep running: a slot the trainer took
+   from the image's code page accepts the trainer's own write but not the game's, so
+   that is what a crash on trigger used to be. `--verbose` records which cave was
+   handed out, and the two `alloc` lines must name a writable region for the script's
+   slot and an executable one for the hook's cave.
 5. Rerun any of the above with `--verbose` when a script behaves differently in the
    trainer than in slopkit: the trainer prints the log path on stderr and writes it
    to `<trainer file>.log` beside itself (for step 4,
@@ -286,7 +292,10 @@ The cave side was checked the same way, against the same game: 234 of its region
 readable and executable, and asking for a 64-byte cave near a site inside
 `d3d12core.dll` returned one in that same module — its section padding, 4.6 MB from
 the site and so inside a near jump's reach — whose write probed clean, which is what
-shows a Wine PE's code pages accept the trainer's write path at all.
+shows a Wine PE's code pages accept the trainer's write path at all. That is also why
+the probe cannot decide where a script's slot may live: the trainer writes with a
+forced read-only page, so only the region's own writable bit matches what the game's
+instructions can do, which is what `tests/trainer/caves_test.cpp` pins down.
 
 ## Diagnose a build or a run
 

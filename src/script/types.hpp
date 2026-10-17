@@ -53,9 +53,14 @@ namespace slopkit::script
         std::function<std::expected<void, std::string>(std::uint64_t, std::span<const std::byte>)>     write;
         std::function<std::expected<std::vector<MemoryRegion>, std::string>()>                         regions;
         std::function<std::expected<std::uint64_t, std::string>(std::size_t size, std::uint64_t near)> allocate;
-        std::function<std::expected<void, std::string>(std::uint64_t address)>                         deallocate;
-        std::function<std::expected<bool, std::string>(std::uint64_t address, std::size_t size)>       validate;
-        std::function<std::expected<std::vector<expr::ModuleRef>, std::string>()>                      modules;
+        // A hook's cave is code and a script's own `alloc` is a slot the target
+        // writes, so a target that can tell the two apart provides this; one that
+        // maps every allocation writably and executably need not.
+        std::function<std::expected<std::uint64_t, std::string>(std::size_t size, std::uint64_t near)>
+                                                                                                 allocate_executable;
+        std::function<std::expected<void, std::string>(std::uint64_t address)>                   deallocate;
+        std::function<std::expected<bool, std::string>(std::uint64_t address, std::size_t size)> validate;
+        std::function<std::expected<std::vector<expr::ModuleRef>, std::string>()>                modules;
     };
 
     struct SymbolApi

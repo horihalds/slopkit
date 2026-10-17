@@ -110,7 +110,7 @@ namespace
     };
 }
 
-TEST_CASE("a cave is a run of zeros in the target's executable memory", "[trainer][caves]")
+TEST_CASE("a code cave is a run of zeros in the target's executable memory", "[trainer][caves]")
 {
     // Code up to 0x1043, zeros from there: the cave is the zero run, handed out at
     // the 16-byte alignment a hook payload is written at.
@@ -118,20 +118,20 @@ TEST_CASE("a cave is a run of zeros in the target's executable memory", "[traine
     target.fill(kBase + 0x43, 0x30, std::byte {0x00});
 
     CaveAllocator allocator {target};
-    const auto    cave = allocator.allocate(0x10, 0);
+    const auto    cave = allocator.allocate_executable(0x10, 0);
 
     REQUIRE(cave.has_value());
     CHECK(*cave == kBase + 0x50);
 }
 
-TEST_CASE("only executable memory is searched for a cave", "[trainer][caves]")
+TEST_CASE("only executable memory is searched for a code cave", "[trainer][caves]")
 {
     // A data region is mostly zeros and free, but it is no place to write a hook,
     // so nothing is offered.
     CodeTarget target {{Region {kBase, kBase + 0x80, true, true, false, "game.exe"}}};
 
     CaveAllocator allocator {target};
-    const auto    cave = allocator.allocate(0x10, 0);
+    const auto    cave = allocator.allocate_executable(0x10, 0);
 
     REQUIRE_FALSE(cave.has_value());
     CHECK(cave.error().find("no free code cave") != std::string::npos);
@@ -144,7 +144,7 @@ TEST_CASE("a zero run too small for the request is skipped", "[trainer][caves]")
     target.fill(kBase + 0x40, 0x20, std::byte {0x00});
 
     CaveAllocator allocator {target};
-    const auto    cave = allocator.allocate(0x20, 0);
+    const auto    cave = allocator.allocate_executable(0x20, 0);
 
     REQUIRE(cave.has_value());
     CHECK(*cave == kBase + 0x40);
@@ -159,11 +159,11 @@ TEST_CASE("the cave nearest the site is preferred", "[trainer][caves]")
 
     CaveAllocator allocator {target};
 
-    const auto near_site = allocator.allocate(0x10, kBase + 0x1080);
+    const auto near_site = allocator.allocate_executable(0x10, kBase + 0x1080);
     REQUIRE(near_site.has_value());
     CHECK(*near_site == kBase + 0x1000);
 
-    const auto far_site = allocator.allocate(0x10, kBase + 0x10);
+    const auto far_site = allocator.allocate_executable(0x10, kBase + 0x10);
     REQUIRE(far_site.has_value());
     CHECK(*far_site == kBase + 0x10);
 }
@@ -174,20 +174,20 @@ TEST_CASE("freeing a cave hands the same bytes back", "[trainer][caves]")
 
     CaveAllocator allocator {target};
 
-    const auto first  = allocator.allocate(0x20, 0);
-    const auto second = allocator.allocate(0x20, 0);
+    const auto first  = allocator.allocate_executable(0x20, 0);
+    const auto second = allocator.allocate_executable(0x20, 0);
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
     CHECK(*first == kBase);
     CHECK(*second == kBase + 0x20);
 
     // A cave a script holds is not offered again until it frees it.
-    const auto held = allocator.allocate(0x20, 0);
+    const auto held = allocator.allocate_executable(0x20, 0);
     REQUIRE(held.has_value());
     CHECK(*held == kBase + 0x40);
 
     REQUIRE(allocator.deallocate(*first).has_value());
-    const auto reused = allocator.allocate(0x20, 0);
+    const auto reused = allocator.allocate_executable(0x20, 0);
     REQUIRE(reused.has_value());
     CHECK(*reused == *first);
 }
@@ -197,7 +197,7 @@ TEST_CASE("only this session's allocations can be freed", "[trainer][caves]")
     CodeTarget target {{Region {kBase, kBase + 0x100, true, false, true, "game.exe"}}};
 
     CaveAllocator allocator {target};
-    const auto    cave = allocator.allocate(0x20, 0);
+    const auto    cave = allocator.allocate_executable(0x20, 0);
     REQUIRE(cave.has_value());
 
     // An address in the target the allocator never handed out is not its to free,
@@ -216,7 +216,7 @@ TEST_CASE("a target that refuses the write offers no cave", "[trainer][caves]")
     target.refuse_writes();
 
     CaveAllocator allocator {target};
-    const auto    cave = allocator.allocate(0x10, 0);
+    const auto    cave = allocator.allocate_executable(0x10, 0);
 
     REQUIRE_FALSE(cave.has_value());
     CHECK(cave.error().find("no free code cave") != std::string::npos);
@@ -229,12 +229,12 @@ TEST_CASE("a cave is offered only within the site's jump reach", "[trainer][cave
     CaveAllocator allocator {target};
 
     // The far edge of a near jump's 32-bit displacement still reaches.
-    const auto reached = allocator.allocate(0x10, kBase + 0x7FFF0000);
+    const auto reached = allocator.allocate_executable(0x10, kBase + 0x7FFF0000);
     REQUIRE(reached.has_value());
     CHECK(*reached == kBase);
 
     // A site beyond it is not served: a hook there could not jump to the cave.
-    const auto beyond = allocator.allocate(0x10, kBase + 0x1000'0000'0000);
+    const auto beyond = allocator.allocate_executable(0x10, kBase + 0x1000'0000'0000);
     REQUIRE_FALSE(beyond.has_value());
     CHECK(beyond.error().find("no free code cave") != std::string::npos);
 }
@@ -248,4 +248,52 @@ TEST_CASE("a zero-sized allocation is refused", "[trainer][caves]")
 
     REQUIRE_FALSE(cave.has_value());
     CHECK(cave.error() == "the size must be larger than 0");
+}
+
+TEST_CASE("a script's allocation is looked for in writable memory only", "[trainer][caves]")
+{
+    // The executable region is all zeros and closer to the site, but the target's
+    // own CPU cannot write it, so a slot must come from the writable one.
+    CodeTarget target {
+        {Region {kBase, kBase + 0x200, true, false, true, "game.exe"},
+         Region {kBase + 0x1000, kBase + 0x1200, true, true, false, "game.exe"}}
+    };
+
+    CaveAllocator allocator {target};
+    const auto    slot = allocator.allocate(0x10, kBase);
+
+    REQUIRE(slot.has_value());
+    CHECK(*slot == kBase + 0x1000);
+}
+
+TEST_CASE("a hook's cave and a script's slot never overlap", "[trainer][caves]")
+{
+    // A mapping the target can both write and execute serves either use, so the
+    // second request must not hand out the first one's bytes.
+    CodeTarget target {{Region {kBase, kBase + 0x100, true, true, true, "game.exe"}}};
+
+    CaveAllocator allocator {target};
+    const auto    slot = allocator.allocate(0x10, 0);
+    const auto    cave = allocator.allocate_executable(0x10, 0);
+
+    REQUIRE(slot.has_value());
+    REQUIRE(cave.has_value());
+    CHECK(*slot == kBase);
+    CHECK(*cave == kBase + 0x10);
+}
+
+TEST_CASE("a named mapping is preferred to an anonymous one", "[trainer][caves]")
+{
+    // A heap is closer, but the target keeps handing that memory out and may reuse
+    // it under a borrowed cave, while a module's own padding stays padding.
+    CodeTarget target {
+        {Region {kBase, kBase + 0x200, true, true, false, "[heap]"},
+         Region {kBase + 0x1000, kBase + 0x1200, true, true, false, "game.exe"}}
+    };
+
+    CaveAllocator allocator {target};
+    const auto    slot = allocator.allocate(0x10, 0);
+
+    REQUIRE(slot.has_value());
+    CHECK(*slot == kBase + 0x1000);
 }

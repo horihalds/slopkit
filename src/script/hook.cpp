@@ -100,7 +100,11 @@ namespace slopkit::script::hook
         {
             return std::unexpected(std::string {"no target is attached"});
         }
-        if (!memory.allocate || !memory.deallocate)
+        // The cave holds code, so a target that can distinguish a code cave from a
+        // data slot must map this one where it may execute; a script's own `alloc`
+        // goes through `allocate` instead and is memory the target writes.
+        const auto& allocate_cave = memory.allocate_executable ? memory.allocate_executable : memory.allocate;
+        if (!allocate_cave || !memory.deallocate)
         {
             return std::unexpected(std::string {"the target's plugin cannot allocate memory"});
         }
@@ -126,7 +130,7 @@ namespace slopkit::script::hook
 
         const auto map_cave = [&](std::size_t bytes) -> std::expected<std::uint64_t, std::string>
         {
-            const std::expected<std::uint64_t, std::string> mapped = memory.allocate(bytes, site);
+            const std::expected<std::uint64_t, std::string> mapped = allocate_cave(bytes, site);
             if (!mapped)
             {
                 return std::unexpected(mapped.error());

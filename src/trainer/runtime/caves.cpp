@@ -16,7 +16,8 @@ namespace slopkit::trainer
     namespace
     {
         // A zero byte is what an image's section padding and alignment gaps are made
-        // of, so a zero run inside executable memory is code nobody wrote.
+        // of, so a zero run inside a mapping the target already has is memory nobody
+        // wrote.
         constexpr std::byte kFree {0x00};
 
         // The reach between a hook's site and its cave, which is a near jump's signed
@@ -26,9 +27,9 @@ namespace slopkit::trainer
         // The alignment `script::hook` sizes its caves to and writes its payload at.
         constexpr std::uint64_t kAlign {16};
 
-        // Reading a target's executable memory costs real time and a target can map
-        // gigabytes of it, so one allocation looks at this much before giving up. A
-        // cave is section padding, so it is found long before that.
+        // Reading a target's memory costs real time and a target can map gigabytes
+        // of it, so one allocation looks at this much before giving up. A cave is
+        // section padding, so it is found long before that.
         constexpr std::size_t kScanBudget {64 * 1024 * 1024};
         constexpr std::size_t kChunk {256 * 1024};
 
@@ -56,10 +57,40 @@ namespace slopkit::trainer
         {
             return near != 0 && distance(near, region) > kReach;
         }
+
+        // A mapping the target has a name for (a module's own region, or a mapped
+        // file) is padding it keeps, while a bracketed one is a heap, stack or JIT
+        // area it is still handing out and may reuse under a borrowed cave.
+        [[nodiscard]] bool named(const Region& region)
+        {
+            return !region.name.empty() && region.name.front() != '[';
+        }
     }
 
     std::expected<std::uint64_t, std::string> CaveAllocator::allocate(std::size_t size, std::uint64_t near)
     {
+        return take(Use::writable, size, near);
+    }
+
+    std::expected<std::uint64_t, std::string> CaveAllocator::allocate_executable(std::size_t size, std::uint64_t near)
+    {
+        return take(Use::executable, size, near);
+    }
+
+    bool CaveAllocator::usable(const Region& region, Use use) noexcept
+    {
+        if (!region.readable)
+        {
+            return false;
+        }
+        return use == Use::executable ? region.executable : region.writable;
+    }
+
+    std::expected<std::uint64_t, std::string> CaveAllocator::take(Use use, std::size_t size, std::uint64_t near)
+    {
+        const auto kind  = use == Use::executable ? "code" : "data";
+        const auto pages = use == Use::executable ? "executable" : "writable";
+
         if (size == 0)
         {
             return std::unexpected(std::string {"the size must be larger than 0"});
@@ -68,8 +99,7 @@ namespace slopkit::trainer
         std::vector<const Region*> candidates;
         for (const Region& region : target_.regions())
         {
-            if (!region.readable || !region.executable || region.end <= region.start || refused(region)
-                || out_of_reach(near, region))
+            if (!usable(region, use) || region.end <= region.start || refused(region) || out_of_reach(near, region))
             {
                 continue;
             }
@@ -78,6 +108,10 @@ namespace slopkit::trainer
         std::ranges::sort(candidates,
                           [near](const Region* left, const Region* right)
                           {
+                              if (named(*left) != named(*right))
+                              {
+                                  return named(*left);
+                              }
                               return distance(near, *left) < distance(near, *right);
                           });
 
@@ -90,9 +124,10 @@ namespace slopkit::trainer
                 continue;
             }
 
-            // Zero the cave through the target's own write path: an address the
-            // trainer cannot write is no use to a hook, and a region whose pages
-            // refuse that write is not searched again.
+            // Zero the cave through the trainer's write path: an address it cannot
+            // write is no use to a hook, and a region whose pages refuse that write
+            // is not searched again. That path forces a read-only page, so the region
+            // flags above, not this probe, decide whether the target may use the cave.
             const std::vector<std::byte> zeros(size, kFree);
             if (const auto wrote = target_.write(*found, zeros); !wrote)
             {
@@ -105,12 +140,13 @@ namespace slopkit::trainer
                 continue;
             }
             loans_.push_back(Loan {*found, size});
-            log::debug(log::category::script, std::format("alloc: {} byte(s) at 0x{:x}", size, *found));
+            log::debug(log::category::script,
+                       std::format("alloc: {} {} cave of {} byte(s) at 0x{:x}", pages, kind, size, *found));
             return *found;
         }
 
         const auto message =
-            std::format("the target has no free code cave of {} byte(s) in its executable memory", size);
+            std::format("the target has no free {} cave of {} byte(s) in its {} memory", kind, size, pages);
         log::warning(log::category::script, message);
         return std::unexpected(message);
     }

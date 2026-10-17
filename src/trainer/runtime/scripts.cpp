@@ -134,6 +134,12 @@ namespace slopkit::trainer
         {
             return caves_.allocate(size, near);
         };
+        // A script's `alloc` is a slot the script and the target write, so it must be
+        // writable; `hook.install` asks for a cave the target executes separately.
+        api.allocate_executable = [this](std::size_t size, std::uint64_t near)
+        {
+            return caves_.allocate_executable(size, near);
+        };
         api.deallocate = [this](std::uint64_t address)
         {
             return caves_.deallocate(address);

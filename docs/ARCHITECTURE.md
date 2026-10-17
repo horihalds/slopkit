@@ -945,17 +945,25 @@ and `structs` views behave in a trainer exactly as they do in slopkit.
 `ScriptState` per payload script, and builds the engine's `MemoryApi` over `Target`
 (`read`, `write`, `validate` and the module names) and its `allocate`/`deallocate`
 over `trainer::CaveAllocator` (`src/trainer/runtime/caves.cpp`). A trainer cannot map
-memory inside the target, so an allocation is a **code cave** instead: a run of zero
-bytes in a region the target already mapped executable — an image pads its sections,
-so there is one near the code — handed out at a 16-byte boundary, preferring the run
-nearest the `near` a hook passes so its jump stays short and only within a near jump's
-reach. Which regions those are is `Region::executable`, off the map permissions on
-Linux and the page protection on Windows. The cave is zeroed through the target's own
-write path before it is returned, which is also how a region the target refuses to
-write is ruled out, and `dealloc` zeroes it again so the run is a cave for the next
+memory inside the target, so an allocation is a **cave** instead: a run of zero bytes
+in a mapping the target already has — an image pads its sections, so there is one near
+the code — handed out at a 16-byte boundary, preferring the run nearest the `near` a
+hook passes so its jump stays short and only within a near jump's reach.
+
+The two uses are not interchangeable, because the trainer writes through
+`process_vm_writev`/`WriteProcessMemory`, which force a read-only page, while the
+target's own CPU cannot: `alloc` returns a **writable** cave (`Region::writable`) that
+the target's own instructions may store into, and `hook.install` an **executable** one
+(`Region::executable`) it may run, both off the map permissions on Linux and the page
+protection on Windows. A mapping the trainer has a name for — a module's own region or
+a mapped file — is preferred to a heap, stack or JIT mapping the target is still
+handing out and could reuse under a borrowed cave. The cave is zeroed through the
+trainer's write path before it is returned, which is also how an address it cannot
+reach is ruled out, and `dealloc` zeroes it again so the run is a cave for the next
 allocation; only a cave of this session can be freed. `alloc` and `hook.install`
 therefore work in a trainer, in space the target already owns, and a request no run
-can satisfy reports `no free code cave of <size> byte(s)` rather than corrupting
+can satisfy reports `no free code cave of <size> byte(s) in its executable memory` or
+`no free data cave of <size> byte(s) in its writable memory` rather than corrupting
 anything. The payload's class records are rebuilt with
 `reclass::from_members` and handed to the engine as its class fields, which is what
 makes `structs.get(name)` work; a project that cannot be parsed is reported once
