@@ -9,6 +9,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -323,6 +324,63 @@ namespace slopkit::trainer
                 return {};
             }
 
+            [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t size) const override
+            {
+                if (size == 0)
+                {
+                    return std::unexpected(std::string {"the size must be larger than 0"});
+                }
+
+                SYSTEM_INFO information {};
+                ::GetSystemInfo(&information);
+                const auto page =
+                    static_cast<std::uint64_t>(information.dwPageSize == 0 ? 0x1000u : information.dwPageSize);
+                const auto span = (static_cast<std::uint64_t>(size) + page - 1) / page * page;
+                if (span > static_cast<std::uint64_t>((std::numeric_limits<SIZE_T>::max)()))
+                {
+                    return std::unexpected(
+                        std::format("cannot map {} byte(s) in pid {}: the size is too large", size, pid_));
+                }
+
+                auto* mapped = ::VirtualAllocEx(
+                    process_, nullptr, static_cast<SIZE_T>(span), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+                if (mapped == nullptr)
+                {
+                    return std::unexpected(std::format("cannot map {} byte(s) in pid {}: Windows error {}",
+                                                       size,
+                                                       pid_,
+                                                       static_cast<unsigned long>(::GetLastError())));
+                }
+
+                const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(mapped));
+                const auto at      = std::ranges::lower_bound(regions_, address, {}, &Region::start);
+                regions_.insert(at, Region {address, address + span, true, true, false, {}});
+                return address;
+            }
+
+            [[nodiscard]] std::expected<void, std::string> deallocate(std::uint64_t address) const override
+            {
+                const auto found = std::ranges::find(regions_, address, &Region::start);
+                if (found == regions_.end())
+                {
+                    return std::unexpected(
+                        std::format("0x{:x} is not a mapping this trainer made in pid {}", address, pid_));
+                }
+
+                if (::VirtualFreeEx(
+                        process_, reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)), 0, MEM_RELEASE)
+                    == 0)
+                {
+                    return std::unexpected(std::format("cannot unmap 0x{:x} in pid {}: Windows error {}",
+                                                       address,
+                                                       pid_,
+                                                       static_cast<unsigned long>(::GetLastError())));
+                }
+
+                regions_.erase(found);
+                return {};
+            }
+
         private:
             [[nodiscard]] std::string describe_failure(std::string_view action, std::uint64_t address) const
             {
@@ -333,11 +391,11 @@ namespace slopkit::trainer
                                    static_cast<unsigned long>(::GetLastError()));
             }
 
-            std::uint32_t       pid_ {};
-            HANDLE              process_ {nullptr};
-            std::uint32_t       pointer_size_ {8};
-            std::vector<Module> modules_;
-            std::vector<Region> regions_;
+            std::uint32_t               pid_ {};
+            HANDLE                      process_ {nullptr};
+            std::uint32_t               pointer_size_ {8};
+            std::vector<Module>         modules_;
+            mutable std::vector<Region> regions_;
         };
     }
 

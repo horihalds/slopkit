@@ -57,6 +57,22 @@ namespace slopkit::trainer
         [[nodiscard]] virtual std::expected<void, std::string> write(std::uint64_t              address,
                                                                      std::span<const std::byte> bytes) const    = 0;
 
+        // Maps `size` bytes in the target that its own code may write, at an address
+        // the backend picks, or refuses when it cannot map memory in another process.
+        // A run of zero bytes borrowed from the target is only *probably* free — a
+        // module's zero-initialized data is zero at startup and written as the target
+        // runs — so memory a script publishes must be mapped where that is possible.
+        [[nodiscard]] virtual std::expected<std::uint64_t, std::string> allocate(std::size_t) const
+        {
+            return std::unexpected(std::string {"this target cannot map memory"});
+        }
+
+        // Unmaps an address `allocate` returned; anything else is refused.
+        [[nodiscard]] virtual std::expected<void, std::string> deallocate(std::uint64_t) const
+        {
+            return std::unexpected(std::string {"this target cannot unmap memory"});
+        }
+
         [[nodiscard]] bool readable(std::uint64_t address, std::size_t size) const
         {
             for (const auto& region : regions())

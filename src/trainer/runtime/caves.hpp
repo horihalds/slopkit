@@ -11,13 +11,14 @@
 
 namespace slopkit::trainer
 {
-    // Where a script's `alloc` and `hook.install` get their memory from. A
-    // self-contained trainer cannot map memory inside the target the way the app's
-    // plugins do, so an allocation here is a *cave*: a run of zero bytes in a
-    // mapping the target already has, which is what an image's section padding and
-    // alignment gaps are. Handing one out changes no target state and needs no
-    // in-target allocator, and freeing it hands the same bytes back, so a hook can
-    // be installed and removed as often as it is in slopkit.
+    // Where a script's `alloc` and `hook.install` get their memory from. The Linux
+    // backend cannot map memory inside the target the way the app's plugins do, and a
+    // hook's payload has to land within a near jump's reach in any case, so an
+    // allocation is a *cave*: a run of zero bytes in a mapping the target already has,
+    // which is what an image's section padding and alignment gaps are. Handing one out
+    // changes no target state and needs no in-target allocator, and freeing it hands
+    // the same bytes back, so a hook can be installed and removed as often as it is in
+    // slopkit.
     //
     // The two uses are not interchangeable, because the trainer writes with
     // `process_vm_writev`/`WriteProcessMemory`, which force a read-only page, while
@@ -43,9 +44,10 @@ namespace slopkit::trainer
 
         // Hands out `size` bytes the *target* may write: what a script's `alloc`
         // returns for a hook to store into. `near` is the site whose instructions
-        // have to reach the cave (`0` accepts any). The cave is zeroed through the
-        // trainer's write path first, so the address returned is one it has proven
-        // it may write.
+        // have to reach the cave (`0` accepts any). A backend that can map memory
+        // returns a mapping of its own, which needs no probe; otherwise the cave is
+        // zeroed through the trainer's write path first, so the address returned is
+        // one it has proven it may write.
         [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t size, std::uint64_t near);
 
         // Hands out `size` bytes the target may *execute*: where `hook.install`
@@ -54,18 +56,20 @@ namespace slopkit::trainer
         [[nodiscard]] std::expected<std::uint64_t, std::string> allocate_executable(std::size_t   size,
                                                                                     std::uint64_t near);
 
-        // Hands one allocation back, zeroing its bytes so the run is a free cave
-        // again. An address this session did not hand out is refused, as the app's
-        // own allocator refuses a foreign address.
+        // Hands one allocation back: a cave is zeroed so the run is free again, a
+        // mapping is unmapped through the backend. An address this session did not
+        // hand out is refused, as the app's own allocator refuses a foreign address.
         [[nodiscard]] std::expected<void, std::string> deallocate(std::uint64_t address);
 
     private:
         // One cave this session handed out; `size` is what the caller asked for, so
-        // freeing it zeroes exactly that much.
+        // freeing it zeroes exactly that much, and `mapped` says the bytes are a
+        // mapping to unmap rather than a cave to zero.
         struct Loan
         {
             std::uint64_t address {};
             std::size_t   size {};
+            bool          mapped {false};
         };
 
         enum class Use

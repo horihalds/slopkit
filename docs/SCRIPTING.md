@@ -401,18 +401,21 @@ there:
 - The class project travels with the trainer, so `structs.get(name)` reads the same
   definitions; a project the trainer cannot parse is reported once and leaves only
   `structs` unavailable.
-- `alloc` / `dealloc` and `hook.install` / `hook.remove` work, but what a trainer
-  hands out is a **cave**, not a fresh mapping: a run of zero bytes in a mapping the
-  target already has (an image pads its sections, so there is one near the code).
-  `alloc` hands out a **writable** run, because the slot it returns is written by the
-  target's own instructions, while `hook.install` takes an **executable** one for its
-  payload; both are handed out at a 16-byte boundary, nearest the `near_address` a
-  hook passes, and `dealloc` zeroes the bytes again so the next allocation can reuse
-  them. A request no run of zero bytes can satisfy raises `alloc: the target has no
-  free data cave of <size> byte(s) in its writable memory`, and a hook cannot be
-  installed where nothing is executable. Nothing is mapped or unmapped in the target,
-  so an allocation there only writes the target's own padding — which is why `alloc`
-  is for a slot or a small buffer, not a large one.
+- `alloc` / `dealloc` and `hook.install` / `hook.remove` work, and a slot is safe to
+  publish: on Windows `alloc` maps a page of its own in the target (`VirtualAllocEx`),
+  and only where the backend cannot map memory — a game the trainer attached to as a
+  Linux process — does it hand out a **cave** instead, which is a run of zero bytes in
+  a mapping the target already has (an image pads its sections, so there is one near
+  the code). A hook's payload always gets a cave, because the jump to it must stay
+  short: `hook.install` takes an **executable** run, while `alloc` takes a **writable**
+  one, both handed out at a 16-byte boundary, nearest the `near_address` a hook passes.
+  A cave is zeroed when it is handed out and `dealloc` zeroes it again, while a mapping
+  is unmapped. A request no run of zero bytes can satisfy raises `alloc: the target has
+  no free data cave of <size> byte(s) in its writable memory`, and a hook cannot be
+  installed where nothing is executable. Zero bytes are only *probably* free — a game
+  fills its zero-initialized data as it runs — so a slot the game's own code writes
+  into, like the one a hook updates, belongs in a mapping: borrowed padding can turn
+  the value a script publishes back into the game's data.
 - Output and failure are per script: its `print` lines and the last hook's message
   are shown beside it, and a script whose source does not compile or whose hook
   fails is marked `error`, stops ticking and never affects the others. Nothing a

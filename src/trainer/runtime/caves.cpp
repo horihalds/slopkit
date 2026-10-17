@@ -96,6 +96,24 @@ namespace slopkit::trainer
             return std::unexpected(std::string {"the size must be larger than 0"});
         }
 
+        // Zero bytes are only *probably* free: a module's zero-initialized data is
+        // zero at attach time and filled as the target runs, and a game that writes
+        // over a slot turns a published pointer into whatever it stored there. A
+        // slot a script publishes is therefore a mapping of its own wherever the
+        // backend can make one, and only a borrowed cave where it cannot.
+        if (use == Use::writable)
+        {
+            const auto mapped = target_->allocate(size);
+            if (mapped)
+            {
+                loans_.push_back(Loan {*mapped, size, true});
+                log::debug(log::category::script, std::format("alloc: mapped {} byte(s) at 0x{:x}", size, *mapped));
+                return *mapped;
+            }
+            log::debug(log::category::script,
+                       std::format("alloc: no mapping to hand out ({}), looking for a cave", mapped.error()));
+        }
+
         std::vector<const Region*> candidates;
         for (const Region& region : target_->regions())
         {
@@ -139,7 +157,7 @@ namespace slopkit::trainer
                 refused_.push_back(region->start);
                 continue;
             }
-            loans_.push_back(Loan {*found, size});
+            loans_.push_back(Loan {*found, size, false});
             log::debug(log::category::script,
                        std::format("alloc: {} {} cave of {} byte(s) at 0x{:x}", pages, kind, size, *found));
             return *found;
@@ -158,6 +176,20 @@ namespace slopkit::trainer
         {
             log::debug(log::category::script, std::format("free: 0x{:x} is not this session's allocation", address));
             return std::unexpected(std::string {"not this session's allocation"});
+        }
+
+        if (loan->mapped)
+        {
+            const std::expected<void, std::string> unmapped = target_->deallocate(address);
+            loans_.erase(loan);
+            if (!unmapped)
+            {
+                log::warning(log::category::script,
+                             std::format("free: 0x{:x} could not be unmapped: {}", address, unmapped.error()));
+                return std::unexpected(unmapped.error());
+            }
+            log::debug(log::category::script, std::format("free: 0x{:x} unmapped", address));
+            return {};
         }
 
         const std::vector<std::byte>           zeros(loan->size, kFree);

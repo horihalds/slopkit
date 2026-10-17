@@ -42,6 +42,11 @@ namespace
         return std::filesystem::path {SLOPKIT_TRAINER_DIR} / "slopkit-trainer";
     }
 
+    std::filesystem::path windows_trainer_binary()
+    {
+        return std::filesystem::path {SLOPKIT_TRAINER_DIR} / "slopkit-trainer.exe";
+    }
+
     // A real target process that owns one writable int32 and rewrites it the way a
     // game does: `rewrite_ms` of furious overwriting, then it holds still, so a
     // frozen trainer's writes can be verified without racing the child.
@@ -159,13 +164,12 @@ namespace
         std::string output;
     };
 
-    RunResult run_trainer(const std::filesystem::path& trainer, const std::vector<std::string>& arguments)
+    RunResult run_command(const std::vector<std::string>& words)
     {
-        std::string command = trainer.string();
-        for (const auto& argument : arguments)
+        std::string command;
+        for (const auto& word : words)
         {
-            command += " ";
-            command += argument;
+            command += command.empty() ? word : " " + word;
         }
         command += " 2>&1";
 
@@ -182,6 +186,22 @@ namespace
         const int status = ::pclose(pipe);
         REQUIRE(status >= 0);
         return RunResult {WEXITSTATUS(status), output};
+    }
+
+    RunResult run_trainer(const std::filesystem::path& trainer, const std::vector<std::string>& arguments)
+    {
+        std::vector<std::string> words {trainer.string()};
+        words.insert(words.end(), arguments.begin(), arguments.end());
+        return run_command(words);
+    }
+
+    RunResult run_windows_trainer(const std::filesystem::path&    wine,
+                                  const std::filesystem::path&    trainer,
+                                  const std::vector<std::string>& arguments)
+    {
+        std::vector<std::string> words {wine.string(), trainer.string()};
+        words.insert(words.end(), arguments.begin(), arguments.end());
+        return run_command(words);
     }
 
     AddressEntry value_entry(std::string description, std::string expression)
@@ -204,8 +224,9 @@ namespace
 
     void generate_trainer(const std::vector<AddressEntry>& entries,
                           std::string_view                 name,
-                          std::string_view                 script       = {},
-                          std::string_view                 process_name = {})
+                          std::string_view                 script         = {},
+                          std::string_view                 process_name   = {},
+                          bool                             windows_target = false)
     {
         const std::filesystem::path directory = std::filesystem::path {SLOPKIT_TMP_DIR} / "trainer_driver" / name;
         std::error_code             error;
@@ -226,8 +247,8 @@ namespace
         Request request;
         request.table            = &table;
         request.pointer_size     = sizeof(void*);
-        request.linux_target     = true;
-        request.windows_target   = false;
+        request.linux_target     = !windows_target;
+        request.windows_target   = windows_target;
         request.output_directory = directory;
         request.base_name        = "practice";
         request.process_name     = std::string {process_name};
@@ -236,12 +257,17 @@ namespace
         REQUIRE(result.has_value());
         REQUIRE(result->errors.empty());
         REQUIRE(result->written.size() == 1);
-        REQUIRE(std::filesystem::is_regular_file(trainer_binary()));
+        REQUIRE(std::filesystem::is_regular_file(windows_target ? windows_trainer_binary() : trainer_binary()));
     }
 
     std::filesystem::path generated_trainer(std::string_view name)
     {
         return std::filesystem::path {SLOPKIT_TMP_DIR} / "trainer_driver" / name / "practice.trainer";
+    }
+
+    std::filesystem::path generated_windows_trainer(std::string_view name)
+    {
+        return std::filesystem::path {SLOPKIT_TMP_DIR} / "trainer_driver" / name / "practice.trainer.exe";
     }
 
     std::string read_file(const std::filesystem::path& path)
@@ -582,4 +608,85 @@ TEST_CASE("the trainer attaches to a wine target by its guest name", "[trainer][
     {
         CHECK(result.output.find("cannot access 0x") != std::string::npos);
     }
+}
+
+// A script's `alloc` slot is memory the *target's* own code writes — a hook stores
+// what it computed into it — so on a Windows target it must be a mapping of its own,
+// not a run of zero bytes borrowed from the guest's data: such a run can be a
+// module's zero-initialized data that the game fills as it loads, and the value the
+// script then read back was the game's own. This needs a Windows trainer and a
+// Windows guest, which only Wine can host here:
+//
+//   SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "slot is a mapping" --timeout 600 --output-on-failure
+TEST_CASE("a windows trainer gives a script's slot a mapping of its own", "[trainer][wine_proton][.]")
+{
+    if (!std::filesystem::is_regular_file(windows_trainer_binary()))
+    {
+        WARN("the Windows trainer template was not built; the wine slot case is skipped");
+        return;
+    }
+
+    const char* enabled = std::getenv("SLOPKIT_WINE_E2E");
+    if (enabled == nullptr || std::string {enabled} != "1")
+    {
+        WARN("set SLOPKIT_WINE_E2E=1 to run the wine slot case");
+        return;
+    }
+
+    const auto      wine  = find_wine();
+    const auto      probe = wine_probe();
+    std::error_code error;
+    if (wine.empty() || !std::filesystem::exists(probe, error))
+    {
+        WARN("wine or the 64-bit Windows probe is unavailable; the wine slot case is skipped");
+        return;
+    }
+
+    const pid_t child = ::fork();
+    REQUIRE(child >= 0);
+    const GuestGuard guard {child};
+    if (child == 0)
+    {
+        ::execl(wine.c_str(), wine.c_str(), probe.c_str(), nullptr);
+        ::_exit(127);
+    }
+
+    // Wine needs a moment to start the guest and map its images.
+    std::this_thread::sleep_for(std::chrono::seconds {3});
+
+    generate_trainer({value_entry("Health", "0x1")},
+                     "wine_slot",
+                     R"(
+function activate()
+    local slot = alloc("slot", 8, 0)
+    print(string.format("slot=0x%x", slot))
+    write(slot, 1234, "u64")
+    local stored = read_u64(slot)
+    dealloc("slot")
+    print(string.format("read=0x%x", stored))
+    return true
+end
+)",
+                     {},
+                     true);
+
+    const auto trainer = generated_windows_trainer("wine_slot");
+    const auto log     = std::filesystem::path {trainer.string() + ".log"};
+    std::filesystem::remove(log, error);
+
+    const auto result = run_windows_trainer(
+        wine,
+        trainer,
+        {"--name", probe.filename().string(), "--activate", "1", "--wait", "4000", "--list", "--verbose"});
+    INFO(result.output);
+    CHECK(result.exit_code == 0);
+    CHECK(result.output.find("slot=0x") != std::string::npos);
+    CHECK(result.output.find("read=0x4d2") != std::string::npos);
+
+    // The slot reached the trainer's own writes, so it was mapped in the guest, and
+    // freeing it gave the mapping back instead of zeroing borrowed bytes.
+    const std::string text = std::filesystem::exists(log, error) ? read_file(log) : std::string {};
+    INFO(text);
+    CHECK(text.find("alloc: mapped 8 byte(s)") != std::string::npos);
+    CHECK(text.find("unmapped") != std::string::npos);
 }

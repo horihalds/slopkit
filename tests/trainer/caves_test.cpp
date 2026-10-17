@@ -49,6 +49,23 @@ namespace
             writes_allowed_ = false;
         }
 
+        // A backend that can map memory in the target hands out a page of its own.
+        // This fake places it where the test picks and remembers taking it back.
+        void map_at(std::uint64_t address)
+        {
+            mapped_ = address;
+        }
+
+        [[nodiscard]] std::uint64_t unmapped() const
+        {
+            return unmapped_;
+        }
+
+        [[nodiscard]] std::size_t mapping_requests() const
+        {
+            return mapping_requests_;
+        }
+
         [[nodiscard]] std::uint32_t pid() const override
         {
             return 1;
@@ -97,6 +114,26 @@ namespace
             return {};
         }
 
+        [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t) const override
+        {
+            ++mapping_requests_;
+            if (mapped_ == 0)
+            {
+                return std::unexpected(std::string {"this target cannot map memory"});
+            }
+            return mapped_;
+        }
+
+        [[nodiscard]] std::expected<void, std::string> deallocate(std::uint64_t address) const override
+        {
+            if (address != mapped_)
+            {
+                return std::unexpected(std::string {"not a mapping this trainer made"});
+            }
+            unmapped_ = address;
+            return {};
+        }
+
     private:
         [[nodiscard]] bool inside(std::uint64_t address, std::size_t size) const
         {
@@ -107,6 +144,9 @@ namespace
         std::vector<Region>            regions_;
         std::vector<Module>            modules_;
         bool                           writes_allowed_ {true};
+        std::uint64_t                  mapped_ {0};
+        mutable std::uint64_t          unmapped_ {0};
+        mutable std::size_t            mapping_requests_ {0};
     };
 }
 
@@ -264,6 +304,40 @@ TEST_CASE("a script's allocation is looked for in writable memory only", "[train
 
     REQUIRE(slot.has_value());
     CHECK(*slot == kBase + 0x1000);
+}
+
+TEST_CASE("a script's slot is mapped where the target can map memory", "[trainer][caves]")
+{
+    // The region has a zero run, but it is the target's own memory: it may be the
+    // zero-initialized data a running program fills, so a slot a script publishes
+    // is not borrowed from it where a mapping of its own is possible.
+    CodeTarget target {{Region {kBase, kBase + 0x200, true, true, false, "game.exe"}}};
+    target.map_at(0x9000'0000);
+
+    CaveAllocator allocator {target};
+    const auto    slot = allocator.allocate(0x10, kBase);
+
+    REQUIRE(slot.has_value());
+    CHECK(*slot == 0x9000'0000);
+
+    // Freeing it is the backend's unmap, not a cave zeroed through the write path.
+    REQUIRE(allocator.deallocate(*slot).has_value());
+    CHECK(target.unmapped() == 0x9000'0000);
+}
+
+TEST_CASE("a hook's cave stays the target's own code even where it can map memory", "[trainer][caves]")
+{
+    // A mapping is placed by the target's allocator, usually out of a near jump's
+    // reach, so code is still borrowed from the target's own executable padding.
+    CodeTarget target {{Region {kBase, kBase + 0x80, true, false, true, "game.exe"}}};
+    target.map_at(0x9000'0000);
+
+    CaveAllocator allocator {target};
+    const auto    cave = allocator.allocate_executable(0x10, kBase);
+
+    REQUIRE(cave.has_value());
+    CHECK(*cave == kBase);
+    CHECK(target.mapping_requests() == 0);
 }
 
 TEST_CASE("a hook's cave and a script's slot never overlap", "[trainer][caves]")

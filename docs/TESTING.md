@@ -166,6 +166,18 @@ report the guest's width (`8-byte pointers`); whether it may then read the guest
 the kernel's ptrace policy, so the row has to show an address inside the guest image
 either way.
 
+A second case runs a generated *Windows* trainer under wine against the same probe,
+because a Windows target is the only kind the trainer can map memory in:
+
+```sh
+SLOPKIT_WINE_E2E=1 ./build/slopkit_tests "a windows trainer gives a script's slot a mapping of its own"
+```
+
+Its script `alloc`s a slot, writes a value through it, reads it back and frees it.
+The trainer's log must show `alloc: mapped 8 byte(s)` and the slot must give the
+mapping up on `dealloc`, which is the rule a slot borrowed from the guest's own
+zero-initialized data broke.
+
 ## Manually verify allocation against a Proton game
 
 The allocation window's blast radius against a real Proton target cannot be
