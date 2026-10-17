@@ -614,11 +614,14 @@ TEST_CASE("the trainer attaches to a wine target by its guest name", "[trainer][
 // what it computed into it — so on a Windows target it must be a mapping of its own,
 // not a run of zero bytes borrowed from the guest's data: such a run can be a
 // module's zero-initialized data that the game fills as it loads, and the value the
-// script then read back was the game's own. This needs a Windows trainer and a
-// Windows guest, which only Wine can host here:
+// script then read back was the game's own. The mapping must also sit within a near
+// jump's reach of the site that names it: `MOV qword ptr [<slot>], RBX` encodes only
+// while the slot is a signed 32-bit displacement away, which is the friend's
+// `the encoder rejected 'MOV qword ptr [0x1E029DF0000], RBX'`. This needs a Windows
+// trainer and a Windows guest, which only Wine can host here:
 //
-//   SLOPKIT_WINE_E2E=1 ctest --test-dir build -R "slot is a mapping" --timeout 600 --output-on-failure
-TEST_CASE("a windows trainer gives a script's slot a mapping of its own", "[trainer][wine_proton][.]")
+//   SLOPKIT_WINE_E2E=1 ./build/slopkit_tests "a windows trainer maps a script's slot within reach of its site"
+TEST_CASE("a windows trainer maps a script's slot within reach of its site", "[trainer][wine_proton][.]")
 {
     if (!std::filesystem::is_regular_file(windows_trainer_binary()))
     {
@@ -654,25 +657,38 @@ TEST_CASE("a windows trainer gives a script's slot a mapping of its own", "[trai
     // Wine needs a moment to start the guest and map its images.
     std::this_thread::sleep_for(std::chrono::seconds {3});
 
-    generate_trainer({value_entry("Health", "0x1")},
-                     "wine_slot",
-                     R"(
+    std::error_code path_error;
+    const auto      module = probe.filename().string();
+    const auto      script = std::format(R"(
 function activate()
-    local slot = alloc("slot", 8, 0)
-    print(string.format("slot=0x%x", slot))
+    local found, site = aobscan("near_site", "4D 5A 90 00 03 00 00 00", "{}")
+    if not found then
+        print("scan failed")
+        return false
+    end
+    local slot = alloc("slot", 8, site)
+    local cave = alloc("cave", 8, site)
+    print(string.format("site=0x%x slot=0x%x cave=0x%x", site, slot, cave))
+    local encoded, reason = assemble(cave, string.format("MOV qword ptr [0x%x], RBX", slot))
+    if not encoded then
+        print("assemble failed: " .. tostring(reason))
+        return false
+    end
     write(slot, 1234, "u64")
     local stored = read_u64(slot)
+    dealloc("cave")
     dealloc("slot")
     print(string.format("read=0x%x", stored))
     return true
 end
 )",
-                     {},
-                     true);
+                                         module);
+
+    generate_trainer({value_entry("Health", "0x1")}, "wine_slot", script, {}, true);
 
     const auto trainer = generated_windows_trainer("wine_slot");
     const auto log     = std::filesystem::path {trainer.string() + ".log"};
-    std::filesystem::remove(log, error);
+    std::filesystem::remove(log, path_error);
 
     const auto result = run_windows_trainer(
         wine,
@@ -682,10 +698,28 @@ end
     CHECK(result.exit_code == 0);
     CHECK(result.output.find("slot=0x") != std::string::npos);
     CHECK(result.output.find("read=0x4d2") != std::string::npos);
+    // `MOV qword ptr [<slot>], RBX` encodes only while the slot is within a signed
+    // 32-bit displacement of the instruction: the user's `the encoder rejected
+    // 'MOV qword ptr [0x1E029DF0000], RBX'` is what a far-away mapping produces.
+    CHECK(result.output.find("assemble failed") == std::string::npos);
+    CHECK(result.output.find("active") != std::string::npos);
+
+    // Both mappings sit where the code that names the slot can reach: an instruction
+    // names an absolute address only within a signed 32-bit displacement, so a
+    // mapping on the other side of the address space is rejected by the assembler.
+    const auto at = result.output.find("site=0x");
+    REQUIRE(at != std::string::npos);
+    const auto site = std::stoull(result.output.substr(at + 7), nullptr, 16);
+    const auto slot = std::stoull(result.output.substr(result.output.find("slot=0x") + 7), nullptr, 16);
+    const auto cave = std::stoull(result.output.substr(result.output.find("cave=0x") + 7), nullptr, 16);
+    CHECK((slot > site ? slot - site : site - slot) <= 0x7FFF'0000ull);
+    // The payload assembled at the cave has to name the slot: both mappings are
+    // within reach of the site, which keeps them within reach of each other.
+    CHECK((cave > slot ? cave - slot : slot - cave) <= 0x7FFF'0000ull);
 
     // The slot reached the trainer's own writes, so it was mapped in the guest, and
     // freeing it gave the mapping back instead of zeroing borrowed bytes.
-    const std::string text = std::filesystem::exists(log, error) ? read_file(log) : std::string {};
+    const std::string text = std::filesystem::exists(log, path_error) ? read_file(log) : std::string {};
     INFO(text);
     CHECK(text.find("alloc: mapped 8 byte(s)") != std::string::npos);
     CHECK(text.find("unmapped") != std::string::npos);

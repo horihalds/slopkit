@@ -96,23 +96,23 @@ namespace slopkit::trainer
             return std::unexpected(std::string {"the size must be larger than 0"});
         }
 
-        // Zero bytes are only *probably* free: a module's zero-initialized data is
-        // zero at attach time and filled as the target runs, and a game that writes
-        // over a slot turns a published pointer into whatever it stored there. A
-        // slot a script publishes is therefore a mapping of its own wherever the
-        // backend can make one, and only a borrowed cave where it cannot.
-        if (use == Use::writable)
+        // Borrowed bytes are only *probably* free: a module's zero-initialized data
+        // is zero at attach time and filled as the target runs, and a game that
+        // writes over a slot turns a published pointer into whatever it stored
+        // there. A slot a script publishes — and the payload a hook installs — is
+        // therefore a mapping of the target's own wherever the backend can make one,
+        // within a near jump's reach of `near`, because the code that names it can
+        // reach no further, and a borrowed cave only where it cannot map at all.
+        const auto mapped =
+            use == Use::executable ? target_->allocate_executable(size, near) : target_->allocate(size, near);
+        if (mapped)
         {
-            const auto mapped = target_->allocate(size);
-            if (mapped)
-            {
-                loans_.push_back(Loan {*mapped, size, true});
-                log::debug(log::category::script, std::format("alloc: mapped {} byte(s) at 0x{:x}", size, *mapped));
-                return *mapped;
-            }
-            log::debug(log::category::script,
-                       std::format("alloc: no mapping to hand out ({}), looking for a cave", mapped.error()));
+            loans_.push_back(Loan {*mapped, size, true});
+            log::debug(log::category::script, std::format("alloc: mapped {} byte(s) at 0x{:x}", size, *mapped));
+            return *mapped;
         }
+        log::debug(log::category::script,
+                   std::format("alloc: no mapping to hand out ({}), looking for a cave", mapped.error()));
 
         std::vector<const Region*> candidates;
         for (const Region& region : target_->regions())

@@ -56,9 +56,20 @@ namespace
             mapped_ = address;
         }
 
+        // The executable mapping a hook's payload would get, if the fake offers one.
+        void map_code_at(std::uint64_t address)
+        {
+            mapped_code_ = address;
+        }
+
         [[nodiscard]] std::uint64_t unmapped() const
         {
             return unmapped_;
+        }
+
+        [[nodiscard]] std::uint64_t mapping_hint() const
+        {
+            return mapping_hint_;
         }
 
         [[nodiscard]] std::size_t mapping_requests() const
@@ -114,9 +125,10 @@ namespace
             return {};
         }
 
-        [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t) const override
+        [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t, std::uint64_t near) const override
         {
             ++mapping_requests_;
+            mapping_hint_ = near;
             if (mapped_ == 0)
             {
                 return std::unexpected(std::string {"this target cannot map memory"});
@@ -124,9 +136,21 @@ namespace
             return mapped_;
         }
 
+        [[nodiscard]] std::expected<std::uint64_t, std::string> allocate_executable(std::size_t,
+                                                                                    std::uint64_t near) const override
+        {
+            ++mapping_requests_;
+            mapping_hint_ = near;
+            if (mapped_code_ == 0)
+            {
+                return std::unexpected(std::string {"this target cannot map executable memory"});
+            }
+            return mapped_code_;
+        }
+
         [[nodiscard]] std::expected<void, std::string> deallocate(std::uint64_t address) const override
         {
-            if (address != mapped_)
+            if (address != mapped_ && address != mapped_code_)
             {
                 return std::unexpected(std::string {"not a mapping this trainer made"});
             }
@@ -145,7 +169,9 @@ namespace
         std::vector<Module>            modules_;
         bool                           writes_allowed_ {true};
         std::uint64_t                  mapped_ {0};
+        std::uint64_t                  mapped_code_ {0};
         mutable std::uint64_t          unmapped_ {0};
+        mutable std::uint64_t          mapping_hint_ {0};
         mutable std::size_t            mapping_requests_ {0};
     };
 }
@@ -319,16 +345,36 @@ TEST_CASE("a script's slot is mapped where the target can map memory", "[trainer
 
     REQUIRE(slot.has_value());
     CHECK(*slot == 0x9000'0000);
+    // The slot must be mapped where the instructions that name it can reach.
+    CHECK(target.mapping_hint() == kBase);
 
     // Freeing it is the backend's unmap, not a cave zeroed through the write path.
     REQUIRE(allocator.deallocate(*slot).has_value());
     CHECK(target.unmapped() == 0x9000'0000);
 }
 
-TEST_CASE("a hook's cave stays the target's own code even where it can map memory", "[trainer][caves]")
+TEST_CASE("a hook's payload is mapped where the target can map executable memory", "[trainer][caves]")
 {
-    // A mapping is placed by the target's allocator, usually out of a near jump's
-    // reach, so code is still borrowed from the target's own executable padding.
+    // Code cannot be borrowed from data, and the target can map executable memory:
+    // the payload gets a mapping of its own rather than a scan of the image's
+    // padding, which a packer may fill later.
+    CodeTarget target {{Region {kBase, kBase + 0x80, true, false, true, "game.exe"}}};
+    target.map_code_at(0x9100'0000);
+
+    CaveAllocator allocator {target};
+    const auto    cave = allocator.allocate_executable(0x10, kBase + 0x40);
+
+    REQUIRE(cave.has_value());
+    CHECK(*cave == 0x9100'0000);
+    CHECK(target.mapping_hint() == kBase + 0x40);
+
+    REQUIRE(allocator.deallocate(*cave).has_value());
+    CHECK(target.unmapped() == 0x9100'0000);
+}
+
+TEST_CASE("a hook falls back to a code cave where it cannot map executable memory", "[trainer][caves]")
+{
+    // A writable mapping does not serve code: the payload still has to execute.
     CodeTarget target {{Region {kBase, kBase + 0x80, true, false, true, "game.exe"}}};
     target.map_at(0x9000'0000);
 
@@ -337,7 +383,7 @@ TEST_CASE("a hook's cave stays the target's own code even where it can map memor
 
     REQUIRE(cave.has_value());
     CHECK(*cave == kBase);
-    CHECK(target.mapping_requests() == 0);
+    CHECK(target.mapping_requests() == 1);
 }
 
 TEST_CASE("a hook's cave and a script's slot never overlap", "[trainer][caves]")

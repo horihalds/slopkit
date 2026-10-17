@@ -239,6 +239,164 @@ namespace slopkit::trainer
             return regions;
         }
 
+        // How far a near jump's signed displacement — and an instruction that names
+        // an absolute memory operand — can reach from the instruction.
+        constexpr std::uint64_t kReach {0x7FFF'0000};
+
+        struct AddressSpace
+        {
+            std::uint64_t lowest {};
+            std::uint64_t highest {};
+            std::uint64_t granularity {};
+        };
+
+        AddressSpace address_space()
+        {
+            SYSTEM_INFO information {};
+            ::GetSystemInfo(&information);
+            return AddressSpace {
+                static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(information.lpMinimumApplicationAddress)),
+                static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(information.lpMaximumApplicationAddress)),
+                information.dwAllocationGranularity == 0 ? 0x10000u : information.dwAllocationGranularity};
+        }
+
+        void* map_at(HANDLE process, std::uint64_t address, std::uint64_t span, DWORD protection)
+        {
+            return ::VirtualAllocEx(process,
+                                    reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)),
+                                    static_cast<SIZE_T>(span),
+                                    MEM_COMMIT | MEM_RESERVE,
+                                    protection);
+        }
+
+        // The nearest free base at or below `from`. `VirtualAllocEx` only takes an
+        // address it can honour exactly, so a hint inside taken memory fails; walking
+        // the target's regions to the top of the closest free one finds a base it
+        // accepts.
+        std::uint64_t map_down(HANDLE        process,
+                               std::uint64_t from,
+                               std::uint64_t span,
+                               std::uint64_t lowest,
+                               std::uint64_t granularity,
+                               DWORD         protection)
+        {
+            std::uint64_t cursor = from & ~(granularity - 1);
+            while (cursor >= lowest && cursor != 0)
+            {
+                MEMORY_BASIC_INFORMATION information {};
+                if (::VirtualQueryEx(process,
+                                     reinterpret_cast<const void*>(static_cast<std::uintptr_t>(cursor)),
+                                     &information,
+                                     sizeof(information))
+                    == 0)
+                {
+                    break;
+                }
+
+                const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(information.BaseAddress));
+                const auto end  = base + static_cast<std::uint64_t>(information.RegionSize);
+                if (information.State == MEM_FREE && end > base)
+                {
+                    std::uint64_t candidate = (end >= span ? end - span : 0) & ~(granularity - 1);
+                    if (candidate > cursor)
+                    {
+                        candidate = cursor;
+                    }
+                    if (candidate >= base && candidate >= lowest && candidate != 0)
+                    {
+                        if (auto* mapped = map_at(process, candidate, span, protection); mapped != nullptr)
+                        {
+                            return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(mapped));
+                        }
+                    }
+                }
+
+                if (base <= lowest || end <= base)
+                {
+                    break;
+                }
+                cursor = (base - 1) & ~(granularity - 1);
+            }
+            return 0;
+        }
+
+        // The nearest free base at or above `from`, found by the same walk upward.
+        std::uint64_t map_up(HANDLE        process,
+                             std::uint64_t from,
+                             std::uint64_t span,
+                             std::uint64_t highest,
+                             std::uint64_t granularity,
+                             DWORD         protection)
+        {
+            std::uint64_t cursor = from & ~(granularity - 1);
+            while (cursor <= highest && cursor != 0)
+            {
+                MEMORY_BASIC_INFORMATION information {};
+                if (::VirtualQueryEx(process,
+                                     reinterpret_cast<const void*>(static_cast<std::uintptr_t>(cursor)),
+                                     &information,
+                                     sizeof(information))
+                    == 0)
+                {
+                    break;
+                }
+
+                const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(information.BaseAddress));
+                const auto end  = base + static_cast<std::uint64_t>(information.RegionSize);
+                if (end <= cursor)
+                {
+                    break;
+                }
+
+                if (information.State == MEM_FREE)
+                {
+                    std::uint64_t candidate = base > cursor ? base : cursor;
+                    candidate               = (candidate + granularity - 1) & ~(granularity - 1);
+                    if (candidate >= base && candidate <= highest && end - candidate >= span)
+                    {
+                        if (auto* mapped = map_at(process, candidate, span, protection); mapped != nullptr)
+                        {
+                            return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(mapped));
+                        }
+                    }
+                }
+                cursor = end;
+            }
+            return 0;
+        }
+
+        // Maps `span` bytes within a near jump's reach of `site`, or returns 0 when
+        // no free base that close exists. A slot a script publishes is only useful
+        // to code that can name it, and code can reach no further than this.
+        std::uint64_t map_near(HANDLE process, std::uint64_t span, std::uint64_t site, DWORD protection)
+        {
+            const AddressSpace  space = address_space();
+            const std::uint64_t start = site & ~(space.granularity - 1);
+
+            if (start >= space.lowest && start <= space.highest)
+            {
+                if (auto* mapped = map_at(process, start, span, protection); mapped != nullptr)
+                {
+                    return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(mapped));
+                }
+            }
+
+            const std::uint64_t lowest = site > kReach ? std::max(space.lowest, site - kReach) : space.lowest;
+            const std::uint64_t highest =
+                space.highest > kReach && site < space.highest - kReach ? site + kReach : space.highest;
+
+            if (start > space.granularity)
+            {
+                const std::uint64_t below =
+                    map_down(process, start - space.granularity, span, lowest, space.granularity, protection);
+                if (below != 0)
+                {
+                    return below;
+                }
+            }
+            return map_up(process, start + space.granularity, span, highest, space.granularity, protection);
+        }
+
         class WindowsTarget : public Target
         {
         public:
@@ -324,38 +482,16 @@ namespace slopkit::trainer
                 return {};
             }
 
-            [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t size) const override
+            [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t   size,
+                                                                             std::uint64_t site) const override
             {
-                if (size == 0)
-                {
-                    return std::unexpected(std::string {"the size must be larger than 0"});
-                }
+                return mapping(size, site, PAGE_READWRITE);
+            }
 
-                SYSTEM_INFO information {};
-                ::GetSystemInfo(&information);
-                const auto page =
-                    static_cast<std::uint64_t>(information.dwPageSize == 0 ? 0x1000u : information.dwPageSize);
-                const auto span = (static_cast<std::uint64_t>(size) + page - 1) / page * page;
-                if (span > static_cast<std::uint64_t>((std::numeric_limits<SIZE_T>::max)()))
-                {
-                    return std::unexpected(
-                        std::format("cannot map {} byte(s) in pid {}: the size is too large", size, pid_));
-                }
-
-                auto* mapped = ::VirtualAllocEx(
-                    process_, nullptr, static_cast<SIZE_T>(span), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-                if (mapped == nullptr)
-                {
-                    return std::unexpected(std::format("cannot map {} byte(s) in pid {}: Windows error {}",
-                                                       size,
-                                                       pid_,
-                                                       static_cast<unsigned long>(::GetLastError())));
-                }
-
-                const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(mapped));
-                const auto at      = std::ranges::lower_bound(regions_, address, {}, &Region::start);
-                regions_.insert(at, Region {address, address + span, true, true, false, {}});
-                return address;
+            [[nodiscard]] std::expected<std::uint64_t, std::string>
+            allocate_executable(std::size_t size, std::uint64_t site) const override
+            {
+                return mapping(size, site, PAGE_EXECUTE_READWRITE);
             }
 
             [[nodiscard]] std::expected<void, std::string> deallocate(std::uint64_t address) const override
@@ -382,6 +518,56 @@ namespace slopkit::trainer
             }
 
         private:
+            // Maps `size` bytes rounded up to pages, remembering them as a region of
+            // the target so the cave scanner and `deallocate` see them.
+            [[nodiscard]] std::expected<std::uint64_t, std::string>
+            mapping(std::size_t size, std::uint64_t site, DWORD protection) const
+            {
+                if (size == 0)
+                {
+                    return std::unexpected(std::string {"the size must be larger than 0"});
+                }
+
+                SYSTEM_INFO information {};
+                ::GetSystemInfo(&information);
+                const auto page =
+                    static_cast<std::uint64_t>(information.dwPageSize == 0 ? 0x1000u : information.dwPageSize);
+                const auto span = (static_cast<std::uint64_t>(size) + page - 1) / page * page;
+                if (span > static_cast<std::uint64_t>((std::numeric_limits<SIZE_T>::max)()))
+                {
+                    return std::unexpected(
+                        std::format("cannot map {} byte(s) in pid {}: the size is too large", size, pid_));
+                }
+
+                std::uint64_t address = 0;
+                if (site != 0)
+                {
+                    address = map_near(process_, span, site, protection);
+                    if (address == 0)
+                    {
+                        return std::unexpected(std::format(
+                            "cannot map {} byte(s) within a near jump's reach of 0x{:x} in pid {}", size, site, pid_));
+                    }
+                }
+                else
+                {
+                    auto* mapped = map_at(process_, 0, span, protection);
+                    if (mapped == nullptr)
+                    {
+                        return std::unexpected(std::format("cannot map {} byte(s) in pid {}: Windows error {}",
+                                                           size,
+                                                           pid_,
+                                                           static_cast<unsigned long>(::GetLastError())));
+                    }
+                    address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(mapped));
+                }
+
+                const bool executable = protection != PAGE_READWRITE;
+                const auto at         = std::ranges::lower_bound(regions_, address, {}, &Region::start);
+                regions_.insert(at, Region {address, address + span, true, true, executable, {}});
+                return address;
+            }
+
             [[nodiscard]] std::string describe_failure(std::string_view action, std::uint64_t address) const
             {
                 return std::format("cannot {} 0x{:x} in pid {}: Windows error {}",

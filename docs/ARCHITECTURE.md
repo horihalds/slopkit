@@ -963,39 +963,48 @@ and `structs` views behave in a trainer exactly as they do in slopkit.
 `trainer::ScriptHost` owns that engine, one `script::SymbolTable` and one
 `ScriptState` per payload script, and builds the engine's `MemoryApi` over `Target`
 (`read`, `write`, `validate` and the module names) and its `allocate`/`deallocate`
-over `trainer::CaveAllocator` (`src/trainer/runtime/caves.cpp`). A hook's payload
-lands in a **cave**: a run of zero bytes in a mapping the target already has — an image
-pads its sections, so there is one near the code — handed out at a 16-byte boundary,
-preferring the run nearest the `near` a hook passes so its jump stays short and only
-within a near jump's reach. A script's `alloc` slot is such a cave only on a backend
-that cannot map memory (Linux); where `Target::allocate` can (`VirtualAllocEx` on
-Windows) the slot is a mapping of its own. Zero bytes are only *probably* free: a
-module's zero-initialized data is zero at attach time and the program fills it as it
-runs, and the slot is memory the target's own code writes — a hook stores a pointer
-into it from the game's thread — so a slot borrowed inside the game's data turns the
-published symbol into whatever the game put there. Read back as a Lua integer, a value
-with the high bit set is negative, and `ssymbol` then reports `the value must be a
-64-bit unsigned integer`, which is how a trainer that had been running a while failed
-while the same script was fine in slopkit. A mapping is handed out anywhere the target
-accepts, so code still comes from the target's own padding: a payload must stay in a
-near jump's reach.
+over `trainer::CaveAllocator` (`src/trainer/runtime/caves.cpp`). An allocation is a
+**mapping** of the target's own wherever the backend can make one: on Windows
+`Target::allocate` and `Target::allocate_executable` call `VirtualAllocEx` with
+`PAGE_READWRITE` or `PAGE_EXECUTE_READWRITE`. The mapping is placed within a near
+jump's reach of the `near` the script passes — for `hook.install` its site, for `alloc`
+the site whose instructions name the slot. Windows' allocator otherwise picks any
+address it likes — a trainer mapped a slot at `0x1E029DF0000` for a site at
+`0x6FFFF646FCF9` — and the assembler then rejects `MOV qword ptr [0x1E029DF0000],
+RBX`, because an x86-64 instruction can only name an absolute address within a signed
+32-bit displacement. `map_near` asks `VirtualAllocEx` for the hint itself, then walks
+`VirtualQueryEx`'s regions to the nearest free base below and above it, so the result
+stays inside that reach. A slot borrowed from a module's zero-initialized data is only
+*probably* free: it is zero at attach time and the program fills it as it runs, and a
+hook stores into it from the game's thread, so the published symbol turns into
+whatever the game put there. Read back as a Lua integer, a value with the high bit set
+is negative, and `ssymbol` then reports `the value must be a 64-bit unsigned integer`,
+which is how a trainer that had been running a while failed while the same script was
+fine in slopkit.
+
+Where the backend cannot map memory — the Linux backend has no in-target allocator, and
+a Windows address space with no free base within reach of the site is the same
+situation — an allocation is a **cave**: a run of zero bytes in a mapping the target
+already has, handed out at a 16-byte boundary, preferring the run nearest the `near` a
+hook passes so its jump stays short and only within a near jump's reach.
 
 The two uses are not interchangeable, because the trainer writes through
 `process_vm_writev`/`WriteProcessMemory`, which force a read-only page, while the
-target's own CPU cannot: `alloc` returns a **writable** cave (`Region::writable`) that
-the target's own instructions may store into, and `hook.install` an **executable** one
-(`Region::executable`) it may run, both off the map permissions on Linux and the page
-protection on Windows. A mapping the trainer has a name for — a module's own region or
-a mapped file — is preferred to a heap, stack or JIT mapping the target is still
-handing out and could reuse under a borrowed cave. The cave is zeroed through the
-trainer's write path before it is returned, which is also how an address it cannot
-reach is ruled out, and `dealloc` zeroes it again so the run is a cave for the next
-allocation, while a mapping is unmapped through the backend that made it; only an
-allocation of this session can be freed. `alloc` and `hook.install` therefore work in a
-trainer, in space the target already owns or in a mapping of its own, and a request no
-run can satisfy reports `no free code cave of <size> byte(s) in its executable memory`
-or `no free data cave of <size> byte(s) in its writable memory` rather than corrupting
-anything. The payload's class records are rebuilt with
+target's own CPU cannot: `alloc` returns a **writable** mapping or cave
+(`Region::writable`) that the target's own instructions may store into, and
+`hook.install` an **executable** one (`Region::executable`) it may run, off the map
+permissions on Linux and the page protection on Windows. A mapping the trainer has a
+name for — a module's own region or a mapped file — is preferred to a heap, stack or
+JIT mapping the target is still handing out and could reuse under a borrowed cave. The
+cave is zeroed through the trainer's write path before it is returned, which is also
+how an address it cannot reach is ruled out, and `dealloc` zeroes it again so the run
+is a cave for the next allocation, while a mapping is unmapped through the backend that
+made it; only an allocation of this session can be freed. `alloc` and `hook.install`
+therefore work in a trainer, in a mapping of its own or in space the target already
+owns, and a request that neither can satisfy reports `no free code cave of <size>
+byte(s) in its executable memory` or `no free data cave of <size> byte(s) in its
+writable memory` rather than corrupting anything. The payload's class records are
+rebuilt with
 `reclass::from_members` and handed to the engine as its class fields, which is what
 makes `structs.get(name)` work; a project that cannot be parsed is reported once
 and leaves only `structs` unavailable. Scripts start idle — the `.skt` archive

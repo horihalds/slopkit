@@ -250,9 +250,10 @@ shows the facts table it consumes.
 
 - `hook.install(spec)` finds `spec.pattern` (restricted to `spec.module` when not
   empty), requires it to match **exactly once**, verifies `site = match +
-  spec.offset` against `spec.original`, maps a code cave near the site, writes
-  `spec.code`, then `spec.trampoline`, then a jump back, and patches the site with
-  a near jump plus NOPs. It returns `true` or `false, reason`; a refusal leaves
+  spec.offset` against `spec.original`, maps executable memory near the site (a code
+  cave where the target cannot map memory), writes `spec.code`, then
+  `spec.trampoline`, then a jump back, and patches the site with a near jump plus
+  NOPs. It returns `true` or `false, reason`; a refusal leaves
   the target as it was. On success the site and cave are published as script-local
   labels under `spec.site_name` and `spec.cave_name`.
 - `hook.remove(spec)` writes `spec.original` back and frees the cave, resolving
@@ -403,19 +404,22 @@ there:
   `structs` unavailable.
 - `alloc` / `dealloc` and `hook.install` / `hook.remove` work, and a slot is safe to
   publish: on Windows `alloc` maps a page of its own in the target (`VirtualAllocEx`),
-  and only where the backend cannot map memory — a game the trainer attached to as a
-  Linux process — does it hand out a **cave** instead, which is a run of zero bytes in
-  a mapping the target already has (an image pads its sections, so there is one near
-  the code). A hook's payload always gets a cave, because the jump to it must stay
-  short: `hook.install` takes an **executable** run, while `alloc` takes a **writable**
-  one, both handed out at a 16-byte boundary, nearest the `near_address` a hook passes.
-  A cave is zeroed when it is handed out and `dealloc` zeroes it again, while a mapping
-  is unmapped. A request no run of zero bytes can satisfy raises `alloc: the target has
-  no free data cave of <size> byte(s) in its writable memory`, and a hook cannot be
-  installed where nothing is executable. Zero bytes are only *probably* free — a game
-  fills its zero-initialized data as it runs — so a slot the game's own code writes
-  into, like the one a hook updates, belongs in a mapping: borrowed padding can turn
-  the value a script publishes back into the game's data.
+  and `hook.install` maps an executable page for its payload the same way. Both are
+  placed near the `near_address` the script passes, because code can only name an
+  address within a near jump's reach: `alloc` sites usually pass the hook's site so
+  `MOV qword ptr [slot], RBX` fits in the payload. Only where the backend cannot map
+  memory — a game the trainer attached to as a Linux process — does an allocation hand
+  out a **cave** instead, which is a run of zero bytes in a mapping the target already
+  has (an image pads its sections, so there is one near the code). A hook's payload
+  takes an **executable** cave and `alloc` a **writable** one, both handed out at a
+  16-byte boundary, nearest the `near_address`. A cave is zeroed when it is handed out
+  and `dealloc` zeroes it again, while a mapping is unmapped. A request no run of zero
+  bytes can satisfy raises `alloc: the target has no free data cave of <size> byte(s)
+  in its writable memory`, and a hook cannot be installed where nothing is executable.
+  Zero bytes are only *probably* free — a game fills its zero-initialized data as it
+  runs — so a slot the game's own code writes into, like the one a hook updates,
+  belongs in a mapping: borrowed padding can turn the value a script publishes back
+  into the game's data.
 - Output and failure are per script: its `print` lines and the last hook's message
   are shown beside it, and a script whose source does not compile or whose hook
   fails is marked `error`, stops ticking and never affects the others. Nothing a

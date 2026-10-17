@@ -11,14 +11,15 @@
 
 namespace slopkit::trainer
 {
-    // Where a script's `alloc` and `hook.install` get their memory from. The Linux
-    // backend cannot map memory inside the target the way the app's plugins do, and a
-    // hook's payload has to land within a near jump's reach in any case, so an
-    // allocation is a *cave*: a run of zero bytes in a mapping the target already has,
-    // which is what an image's section padding and alignment gaps are. Handing one out
-    // changes no target state and needs no in-target allocator, and freeing it hands
-    // the same bytes back, so a hook can be installed and removed as often as it is in
-    // slopkit.
+    // Where a script's `alloc` and `hook.install` get their memory from. Borrowed
+    // bytes are only *probably* free, so wherever the backend can map memory a slot
+    // or a payload is a mapping of the target's own, placed within a near jump's
+    // reach of the site that names it. Everywhere else — the Linux backend cannot
+    // map memory inside the target at all — an allocation is a *cave*: a run of zero
+    // bytes in a mapping the target already has, which is what an image's section
+    // padding and alignment gaps are. Handing one out changes no target state and
+    // needs no in-target allocator, and freeing it hands the same bytes back, so a
+    // hook can be installed and removed as often as it is in slopkit.
     //
     // The two uses are not interchangeable, because the trainer writes with
     // `process_vm_writev`/`WriteProcessMemory`, which force a read-only page, while
@@ -44,15 +45,17 @@ namespace slopkit::trainer
 
         // Hands out `size` bytes the *target* may write: what a script's `alloc`
         // returns for a hook to store into. `near` is the site whose instructions
-        // have to reach the cave (`0` accepts any). A backend that can map memory
-        // returns a mapping of its own, which needs no probe; otherwise the cave is
-        // zeroed through the trainer's write path first, so the address returned is
-        // one it has proven it may write.
+        // have to address it (`0` accepts any). A backend that can map memory
+        // returns a mapping of its own within reach of `near`, which needs no probe;
+        // otherwise the cave is zeroed through the trainer's write path first, so
+        // the address returned is one it has proven it may write.
         [[nodiscard]] std::expected<std::uint64_t, std::string> allocate(std::size_t size, std::uint64_t near);
 
         // Hands out `size` bytes the target may *execute*: where `hook.install`
-        // writes its payload. A target that maps its allocations both ways need not
-        // tell this apart from `allocate`, so a missing seam falls back to it.
+        // writes its payload. `near` is the site its jump starts from (`0` accepts
+        // any). A backend that can map executable memory returns a mapping of its
+        // own within reach of `near`; otherwise the payload borrows the target's own
+        // executable padding, which also keeps its jump short.
         [[nodiscard]] std::expected<std::uint64_t, std::string> allocate_executable(std::size_t   size,
                                                                                     std::uint64_t near);
 

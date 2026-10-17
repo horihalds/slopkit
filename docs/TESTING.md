@@ -170,10 +170,13 @@ A second case runs a generated *Windows* trainer under wine against the same pro
 because a Windows target is the only kind the trainer can map memory in:
 
 ```sh
-SLOPKIT_WINE_E2E=1 ./build/slopkit_tests "a windows trainer gives a script's slot a mapping of its own"
+SLOPKIT_WINE_E2E=1 ./build/slopkit_tests "a windows trainer maps a script's slot within reach of its site"
 ```
 
-Its script `alloc`s a slot, writes a value through it, reads it back and frees it.
+Its script `alloc`s a slot near the site it found, `alloc`s a second mapping beside
+it and assembles `MOV qword ptr [<slot>], RBX` there, then writes a value through the
+slot, reads it back and frees both — the encoder accepts the instruction only while
+the two mappings are within a signed 32-bit displacement of each other.
 The trainer's log must show `alloc: mapped 8 byte(s)` and the slot must give the
 mapping up on `dealloc`, which is the rule a slot borrowed from the guest's own
 zero-initialized data broke.
@@ -276,15 +279,16 @@ rather than the trainer's:
 4. A hook script must get past its scan and its allocation:
    `tmp/trainer/<table>.trainer --name <game>.exe --activate <n> --wait 500 --list`
    must leave the script `active` rather than `error`. A pattern that is not found
-   and a request no cave can satisfy are the two ways it stops, and both are
-   reported with the reason the script printed — the second as `alloc: the target
-   has no free data cave of <size> byte(s) in its writable memory`.
+   and a request no mapping or cave can satisfy are the two ways it stops, and both
+   are reported with the reason the script printed — the second as `alloc: the target
+   has no free data cave of <size> byte(s) in its writable memory` when even a
+   borrowed cave is refused.
 
-   Trigger the hook in game and the game must keep running: a slot the trainer took
-   from the image's code page accepts the trainer's own write but not the game's, so
-   that is what a crash on trigger used to be. `--verbose` records which cave was
-   handed out, and the two `alloc` lines must name a writable region for the script's
-   slot and an executable one for the hook's cave.
+   Trigger the hook in game and the game must keep running: a slot the trainer
+   borrowed from the image's code page accepts the trainer's own write but not the
+   game's, so that is what a crash on trigger used to be. `--verbose` records which
+   mapping or cave was handed out, and the two `alloc` lines must name writable
+   memory for the script's slot and executable memory for the hook's payload.
 5. Rerun any of the above with `--verbose` when a script behaves differently in the
    trainer than in slopkit: the trainer prints the log path on stderr and writes it
    to `<trainer file>.log` beside itself (for step 4,
