@@ -997,6 +997,19 @@ drive the same actions without a TTY, so the trainer can be scripted or run by a
 test; without them and with a terminal it runs the full-screen list, and the exit
 codes are the ones `README.md` documents.
 
+A trainer installs no log sink of its own, so an ordinary run writes nothing.
+`--verbose` (`src/trainer/runtime/logging.cpp`) raises slopkit's logger to `debug`,
+adds the application's rolling file sink with a 1 MiB cap, and points it at the
+executable's own path with `.log` appended — `game.trainer.log` beside
+`game.trainer` — printing that path on stderr. The records are the trainer's
+lifecycle rather than its data: the payload's counts, the attach request and its
+outcome (or failure), a class project the engine could not parse, each script's
+activation, deactivation and every failed `update`, the lines a hook printed, and
+each `alloc`/`free` together with the region a write probe ruled out. Values are
+not logged per tick, so a long session stays a small file; a script that behaves
+differently in a trainer than in slopkit can be diagnosed from the file without a
+debugger.
+
 The templates live in the build tree (`SLOPKIT_TRAINER_DIR`) and, once installed,
 next to the plugins (`SLOPKIT_TRAINER_RELATIVE_DIR`), which is where the generator
 looks. The Linux one is the `slopkit-trainer` target itself. The Windows one is a

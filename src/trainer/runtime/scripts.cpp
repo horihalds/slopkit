@@ -1,5 +1,6 @@
 #include "trainer/runtime/scripts.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -8,9 +9,12 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "reclass/serialize.hpp"
 #include "script/structs_view.hpp"
 #include "script/types.hpp"
@@ -23,6 +27,28 @@ namespace slopkit::trainer
         {
             return message.empty() ? error : message;
         }
+
+        std::string one_line(std::string_view text)
+        {
+            std::string line {text};
+            std::ranges::replace(line, '\n', ' ');
+            std::ranges::replace(line, '\r', ' ');
+            return line;
+        }
+
+        std::string label_of(std::size_t index, const PayloadScript& script)
+        {
+            return script.description.empty() ? std::format("script {}", index + 1)
+                                              : std::format("script {} '{}'", index + 1, one_line(script.description));
+        }
+
+        void log_output(std::size_t index, const PayloadScript& script, const std::vector<std::string>& output)
+        {
+            for (const std::string& line : output)
+            {
+                log::info(log::category::script, std::format("{}: {}", label_of(index, script), one_line(line)));
+            }
+        }
     }
 
     ScriptHost::ScriptHost(const Target& target, const Payload& payload, std::uint64_t fallback_interval_ms)
@@ -30,6 +56,8 @@ namespace slopkit::trainer
           engine_ {memory_api(), symbols_.api()}
     {
         states_.resize(scripts_.size());
+        log::info(log::category::script,
+                  std::format("script host: {} script(s), {} class(es)", scripts_.size(), payload.classes.size()));
 
         std::vector<reclass::Member> members;
         members.reserve(payload.classes.size());
@@ -45,6 +73,7 @@ namespace slopkit::trainer
         else
         {
             class_error_ = project.error();
+            log::warning(log::category::script, std::format("class project unavailable: {}", class_error_));
         }
         engine_.set_classes(script::class_index_of(project_));
     }
@@ -165,11 +194,17 @@ namespace slopkit::trainer
             state.interval_ms = 0;
             state.next_update = {};
             note(index, outcome.output, reason_of(outcome.message, outcome.error), true);
+            log_output(index, scripts_[index], state.output);
+            log::warning(log::category::script,
+                         std::format("{} activate failed: {}", label_of(index, scripts_[index]), state.message));
             return std::unexpected(state.message);
         }
 
         note(index, outcome.output, outcome.message, false);
         adopt_interval(index, outcome.interval_ms, now);
+        log::info(log::category::script,
+                  std::format("{} activated, update every {} ms", label_of(index, scripts_[index]), state.interval_ms));
+        log_output(index, scripts_[index], state.output);
         return {};
     }
 
@@ -187,10 +222,14 @@ namespace slopkit::trainer
         state.interval_ms = 0;
         state.next_update = {};
         note(index, outcome.output, reason_of(outcome.message, outcome.error), !outcome.ok);
+        log_output(index, scripts_[index], state.output);
         if (outcome.ok)
         {
+            log::info(log::category::script, std::format("{} deactivated", label_of(index, scripts_[index])));
             return {};
         }
+        log::warning(log::category::script,
+                     std::format("{} deactivate failed: {}", label_of(index, scripts_[index]), state.message));
         return std::unexpected(state.message);
     }
 
@@ -212,6 +251,10 @@ namespace slopkit::trainer
                 states_[index].active      = false;
                 states_[index].interval_ms = 0;
                 note(index, outcome.output, reason_of(outcome.message, outcome.error), true);
+                log_output(index, scripts_[index], states_[index].output);
+                log::warning(
+                    log::category::script,
+                    std::format("{} update failed: {}", label_of(index, scripts_[index]), states_[index].message));
                 continue;
             }
 

@@ -378,12 +378,13 @@ namespace slopkit::trainer::console
     {
         return "usage: slopkit-trainer [--pid N | --name NAME] [--interval MS] [--list]\n"
                "                       [--wait MS] [--set N=VALUE]... [--freeze N]...\n"
-               "                       [--activate N]...\n"
+               "                       [--activate N]... [--verbose]\n"
                "\n"
                "Without attachment flags the trainer attaches to the process name recorded\n"
                "when it was generated. Actions run before the list is printed; without any\n"
                "action flag an interactive console is shown when stdin is a terminal.\n"
-               "Scripts start idle; --activate N ticks script S<N> before the actions run.\n";
+               "Scripts start idle; --activate N ticks script S<N> before the actions run.\n"
+               "--verbose writes debug-level logging to <trainer>.log beside this file.\n";
     }
 
 }

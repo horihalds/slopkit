@@ -116,6 +116,7 @@ recorded when it was generated:
 ./game.trainer --pid 4711 --list          # one-shot: print the rows and exit
 ./game.trainer --pid 4711 --set 1=250 --freeze 1 --wait 900 --list
 ./game.trainer --pid 4711 --activate 1 --wait 500 --list
+./game.trainer --pid 4711 --verbose --activate 1 --wait 500 --list
 ```
 
 A game running under Proton/Wine is a target like any other on Linux: the name a
@@ -150,6 +151,14 @@ until that script is deactivated. A script's own failure marks that one script
 alone. Without a terminal, or with any of the flags above, the trainer prints the
 same rows as text and exits. Exit codes: `0` success, `1` usage error, `2` no
 embedded data, `3` target process not found, `4` memory access failure.
+
+`--verbose` writes slopkit's debug-level log to `<trainer file>.log` beside the
+executable — `game.trainer.log` next to `game.trainer` — and prints that path on
+stderr. A run without the flag records nothing. The file carries the payload the
+trainer was generated from, the process it attached to, each script's activation
+and deactivation, each hook's output and failure, every class-project error and
+every `alloc`/`free`, which is where to look when a script behaves differently in
+a trainer than it does in slopkit.
 
 `./tools/install.sh` configures, builds and installs slopkit with its desktop entry and
 hicolor icons into `~/.local` by default, with no root needed; override the

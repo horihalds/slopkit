@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -231,6 +233,13 @@ namespace
     {
         return std::filesystem::path {SLOPKIT_TMP_DIR} / "trainer_driver" / name / "practice.trainer";
     }
+
+    std::string read_file(const std::filesystem::path& path)
+    {
+        std::ifstream stream {path, std::ios::binary};
+        REQUIRE(stream.good());
+        return std::string {std::istreambuf_iterator<char> {stream}, std::istreambuf_iterator<char> {}};
+    }
 }
 
 TEST_CASE("the trainer lists a value of a running process", "[trainer][driver]")
@@ -249,6 +258,38 @@ TEST_CASE("the trainer lists a value of a running process", "[trainer][driver]")
     CHECK(result.output.find("Health") != std::string::npos);
     CHECK(result.output.find("4 Bytes    100") != std::string::npos);
     CHECK(result.output.find("unresolved") == std::string::npos);
+}
+
+TEST_CASE("verbose logging writes a log file beside the trainer", "[trainer][driver]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    const auto target = spawn_target(0);
+    generate_trainer({value_entry("Health", literal_address(target.address))}, "verbose");
+
+    const auto trainer = generated_trainer("verbose");
+    const auto log     = std::filesystem::path {trainer.string() + ".log"};
+
+    // Nothing is written unless it was asked for, so a trainer behaves exactly as
+    // it did before this flag existed.
+    const auto quiet = run_trainer(trainer, {"--pid", std::to_string(target.pid), "--list"});
+    CHECK(quiet.exit_code == 0);
+    CHECK_FALSE(std::filesystem::exists(log));
+
+    const auto result = run_trainer(trainer, {"--pid", std::to_string(target.pid), "--verbose", "--list"});
+    CHECK(result.exit_code == 0);
+    CHECK(result.output.find("verbose logging to") != std::string::npos);
+
+    REQUIRE(std::filesystem::is_regular_file(log));
+    const std::string text = read_file(log);
+    CHECK(text.find("verbose logging to") != std::string::npos);
+    CHECK(text.find("payload: 1 value entr(ies)") != std::string::npos);
+    CHECK(text.find("attached to pid") != std::string::npos);
+    CHECK(text.find("script host") != std::string::npos);
 }
 
 TEST_CASE("the trainer writes a value into a running process", "[trainer][driver]")

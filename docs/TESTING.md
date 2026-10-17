@@ -267,6 +267,13 @@ rather than the trainer's:
    and a request no cave can satisfy are the two ways it stops, and both are
    reported with the reason the script printed — the second as
    `alloc: the target has no free code cave of <size> byte(s) in its executable memory`.
+5. Rerun any of the above with `--verbose` when a script behaves differently in the
+   trainer than in slopkit: the trainer prints the log path on stderr and writes it
+   to `<trainer file>.log` beside itself (for step 4,
+   `tmp/trainer/<table>.trainer.log`). It must contain the payload's counts, the
+   attach line with the target's pid and pointer width, the script's activation and
+   each hook's output or failure. The end-to-end `verbose logging writes a log file
+   beside the trainer` case covers the same path in the suite.
 
 Verified against Dying Light The Beast under GE-Proton11 through the trainer's own
 attachment path (`src/trainer/runtime/target_linux.cpp`): the name lookup found the

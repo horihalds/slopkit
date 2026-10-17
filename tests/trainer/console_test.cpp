@@ -216,6 +216,7 @@ TEST_CASE("the help and usage text document the script commands", "[trainer][con
     CHECK(help.find("independent") != std::string::npos);
 
     CHECK(slopkit::trainer::console::render_usage().find("--activate N") != std::string::npos);
+    CHECK(slopkit::trainer::console::render_usage().find("--verbose") != std::string::npos);
 }
 
 TEST_CASE("the printed list is the row renderers line by line", "[trainer][console]")

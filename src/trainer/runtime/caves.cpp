@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+
 namespace slopkit::trainer
 {
     namespace
@@ -93,15 +96,23 @@ namespace slopkit::trainer
             const std::vector<std::byte> zeros(size, kFree);
             if (const auto wrote = target_.write(*found, zeros); !wrote)
             {
+                log::debug(log::category::script,
+                           std::format("alloc: region 0x{:x} ({}) refuses the write probe: {}",
+                                       region->start,
+                                       region->name,
+                                       wrote.error()));
                 refused_.push_back(region->start);
                 continue;
             }
             loans_.push_back(Loan {*found, size});
+            log::debug(log::category::script, std::format("alloc: {} byte(s) at 0x{:x}", size, *found));
             return *found;
         }
 
-        return std::unexpected(
-            std::format("the target has no free code cave of {} byte(s) in its executable memory", size));
+        const auto message =
+            std::format("the target has no free code cave of {} byte(s) in its executable memory", size);
+        log::warning(log::category::script, message);
+        return std::unexpected(message);
     }
 
     std::expected<void, std::string> CaveAllocator::deallocate(std::uint64_t address)
@@ -109,6 +120,7 @@ namespace slopkit::trainer
         const auto loan = std::ranges::find(loans_, address, &Loan::address);
         if (loan == loans_.end())
         {
+            log::debug(log::category::script, std::format("free: 0x{:x} is not this session's allocation", address));
             return std::unexpected(std::string {"not this session's allocation"});
         }
 
@@ -117,8 +129,11 @@ namespace slopkit::trainer
         loans_.erase(loan);
         if (!wrote)
         {
+            log::warning(log::category::script,
+                         std::format("free: 0x{:x} could not be zeroed: {}", address, wrote.error()));
             return std::unexpected(wrote.error());
         }
+        log::debug(log::category::script, std::format("free: 0x{:x}", address));
         return {};
     }
 

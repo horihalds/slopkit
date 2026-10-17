@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <filesystem>
 #include <format>
 #include <iostream>
 #include <optional>
@@ -13,10 +14,13 @@
 #include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "scan/types.hpp"
 #include "scan/value.hpp"
 #include "trainer/payload.hpp"
 #include "trainer/runtime/console.hpp"
+#include "trainer/runtime/logging.hpp"
 #include "trainer/runtime/payload_reader.hpp"
 #include "trainer/runtime/resolve.hpp"
 #include "trainer/runtime/scripts.hpp"
@@ -38,6 +42,7 @@ namespace slopkit::trainer
             std::vector<std::size_t>                         freeze;
             std::vector<std::pair<std::size_t, std::string>> set_values;
             std::vector<std::size_t>                         activate;
+            bool                                             verbose {false};
             bool                                             help {false};
 
             [[nodiscard]] bool has_actions() const
@@ -183,6 +188,11 @@ namespace slopkit::trainer
                         return std::unexpected(number.error());
                     }
                     options.activate.push_back(*number);
+                    continue;
+                }
+                if (argument == "--verbose")
+                {
+                    options.verbose = true;
                     continue;
                 }
                 return std::unexpected(std::format("unknown option \"{}\"", argument));
@@ -404,14 +414,41 @@ namespace slopkit::trainer
             return tui::run_tui(payload, live, scripts.states(), pid, interval_ms, perform, step);
         }
 
+        // `--verbose` is the only way a trainer writes a log, so start it before
+        // anything else can report why it stops; an executable that cannot be
+        // located fails the payload read right after and is reported there.
+        void start_verbose_logging()
+        {
+            const auto executable = own_executable_path();
+            if (executable.empty())
+            {
+                std::cerr << "slopkit-trainer: --verbose could not locate this trainer's own executable, so no log "
+                             "is written\n";
+                return;
+            }
+            std::cerr << std::format("slopkit-trainer: verbose logging to {}\n",
+                                     enable_verbose_logging(executable).string());
+        }
+
         int run(const Options& options)
         {
+            if (options.verbose)
+            {
+                start_verbose_logging();
+            }
+
             const auto payload = load_own_payload();
             if (!payload)
             {
+                log::error(log::category::app, std::format("cannot read the payload: {}", payload.error()));
                 std::cerr << "slopkit-trainer: " << payload.error() << "\n";
                 return kExitNoPayload;
             }
+            log::info(log::category::app,
+                      std::format("payload: {} value entr(ies), {} script(s), {} class(es)",
+                                  payload->entries.size(),
+                                  payload->scripts.size(),
+                                  payload->classes.size()));
             if (payload->entries.empty() && payload->scripts.empty())
             {
                 std::cerr << "slopkit-trainer: this trainer carries no entries and no scripts\n";
@@ -431,12 +468,22 @@ namespace slopkit::trainer
                 return kExitUsage;
             }
 
+            log::info(log::category::process,
+                      request.pid != 0 ? std::format("attaching to pid {}", request.pid)
+                                       : std::format("attaching to \"{}\"", request.name));
             const auto target = attach(request);
             if (!target)
             {
+                log::error(log::category::process, target.error().message);
                 std::cerr << "slopkit-trainer: " << target.error().message << "\n";
                 return target.error().not_found ? kExitNoProcess : kExitAccess;
             }
+            log::info(log::category::process,
+                      std::format("attached to pid {}: {}-byte pointers, {} module(s), {} region(s)",
+                                  (*target)->pid(),
+                                  (*target)->pointer_size(),
+                                  (*target)->modules().size(),
+                                  (*target)->regions().size()));
 
             Resolver               resolver {**target, payload->pointer_size};
             std::vector<LiveEntry> live = seed(*payload);

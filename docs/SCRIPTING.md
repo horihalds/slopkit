@@ -414,6 +414,11 @@ there:
   are shown beside it, and a script whose source does not compile or whose hook
   fails is marked `error`, stops ticking and never affects the others. Nothing a
   script does changes the trainer's exit code.
+- `--verbose` writes a debug-level log to `<trainer file>.log` beside the
+  executable: the payload's counts, the attach outcome, each script's activation
+  and deactivation, the lines a hook printed, every hook failure and every
+  `alloc` / `free`, which is where to look when a script behaves differently in a
+  trainer than it does here.
 
 ## Where to look next
 
