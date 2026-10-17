@@ -215,3 +215,11 @@ TEST_CASE("a trainer's own target names a region after the module that owns it",
     CHECK(live.bytes
           == std::vector<std::byte> {std::byte {0xde}, std::byte {0xad}, std::byte {0xbe}, std::byte {0xef}});
 }
+
+TEST_CASE("the Linux trainer keeps the terminal it was given", "[trainer][target]")
+{
+    bool window_list = true;
+
+    CHECK_FALSE(slopkit::trainer::ensure_console_window(window_list).has_value());
+    CHECK_FALSE(window_list);
+}

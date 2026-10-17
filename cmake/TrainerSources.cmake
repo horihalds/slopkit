@@ -80,4 +80,5 @@ list(REMOVE_ITEM SLOPKIT_TRAINER_WINDOWS_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_linux.cpp
     ${SLOPKIT_TRAINER_LINUX_SOURCES})
 list(APPEND SLOPKIT_TRAINER_WINDOWS_SOURCES
-    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_windows.cpp)
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_windows.cpp
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/tui_win32.cpp)

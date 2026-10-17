@@ -331,8 +331,18 @@ namespace slopkit::trainer::tui
                 const std::function<std::uint32_t()>&            pid,
                 std::uint32_t                                    interval_ms,
                 const std::function<std::string(const Action&)>& perform,
-                const std::function<void()>&                     step)
+                const std::function<void()>&                     step,
+                bool                                             console_window)
     {
+#if defined(_WIN32)
+        if (console_window)
+        {
+            return run_window(payload, live, scripts, pid, interval_ms, perform, step);
+        }
+#else
+        static_cast<void>(console_window);
+#endif
+
         Model                   model {payload.entries.size(), scripts};
         std::vector<ftxui::Box> boxes;
 

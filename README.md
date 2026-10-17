@@ -130,6 +130,15 @@ image also decides the pointer width, so a 32-bit game's pointer chains resolve
 with 4-byte pointers even though the loader hosting it is 64-bit. Reading and
 writing that memory follows the same kernel ptrace policy as any other target.
 
+The Windows trainer opens its full-screen list in a console window of its own when
+it was started from a Unix terminal under Wine. Such a process only borrowed that
+terminal, so an interactive run hands itself to a copy started with a new console
+and the original waits and passes its exit code back; the list is painted with the
+Win32 console API there, because a Wine console window does not interpret escape
+sequences. The Unix terminal only keeps what the trainer prints before the window
+opens. A native Windows console, or a Wine console that already has a visible
+window, is used as it is.
+
 With a terminal it opens a full-screen list: click a row to toggle it, or select
 it and press Enter — a click on a value entry freezes or unfreezes it and a click
 on a script row activates or deactivates it. Arrow keys, Page Up/Down, Home and

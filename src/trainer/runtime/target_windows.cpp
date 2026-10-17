@@ -379,4 +379,57 @@ namespace slopkit::trainer
         return ::_isatty(::_fileno(stdin)) != 0;
     }
 
+    std::optional<int> ensure_console_window(bool& window_list)
+    {
+        window_list = false;
+
+        const HMODULE ntdll = ::GetModuleHandleW(L"ntdll.dll");
+        if (ntdll == nullptr || ::GetProcAddress(ntdll, "wine_get_version") == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        // Wine gives a console started from a Unix terminal a hidden window and
+        // keeps reading the terminal itself, and the process cannot move to a
+        // window in place: only a process started with CREATE_NEW_CONSOLE gets
+        // one. The run is therefore handed to a child of that kind, and the
+        // parent waits so the command's lifetime and exit code stay the same.
+        wchar_t    guard[2] {};
+        const bool windowed = ::GetEnvironmentVariableW(L"SLOPKIT_TRAINER_WINDOW", guard, 2) != 0;
+        const HWND window   = ::GetConsoleWindow();
+        if (windowed || (window != nullptr && ::IsWindowVisible(window) != 0))
+        {
+            window_list = true;
+            return std::nullopt;
+        }
+
+        std::wstring command_line {::GetCommandLineW()};
+        static_cast<void>(::SetEnvironmentVariableW(L"SLOPKIT_TRAINER_WINDOW", L"1"));
+        STARTUPINFOW        startup {};
+        PROCESS_INFORMATION child {};
+        startup.cb         = sizeof(startup);
+        const BOOL created = ::CreateProcessW(nullptr,
+                                              command_line.data(),
+                                              nullptr,
+                                              nullptr,
+                                              FALSE,
+                                              CREATE_NEW_CONSOLE,
+                                              nullptr,
+                                              nullptr,
+                                              &startup,
+                                              &child);
+        static_cast<void>(::SetEnvironmentVariableW(L"SLOPKIT_TRAINER_WINDOW", nullptr));
+        if (created == 0)
+        {
+            return std::nullopt;
+        }
+
+        ::CloseHandle(child.hThread);
+        static_cast<void>(::WaitForSingleObject(child.hProcess, INFINITE));
+        DWORD exit_code = 0;
+        static_cast<void>(::GetExitCodeProcess(child.hProcess, &exit_code));
+        ::CloseHandle(child.hProcess);
+        return static_cast<int>(exit_code);
+    }
+
 }

@@ -116,12 +116,26 @@ namespace slopkit::trainer::tui
     // for every draw, since a re-attach changes it. All of them run on the
     // loop's own thread, which is also the one reading the keyboard, so the
     // target is only ever touched from there.
+    // `console_window` asks for the list to be painted with the Win32 console
+    // API instead of FTXUI, which a Wine console window cannot drive.
     int run_tui(const Payload&                                   payload,
                 std::span<const LiveEntry>                       live,
                 std::span<const ScriptState>                     scripts,
                 const std::function<std::uint32_t()>&            pid,
                 std::uint32_t                                    interval_ms,
                 const std::function<std::string(const Action&)>& perform,
-                const std::function<void()>&                     step);
+                const std::function<void()>&                     step,
+                bool                                             console_window);
+
+#if defined(_WIN32)
+    // The `console_window` variant of `run_tui`, in `tui_win32.cpp`.
+    int run_window(const Payload&                                   payload,
+                   std::span<const LiveEntry>                       live,
+                   std::span<const ScriptState>                     scripts,
+                   const std::function<std::uint32_t()>&            pid,
+                   std::uint32_t                                    interval_ms,
+                   const std::function<std::string(const Action&)>& perform,
+                   const std::function<void()>&                     step);
+#endif
 
 }

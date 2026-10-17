@@ -1030,16 +1030,33 @@ value entry's freeze flag, a script's activation — and the keyboard keeps the 
 command set above. The state (`tui::Model`: rows, selection, scroll window, input
 line, status message) knows neither FTXUI nor the target, so the interaction is
 unit-testable without a terminal, and `tui::run_tui` only renders it and maps
-events to a `tui::Action`. The actions are applied by `main.cpp` to the same
-`ScriptHost`, `Resolver` and `LiveEntry` state the non-interactive flags drive, on
-the loop's own thread — script ticking and value refreshing happen through the
-`step` callback the FTXUI loop calls on the interval, never on a second thread, so
-target access cannot race. The rows themselves are rendered by `console.cpp`, so
+events to a `tui::Action`; a Wine console window that cannot draw escape
+sequences is served by `tui::run_window` (`tui_win32.cpp`), which drives the same
+`Model` through the Win32 console API. The actions are applied by `main.cpp` to
+the same `ScriptHost`, `Resolver` and `LiveEntry` state the non-interactive flags
+drive, on the loop's own thread — script ticking and value refreshing happen
+through the `step` callback the loop calls on the interval, never on a second
+thread, so target access cannot race. The rows themselves are rendered by `console.cpp`, so
 the list and the printed output cannot drift apart. The non-interactive flags
 (`--list`, `--set N=VALUE`, `--freeze N`, `--activate N`, `--interval`, `--wait`)
 drive the same actions without a TTY, so the trainer can be scripted or run by a
 test; without them and with a terminal it runs the full-screen list, and the exit
 codes are the ones `README.md` documents.
+
+The Windows build enters the full-screen list in a console window of its own when
+the trainer was started from a Unix terminal under Wine. Wine gives such a process
+a hidden console window whose input and output are that terminal, and the process
+cannot move to a window in place: only a process started with
+`CREATE_NEW_CONSOLE` gets one. An interactive run therefore hands itself to a
+child started that way (`CreateProcessW` in `ensure_console_window`,
+`target_windows.cpp`) and waits for it, passing its exit code back; the
+`SLOPKIT_TRAINER_WINDOW` environment variable stops the child from repeating the
+hand-off. The child's console window does not interpret escape sequences, so
+`run_window` (`tui_win32.cpp`) paints the same `Model` and the same rows and help
+text that FTXUI gets through `WriteConsoleOutputW`, reading the keyboard and mouse
+as console input and calling the same `step` on the interval. A native Windows
+console and a Wine console that already has a visible window run FTXUI directly,
+and the Linux build's `ensure_console_window` does nothing.
 
 A trainer installs no log sink of its own, so an ordinary run writes nothing.
 `--verbose` (`src/trainer/runtime/logging.cpp`) raises slopkit's logger to `debug`,

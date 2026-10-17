@@ -93,4 +93,10 @@ namespace slopkit::trainer
     // is printed once and the trainer exits.
     [[nodiscard]] bool stdin_is_terminal();
 
+    // Hands the run to itself in a console window and returns that run's exit
+    // code when the trainer only borrowed a Wine console from a Unix terminal.
+    // Sets `window_list` when the interactive list has to be painted with the
+    // Win32 console API instead of FTXUI, which such a console cannot drive.
+    [[nodiscard]] std::optional<int> ensure_console_window(bool& window_list);
+
 }

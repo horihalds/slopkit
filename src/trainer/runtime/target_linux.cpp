@@ -434,4 +434,10 @@ namespace slopkit::trainer
         return ::isatty(STDIN_FILENO) != 0;
     }
 
+    std::optional<int> ensure_console_window(bool& window_list)
+    {
+        window_list = false;
+        return std::nullopt;
+    }
+
 }

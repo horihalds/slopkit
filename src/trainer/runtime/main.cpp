@@ -605,7 +605,8 @@ namespace slopkit::trainer
                         ScriptHost&             scripts,
                         Resolver&               resolver,
                         std::vector<LiveEntry>& live,
-                        std::uint32_t           interval_ms)
+                        std::uint32_t           interval_ms,
+                        bool                    console_window)
         {
             const auto perform = [&](const tui::Action& action)
             {
@@ -637,7 +638,8 @@ namespace slopkit::trainer
                 },
                 interval_ms,
                 perform,
-                step);
+                step,
+                console_window);
         }
 
         // `--verbose` is the only way a trainer writes a log, so start it before
@@ -656,7 +658,7 @@ namespace slopkit::trainer
                                      enable_verbose_logging(executable).string());
         }
 
-        int run(const Options& options)
+        int run(const Options& options, bool window_list)
         {
             if (options.verbose)
             {
@@ -831,7 +833,7 @@ namespace slopkit::trainer
                 return kExitOk;
             }
 
-            return interactive(*payload, session, scripts, resolver, live, options.interval_ms);
+            return interactive(*payload, session, scripts, resolver, live, options.interval_ms, window_list);
         }
     }
 
@@ -848,7 +850,18 @@ namespace slopkit::trainer
             std::cout << console::render_usage();
             return kExitOk;
         }
-        return run(*options);
+
+        // An interactive run may have to move to a console window before it
+        // attaches, so the borrowed terminal never sees the list.
+        bool window_list = false;
+        if (!options->has_actions() && stdin_is_terminal())
+        {
+            if (const auto exit_code = ensure_console_window(window_list))
+            {
+                return *exit_code;
+            }
+        }
+        return run(*options, window_list);
     }
 
 }
