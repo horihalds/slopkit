@@ -21,6 +21,7 @@
 #include "trainer/runtime/resolve.hpp"
 #include "trainer/runtime/scripts.hpp"
 #include "trainer/runtime/target.hpp"
+#include "trainer/runtime/tui.hpp"
 
 namespace slopkit::trainer
 {
@@ -293,6 +294,95 @@ namespace slopkit::trainer
             }
         }
 
+        // One interactive action, applied to the session; the returned text is the
+        // message the list shows. Everything it touches stays on the loop's own
+        // thread, so the target is never reached from a second one.
+        std::string apply_action(const tui::Action&      action,
+                                 const Payload&          payload,
+                                 ScriptHost&             scripts,
+                                 Resolver&               resolver,
+                                 std::vector<LiveEntry>& live)
+        {
+            const auto entry_error = [&payload, &action]
+            {
+                return std::format(
+                    "this trainer carries {} entries, so there is no entry {}", payload.entries.size(), action.index);
+            };
+            const auto script_error = [&scripts, &action]
+            {
+                return std::format("this trainer carries {} script{}, so there is no script {}",
+                                   scripts.size(),
+                                   scripts.size() == 1 ? "" : "s",
+                                   action.index);
+            };
+
+            switch (action.kind)
+            {
+            case tui::Action::Kind::none:
+            case tui::Action::Kind::quit:
+                return {};
+            case tui::Action::Kind::refresh:
+                resolver.refresh_modules();
+                tick_scripts(scripts, resolver);
+                rewrite_frozen(payload, resolver, live);
+                refresh_all(payload, resolver, live);
+                return {};
+            case tui::Action::Kind::freeze:
+            {
+                if (action.index == 0 || action.index > payload.entries.size())
+                {
+                    return entry_error();
+                }
+                auto& state  = live[action.index - 1];
+                state.frozen = !state.frozen;
+                if (state.frozen && !state.bytes.empty())
+                {
+                    if (const auto written = resolver.write(payload.entries[action.index - 1], state, state.bytes);
+                        !written)
+                    {
+                        return written.error();
+                    }
+                }
+                return {};
+            }
+            case tui::Action::Kind::set_value:
+            {
+                if (action.index == 0 || action.index > payload.entries.size())
+                {
+                    return entry_error();
+                }
+                return apply_set(resolver, payload.entries[action.index - 1], live[action.index - 1], action.value)
+                    .value_or(std::string {});
+            }
+            case tui::Action::Kind::activate_script:
+            case tui::Action::Kind::deactivate_script:
+            {
+                if (action.index == 0 || action.index > scripts.size())
+                {
+                    return script_error();
+                }
+
+                const auto outcome = action.kind == tui::Action::Kind::activate_script
+                                       ? scripts.activate(action.index - 1)
+                                       : scripts.deactivate(action.index - 1);
+                resolver.set_symbols(scripts.symbols());
+
+                // The hook's own output is the interesting part; a failure adds why.
+                auto message = scripts.output_text(action.index - 1);
+                if (!outcome.has_value())
+                {
+                    if (!message.empty())
+                    {
+                        message += " | ";
+                    }
+                    message += outcome.error();
+                }
+                return message;
+            }
+            }
+            return {};
+        }
+
         int interactive(const Payload&          payload,
                         ScriptHost&             scripts,
                         Resolver&               resolver,
@@ -300,121 +390,18 @@ namespace slopkit::trainer
                         std::uint32_t           pid,
                         std::uint32_t           interval_ms)
         {
-            auto next_draw = std::chrono::steady_clock::time_point {};
-
-            while (true)
+            const auto perform = [&](const tui::Action& action)
             {
-                const auto now = std::chrono::steady_clock::now();
-                if (now >= next_draw)
-                {
-                    tick_scripts(scripts, resolver);
-                    rewrite_frozen(payload, resolver, live);
-                    refresh_all(payload, resolver, live);
+                return apply_action(action, payload, scripts, resolver, live);
+            };
+            const auto step = [&]
+            {
+                tick_scripts(scripts, resolver);
+                rewrite_frozen(payload, resolver, live);
+                refresh_all(payload, resolver, live);
+            };
 
-                    clear_screen();
-                    std::cout << console::render_header(payload, pid)
-                              << console::render_rows(payload, live, scripts.states()) << "slopkit-trainer> "
-                              << std::flush;
-                    next_draw = now + std::chrono::milliseconds {interval_ms};
-                }
-
-                const auto input = read_line(interval_ms);
-                if (input.status == InputStatus::closed)
-                {
-                    break;
-                }
-                if (input.status == InputStatus::idle)
-                {
-                    continue;
-                }
-
-                const auto command = console::parse_command(input.line);
-                switch (command.kind)
-                {
-                case console::CommandKind::none:
-                case console::CommandKind::list:
-                    break;
-                case console::CommandKind::quit:
-                    return kExitOk;
-                case console::CommandKind::help:
-                    std::cout << console::render_help();
-                    break;
-                case console::CommandKind::refresh:
-                    resolver.refresh_modules();
-                    refresh_all(payload, resolver, live);
-                    rewrite_frozen(payload, resolver, live);
-                    break;
-                case console::CommandKind::freeze:
-                case console::CommandKind::set_value:
-                case console::CommandKind::activate_script:
-                case console::CommandKind::deactivate_script:
-                case console::CommandKind::invalid:
-                    break;
-                }
-
-                if (command.kind == console::CommandKind::invalid)
-                {
-                    std::cout << std::format("unrecognized input \"{}\"; press ? for help\n", command.text);
-                    next_draw = {};
-                    continue;
-                }
-                if (command.kind == console::CommandKind::activate_script
-                    || command.kind == console::CommandKind::deactivate_script)
-                {
-                    if (command.index == 0 || command.index > scripts.size())
-                    {
-                        std::cout << std::format("this trainer carries {} script{}, so there is no script {}\n",
-                                                 scripts.size(),
-                                                 scripts.size() == 1 ? "" : "s",
-                                                 command.index);
-                    }
-                    else
-                    {
-                        run_script_command(
-                            scripts, resolver, command.kind == console::CommandKind::activate_script, command.index);
-                    }
-                    next_draw = {};
-                    continue;
-                }
-                if (command.kind != console::CommandKind::freeze && command.kind != console::CommandKind::set_value)
-                {
-                    next_draw = {};
-                    continue;
-                }
-                if (command.index == 0 || command.index > payload.entries.size())
-                {
-                    std::cout << std::format("this trainer carries {} entries, so there is no entry {}\n",
-                                             payload.entries.size(),
-                                             command.index);
-                    next_draw = {};
-                    continue;
-                }
-
-                const auto position = command.index - 1;
-                if (command.kind == console::CommandKind::freeze)
-                {
-                    auto& state  = live[position];
-                    state.frozen = !state.frozen;
-                    if (state.frozen && !state.bytes.empty())
-                    {
-                        if (const auto written = resolver.write(payload.entries[position], state, state.bytes);
-                            !written)
-                        {
-                            std::cout << std::format("{}\n", written.error());
-                        }
-                    }
-                }
-                else if (const auto message =
-                             apply_set(resolver, payload.entries[position], live[position], command.value);
-                         message)
-                {
-                    std::cout << std::format("{}\n", *message);
-                }
-
-                next_draw = {};
-            }
-
-            return kExitOk;
+            return tui::run_tui(payload, live, scripts.states(), pid, interval_ms, perform, step);
         }
 
         int run(const Options& options)

@@ -23,7 +23,7 @@ add_executable(slopkit-trainer-template ${SLOPKIT_TRAINER_WINDOWS_SOURCES})
 target_include_directories(slopkit-trainer-template PRIVATE ${SLOPKIT_SOURCE_ROOT}/src)
 target_compile_options(slopkit-trainer-template PRIVATE -Wall -Wextra)
 # psapi backs the Windows target backend's module enumeration.
-target_link_libraries(slopkit-trainer-template PRIVATE sol2::sol2 Zydis slopkit_lua psapi)
+target_link_libraries(slopkit-trainer-template PRIVATE sol2::sol2 Zydis slopkit_lua ftxui::component psapi)
 set_target_properties(slopkit-trainer-template PROPERTIES
     OUTPUT_NAME slopkit-trainer
     RUNTIME_OUTPUT_DIRECTORY "${SLOPKIT_TRAINER_OUTPUT_DIR}")

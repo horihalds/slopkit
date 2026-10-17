@@ -311,26 +311,39 @@ namespace slopkit::trainer::console
                            payload.pointer_size);
     }
 
+    std::string render_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number)
+    {
+        const auto address = state.address == 0 ? std::string {"-"} : std::format("0x{:012x}", state.address);
+        const auto value =
+            state.bytes.empty() ? std::string {"?"} : scan::format_value(entry.type, state.bytes, entry.hex);
+
+        return std::format("{:>3}  {:<24}  {:<14}  {:<9}  {:<18}{}",
+                           number,
+                           shorten(entry.description),
+                           address,
+                           scan::describe(entry.type),
+                           value,
+                           annotations(entry, state));
+    }
+
+    std::string render_script_row(const PayloadScript& script, const ScriptState& state, std::size_t number)
+    {
+        return std::format("S{}  {:<24}  {:<14}  {:<9}  {}",
+                           number,
+                           shorten(script.description),
+                           script_state(state),
+                           script_interval(state),
+                           script_message(state));
+    }
+
     std::string
     render_rows(const Payload& payload, std::span<const LiveEntry> live, std::span<const ScriptState> scripts)
     {
         std::string text;
         for (std::size_t position = 0; position < payload.entries.size() && position < live.size(); ++position)
         {
-            const auto& entry = payload.entries[position];
-            const auto& state = live[position];
-
-            const auto address = state.address == 0 ? std::string {"-"} : std::format("0x{:012x}", state.address);
-            const auto value =
-                state.bytes.empty() ? std::string {"?"} : scan::format_value(entry.type, state.bytes, entry.hex);
-
-            text += std::format("{:>3}  {:<24}  {:<14}  {:<9}  {:<18}{}\n",
-                                position + 1,
-                                shorten(entry.description),
-                                address,
-                                scan::describe(entry.type),
-                                value,
-                                annotations(entry, state));
+            text += render_value_row(payload.entries[position], live[position], position + 1);
+            text += '\n';
         }
 
         // Scripts are a second numbering space: the rows above stay 1..N and a
@@ -341,13 +354,8 @@ namespace slopkit::trainer::console
         }
         for (std::size_t position = 0; position < scripts.size() && position < payload.scripts.size(); ++position)
         {
-            const auto& state = scripts[position];
-            text += std::format("S{}  {:<24}  {:<14}  {:<9}  {}\n",
-                                position + 1,
-                                shorten(payload.scripts[position].description),
-                                script_state(state),
-                                script_interval(state),
-                                script_message(state));
+            text += render_script_row(payload.scripts[position], scripts[position], position + 1);
+            text += '\n';
         }
         return text;
     }

@@ -76,28 +76,11 @@ namespace slopkit::trainer
 
     [[nodiscard]] std::expected<std::unique_ptr<Target>, AttachError> attach(const AttachRequest& request);
 
-    enum class InputStatus
-    {
-        line,
-        idle,
-        closed,
-    };
-
-    struct InputResult
-    {
-        InputStatus status {InputStatus::idle};
-        std::string line;
-    };
-
     // The path of the running executable, where the generator appended the payload.
     [[nodiscard]] std::filesystem::path own_executable_path();
 
-    // Reads one console line if one arrives within `timeout_ms`; `idle` lets the
-    // caller redraw, and `closed` ends the interactive loop.
-    [[nodiscard]] InputResult read_line(std::uint32_t timeout_ms);
-
+    // Whether the interactive mode has a terminal to draw in; without one the list
+    // is printed once and the trainer exits.
     [[nodiscard]] bool stdin_is_terminal();
-
-    void clear_screen();
 
 }

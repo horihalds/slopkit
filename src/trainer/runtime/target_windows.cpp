@@ -354,99 +354,9 @@ namespace slopkit::trainer
         }
     }
 
-    InputResult read_line(std::uint32_t timeout_ms)
-    {
-        static std::string pending;
-
-        if (stdin_is_terminal())
-        {
-            // A console has no pollable stdin; the line is assembled character by
-            // character, and only a complete one is reported.
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds {timeout_ms};
-            while (std::chrono::steady_clock::now() < deadline)
-            {
-                if (::_kbhit() == 0)
-                {
-                    std::this_thread::sleep_for(std::chrono::milliseconds {10});
-                    continue;
-                }
-
-                const int character = ::_getch();
-                if (character == '\r' || character == '\n')
-                {
-                    std::fputs("\n", stdout);
-                    auto line = pending;
-                    pending.clear();
-                    return InputResult {InputStatus::line, std::move(line)};
-                }
-                if (character == '\b' || character == 127)
-                {
-                    if (!pending.empty())
-                    {
-                        pending.pop_back();
-                        std::fputs("\b \b", stdout);
-                    }
-                    continue;
-                }
-                pending.push_back(static_cast<char>(character));
-                std::fputc(character, stdout);
-            }
-            return InputResult {InputStatus::idle, {}};
-        }
-
-        const auto input = ::GetStdHandle(STD_INPUT_HANDLE);
-        if (input == nullptr || input == INVALID_HANDLE_VALUE)
-        {
-            return InputResult {InputStatus::closed, {}};
-        }
-        const auto ready = ::WaitForSingleObject(input, timeout_ms);
-        if (ready == WAIT_TIMEOUT)
-        {
-            return InputResult {InputStatus::idle, {}};
-        }
-        if (ready != WAIT_OBJECT_0)
-        {
-            return InputResult {InputStatus::closed, {}};
-        }
-
-        char  buffer[256];
-        DWORD read = 0;
-        if (::ReadFile(input, buffer, sizeof(buffer), &read, nullptr) == 0 || read == 0)
-        {
-            return InputResult {InputStatus::closed, {}};
-        }
-        pending.append(buffer, read);
-
-        const auto newline = pending.find('\n');
-        if (newline == std::string::npos)
-        {
-            return InputResult {InputStatus::idle, {}};
-        }
-
-        auto line = pending.substr(0, newline);
-        pending.erase(0, newline + 1);
-        if (!line.empty() && line.back() == '\r')
-        {
-            line.pop_back();
-        }
-        return InputResult {InputStatus::line, std::move(line)};
-    }
-
     bool stdin_is_terminal()
     {
         return ::_isatty(::_fileno(stdin)) != 0;
-    }
-
-    void clear_screen()
-    {
-        const auto output = ::GetStdHandle(STD_OUTPUT_HANDLE);
-        DWORD      mode   = 0;
-        if (output != nullptr && output != INVALID_HANDLE_VALUE && ::GetConsoleMode(output, &mode) != 0)
-        {
-            ::SetConsoleMode(output, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-        }
-        std::fputs("\x1b[2J\x1b[H", stdout);
-        std::fflush(stdout);
     }
 
 }

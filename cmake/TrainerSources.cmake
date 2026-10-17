@@ -13,7 +13,8 @@ set(SLOPKIT_TRAINER_RUNTIME_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/payload_reader.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/resolve.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/scripts.cpp
-    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_linux.cpp)
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_linux.cpp
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/tui.cpp)
 
 # The application's Lua engine and its Qt-free dependencies (the reclass class
 # project, the Zydis-backed assembler and scan/pattern). Kept out of the runtime

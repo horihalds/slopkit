@@ -380,8 +380,9 @@ into the trainer it writes, and the trainer runs it through the same engine
 slopkit uses, so a script that reproduces a table's behaviour here reproduces it
 there:
 
-- Scripts start **idle**: nothing runs until one is activated. The console's
-  `a<N>` activates script `S<N>` and `d<N>` deactivates it, and the repeatable
+- Scripts start **idle**: nothing runs until one is activated. In the trainer's
+  interactive list a click on a script's row toggles it, and a typed `a<N>`
+  activates script `S<N>` while `d<N>` deactivates it; the repeatable
   `--activate N` does the same before the requested actions run.
 - `activate`, `deactivate` and `update` behave as described above, with the
   trainer's `--interval` (250 ms by default) as the fallback cadence;

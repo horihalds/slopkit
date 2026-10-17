@@ -217,3 +217,28 @@ TEST_CASE("the help and usage text document the script commands", "[trainer][con
 
     CHECK(slopkit::trainer::console::render_usage().find("--activate N") != std::string::npos);
 }
+
+TEST_CASE("the printed list is the row renderers line by line", "[trainer][console]")
+{
+    auto payload = single_entry_table();
+    payload.scripts.push_back(PayloadScript {"No reload", "return true"});
+
+    std::vector<std::byte> bytes(4, std::byte {0});
+    bytes[0] = std::byte {42};
+
+    LiveEntry live;
+    live.address  = 0x7f2a12345678;
+    live.resolved = true;
+    live.bytes    = bytes;
+
+    std::vector<ScriptState> states(1);
+    states[0].active      = true;
+    states[0].interval_ms = 250;
+
+    // The interactive list paints these one row at a time, so a row has to render
+    // identically whether it is printed or painted.
+    const auto rows     = render_rows(payload, std::span {&live, 1}, states);
+    const auto expected = slopkit::trainer::console::render_value_row(payload.entries[0], live, 1) + "\n\n"
+                        + slopkit::trainer::console::render_script_row(payload.scripts[0], states[0], 1) + "\n";
+    CHECK(rows == expected);
+}

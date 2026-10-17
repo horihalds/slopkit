@@ -37,12 +37,12 @@ offers to cancel, overwrite the open table or merge the file.
 Dependencies (from the system repositories): CMake and Ninja, a C++23 compiler,
 the libzip development package (e.g. Fedora's `libzip-devel`) with `pkg-config`,
 Catch2, Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick
-(build-time only, for the icon set). Lua, sol2 and Zydis are not system packages:
-CMake fetches them with `FetchContent` — sol2 and Zydis from their repositories
-at pinned revisions, Lua from the Lua team's official 5.4.7 release tarball,
-pinned by its SHA-256 — so the first configure needs network access and downloads
-each once into `build/_deps`, which the Windows trainer template's cross-build
-reuses. The
+(build-time only, for the icon set). Lua, sol2, Zydis and FTXUI are not system
+packages: CMake fetches them with `FetchContent` — sol2, Zydis and FTXUI from
+their repositories at pinned revisions, Lua from the Lua team's official 5.4.7
+release tarball, pinned by its SHA-256 — so the first configure needs network
+access and downloads each once into `build/_deps`, which the Windows trainer
+template's cross-build reuses. The
 Wine/Proton resident agent is cross-compiled and
 needs the mingw-w64 compilers for both bitnesses (`x86_64-w64-mingw32-gcc` and
 `i686-w64-mingw32-gcc`); without them the build uses a prebuilt agent under
@@ -112,30 +112,37 @@ A generated trainer attaches to `--pid`, else `--name`, else the process name
 recorded when it was generated:
 
 ```sh
-./game.trainer                            # interactive console, four refreshes a second
+./game.trainer                            # the interactive list, refreshed four times a second
 ./game.trainer --pid 4711 --list          # one-shot: print the rows and exit
 ./game.trainer --pid 4711 --set 1=250 --freeze 1 --wait 900 --list
 ./game.trainer --pid 4711 --activate 1 --wait 500 --list
 ```
 
-The console lists the value entries as `1..N` — index, description, resolved
+With a terminal it opens a full-screen list: click a row to toggle it, or select
+it and press Enter — a click on a value entry freezes or unfreezes it and a click
+on a script row activates or deactivates it. Arrow keys, Page Up/Down, Home and
+End move the selection and the wheel scrolls. Typing letters starts a command,
+which Enter runs: `f<N>` toggles freeze, `s <N> <value>` writes a value (hex
+honouring the entry's hex flag), `a<N>` activates script `S<N>` and `d<N>`
+deactivates it (each running the script's `activate` / `deactivate` hook), `r`
+re-resolves, `l` redraws, `?` shows the help and `q` quits.
+
+The list shows the value entries as `1..N` — index, description, resolved
 address, type, value and a frozen marker — and then the scripts as `S1..Sm`, with
 each script's state (`idle`, `active` or `error`), tick interval and last
-message. `f<N>` toggles freeze, `s <N> <value>` writes a value (hex honouring the
-entry's hex flag), `a<N>` activates script `S<N>` and `d<N>` deactivates it (each
-running the script's `activate` / `deactivate` hook), `r` re-resolves, `l`
-re-lists, `q` quits. The two numberings are independent, so `f1` never touches
-`S1`. Frozen entries are re-written on every tick, and an active script's
-`update` hook runs on the interval it asks for, else `--interval` (250 ms by
-default), both inside `--wait` and in the interactive console. `--activate N` is
-repeatable and ticks a script before the requested actions run, so a headless run
-starts only the scripts it trusts — scripts always start idle otherwise. An entry
-whose expression cannot resolve shows the address recorded at generation time
-with an `unresolved` marker and is never written to; a symbol a script published
-resolves such expressions until that script is deactivated. A script's own
-failure marks that one script `error`, is reported on stderr and leaves the
-other scripts and the exit code alone. Exit codes: `0` success, `1` usage error,
-`2` no embedded data, `3` target process not found, `4` memory access failure.
+message. The two numberings are independent, so `f1` never touches `S1`. Frozen
+entries are re-written on every tick, and an active script's `update` hook runs on
+the interval it asks for, else `--interval` (250 ms by default), both inside
+`--wait` and in the interactive list. `--activate N` is repeatable and ticks a
+script before the requested actions run, so a headless run starts only the scripts
+it trusts — scripts always start idle otherwise. An entry whose expression cannot
+resolve shows the address recorded at generation time with an `unresolved` marker
+and is never written to; a symbol a script published resolves such expressions
+until that script is deactivated. A script's own failure marks that one script
+`error`, is reported in the list and leaves the other scripts and the exit code
+alone. Without a terminal, or with any of the flags above, the trainer prints the
+same rows as text and exits. Exit codes: `0` success, `1` usage error, `2` no
+embedded data, `3` target process not found, `4` memory access failure.
 
 `./tools/install.sh` configures, builds and installs slopkit with its desktop entry and
 hicolor icons into `~/.local` by default, with no root needed; override the

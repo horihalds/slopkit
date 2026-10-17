@@ -37,11 +37,14 @@ executables, a `.debug/` sub-directory for the plugins), so `gdb` on an installe
 binary still resolves source lines. Pass `-DSLOPKIT_STRIP_INSTALL=OFF` to install
 them verbatim.
 
-Lua, sol2 and Zydis are not system packages: the first configure fetches them
-through `FetchContent` (see `cmake/Dependencies.cmake`) — sol2 and Zydis from
-their repositories at pinned revisions, Lua from the official 5.4.7 release
-tarball pinned by its SHA-256 — so it needs network access and the downloads land
-in `build/_deps`. The Windows trainer
+Lua, sol2, Zydis and FTXUI are not system packages: the first configure fetches
+them through `FetchContent` (see `cmake/Dependencies.cmake`) — sol2, Zydis and
+FTXUI from their repositories at pinned revisions, Lua from the official 5.4.7
+release tarball pinned by its SHA-256 — so it needs network access and the
+downloads land in `build/_deps`. FTXUI is built statically for both targets, as
+the trainer must stay one file, and its examples, tests, docs, modules, dev
+warnings and install rules are switched off so its diagnostics never reach the
+warning-free stage. The Windows trainer
 template is a nested mingw cross-build (`cmake/TrainerTemplate.cmake`) that
 reuses those downloads and builds the same runtime plus the script engine into
 `slopkit-trainer.exe`; without `x86_64-w64-mingw32-gcc`/`-g++` it is skipped with
@@ -243,6 +246,10 @@ instead. No second host architecture is involved — the i686 agent is a PE for 
   `cmake --build build --target slopkit_tests 2>&1 | grep -E "error:|FAILED|warning:"`.
 - Extra arguments are forwarded to ctest, so a targeted run reuses the entry
   point: `./tools/verify.sh -R "<test name>"`.
+- The trainer's interactive list needs a real terminal, so the suite cannot click
+  it: `tests/trainer/tui_test.cpp` covers the list model without one, and the view
+  is checked by hand against a built template
+  (`./build/trainer/slopkit-trainer --pid $$` in a terminal).
 
 ## Formatting
 

@@ -377,73 +377,9 @@ namespace slopkit::trainer
         return error ? std::filesystem::path {} : path;
     }
 
-    InputResult read_line(std::uint32_t timeout_ms)
-    {
-        static std::string pending;
-
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds {timeout_ms};
-        while (true)
-        {
-            if (const auto newline = pending.find('\n'); newline != std::string::npos)
-            {
-                auto line = pending.substr(0, newline);
-                pending.erase(0, newline + 1);
-                if (!line.empty() && line.back() == '\r')
-                {
-                    line.pop_back();
-                }
-                return InputResult {InputStatus::line, std::move(line)};
-            }
-
-            const auto now = std::chrono::steady_clock::now();
-            if (now >= deadline)
-            {
-                return InputResult {InputStatus::idle, {}};
-            }
-            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
-
-            pollfd     descriptor {STDIN_FILENO, POLLIN, 0};
-            const auto ready = ::poll(&descriptor, 1, static_cast<int>(remaining));
-            if (ready == 0)
-            {
-                return InputResult {InputStatus::idle, {}};
-            }
-            if (ready < 0)
-            {
-                if (errno == EINTR)
-                {
-                    continue;
-                }
-                return InputResult {InputStatus::closed, {}};
-            }
-
-            char       buffer[256];
-            const auto count = ::read(STDIN_FILENO, buffer, sizeof(buffer));
-            if (count == 0)
-            {
-                return InputResult {InputStatus::closed, {}};
-            }
-            if (count < 0)
-            {
-                if (errno == EINTR || errno == EAGAIN)
-                {
-                    continue;
-                }
-                return InputResult {InputStatus::closed, {}};
-            }
-            pending.append(buffer, static_cast<std::size_t>(count));
-        }
-    }
-
     bool stdin_is_terminal()
     {
         return ::isatty(STDIN_FILENO) != 0;
-    }
-
-    void clear_screen()
-    {
-        std::fputs("\x1b[2J\x1b[H", stdout);
-        std::fflush(stdout);
     }
 
 }

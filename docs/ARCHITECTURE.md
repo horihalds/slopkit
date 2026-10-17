@@ -939,7 +939,7 @@ deactivating the script takes them away again. Every hook's output is printed, a
 failing hook marks that one script `error` and stops ticking it: no script can abort
 the trainer or change its exit code.
 
-The console shows the value entries as `1..N` — index, description, resolved
+The list shows the value entries as `1..N` — index, description, resolved
 address, value type, value and the frozen and unresolved markers — and then the
 scripts as `S1..Sm` with their state, tick interval and last message, refreshing
 about four times a second. `f<N>` freezes or unfreezes an entry, `s <N> <value>`
@@ -947,17 +947,30 @@ writes one (parsing in the entry's own hex flag), `a<N>` / `d<N>` activate and
 deactivate script `S<N>`, `r` re-resolves every expression, `l` redraws and `q`
 quits; the two numberings are independent and the help text says so. Frozen entries
 are re-written on every tick, which is what lets the trainer hold a value a game
-keeps overwriting. The non-interactive flags (`--list`, `--set N=VALUE`,
-`--freeze N`, `--activate N`, `--interval`, `--wait`) drive the same actions without
-a TTY, so the trainer can be scripted or run by a test; without them and with a
-terminal it runs the interactive loop, and the exit codes are the ones `README.md`
-documents.
+keeps overwriting.
+
+With a terminal, the interactive mode is a full-screen FTXUI list
+(`src/trainer/runtime/tui.{hpp,cpp}`): a click or Enter on a row toggles it — a
+value entry's freeze flag, a script's activation — and the keyboard keeps the whole
+command set above. The state (`tui::Model`: rows, selection, scroll window, input
+line, status message) knows neither FTXUI nor the target, so the interaction is
+unit-testable without a terminal, and `tui::run_tui` only renders it and maps
+events to a `tui::Action`. The actions are applied by `main.cpp` to the same
+`ScriptHost`, `Resolver` and `LiveEntry` state the non-interactive flags drive, on
+the loop's own thread — script ticking and value refreshing happen through the
+`step` callback the FTXUI loop calls on the interval, never on a second thread, so
+target access cannot race. The rows themselves are rendered by `console.cpp`, so
+the list and the printed output cannot drift apart. The non-interactive flags
+(`--list`, `--set N=VALUE`, `--freeze N`, `--activate N`, `--interval`, `--wait`)
+drive the same actions without a TTY, so the trainer can be scripted or run by a
+test; without them and with a terminal it runs the full-screen list, and the exit
+codes are the ones `README.md` documents.
 
 The templates live in the build tree (`SLOPKIT_TRAINER_DIR`) and, once installed,
 next to the plugins (`SLOPKIT_TRAINER_RELATIVE_DIR`), which is where the generator
 looks. The Linux one is the `slopkit-trainer` target itself. The Windows one is a
 nested CMake cross-build (`cmake/TrainerTemplate.cmake` over
 `cmake/toolchain-mingw64.cmake`, driven by `cmake/Trainer.cmake`) of the same source
-list and the same dependency declarations, so it links the same fetched Lua, sol2
-and Zydis as the host build and, like it, statically links the C++ and mingw
+list and the same dependency declarations, so it links the same fetched Lua, sol2,
+Zydis and FTXUI as the host build and, like it, statically links the C++ and mingw
 runtimes: it needs no DLL on the target machine.

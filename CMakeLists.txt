@@ -145,10 +145,10 @@ set(CMAKE_AUTOMOC ON)
 # --- system dependencies ---------------------------------------------------
 #
 # libzip backs the `.skt` archive container and comes from the system
-# repositories (e.g. Fedora `libzip-devel`). sol2, Lua and Zydis are fetched
-# instead (see cmake/Dependencies.cmake): sol2 and Zydis from their repositories
-# at pinned revisions, Lua from the official 5.4.7 release tarball pinned by its
-# SHA-256.
+# repositories (e.g. Fedora `libzip-devel`). sol2, Lua, Zydis and FTXUI are
+# fetched instead (see cmake/Dependencies.cmake): sol2, Zydis and FTXUI from their
+# repositories at pinned revisions, Lua from the official 5.4.7 release tarball
+# pinned by its SHA-256.
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
@@ -324,8 +324,8 @@ slopkit_add_icon_resources(slopkit-sandbox)
 # The same sources are cross-compiled into the Windows template by
 # cmake/Trainer.cmake, and the script engine and its Qt-free dependencies are
 # shared verbatim with the application, so a table's scripts behave the same in
-# both. Lua, sol2 and Zydis link statically, so the result needs nothing but the
-# C++ runtime on the target machine. The build tree copy is itself the Linux
+# both. Lua, sol2, Zydis and FTXUI link statically, so the result needs nothing but
+# the C++ runtime on the target machine. The build tree copy is itself the Linux
 # template (SLOPKIT_TRAINER_DIR).
 
 set(SLOPKIT_SOURCE_ROOT ${CMAKE_SOURCE_DIR})
@@ -337,7 +337,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/TrainerSources.cmake)
 add_executable(slopkit-trainer-native ${SLOPKIT_TRAINER_SOURCES})
 target_include_directories(slopkit-trainer-native PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit-trainer-native PRIVATE -Wall -Wextra)
-target_link_libraries(slopkit-trainer-native PRIVATE slopkit_native Zydis sol2::sol2 slopkit_lua)
+target_link_libraries(slopkit-trainer-native PRIVATE slopkit_native Zydis sol2::sol2 slopkit_lua ftxui::component)
 set_target_properties(slopkit-trainer-native PROPERTIES
     OUTPUT_NAME slopkit-trainer
     RUNTIME_OUTPUT_DIRECTORY "${SLOPKIT_TRAINER_DIR}")
@@ -530,6 +530,7 @@ target_link_libraries(slopkit_tests PRIVATE
     Zydis
     sol2::sol2
     slopkit_lua
+    ftxui::component
     PkgConfig::LIBZIP
     ${CMAKE_DL_LIBS})
 slopkit_add_icon_resources(slopkit_tests)

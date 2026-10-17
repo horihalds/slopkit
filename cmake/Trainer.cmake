@@ -4,7 +4,7 @@
 # payload to it, so the Windows target needs the trainer as a Windows binary. The
 # sources are the same ones the native `slopkit-trainer` target builds (see
 # cmake/TrainerSources.cmake); only the target backend differs, and the fetched
-# Lua, sol2 and Zydis libraries are cross-compiled by the nested project
+# Lua, sol2, Zydis and FTXUI libraries are cross-compiled by the nested project
 # (cmake/TrainerTemplate.cmake) this rule configures and builds with the mingw
 # toolchain (cmake/toolchain-mingw64.cmake).
 #
