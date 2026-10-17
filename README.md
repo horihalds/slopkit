@@ -109,7 +109,10 @@ against the target through slopkit's own scripting engine, and the number of
 script entries is reported beside the value entries.
 
 A generated trainer attaches to `--pid`, else `--name`, else the process name
-recorded when it was generated:
+recorded when it was generated. If that process is not running yet, an
+interactive run still opens the list with its rows unresolved and attaches when
+the process appears; a `--wait` run waits the same way and exits `3` only if the
+wait expires without a target:
 
 ```sh
 ./game.trainer                            # the interactive list, refreshed four times a second
@@ -117,6 +120,7 @@ recorded when it was generated:
 ./game.trainer --pid 4711 --set 1=250 --freeze 1 --wait 900 --list
 ./game.trainer --pid 4711 --activate 1 --wait 500 --list
 ./game.trainer --pid 4711 --verbose --activate 1 --wait 500 --list
+./game.trainer --wait 10000 --list        # wait for the recorded game to start, then print
 ```
 
 A game running under Proton/Wine is a target like any other on Linux: the name a

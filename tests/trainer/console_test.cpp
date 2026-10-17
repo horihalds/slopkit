@@ -140,6 +140,16 @@ TEST_CASE("the header names the target and the pointer size", "[trainer][console
     CHECK(header.find("8-byte") != std::string::npos);
 }
 
+TEST_CASE("the header says the trainer is waiting when no target is attached", "[trainer][console]")
+{
+    auto payload         = single_entry_table();
+    payload.process_name = "practice";
+
+    const auto header = slopkit::trainer::console::render_header(payload, 0);
+    CHECK(header.find("waiting for it to appear") != std::string::npos);
+    CHECK(header.find("pid 0") == std::string::npos);
+}
+
 TEST_CASE("the header counts the scripts too", "[trainer][console]")
 {
     auto payload = single_entry_table();
@@ -217,6 +227,7 @@ TEST_CASE("the help and usage text document the script commands", "[trainer][con
 
     CHECK(slopkit::trainer::console::render_usage().find("--activate N") != std::string::npos);
     CHECK(slopkit::trainer::console::render_usage().find("--verbose") != std::string::npos);
+    CHECK(slopkit::trainer::console::render_usage().find("as soon as it appears") != std::string::npos);
 }
 
 TEST_CASE("the printed list is the row renderers line by line", "[trainer][console]")

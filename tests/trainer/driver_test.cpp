@@ -81,8 +81,10 @@ namespace
         }
     };
 
-    ChildTarget spawn_target(std::uint32_t rewrite_ms)
+    ChildTarget spawn_target(std::uint32_t rewrite_ms, std::string_view process_name = {})
     {
+        const std::string comm {process_name};
+
         int fds[2] {0, 0};
         REQUIRE(::pipe(fds) == 0);
 
@@ -92,6 +94,10 @@ namespace
         if (child == 0)
         {
             ::close(fds[0]);
+            if (!comm.empty())
+            {
+                static_cast<void>(::prctl(PR_SET_NAME, comm.c_str()));
+            }
             // The trainer is a sibling of this child, not its ancestor, so Yama's
             // ptrace scope would otherwise refuse the access it needs.
             static_cast<void>(::prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY));
@@ -196,7 +202,10 @@ namespace
         return std::format("0x{:x}", address);
     }
 
-    void generate_trainer(const std::vector<AddressEntry>& entries, std::string_view name, std::string_view script = {})
+    void generate_trainer(const std::vector<AddressEntry>& entries,
+                          std::string_view                 name,
+                          std::string_view                 script       = {},
+                          std::string_view                 process_name = {})
     {
         const std::filesystem::path directory = std::filesystem::path {SLOPKIT_TMP_DIR} / "trainer_driver" / name;
         std::error_code             error;
@@ -221,6 +230,7 @@ namespace
         request.windows_target   = false;
         request.output_directory = directory;
         request.base_name        = "practice";
+        request.process_name     = std::string {process_name};
 
         const auto result = slopkit::trainer::generate(request);
         REQUIRE(result.has_value());
@@ -258,6 +268,34 @@ TEST_CASE("the trainer lists a value of a running process", "[trainer][driver]")
     CHECK(result.output.find("Health") != std::string::npos);
     CHECK(result.output.find("4 Bytes    100") != std::string::npos);
     CHECK(result.output.find("unresolved") == std::string::npos);
+}
+
+TEST_CASE("a trainer waits for its target and attaches when it appears", "[trainer][driver]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    constexpr std::string_view kLateName {"slopkit-late"};
+    generate_trainer({value_entry("Health", literal_address(1))}, "late", {}, kLateName);
+
+    RunResult   result;
+    std::thread trainer {[&]
+                         {
+                             result = run_trainer(generated_trainer("late"), {"--wait", "3000", "--list"});
+                         }};
+
+    // The trainer has to be up and waiting before the target starts; the name is
+    // unique to this case, so it cannot attach to anything else first.
+    std::this_thread::sleep_for(std::chrono::milliseconds {500});
+    const auto target = spawn_target(0, kLateName);
+    trainer.join();
+
+    CHECK(result.exit_code == 0);
+    CHECK(result.output.find("waiting for it to appear") != std::string::npos);
+    CHECK(result.output.find("pid " + std::to_string(target.pid)) != std::string::npos);
 }
 
 TEST_CASE("verbose logging writes a log file beside the trainer", "[trainer][driver]")

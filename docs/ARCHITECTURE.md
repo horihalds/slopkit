@@ -991,18 +991,28 @@ deactivating the script takes them away again. Every hook's output is printed, a
 failing hook marks that one script `error` and stops ticking it: no script can abort
 the trainer or change its exit code.
 
-A trainer follows its process instead of ending with it. `Target::alive()` is the
-platform's cheap liveness probe (`/proc/<pid>` on Linux, a zero-time wait on the
-process handle on Windows), checked before every tick, refresh and action. When it
-reports the process gone, the session marks every script inactive without running a
-`deactivate` hook against the dead handle, drops the target and retries the attach
-once a second; the payload's recorded process name is used when the trainer was
-started with `--pid`. A successful re-attach rebinds `Resolver` and `ScriptHost` to
-the new target — fresh modules, symbol table, engine and caves — re-resolves and
-re-freezes the entries, and runs `activate` again for the scripts that were active,
-so a trainer outlives a game restart. The interactive header reads the current pid
-for every draw, and actions submitted while the target is absent answer that the
-trainer is waiting for it to reappear.
+A trainer follows its process instead of ending with it, and it may start before
+the process does. The attach failure that says no such process is running is not
+fatal for the interactive list or a `--wait` run: `Resolver` and `ScriptHost` are
+bound to a `DetachedTarget` stand-in whose accesses fail cleanly, so every row
+shows unresolved, and the session retries the attach once a second. Startup
+actions that need a target (`--activate` and `--set`) are replayed by the first
+successful attach. A headless run without `--wait` still exits `3`, and a `--wait`
+run whose deadline passes with no target does too.
+
+`Target::alive()` is the platform's cheap liveness probe (`/proc/<pid>` on Linux, a
+zero-time wait on the process handle on Windows), checked before every tick,
+refresh and action. When it reports the process gone, the session marks every
+script inactive without running a `deactivate` hook against the dead handle, drops
+the target, rebinds the resolver and script host to the detached stand-in and
+retries the attach once a second; the payload's recorded process name is used when
+the trainer was started with `--pid`. A successful attach rebinds them to the new
+target — fresh modules, symbol table, engine and caves — re-resolves and re-freezes
+the entries, and runs `activate` again for the scripts that were active, so a
+trainer outlives a game restart. The interactive header reads the current pid for
+every draw and says the trainer is waiting while there is none, and actions
+submitted while the target is absent answer that the trainer is waiting for it to
+appear.
 
 The list shows the value entries as `1..N` — index, description, resolved
 address, value type, value and the frozen and unresolved markers — and then the

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -281,22 +282,75 @@ namespace slopkit::trainer
             return std::nullopt;
         }
 
+        // A stand-in bound to the resolver and script host while no target is
+        // attached. Every access fails cleanly, so the rows show as unresolved
+        // instead of the trainer holding on to a dead handle.
+        class DetachedTarget final : public Target
+        {
+        public:
+            explicit DetachedTarget(std::uint32_t pointer_size) : pointer_size_ {pointer_size} {}
+
+            [[nodiscard]] std::uint32_t pid() const override
+            {
+                return 0;
+            }
+
+            [[nodiscard]] std::uint32_t pointer_size() const override
+            {
+                return pointer_size_;
+            }
+
+            [[nodiscard]] bool alive() const override
+            {
+                return false;
+            }
+
+            [[nodiscard]] const std::vector<Module>& modules() const override
+            {
+                return modules_;
+            }
+
+            [[nodiscard]] const std::vector<Region>& regions() const override
+            {
+                return regions_;
+            }
+
+            [[nodiscard]] std::expected<std::vector<std::byte>, std::string> read(std::uint64_t,
+                                                                                  std::size_t) const override
+            {
+                return std::unexpected(std::string {"the target is not attached"});
+            }
+
+            [[nodiscard]] std::expected<void, std::string> write(std::uint64_t,
+                                                                 std::span<const std::byte>) const override
+            {
+                return std::unexpected(std::string {"the target is not attached"});
+            }
+
+        private:
+            std::uint32_t       pointer_size_ {8};
+            std::vector<Module> modules_;
+            std::vector<Region> regions_;
+        };
+
         // Owns the target handle and the reconnect policy. A trainer follows the
-        // process it was built for: when that process exits its scripts are
-        // switched off, and once a process of the recorded name runs again the
-        // session re-attaches and restores the scripts and frozen entries.
+        // process it was built for: it may start before that process does, and
+        // when the process exits its scripts are switched off and a re-attach is
+        // tried until it runs again, restoring the scripts and frozen entries.
         class Session
         {
         public:
             Session(std::unique_ptr<Target> target,
+                    const Target&           detached,
                     AttachRequest           request,
                     const Payload&          payload,
                     ScriptHost&             scripts,
                     Resolver&               resolver,
                     std::vector<LiveEntry>& live)
-                : target_ {std::move(target)}, request_ {std::move(request)}, payload_ {payload}, scripts_ {scripts},
-                  resolver_ {resolver}, live_ {live}
+                : target_ {std::move(target)}, detached_ {detached}, request_ {std::move(request)}, payload_ {payload},
+                  scripts_ {scripts}, resolver_ {resolver}, live_ {live}
             {
+                ever_attached_ = target_ != nullptr;
             }
 
             [[nodiscard]] bool attached() const noexcept
@@ -304,13 +358,30 @@ namespace slopkit::trainer
                 return target_ != nullptr;
             }
 
+            [[nodiscard]] bool ever_attached() const noexcept
+            {
+                return ever_attached_;
+            }
+
             [[nodiscard]] std::uint32_t pid() const noexcept
             {
                 return target_ ? target_->pid() : 0;
             }
 
-            // True when the target is live. When it is gone, switches the scripts
-            // off and tries a re-attach at most once a second.
+            // Startup actions that need a target are replayed by the first
+            // successful attach instead of failing the run.
+            void defer_activation(std::size_t index)
+            {
+                pending_activation_.push_back(index);
+            }
+
+            void defer_set(std::size_t index, std::string text)
+            {
+                pending_set_.emplace_back(index, std::move(text));
+            }
+
+            // True when the target is live. When it is absent, tries an attach at
+            // most once a second and restores the state when it succeeds.
             bool ensure()
             {
                 if (target_ && target_->alive())
@@ -333,6 +404,8 @@ namespace slopkit::trainer
                     }
                     scripts_.disable_all();
                     target_.reset();
+                    resolver_.rebind(detached_);
+                    scripts_.rebind(detached_);
                 }
 
                 const auto now = std::chrono::steady_clock::now();
@@ -358,9 +431,12 @@ namespace slopkit::trainer
                     return false;
                 }
 
-                target_ = std::move(*attached);
+                const bool reattached = ever_attached_;
+                target_               = std::move(*attached);
+                ever_attached_        = true;
                 log::info(log::category::process,
-                          std::format("re-attached to pid {}; restoring scripts", target_->pid()));
+                          reattached ? std::format("re-attached to pid {}; restoring scripts", target_->pid())
+                                     : std::format("attached to pid {}; restoring scripts", target_->pid()));
 
                 resolver_.rebind(*target_);
                 scripts_.rebind(*target_);
@@ -373,20 +449,39 @@ namespace slopkit::trainer
                     run_script_command(scripts_, resolver_, true, index + 1);
                 }
                 active_.clear();
+                for (const std::size_t index : pending_activation_)
+                {
+                    run_script_command(scripts_, resolver_, true, index + 1);
+                }
+                pending_activation_.clear();
                 resolver_.set_symbols(scripts_.symbols());
                 refresh_all(payload_, resolver_, live_);
+
+                for (const auto& [index, text] : pending_set_)
+                {
+                    if (const auto message = apply_set(resolver_, payload_.entries[index], live_[index], text))
+                    {
+                        log::warning(log::category::app,
+                                     std::format("deferred --set of entry {} failed: {}", index + 1, *message));
+                    }
+                }
+                pending_set_.clear();
                 return true;
             }
 
         private:
-            std::unique_ptr<Target>               target_;
-            AttachRequest                         request_;
-            const Payload&                        payload_;
-            ScriptHost&                           scripts_;
-            Resolver&                             resolver_;
-            std::vector<LiveEntry>&               live_;
-            std::vector<std::size_t>              active_;
-            std::chrono::steady_clock::time_point next_attempt_ {};
+            std::unique_ptr<Target>                          target_;
+            const Target&                                    detached_;
+            AttachRequest                                    request_;
+            const Payload&                                   payload_;
+            ScriptHost&                                      scripts_;
+            Resolver&                                        resolver_;
+            std::vector<LiveEntry>&                          live_;
+            std::vector<std::size_t>                         active_;
+            std::vector<std::size_t>                         pending_activation_;
+            std::vector<std::pair<std::size_t, std::string>> pending_set_;
+            std::chrono::steady_clock::time_point            next_attempt_ {};
+            bool                                             ever_attached_ {false};
         };
 
         void pump(std::uint32_t           wait_ms,
@@ -516,7 +611,8 @@ namespace slopkit::trainer
             {
                 if (!session.ensure())
                 {
-                    return std::string {"the target has exited; waiting for it to reappear"};
+                    return std::string {session.ever_attached() ? "the target has exited; waiting for it to reappear"
+                                                                : "waiting for the target to appear"};
                 }
                 return apply_action(action, payload, scripts, resolver, live);
             };
@@ -601,24 +697,48 @@ namespace slopkit::trainer
             log::info(log::category::process,
                       request.pid != 0 ? std::format("attaching to pid {}", request.pid)
                                        : std::format("attaching to \"{}\"", request.name));
-            auto target = attach(request);
+            auto        target = attach(request);
+            std::string attach_failure;
             if (!target)
             {
-                log::error(log::category::process, target.error().message);
-                std::cerr << "slopkit-trainer: " << target.error().message << "\n";
+                attach_failure = target.error().message;
+            }
+            const bool interactive_session = !options.has_actions() && stdin_is_terminal();
+            const bool wait_for_target =
+                !target && target.error().not_found && (options.wait_ms > 0 || interactive_session);
+            if (!target && !wait_for_target)
+            {
+                log::error(log::category::process, attach_failure);
+                std::cerr << "slopkit-trainer: " << attach_failure << "\n";
                 return target.error().not_found ? kExitNoProcess : kExitAccess;
             }
-            log::info(log::category::process,
-                      std::format("attached to pid {}: {}-byte pointers, {} module(s), {} region(s)",
-                                  (*target)->pid(),
-                                  (*target)->pointer_size(),
-                                  (*target)->modules().size(),
-                                  (*target)->regions().size()));
+            if (target)
+            {
+                log::info(log::category::process,
+                          std::format("attached to pid {}: {}-byte pointers, {} module(s), {} region(s)",
+                                      (*target)->pid(),
+                                      (*target)->pointer_size(),
+                                      (*target)->modules().size(),
+                                      (*target)->regions().size()));
+            }
+            else
+            {
+                log::info(log::category::process,
+                          std::format("target not found ({}); waiting for it to appear", attach_failure));
+                std::cerr << "slopkit-trainer: " << attach_failure << "; waiting for it to appear\n";
+            }
 
-            Resolver               resolver {**target, payload->pointer_size};
-            std::vector<LiveEntry> live = seed(*payload);
-            ScriptHost             scripts {**target, *payload, options.interval_ms};
-            Session                session {std::move(*target), request, *payload, scripts, resolver, live};
+            DetachedTarget          detached {payload->pointer_size};
+            const Target&           bound = target ? **target : detached;
+            Resolver                resolver {bound, payload->pointer_size};
+            std::vector<LiveEntry>  live = seed(*payload);
+            ScriptHost              scripts {bound, *payload, options.interval_ms};
+            std::unique_ptr<Target> handle;
+            if (target)
+            {
+                handle = std::move(*target);
+            }
+            Session session {std::move(handle), detached, request, *payload, scripts, resolver, live};
 
             if (!scripts.class_error().empty())
             {
@@ -641,7 +761,14 @@ namespace slopkit::trainer
                         index);
                     return kExitUsage;
                 }
-                run_script_command(scripts, resolver, true, index);
+                if (session.attached())
+                {
+                    run_script_command(scripts, resolver, true, index);
+                }
+                else
+                {
+                    session.defer_activation(index - 1);
+                }
             }
             resolver.set_symbols(scripts.symbols());
 
@@ -659,7 +786,10 @@ namespace slopkit::trainer
                 }
                 live[index - 1].frozen = true;
             }
-            rewrite_frozen(*payload, resolver, live);
+            if (session.attached())
+            {
+                rewrite_frozen(*payload, resolver, live);
+            }
 
             for (const auto& [index, text] : options.set_values)
             {
@@ -670,6 +800,11 @@ namespace slopkit::trainer
                         live.size(),
                         index);
                     return kExitUsage;
+                }
+                if (!session.attached())
+                {
+                    session.defer_set(index - 1, text);
+                    continue;
                 }
                 if (const auto message = apply_set(resolver, payload->entries[index - 1], live[index - 1], text))
                 {
@@ -685,6 +820,12 @@ namespace slopkit::trainer
 
             if (options.has_actions() || !stdin_is_terminal())
             {
+                if (!session.attached())
+                {
+                    std::cerr << "slopkit-trainer: "
+                              << (attach_failure.empty() ? "the target is not running" : attach_failure) << "\n";
+                    return kExitNoProcess;
+                }
                 std::cout << console::render_header(*payload, session.pid())
                           << console::render_rows(*payload, live, scripts.states());
                 return kExitOk;

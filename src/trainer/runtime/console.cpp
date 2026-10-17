@@ -300,10 +300,11 @@ namespace slopkit::trainer::console
 
     std::string render_header(const Payload& payload, std::uint32_t pid)
     {
-        const auto name = payload.process_name.empty() ? std::string {"the target"} : payload.process_name;
-        return std::format("slopkit-trainer: {} (pid {}), {} entr{}, {} script{}, {}-byte pointers\n",
+        const auto name   = payload.process_name.empty() ? std::string {"the target"} : payload.process_name;
+        const auto status = pid == 0 ? std::string {"waiting for it to appear"} : std::format("pid {}", pid);
+        return std::format("slopkit-trainer: {} ({}), {} entr{}, {} script{}, {}-byte pointers\n",
                            name,
-                           pid,
+                           status,
                            payload.entries.size(),
                            payload.entries.size() == 1 ? "y" : "ies",
                            payload.scripts.size(),
@@ -383,6 +384,8 @@ namespace slopkit::trainer::console
                "Without attachment flags the trainer attaches to the process name recorded\n"
                "when it was generated. Actions run before the list is printed; without any\n"
                "action flag an interactive console is shown when stdin is a terminal.\n"
+               "A missing target keeps the interactive list or a --wait run waiting, and the\n"
+               "trainer attaches as soon as it appears.\n"
                "Scripts start idle; --activate N ticks script S<N> before the actions run.\n"
                "--verbose writes debug-level logging to <trainer>.log beside this file.\n";
     }
