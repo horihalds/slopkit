@@ -178,6 +178,28 @@ namespace slopkit::trainer
             return modules;
         }
 
+        // The pages of an image report the image's own base as their allocation
+        // base, and that base is the module handle, so the owning module can be
+        // asked for the name directly instead of being looked up in the module
+        // list the attach captured: a module loaded after that snapshot is still
+        // recognised. A module-scoped `aobscan` filters on this name, and the
+        // protection alone says nothing about which image a page belongs to.
+        std::string image_module_name(HANDLE process, const MEMORY_BASIC_INFORMATION& information)
+        {
+            if (information.Type != MEM_IMAGE || information.AllocationBase == nullptr)
+            {
+                return {};
+            }
+
+            wchar_t    name[MAX_PATH] {};
+            const auto module = static_cast<HMODULE>(information.AllocationBase);
+            if (::GetModuleBaseNameW(process, module, name, MAX_PATH) == 0)
+            {
+                return {};
+            }
+            return to_utf8(name);
+        }
+
         std::vector<Region> query_regions(HANDLE process)
         {
             std::vector<Region> regions;
@@ -202,6 +224,7 @@ namespace slopkit::trainer
                     region.readable   = readable_protection(information.Protect);
                     region.writable   = writable_protection(information.Protect);
                     region.executable = executable_protection(information.Protect);
+                    region.name       = image_module_name(process, information);
                     regions.push_back(std::move(region));
                 }
 

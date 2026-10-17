@@ -946,7 +946,13 @@ span owns it rather than after the path it was mapped with
 (`process::owning_module_name`, the rule the app's own memory map already used):
 Wine maps a PE image's executable page anonymously, so the path alone would leave
 the very bytes a module-scoped `aobscan` has to sweep labelled `[anon]` and the
-trainer would report the pattern missing where slopkit finds it. Memory access is
+trainer would report the pattern missing where slopkit finds it. `target_windows.cpp`
+takes the name from the other end of the same question: every page of an image
+reports that image's base — the module handle — as its allocation base, so
+`GetModuleBaseNameW` names the module a region belongs to however late the image was
+loaded. Both backends have to fill `Region::name` for this reason: an unnamed region
+is in no module, and a module-scoped `aobscan` then finds nothing and the script
+reports `no region belongs to module <name>`. Memory access is
 the same `process_vm_*`/`/proc/<pid>/mem` path as for a native target, subject to
 the same kernel ptrace policy.
 
