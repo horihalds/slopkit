@@ -10,6 +10,7 @@ namespace
 {
     using slopkit::trainer::ScriptState;
     using slopkit::trainer::tui::Action;
+    using slopkit::trainer::tui::ClickTracker;
     using slopkit::trainer::tui::Model;
     using slopkit::trainer::tui::Row;
 
@@ -61,6 +62,37 @@ TEST_CASE("a click toggles the row it lands on", "[trainer][tui]")
     CHECK(active.index == 2);
 
     CHECK(model.toggle_row(3).kind == Action::Kind::none);
+}
+
+TEST_CASE("a row is toggled by the release of a click, not by the button's state", "[trainer][tui]")
+{
+    ClickTracker clicks;
+
+    // A console repeats the button's state on records that are not clicks, and a
+    // held button keeps reading pressed: neither is a click.
+    CHECK_FALSE(clicks.release(true, 2).has_value());
+    CHECK_FALSE(clicks.release(true, 2).has_value());
+    CHECK_FALSE(clicks.release(true, 4).has_value());
+
+    // The release ends the click on the row the pointer is over at that moment.
+    CHECK(clicks.release(false, 4) == std::optional<std::size_t> {4});
+
+    // A release with no press before it is not a click either, so a console that
+    // repeats one cannot toggle a row on its own.
+    CHECK_FALSE(clicks.release(false, 2).has_value());
+    CHECK_FALSE(clicks.release(false, 2).has_value());
+}
+
+TEST_CASE("a click released outside the list toggles nothing", "[trainer][tui]")
+{
+    ClickTracker clicks;
+
+    CHECK_FALSE(clicks.release(true, std::nullopt).has_value());
+    CHECK_FALSE(clicks.release(false, std::nullopt).has_value());
+    CHECK_FALSE(clicks.release(false, 1).has_value());
+
+    CHECK_FALSE(clicks.release(true, 3).has_value());
+    CHECK(clicks.release(false, 3) == std::optional<std::size_t> {3});
 }
 
 TEST_CASE("a failed script is retried by the same click", "[trainer][tui]")

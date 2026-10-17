@@ -110,6 +110,23 @@ namespace slopkit::trainer::tui
         bool              help_shown_ {false};
     };
 
+    // A console reports the mouse button's state with every record it queues, and
+    // Wine repeats the state it believes on records that are not clicks at all,
+    // so a pressed bit alone is not an input event: a held or stale button would
+    // toggle the row under the pointer again for every record. Only the release
+    // that ends a press is a click, and it lands on the row under the pointer at
+    // that moment.
+    class ClickTracker
+    {
+    public:
+        // `pressed` is a mouse record's left-button state and `row` the list row
+        // the pointer names, if any. Returns the row a click completed on.
+        [[nodiscard]] std::optional<std::size_t> release(bool pressed, std::optional<std::size_t> row);
+
+    private:
+        bool down_ {false};
+    };
+
     // Runs the full-screen interactive mode until the user quits. `perform`
     // applies one action to the session and answers with the message to show
     // (empty clears it); `step` is the periodic target work and `pid` is read

@@ -244,6 +244,21 @@ namespace slopkit::trainer::tui
         return action;
     }
 
+    std::optional<std::size_t> ClickTracker::release(bool pressed, std::optional<std::size_t> row)
+    {
+        if (pressed)
+        {
+            down_ = true;
+            return std::nullopt;
+        }
+        if (!down_)
+        {
+            return std::nullopt;
+        }
+        down_ = false;
+        return row;
+    }
+
     void Model::clamp_scroll()
     {
         if (visible_ == 0 || rows_.size() <= visible_)

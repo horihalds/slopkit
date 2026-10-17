@@ -399,6 +399,18 @@ namespace slopkit::trainer::tui
             }
         };
 
+        ClickTracker clicks;
+
+        const auto row_at = [&](SHORT line) -> std::optional<std::size_t>
+        {
+            const auto offset = static_cast<std::ptrdiff_t>(line) - geometry.top - kBodyRow;
+            if (offset < 0)
+            {
+                return std::nullopt;
+            }
+            return model.row_at_offset(static_cast<std::size_t>(offset));
+        };
+
         const auto handle_mouse = [&](const MOUSE_EVENT_RECORD& mouse)
         {
             if (mouse.dwEventFlags == MOUSE_WHEELED)
@@ -407,22 +419,16 @@ namespace slopkit::trainer::tui
                 model.move(delta > 0 ? -kWheelRows : kWheelRows);
                 return;
             }
-            if (mouse.dwEventFlags != 0 || (mouse.dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED) == 0)
+            if (mouse.dwEventFlags != 0)
             {
                 return;
             }
-            const SHORT offset = static_cast<SHORT>(mouse.dwMousePosition.Y - geometry.top - kBodyRow);
-            if (offset < 0 || offset >= static_cast<SHORT>(model.visible_rows()))
+            const bool pressed = (mouse.dwButtonState & FROM_LEFT_1ST_BUTTON_PRESSED) != 0;
+            if (const auto position = clicks.release(pressed, row_at(mouse.dwMousePosition.Y)))
             {
-                return;
+                model.select(*position);
+                apply(model.toggle_row(*position));
             }
-            const auto position = static_cast<std::size_t>(model.scroll()) + static_cast<std::size_t>(offset);
-            if (position >= model.row_count())
-            {
-                return;
-            }
-            model.select(position);
-            apply(model.toggle_row(position));
         };
 
         std::vector<INPUT_RECORD> events;

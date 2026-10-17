@@ -1064,6 +1064,16 @@ as console input and calling the same `step` on the interval. A native Windows
 console and a Wine console that already has a visible window run FTXUI directly,
 and the Linux build's `ensure_console_window` does nothing.
 
+A console queues the mouse button's state with every record and repeats it on
+records that are not clicks at all — Wine reports the state it believes while the
+pointer only moves or the window is activated, and a held button reads pressed on
+every record — so the pressed bit is not an input event. `run_window` therefore
+tracks the button and toggles a row on the release that ends a press
+(`tui::ClickTracker`), using the row under the pointer at the release; motion,
+wheel and focus records, and a press that never ends, ask for nothing. Reading the
+state directly let every such record toggle the row under the pointer, which is how
+the list could cycle on its own while its console window had focus.
+
 The handle `attach` opens for the target carries `SYNCHRONIZE` on top of the
 query and VM rights, because `WindowsTarget::alive` asks `WaitForSingleObject`
 and Wine refuses that call for a handle opened without it. A failed wait must not
