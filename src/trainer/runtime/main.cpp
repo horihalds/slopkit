@@ -626,9 +626,8 @@ namespace slopkit::trainer
             };
 
             gui::Options options;
-            options.title = payload.process_name.empty()
-                              ? QStringLiteral("slopkit-trainer")
-                              : QStringLiteral("slopkit-trainer: %1").arg(QString::fromStdString(payload.process_name));
+            options.title = payload.process_name.empty() ? std::string {"slopkit-trainer"}
+                                                         : std::format("slopkit-trainer: {}", payload.process_name);
             options.interval_ms = interval_ms;
 
             return gui::run(

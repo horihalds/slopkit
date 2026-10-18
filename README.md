@@ -30,7 +30,7 @@ offers to cancel, overwrite the open table or merge the file.
 | Access Watch | Record every instruction that writes or accesses a watched address, and resolve an instruction's memory operands from live registers. The "find out what writes/accesses" commands attach the debug session on demand after a confirmation, so the Memory Viewer does not have to be opened first. | Implemented (Access Watch window) |
 | Referenced strings | Analyze a loaded module for the ASCII and UTF-16LE strings its code directly references and show each as a comment on the referencing disassembly line, with a filterable, per-module list in the Referenced strings window. | Implemented (Referenced strings window) |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
-| Standalone trainer | Turn the open table into trainers (`File > Generate Trainer…`) that reproduce its live values, frozen writes and Lua scripts on a machine with no slopkit or plugin installed; a Linux executable and a 64-bit Windows one are written, each with the table's value entries, scripts and ReClass classes appended to a runtime template rather than a sidecar file. The trainer is a Qt 6 window: the Linux one needs the same Qt 6 runtime slopkit uses, and the Windows one links Qt statically and stays a single file. | Implemented (Generate Trainer…) |
+| Standalone trainer | Turn the open table into trainers (`File > Generate Trainer…`) that reproduce its live values, frozen writes and Lua scripts on a machine with no slopkit or plugin installed; a Linux executable and a 64-bit Windows one are written, each with the table's value entries, scripts and ReClass classes appended to a runtime template rather than a sidecar file. The trainer is a window on both targets: the Linux one is a Qt 6 window and needs the same Qt 6 runtime slopkit uses, while the Windows one draws its own Win32 window and stays a single file with no Qt. | Implemented (Generate Trainer…) |
 
 ## Quick start
 
@@ -42,19 +42,15 @@ CMake fetches them with `FetchContent` — sol2 and Zydis from their repositorie
 at pinned revisions, Lua from the Lua team's official 5.4.7 release tarball,
 pinned by its SHA-256 — so the first configure needs network access and
 downloads each once into `build/_deps`, which the Windows trainer template's
-cross-build reuses. That template links a statically built mingw-w64 Qt 6, so
-the cross-build needs a static kit besides the mingw compilers: point
-`SLOPKIT_MINGW_QT_DIR` at a kit whose `Qt6Config.cmake` has `lib/libQt6Core.a`
-beside it (a shared kit is refused). Without one, configure warns and the
-Windows trainer is reported unavailable while the Linux one still works. The
-Wine/Proton resident agent is cross-compiled and
+cross-build reuses. The Wine/Proton resident agent is cross-compiled and
 needs the mingw-w64 compilers for both bitnesses (`x86_64-w64-mingw32-gcc` and
 `i686-w64-mingw32-gcc`); without them the build uses a prebuilt agent under
 `src/plugins/wine_proton/agent/prebuilt/<bitness>` and otherwise fails the
 `slopkit-agent` target — see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md). The
 Windows trainer template needs the matching C++ cross-compiler
 (`x86_64-w64-mingw32-g++` from the same package); without it the build still
-succeeds and only the Windows trainer target becomes unavailable.
+succeeds and only the Windows trainer target becomes unavailable. The template
+needs no Qt kit, because its window is drawn with the Win32 API.
 
 ```sh
 ./tools/configure.sh
@@ -90,7 +86,7 @@ value entries and Lua scripts inside themselves and reproduce their behaviour �
 live values, frozen writes and scripted effects — on a machine that has neither
 slopkit nor any plugin installed. The generated Linux trainer is a Qt 6 window
 and therefore needs the same Qt 6 libraries slopkit itself needs; the Windows
-trainer links a statically built mingw Qt 6 and stays one file. The same
+trainer draws its own Win32 window, needs no Qt and stays one file. The same
 generation is reachable headlessly:
 
 ```sh
@@ -116,12 +112,12 @@ script entries is reported beside the value entries.
 
 A generated trainer attaches to `--pid`, else `--name`, else the process name
 recorded when it was generated. If that process is not running yet, an
-interactive run still opens the list with its rows unresolved and attaches when
+interactive run still opens the window with its rows unresolved and attaches when
 the process appears; a `--wait` run waits the same way and exits `3` only if the
 wait expires without a target:
 
 ```sh
-./game.trainer                            # the interactive list, refreshed four times a second
+./game.trainer                            # the interactive window, refreshed four times a second
 ./game.trainer --pid 4711 --list          # one-shot: print the rows and exit
 ./game.trainer --pid 4711 --set 1=250 --freeze 1 --wait 900 --list
 ./game.trainer --pid 4711 --activate 1 --wait 500 --list
@@ -155,7 +151,8 @@ pass.
 The Windows trainer keeps a console beside its window, because the template is a
 console-subsystem binary and that is where `--list` output and the exit code go;
 launched from the command line under Wine it therefore shows both the console
-and the window.
+and the window. Its window uses the system UI font for prose and a fixed-pitch
+face for addresses, values and intervals, so it follows the Windows theme.
 
 The two numberings are independent, so entry `1` never touches `S1`. Frozen
 entries are re-written on every tick, and an active script's `update` hook runs on

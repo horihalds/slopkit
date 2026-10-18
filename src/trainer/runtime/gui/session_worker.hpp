@@ -13,12 +13,11 @@
 #include <QThread>
 
 #include "trainer/runtime/action.hpp"
+#include "trainer/runtime/gui/window.hpp"
 #include "trainer/runtime/rows.hpp"
 
 namespace slopkit::trainer::gui
 {
-    using Perform  = std::function<std::string(const Action&)>;
-    using Step     = std::function<void()>;
     using Snapshot = std::function<std::shared_ptr<const std::vector<RowView>>()>;
     using Header   = std::function<QString()>;
 

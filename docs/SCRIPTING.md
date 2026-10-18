@@ -386,9 +386,9 @@ there:
   with the guest's pointer width, so `expression("game.exe+1A2B40")` means there
   what it means here.
 - Scripts start **idle**: nothing runs until one is activated. In the trainer's
-  interactive list a click on a script's row toggles it, and a typed `a<N>`
-  activates script `S<N>` while `d<N>` deactivates it; the repeatable
-  `--activate N` does the same before the requested actions run.
+  window the `Frozen / Active` checkbox on the `S<N>` row activates or deactivates
+  that script, and the repeatable `--activate N` does the same before the
+  requested actions run.
 - `activate`, `deactivate` and `update` behave as described above, with the
   trainer's `--interval` (250 ms by default) as the fallback cadence;
   `update_interval` still wins, and its "due every pass" floor is the trainer's own

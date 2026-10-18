@@ -1,4 +1,4 @@
-#include "trainer/runtime/gui/window.hpp"
+#include "trainer/runtime/gui/window_qt.hpp"
 
 #include <memory>
 #include <utility>
@@ -20,6 +20,7 @@
 #include "core/log_categories.hpp"
 #include "trainer/runtime/console.hpp"
 #include "trainer/runtime/gui/rows_model.hpp"
+#include "trainer/runtime/gui/session_worker.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/validating_delegate.hpp"
 #include "ui/fonts.hpp"
@@ -56,7 +57,7 @@ namespace slopkit::trainer::gui
         : QMainWindow(parent), options_(std::move(options)), payload_(payload), pid_(std::move(pid)), live_(live),
           scripts_(scripts)
     {
-        setWindowTitle(options_.title);
+        setWindowTitle(QString::fromStdString(options_.title));
         resize(1024, 480);
 
         model_ = new RowsModel(payload_, this);
@@ -116,7 +117,9 @@ namespace slopkit::trainer::gui
             },
             [this]
             {
-                return ui::to_qstring(console::render_header(payload_, pid_()));
+                const auto pid = pid_();
+                pid_cache_.store(pid);
+                return ui::to_qstring(console::render_header(payload_, pid));
             },
             options_.interval_ms,
             this);
@@ -177,14 +180,14 @@ namespace slopkit::trainer::gui
 
     void TrainerWindow::show_about()
     {
-        const auto pid    = pid_();
+        const auto pid    = pid_cache_.load();
         const auto target = pid == 0 ? tr("waiting for the target to appear") : tr("target pid %1").arg(pid);
         const auto values = payload_.entries.size();
         const auto count  = payload_.scripts.size();
         ui::widgets::information(this,
                                  tr("About"),
                                  tr("%1\n\n%2 value entr%3, %4 script%5\n%6\n%7-byte pointers")
-                                     .arg(options_.title)
+                                     .arg(QString::fromStdString(options_.title))
                                      .arg(values)
                                      .arg(values == 1 ? tr("y") : tr("ies"))
                                      .arg(count)
@@ -222,7 +225,7 @@ namespace slopkit::trainer::gui
 
             application = std::make_unique<QApplication>(argc, argv);
             QApplication::setApplicationName(QStringLiteral("slopkit-trainer"));
-            QApplication::setApplicationDisplayName(options.title);
+            QApplication::setApplicationDisplayName(QString::fromStdString(options.title));
             QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 
             if (!ui::register_embedded_fonts())

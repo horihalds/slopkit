@@ -19,7 +19,7 @@
 #include "scan/types.hpp"
 #include "trainer/payload.hpp"
 #include "trainer/runtime/gui/rows_model.hpp"
-#include "trainer/runtime/gui/window.hpp"
+#include "trainer/runtime/gui/window_qt.hpp"
 #include "trainer/runtime/resolve.hpp"
 #include "trainer/runtime/rows.hpp"
 #include "trainer/runtime/scripts.hpp"
@@ -238,7 +238,7 @@ TEST_CASE("the window lists the rows and closes cleanly", "[trainer][gui]")
         {
             return std::uint32_t {0};
         },
-        Options {QStringLiteral("slopkit-trainer: practice"), 20},
+        Options {"slopkit-trainer: practice", 20},
         [](const Action&)
         {
             return std::string {};

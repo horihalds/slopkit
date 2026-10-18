@@ -899,8 +899,8 @@ turn the open table into a standalone trainer: one file that carries the table's
 value entries, scripts and ReClass classes inside itself and reproduces their
 live values, frozen writes and scripted effects on a machine with no slopkit and
 no plugin. The Linux binary is a Qt 6 window and needs the same Qt 6 runtime
-slopkit itself uses; the Windows one links a static mingw Qt 6 and stays one
-file.
+slopkit itself uses; the Windows one draws its own Win32 window, links no Qt and
+stays one file.
 
 `trainer::generate` (`src/trainer/generate.cpp`) does that by copying an installed
 runtime template and appending a version-2 payload: a `SLPKTRN1` header carrying the
@@ -1010,8 +1010,9 @@ rebuilt with
 `reclass::from_members` and handed to the engine as its class fields, which is what
 makes `structs.get(name)` work; a project that cannot be parsed is reported once
 and leaves only `structs` unavailable. Scripts start idle — the `.skt` archive
-stores no Active column, so nothing runs behind the user's back — and `a<N>` / `d<N>`
-(or `--activate N`) run the corresponding lifecycle hook. An active script's
+stores no Active column, so nothing runs behind the user's back — and the
+`Frozen / Active` checkbox (or `--activate N`) runs the corresponding lifecycle
+hook. An active script's
 `update` hook runs on the interval it declares with `update_interval`, else on the
 trainer's own `--interval`, inside both the `--wait` pump and the interactive loop.
 The symbols a script publishes are handed to the resolver as its symbol snapshot one
@@ -1053,18 +1054,26 @@ re-written on every tick, which is what lets the trainer hold a value a game kee
 overwriting. `parse_value_text` is the one parse of a value text: `apply_action`
 writes through it and the window's editor validates with it.
 
-With a display, a run without any action flag opens a Qt 6 window
-(`src/trainer/runtime/gui/window.{hpp,cpp}`): a `QMainWindow` over one
-`QTableView` fed by `gui::RowsModel`, with `File` (`Refresh now`, `Close`) and
-`Help` (`Help`, `About`) menus and a status bar carrying `console::render_header`
-on the left and the last action or script message on the right.
+With a display, a run without any action flag opens the platform window. On
+Linux it is a `QMainWindow` over one `QTableView` fed by `gui::RowsModel`
+(`src/trainer/runtime/gui/window_qt.hpp`, implemented in `gui/window.cpp`); on
+Windows `gui/window_win32.cpp` mirrors it with a `ListView`, a custom-drawn
+`Frozen / Active` check column and an `EDIT` control over a double-clicked value
+cell. Both implementations are declared by the Qt-free `gui/window.hpp`, which
+holds `Options`, `Perform`, `Step`, `Pid`, `window_available()` and `run()`. Each
+has `File` (`Refresh now`, `Close`) and `Help` (`Help`, `About`) menus and a
+status bar carrying `console::render_header` on the left and the last action or
+script message on the right.
+
 `RowsModel` holds the worker's immutable row snapshot and maps it onto the nine
 columns; a `Value` cell edits in place through
 `ui::components::ValidatingDelegate`, and the `Frozen / Active` column freezes a
 value entry or activates a script. A cell never mutates a snapshot: it
 validates, emits the `Action` it wants (the same `slopkit::trainer::Action` the
 worker applies) and repaints from the current snapshot, so a submitted change
-appears on the worker's next pass.
+appears on the worker's next pass. The Win32 window submits the same `Action`s
+from its check-column click and its edited value, and both front-ends carry the
+same nine `RowView` columns.
 
 Every target call stays off the GUI thread. `gui::SessionWorker` is a `QThread`
 that owns the trainer's existing `Session`, `ScriptHost`, `Resolver` and
@@ -1076,24 +1085,30 @@ message. The window hands that snapshot to `RowsModel` and never sees a `Target`
 Because a `QThread` object lives in the thread that created it, `submit()` queues
 the action under a mutex and wakes the worker with a queued call on an object the
 worker thread owns, so no action can ever run on the GUI thread; closing the
-window stops the worker and waits for it before the session is released.
+window stops the worker and waits for it before the session is released. The
+Win32 window's `SessionThread` is the same design without Qt: a condition
+variable waits on the interval, submitted actions queue under a mutex, and the
+thread is joined before the session is released. The pid the About box shows is
+the one the worker last published, so no window ever calls `Target::pid()` itself.
 
 The non-interactive flags (`--list`, `--set N=VALUE`, `--freeze N`,
 `--activate N`, `--interval`, `--wait`) drive the same actions without a display,
 and any action flag forces the printed path even when one exists, so the trainer
 can be scripted or run by a test. Without them and with a display
-(`gui::window_available()`, which accepts `DISPLAY`, `WAYLAND_DISPLAY` or an
-explicit `QT_QPA_PLATFORM`) it runs the window; without a display it prints the
-rows and exits. The exit codes are the ones `README.md` documents.
+(`gui::window_available()`, which on Linux accepts `DISPLAY`, `WAYLAND_DISPLAY`
+or an explicit `QT_QPA_PLATFORM`, and on Windows always answers true) it runs the
+window; without a display it prints the rows and exits. The exit codes are the
+ones `README.md` documents.
 
 The Windows template is cross-compiled with mingw-w64 against the same source
-lists and a statically linked mingw Qt 6 kit (`SLOPKIT_MINGW_QT_DIR`), because
-the template is still one file with the payload appended and a shared Qt would
-demand sidecar DLLs. Without such a kit `cmake/Trainer.cmake` warns and does not
-build the template, so `trainer::generate` reports the windows target unavailable
-while the Linux one still works. The template stays a console-subsystem binary,
-so `--list` output and the exit code keep working from a terminal, and a window
-run launched that way keeps its console beside the window.
+lists, with the Windows target backend and `gui/window_win32.cpp` swapped in for
+the Linux backend and the Qt window. It links no Qt at all, so it keeps the
+one-file promise with no sidecar DLLs. `cmake/Trainer.cmake` only needs
+`x86_64-w64-mingw32-g++`; when it is missing the rule warns and builds no
+template, so `trainer::generate` reports the windows target unavailable while the
+Linux one still works. The template stays a console-subsystem binary, so
+`--list` output and the exit code keep working from a terminal, and a window run
+launched that way keeps its console beside the window.
 
 The handle `attach` opens for the target carries `SYNCHRONIZE` on top of the
 query and VM rights, because `WindowsTarget::alive` asks `WaitForSingleObject`
@@ -1119,12 +1134,9 @@ The templates live in the build tree (`SLOPKIT_TRAINER_DIR`) and, once installed
 next to the plugins (`SLOPKIT_TRAINER_RELATIVE_DIR`), which is where the generator
 looks. The Linux one is the `slopkit-trainer` target itself. The Windows one is a
 nested CMake cross-build (`cmake/TrainerTemplate.cmake` over
-`cmake/toolchain-mingw64.cmake`, driven by `cmake/Trainer.cmake`) of the same source
-lists and the same dependency declarations, so it links the same fetched Lua,
-sol2 and Zydis as the host build, the same `slopkit_ui_common` presentation
-sources and a **statically linked** mingw Qt 6 kit (`SLOPKIT_MINGW_QT_DIR`). That
-kit is required because the template is still one file with the payload appended:
-a shared Qt would need sidecar DLLs, so the cross-build refuses a shared kit,
-warns, and leaves the windows target unavailable while the Linux one still works.
-The template also statically links the C++ and mingw runtimes, so it needs no DLL
-on the target machine.
+`cmake/toolchain-mingw64.cmake`, driven by `cmake/Trainer.cmake`) of the same
+dependency declarations, so it links the same fetched Lua, sol2 and Zydis as the
+host build, plus the Win32 window's `comctl32`, `gdi32`, `user32` and `psapi`. It
+links no Qt and no `slopkit_ui_common`, which is what keeps the template one
+file with the payload appended. The template also statically links the C++ and
+mingw runtimes, so it needs no DLL on the target machine.

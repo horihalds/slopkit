@@ -9,13 +9,20 @@
 #
 # `SLOPKIT_SOURCE_ROOT` must be set before this file is included.
 
-# The trainer window, its table model and the session thread: the third UI in
-# the project, built from the same presentation library as the app and the
-# sandbox.
-set(SLOPKIT_TRAINER_GUI_SOURCES
+# The native trainer window, its table model and the session thread: the third
+# UI in the project, built from the same presentation library as the app and the
+# sandbox. The Windows template replaces these with a native Win32 window so its
+# cross-build needs no Qt at all.
+set(SLOPKIT_TRAINER_QT_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/rows_model.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/session_worker.cpp
-    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/window.cpp)
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/window.cpp
+    # AUTOMOC only sees a header it is given by name when it has no matching
+    # source file, which `window_qt.hpp` does not.
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/window_qt.hpp)
+
+set(SLOPKIT_TRAINER_WIN32_SOURCES
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/window_win32.cpp)
 
 set(SLOPKIT_TRAINER_RUNTIME_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/caves.cpp
@@ -26,7 +33,7 @@ set(SLOPKIT_TRAINER_RUNTIME_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/rows.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/scripts.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_linux.cpp
-    ${SLOPKIT_TRAINER_GUI_SOURCES})
+    ${SLOPKIT_TRAINER_QT_SOURCES})
 
 # The Qt-free platform units the Linux target backend builds on: the procfs
 # parsers, the PE/ELF header readers and the Wine classification. The trainer's
@@ -82,11 +89,14 @@ set(SLOPKIT_TRAINER_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/scan/types.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/scan/value.cpp)
 
-# The Windows template swaps the Linux target backend for the Windows one, so the
-# procfs, PE-header and Wine units go with it.
+# The Windows template swaps the Linux target backend and the Qt window for the
+# Windows backend and the native Win32 window, so the procfs, PE-header and Wine
+# units go with them.
 set(SLOPKIT_TRAINER_WINDOWS_SOURCES ${SLOPKIT_TRAINER_SOURCES})
 list(REMOVE_ITEM SLOPKIT_TRAINER_WINDOWS_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_linux.cpp
-    ${SLOPKIT_TRAINER_LINUX_SOURCES})
+    ${SLOPKIT_TRAINER_LINUX_SOURCES}
+    ${SLOPKIT_TRAINER_QT_SOURCES})
 list(APPEND SLOPKIT_TRAINER_WINDOWS_SOURCES
-    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_windows.cpp)
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_windows.cpp
+    ${SLOPKIT_TRAINER_WIN32_SOURCES})

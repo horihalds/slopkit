@@ -42,15 +42,14 @@ through `FetchContent` (see `cmake/Dependencies.cmake`) — sol2 and Zydis from
 their repositories at pinned revisions, Lua from the official 5.4.7 release
 tarball pinned by its SHA-256 — so it needs network access and the downloads land
 in `build/_deps`, which the Windows trainer cross-build reuses. Qt 6 comes from
-the system packages and is linked by every UI binary, trainer included. The
-Windows trainer template is a nested mingw cross-build
-(`cmake/TrainerTemplate.cmake`) that builds the same runtime, the script engine,
-the shared `slopkit_ui_common` presentation sources and the Qt window into
-`slopkit-trainer.exe`. It needs `x86_64-w64-mingw32-gcc`/`-g++` **and** a
-**statically linked** mingw-w64 Qt 6 kit: point `SLOPKIT_MINGW_QT_DIR` at one
-whose `Qt6Config.cmake` has `lib/libQt6Core.a` beside it (a shared kit is
-refused, because the template must stay one file with no sidecar DLLs). Without
-either, configure warns and only the Windows trainer target becomes unavailable.
+the system packages and is linked by every Linux UI binary, trainer included.
+The Windows trainer template is a nested mingw cross-build
+(`cmake/TrainerTemplate.cmake`) that builds the same runtime and the script
+engine, with the Windows target backend and the native Win32 window
+(`gui/window_win32.cpp`) in place of the Linux backend and the Qt window, into
+`slopkit-trainer.exe`. It needs `x86_64-w64-mingw32-gcc`/`-g++` and no Qt kit at
+all; without the compilers, configure warns and only the Windows trainer target
+becomes unavailable.
 
 ## Run the tests
 
@@ -327,13 +326,18 @@ instructions can do, which is what `tests/trainer/caves_test.cpp` pins down.
   `cmake --build build --target slopkit_tests 2>&1 | grep -E "error:|FAILED|warning:"`.
 - Extra arguments are forwarded to ctest, so a targeted run reuses the entry
   point: `./tools/verify.sh -R "<test name>"`.
-- The trainer window runs in the suite without a display: `slopkit_tests` sets
-  `QT_QPA_PLATFORM=offscreen`, `tests/trainer/gui_test.cpp` checks the model's
-  roles/flags and `setData` submissions and opens the window with stub session
-  callbacks (asserting a snapshot arrives and the window closes with `0`), and
-  `tests/trainer/rows_test.cpp` keeps the printed list equal to the row fields.
-  The real session against a live process is still checked by hand:
+- The Linux trainer window runs in the suite without a display: `slopkit_tests`
+  sets `QT_QPA_PLATFORM=offscreen`, `tests/trainer/gui_test.cpp` checks the
+  model's roles/flags and `setData` submissions and opens the window with stub
+  session callbacks (asserting a snapshot arrives and the window closes with
+  `0`), and `tests/trainer/rows_test.cpp` keeps the printed list equal to the row
+  fields. The real session against a live process is still checked by hand:
   `./build/trainer/slopkit-trainer --pid $$` against the shell, in both themes.
+- The Windows window has no headless harness of its own. The cross-build proves
+  it compiles and links; check its imports after a build with
+  `x86_64-w64-mingw32-objdump -p build/trainer/slopkit-trainer.exe | grep 'DLL Name'`
+  — it must list only system DLLs (`COMCTL32`, `GDI32`, `KERNEL32`, `msvcrt`,
+  `USER32`), never a `Qt6*.dll` — and exercise the window under Wine by hand.
 
 ## Formatting
 
