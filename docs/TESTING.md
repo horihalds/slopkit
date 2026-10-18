@@ -37,18 +37,20 @@ executables, a `.debug/` sub-directory for the plugins), so `gdb` on an installe
 binary still resolves source lines. Pass `-DSLOPKIT_STRIP_INSTALL=OFF` to install
 them verbatim.
 
-Lua, sol2, Zydis and FTXUI are not system packages: the first configure fetches
-them through `FetchContent` (see `cmake/Dependencies.cmake`) — sol2, Zydis and
-FTXUI from their repositories at pinned revisions, Lua from the official 5.4.7
-release tarball pinned by its SHA-256 — so it needs network access and the
-downloads land in `build/_deps`. FTXUI is built statically for both targets, as
-the trainer must stay one file, and its examples, tests, docs, modules, dev
-warnings and install rules are switched off so its diagnostics never reach the
-warning-free stage. The Windows trainer
-template is a nested mingw cross-build (`cmake/TrainerTemplate.cmake`) that
-reuses those downloads and builds the same runtime plus the script engine into
-`slopkit-trainer.exe`; without `x86_64-w64-mingw32-gcc`/`-g++` it is skipped with
-a warning and only the Windows trainer target becomes unavailable.
+Lua, sol2 and Zydis are not system packages: the first configure fetches them
+through `FetchContent` (see `cmake/Dependencies.cmake`) — sol2 and Zydis from
+their repositories at pinned revisions, Lua from the official 5.4.7 release
+tarball pinned by its SHA-256 — so it needs network access and the downloads land
+in `build/_deps`, which the Windows trainer cross-build reuses. Qt 6 comes from
+the system packages and is linked by every UI binary, trainer included. The
+Windows trainer template is a nested mingw cross-build
+(`cmake/TrainerTemplate.cmake`) that builds the same runtime, the script engine,
+the shared `slopkit_ui_common` presentation sources and the Qt window into
+`slopkit-trainer.exe`. It needs `x86_64-w64-mingw32-gcc`/`-g++` **and** a
+**statically linked** mingw-w64 Qt 6 kit: point `SLOPKIT_MINGW_QT_DIR` at one
+whose `Qt6Config.cmake` has `lib/libQt6Core.a` beside it (a shared kit is
+refused, because the template must stay one file with no sidecar DLLs). Without
+either, configure warns and only the Windows trainer target becomes unavailable.
 
 ## Run the tests
 
@@ -325,10 +327,13 @@ instructions can do, which is what `tests/trainer/caves_test.cpp` pins down.
   `cmake --build build --target slopkit_tests 2>&1 | grep -E "error:|FAILED|warning:"`.
 - Extra arguments are forwarded to ctest, so a targeted run reuses the entry
   point: `./tools/verify.sh -R "<test name>"`.
-- The trainer's interactive list needs a real terminal, so the suite cannot click
-  it: `tests/trainer/tui_test.cpp` covers the list model without one, and the view
-  is checked by hand against a built template
-  (`./build/trainer/slopkit-trainer --pid $$` in a terminal).
+- The trainer window runs in the suite without a display: `slopkit_tests` sets
+  `QT_QPA_PLATFORM=offscreen`, `tests/trainer/gui_test.cpp` checks the model's
+  roles/flags and `setData` submissions and opens the window with stub session
+  callbacks (asserting a snapshot arrives and the window closes with `0`), and
+  `tests/trainer/rows_test.cpp` keeps the printed list equal to the row fields.
+  The real session against a live process is still checked by hand:
+  `./build/trainer/slopkit-trainer --pid $$` against the shell, in both themes.
 
 ## Formatting
 

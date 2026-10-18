@@ -145,10 +145,10 @@ set(CMAKE_AUTOMOC ON)
 # --- system dependencies ---------------------------------------------------
 #
 # libzip backs the `.skt` archive container and comes from the system
-# repositories (e.g. Fedora `libzip-devel`). sol2, Lua, Zydis and FTXUI are
-# fetched instead (see cmake/Dependencies.cmake): sol2, Zydis and FTXUI from their
-# repositories at pinned revisions, Lua from the official 5.4.7 release tarball
-# pinned by its SHA-256.
+# repositories (e.g. Fedora `libzip-devel`). sol2, Lua and Zydis are fetched
+# instead (see cmake/Dependencies.cmake): sol2 and Zydis from their repositories at
+# pinned revisions, Lua from the official 5.4.7 release tarball pinned by its
+# SHA-256. Qt 6 comes from the system and is required by every UI binary.
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBZIP REQUIRED IMPORTED_TARGET libzip)
@@ -234,18 +234,8 @@ endfunction()
 # version string both binaries need. scan/process/plugin/table stay out, which
 # is also what keeps the sandbox structurally incapable of target access.
 
-set(SLOPKIT_UI_COMMON_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/core/log.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/version.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/theme.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/datatype_palette.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/fonts.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/settings.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/platform.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/components/elided_tooltip_delegate.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/components/input_box.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/components/message_box.cpp
-    ${CMAKE_SOURCE_DIR}/src/ui/components/widgets.cpp)
+set(SLOPKIT_SOURCE_ROOT ${CMAKE_SOURCE_DIR})
+include(${CMAKE_SOURCE_DIR}/cmake/UiCommonSources.cmake)
 
 add_library(slopkit_ui_common STATIC ${SLOPKIT_UI_COMMON_SOURCES})
 target_include_directories(slopkit_ui_common PUBLIC ${CMAKE_SOURCE_DIR}/src)
@@ -320,15 +310,13 @@ slopkit_add_icon_resources(slopkit-sandbox)
 
 # --- trainer runtime -------------------------------------------------------
 
-# The Qt-free console trainer `Generate Trainer…` copies and appends a payload to.
-# The same sources are cross-compiled into the Windows template by
-# cmake/Trainer.cmake, and the script engine and its Qt-free dependencies are
+# The trainer `Generate Trainer…` copies and appends a payload to. It is the
+# project's third UI binary, built from the same presentation library as the app
+# and the sandbox. The same sources are cross-compiled into the Windows template
+# by cmake/Trainer.cmake, and the script engine and its Qt-free dependencies are
 # shared verbatim with the application, so a table's scripts behave the same in
-# both. Lua, sol2, Zydis and FTXUI link statically, so the result needs nothing but
-# the C++ runtime on the target machine. The build tree copy is itself the Linux
-# template (SLOPKIT_TRAINER_DIR).
+# both. The build tree copy is itself the Linux template (SLOPKIT_TRAINER_DIR).
 
-set(SLOPKIT_SOURCE_ROOT ${CMAKE_SOURCE_DIR})
 include(${CMAKE_SOURCE_DIR}/cmake/TrainerSources.cmake)
 
 # The native target is not named after the file it produces: CMake resolves the
@@ -337,7 +325,12 @@ include(${CMAKE_SOURCE_DIR}/cmake/TrainerSources.cmake)
 add_executable(slopkit-trainer-native ${SLOPKIT_TRAINER_SOURCES})
 target_include_directories(slopkit-trainer-native PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(slopkit-trainer-native PRIVATE -Wall -Wextra)
-target_link_libraries(slopkit-trainer-native PRIVATE slopkit_native Zydis sol2::sol2 slopkit_lua ftxui::component)
+target_link_libraries(slopkit-trainer-native PRIVATE
+    slopkit_native
+    Zydis
+    sol2::sol2
+    slopkit_lua
+    slopkit_ui_common)
 set_target_properties(slopkit-trainer-native PROPERTIES
     OUTPUT_NAME slopkit-trainer
     RUNTIME_OUTPUT_DIRECTORY "${SLOPKIT_TRAINER_DIR}")
@@ -530,7 +523,6 @@ target_link_libraries(slopkit_tests PRIVATE
     Zydis
     sol2::sol2
     slopkit_lua
-    ftxui::component
     PkgConfig::LIBZIP
     ${CMAKE_DL_LIBS})
 slopkit_add_icon_resources(slopkit_tests)

@@ -17,8 +17,6 @@ namespace
     using slopkit::trainer::PayloadEntry;
     using slopkit::trainer::PayloadScript;
     using slopkit::trainer::ScriptState;
-    using slopkit::trainer::console::CommandKind;
-    using slopkit::trainer::console::parse_command;
     using slopkit::trainer::console::render_rows;
 
     Payload single_entry_table()
@@ -31,69 +29,6 @@ namespace
         payload.entries.push_back(entry);
         return payload;
     }
-}
-
-TEST_CASE("freeze commands accept both spellings", "[trainer][console]")
-{
-    CHECK(parse_command("f2").kind == CommandKind::freeze);
-    CHECK(parse_command("f2").index == 2);
-    CHECK(parse_command("f 3").kind == CommandKind::freeze);
-    CHECK(parse_command("f 3").index == 3);
-    CHECK(parse_command("freeze 12").kind == CommandKind::freeze);
-    CHECK(parse_command("freeze 12").index == 12);
-}
-
-TEST_CASE("set commands carry the index and the value text", "[trainer][console]")
-{
-    const auto spaced = parse_command("s 3 100");
-    CHECK(spaced.kind == CommandKind::set_value);
-    CHECK(spaced.index == 3);
-    CHECK(spaced.value == "100");
-
-    const auto joined = parse_command("s3=1f");
-    CHECK(joined.kind == CommandKind::set_value);
-    CHECK(joined.index == 3);
-    CHECK(joined.value == "1f");
-
-    const auto text = parse_command("s 1 hello world");
-    CHECK(text.kind == CommandKind::set_value);
-    CHECK(text.value == "hello world");
-
-    const auto named = parse_command("set 4 12.5");
-    CHECK(named.kind == CommandKind::set_value);
-    CHECK(named.index == 4);
-    CHECK(named.value == "12.5");
-}
-
-TEST_CASE("simple commands are recognized", "[trainer][console]")
-{
-    CHECK(parse_command("q").kind == CommandKind::quit);
-    CHECK(parse_command("quit").kind == CommandKind::quit);
-    CHECK(parse_command("r").kind == CommandKind::refresh);
-    CHECK(parse_command("refresh").kind == CommandKind::refresh);
-    CHECK(parse_command("l").kind == CommandKind::list);
-    CHECK(parse_command("list").kind == CommandKind::list);
-    CHECK(parse_command("?").kind == CommandKind::help);
-    CHECK(parse_command("help").kind == CommandKind::help);
-}
-
-TEST_CASE("an empty line is nothing to do", "[trainer][console]")
-{
-    CHECK(parse_command("").kind == CommandKind::none);
-    CHECK(parse_command("   ").kind == CommandKind::none);
-    CHECK(parse_command("\t").kind == CommandKind::none);
-}
-
-TEST_CASE("bad input is reported as invalid", "[trainer][console]")
-{
-    CHECK(parse_command("f").kind == CommandKind::invalid);
-    CHECK(parse_command("f x").kind == CommandKind::invalid);
-    CHECK(parse_command("f x").text == "x");
-    CHECK(parse_command("f0").kind == CommandKind::invalid);
-    CHECK(parse_command("s 2").kind == CommandKind::invalid);
-    CHECK(parse_command("s").kind == CommandKind::invalid);
-    CHECK(parse_command("nonsense").kind == CommandKind::invalid);
-    CHECK(parse_command("nonsense").text == "nonsense");
 }
 
 TEST_CASE("rows carry the value, the freeze marker and the unresolved marker", "[trainer][console]")
@@ -159,31 +94,6 @@ TEST_CASE("the header counts the scripts too", "[trainer][console]")
     CHECK(header.find("1 script") != std::string::npos);
 }
 
-TEST_CASE("activate and deactivate commands accept both spellings", "[trainer][console]")
-{
-    CHECK(parse_command("a1").kind == CommandKind::activate_script);
-    CHECK(parse_command("a1").index == 1);
-    CHECK(parse_command("a 2").kind == CommandKind::activate_script);
-    CHECK(parse_command("a 2").index == 2);
-    CHECK(parse_command("activate 3").kind == CommandKind::activate_script);
-    CHECK(parse_command("activate 3").index == 3);
-    CHECK(parse_command("d4").kind == CommandKind::deactivate_script);
-    CHECK(parse_command("d4").index == 4);
-    CHECK(parse_command("d 5").kind == CommandKind::deactivate_script);
-    CHECK(parse_command("d 5").index == 5);
-
-    // Missing or unusable indices are reported like the other commands.
-    CHECK(parse_command("a").kind == CommandKind::invalid);
-    CHECK(parse_command("a x").kind == CommandKind::invalid);
-    CHECK(parse_command("a x").text == "x");
-    CHECK(parse_command("a0").kind == CommandKind::invalid);
-    CHECK(parse_command("d").kind == CommandKind::invalid);
-
-    // `d` never means "deactivate the value entry": the two spaces are apart.
-    CHECK(parse_command("f1").kind == CommandKind::freeze);
-    CHECK(parse_command("s 1 42").kind == CommandKind::set_value);
-}
-
 TEST_CASE("the script block shows each script's state, interval and message", "[trainer][console]")
 {
     auto payload = single_entry_table();
@@ -218,11 +128,11 @@ TEST_CASE("the script block shows each script's state, interval and message", "[
     CHECK(failed.find("hp went negative") != std::string::npos);
 }
 
-TEST_CASE("the help and usage text document the script commands", "[trainer][console]")
+TEST_CASE("the help text documents the window and the usage the flags", "[trainer][console]")
 {
     const auto help = slopkit::trainer::console::render_help();
-    CHECK(help.find("a<N>") != std::string::npos);
-    CHECK(help.find("d<N>") != std::string::npos);
+    CHECK(help.find("double-click") != std::string::npos);
+    CHECK(help.find("Frozen / Active") != std::string::npos);
     CHECK(help.find("independent") != std::string::npos);
 
     CHECK(slopkit::trainer::console::render_usage().find("--activate N") != std::string::npos);
@@ -247,7 +157,7 @@ TEST_CASE("the printed list is the row renderers line by line", "[trainer][conso
     states[0].active      = true;
     states[0].interval_ms = 250;
 
-    // The interactive list paints these one row at a time, so a row has to render
+    // The window paints these one row at a time, so a row has to render
     // identically whether it is printed or painted.
     const auto rows     = render_rows(payload, std::span {&live, 1}, states);
     const auto expected = slopkit::trainer::console::render_value_row(payload.entries[0], live, 1) + "\n\n"

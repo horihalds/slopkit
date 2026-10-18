@@ -1,6 +1,6 @@
 # --- third-party dependencies ----------------------------------------------
 #
-# sol2, Zydis and FTXUI are fetched from their upstream repositories at pinned
+# sol2 and Zydis are fetched from their upstream repositories at pinned
 # revisions and Lua from the Lua team's official release tarball, which is pinned
 # by its SHA-256, instead of coming from the system packages, so the application,
 # the native trainer and the cross-compiled Windows template all link identical
@@ -41,9 +41,6 @@ if(SLOPKIT_SHARED_SOURCE_DIR)
     if(EXISTS "${SLOPKIT_SHARED_SOURCE_DIR}/lua-src/src/lua.h")
         set(SLOPKIT_LUA_SOURCE_DIR "${SLOPKIT_SHARED_SOURCE_DIR}/lua-src/src")
     endif()
-    if(EXISTS "${SLOPKIT_SHARED_SOURCE_DIR}/ftxui-src/CMakeLists.txt")
-        set(FETCHCONTENT_SOURCE_DIR_FTXUI "${SLOPKIT_SHARED_SOURCE_DIR}/ftxui-src" CACHE PATH "" FORCE)
-    endif()
 endif()
 
 # sol2: the header-only Lua binding library (pinned to 3.5.0).
@@ -66,33 +63,7 @@ set(ZYDIS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ZYDIS_BUILD_DOXYGEN OFF CACHE BOOL "" FORCE)
 set(ZYDIS_BUILD_MAN OFF CACHE BOOL "" FORCE)
 
-# FTXUI: the terminal UI library behind the trainer's interactive mode. Only the
-# three libraries it splits into are built (never its examples, tests, docs or
-# C++20 modules), and the install rules stay out of the way so `cmake --install`
-# ships slopkit's files only.
-FetchContent_Declare(ftxui
-    GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
-    GIT_TAG f921fad208912747c17d129a8ef75ec7624b6eec)
-
-set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(FTXUI_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(FTXUI_BUILD_MODULES OFF CACHE BOOL "" FORCE)
-set(FTXUI_CLANG_TIDY OFF CACHE BOOL "" FORCE)
-set(FTXUI_DEV_WARNINGS OFF CACHE BOOL "" FORCE)
-set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-set(FTXUI_ENABLE_CCACHE OFF CACHE BOOL "" FORCE)
-
-# FTXUI declares its libraries without a type, so they would follow a caller's
-# BUILD_SHARED_LIBS. The trainer promises a binary with no shared-library
-# dependencies, so the default is pinned off for the subdirectory and restored
-# afterwards (this file is included by both the host build and the nested one).
-set(SLOPKIT_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
-set(BUILD_SHARED_LIBS OFF)
-
-FetchContent_MakeAvailable(sol2 zydis ftxui)
-
-set(BUILD_SHARED_LIBS "${SLOPKIT_BUILD_SHARED_LIBS}")
+FetchContent_MakeAvailable(sol2 zydis)
 
 # Lua: the VM sol2 binds to. The Lua team publishes no CMake build, so the
 # official 5.4.7 release tarball is downloaded, pinned by its SHA-256, and its
@@ -126,5 +97,5 @@ endif()
 # diagnostics out of the `-Wall -Wextra` warning-free build stage. Zydis is also
 # compiled position-independently because the bundled plugins link it into
 # shared objects.
-set_target_properties(Zydis Zycore sol2 screen dom component PROPERTIES SYSTEM TRUE)
+set_target_properties(Zydis Zycore sol2 PROPERTIES SYSTEM TRUE)
 set_target_properties(Zydis Zycore PROPERTIES POSITION_INDEPENDENT_CODE ON)

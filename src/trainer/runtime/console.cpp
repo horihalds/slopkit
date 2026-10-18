@@ -1,137 +1,14 @@
 #include "trainer/runtime/console.hpp"
 
-#include <cstddef>
-#include <cstdint>
 #include <format>
-#include <span>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
-
-#include "scan/types.hpp"
-#include "scan/value.hpp"
 
 namespace slopkit::trainer::console
 {
     namespace
     {
         constexpr std::size_t kDescriptionWidth {24};
-
-        std::string_view trim(std::string_view text)
-        {
-            while (!text.empty() && (text.front() == ' ' || text.front() == '\t'))
-            {
-                text.remove_prefix(1);
-            }
-            while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r'))
-            {
-                text.remove_suffix(1);
-            }
-            return text;
-        }
-
-        std::vector<std::string_view> words(std::string_view line)
-        {
-            std::vector<std::string_view> result;
-            std::string_view              rest = trim(line);
-            while (!rest.empty())
-            {
-                const auto space = rest.find_first_of(" \t");
-                const auto word  = rest.substr(0, space);
-                result.push_back(word);
-                if (space == std::string_view::npos)
-                {
-                    break;
-                }
-                rest = trim(rest.substr(space + 1));
-            }
-            return result;
-        }
-
-        bool is_number(std::string_view text)
-        {
-            if (text.empty())
-            {
-                return false;
-            }
-            for (const char character : text)
-            {
-                if (character < '0' || character > '9')
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        bool parse_index(std::string_view text, std::size_t& index)
-        {
-            if (!is_number(text))
-            {
-                return false;
-            }
-            index = 0;
-            for (const char character : text)
-            {
-                index = index * 10 + static_cast<std::size_t>(character - '0');
-            }
-            return index > 0;
-        }
-
-        std::string joined(const std::vector<std::string_view>& parts, std::size_t first)
-        {
-            std::string text;
-            for (std::size_t position = first; position < parts.size(); ++position)
-            {
-                if (!text.empty())
-                {
-                    text += ' ';
-                }
-                text += parts[position];
-            }
-            return text;
-        }
-
-        Command simple_command(CommandKind kind)
-        {
-            Command command;
-            command.kind = kind;
-            return command;
-        }
-
-        Command invalid(std::string_view text)
-        {
-            Command command;
-            command.kind = CommandKind::invalid;
-            command.text = std::string {text};
-            return command;
-        }
-
-        Command freeze_command(std::size_t index)
-        {
-            Command command;
-            command.kind  = CommandKind::freeze;
-            command.index = index;
-            return command;
-        }
-
-        Command set_command(std::size_t index, std::string value)
-        {
-            Command command;
-            command.kind  = CommandKind::set_value;
-            command.index = index;
-            command.value = std::move(value);
-            return command;
-        }
-
-        Command script_command(CommandKind kind, std::size_t index)
-        {
-            Command command;
-            command.kind  = kind;
-            command.index = index;
-            return command;
-        }
 
         std::string shorten(std::string_view text)
         {
@@ -141,161 +18,6 @@ namespace slopkit::trainer::console
             }
             return std::format("{}...", text.substr(0, kDescriptionWidth - 3));
         }
-
-        std::string annotations(const PayloadEntry& entry, const LiveEntry& live)
-        {
-            std::string text;
-            if (live.frozen)
-            {
-                text += " frozen";
-            }
-            if (entry.hex)
-            {
-                text += " hex";
-            }
-            if (!live.resolved)
-            {
-                text += " unresolved";
-                if (!live.note.empty())
-                {
-                    text += std::format(" ({})", live.note);
-                }
-            }
-            return text;
-        }
-
-        std::string script_state(const ScriptState& state)
-        {
-            if (state.failed)
-            {
-                return "error";
-            }
-            return state.active ? "active" : "idle";
-        }
-
-        std::string script_interval(const ScriptState& state)
-        {
-            return state.interval_ms > 0 ? std::format("{} ms", state.interval_ms) : std::string {"-"};
-        }
-
-        std::string script_message(const ScriptState& state)
-        {
-            if (state.message.empty())
-            {
-                return "-";
-            }
-            std::string text = state.message;
-            for (char& character : text)
-            {
-                if (character == '\n' || character == '\r')
-                {
-                    character = ' ';
-                }
-            }
-            return text;
-        }
-    }
-
-    Command parse_command(std::string_view line)
-    {
-        const auto parts = words(line);
-        if (parts.empty())
-        {
-            return Command {};
-        }
-
-        const auto head = parts.front();
-        if (head == "q" || head == "quit")
-        {
-            return simple_command(CommandKind::quit);
-        }
-        if (head == "r" || head == "refresh")
-        {
-            return simple_command(CommandKind::refresh);
-        }
-        if (head == "l" || head == "list")
-        {
-            return simple_command(CommandKind::list);
-        }
-        if (head == "h" || head == "help" || head == "?")
-        {
-            return simple_command(CommandKind::help);
-        }
-
-        if (head.front() == 'f')
-        {
-            std::size_t index = 0;
-            if (parse_index(head.substr(1), index))
-            {
-                return freeze_command(index);
-            }
-            if (head == "f" || head == "freeze")
-            {
-                if (parts.size() < 2 || !parse_index(parts[1], index))
-                {
-                    return invalid(parts.size() < 2 ? head : parts[1]);
-                }
-                return freeze_command(index);
-            }
-            return invalid(head);
-        }
-
-        if (head.front() == 'a' || head.front() == 'd')
-        {
-            const bool activating = head.front() == 'a';
-            const auto kind       = activating ? CommandKind::activate_script : CommandKind::deactivate_script;
-            const auto long_form  = activating ? std::string_view {"activate"} : std::string_view {"deactivate"};
-
-            std::size_t index = 0;
-            if (parse_index(head.substr(1), index))
-            {
-                return script_command(kind, index);
-            }
-            if (head.size() == 1 || head == long_form)
-            {
-                if (parts.size() < 2 || !parse_index(parts[1], index))
-                {
-                    return invalid(parts.size() < 2 ? head : parts[1]);
-                }
-                return script_command(kind, index);
-            }
-            return invalid(head);
-        }
-
-        if (head.front() == 's')
-        {
-            const auto rest = head.substr(1);
-            if (const auto equals = rest.find('='); equals != std::string_view::npos)
-            {
-                std::size_t index = 0;
-                if (!parse_index(rest.substr(0, equals), index))
-                {
-                    return invalid(head);
-                }
-                return set_command(index, std::string {rest.substr(equals + 1)});
-            }
-
-            std::size_t index = 0;
-            if (parse_index(rest, index))
-            {
-                if (parts.size() < 2)
-                {
-                    return invalid(head);
-                }
-                return set_command(index, joined(parts, 1));
-            }
-            if (head == "s" || head == "set")
-            {
-                if (parts.size() < 3 || !parse_index(parts[1], index))
-                {
-                    return invalid(parts.size() < 2 ? head : parts[1]);
-                }
-                return set_command(index, joined(parts, 2));
-            }
-            return invalid(head);
-        }
-
-        return invalid(std::string {trim(line)});
     }
 
     std::string render_header(const Payload& payload, std::uint32_t pid)
@@ -312,67 +34,96 @@ namespace slopkit::trainer::console
                            payload.pointer_size);
     }
 
-    std::string render_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number)
+    std::string render_value_row(const RowView& row)
     {
-        const auto address = state.address == 0 ? std::string {"-"} : std::format("0x{:012x}", state.address);
-        const auto value =
-            state.bytes.empty() ? std::string {"?"} : scan::format_value(entry.type, state.bytes, entry.hex);
+        std::string annotations;
+        if (row.frozen)
+        {
+            annotations += " frozen";
+        }
+        if (row.hex)
+        {
+            annotations += " hex";
+        }
+        if (row.unresolved)
+        {
+            annotations += " unresolved";
+            if (!row.message.empty())
+            {
+                annotations += std::format(" ({})", row.message);
+            }
+        }
 
         return std::format("{:>3}  {:<24}  {:<14}  {:<9}  {:<18}{}",
-                           number,
-                           shorten(entry.description),
-                           address,
-                           scan::describe(entry.type),
-                           value,
-                           annotations(entry, state));
+                           row.number,
+                           shorten(row.description),
+                           row.address,
+                           row.type,
+                           row.value,
+                           annotations);
+    }
+
+    std::string render_script_row(const RowView& row)
+    {
+        return std::format("S{}  {:<24}  {:<14}  {:<9}  {}",
+                           row.number,
+                           shorten(row.description),
+                           row.state,
+                           row.interval,
+                           row.message);
+    }
+
+    std::string render_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number)
+    {
+        return render_value_row(build_value_row(entry, state, number));
     }
 
     std::string render_script_row(const PayloadScript& script, const ScriptState& state, std::size_t number)
     {
-        return std::format("S{}  {:<24}  {:<14}  {:<9}  {}",
-                           number,
-                           shorten(script.description),
-                           script_state(state),
-                           script_interval(state),
-                           script_message(state));
+        return render_script_row(build_script_row(script, state, number));
     }
 
     std::string
     render_rows(const Payload& payload, std::span<const LiveEntry> live, std::span<const ScriptState> scripts)
     {
         std::string text;
-        for (std::size_t position = 0; position < payload.entries.size() && position < live.size(); ++position)
+        bool        printed_value = false;
+        bool        printed_blank = false;
+        for (const auto& row : build_rows(payload, live, scripts))
         {
-            text += render_value_row(payload.entries[position], live[position], position + 1);
+            // Scripts are a second numbering space: the rows above stay 1..N and
+            // a script is always addressed as S<n>, never by the entry number.
+            if (row.kind == RowKind::script && printed_value && !printed_blank)
+            {
+                text += '\n';
+                printed_blank = true;
+            }
+            text += row.kind == RowKind::value ? render_value_row(row) : render_script_row(row);
             text += '\n';
-        }
-
-        // Scripts are a second numbering space: the rows above stay 1..N and a
-        // script is always addressed as S<n>, never by the value-entry number.
-        if (!scripts.empty() && !payload.entries.empty())
-        {
-            text += '\n';
-        }
-        for (std::size_t position = 0; position < scripts.size() && position < payload.scripts.size(); ++position)
-        {
-            text += render_script_row(payload.scripts[position], scripts[position], position + 1);
-            text += '\n';
+            printed_value = printed_value || row.kind == RowKind::value;
         }
         return text;
     }
 
     std::string render_help()
     {
-        return "  f<N>          freeze or unfreeze entry N\n"
-               "  s <N> <value> write a value (hex honouring the entry's hex flag)\n"
-               "  a<N>          activate script S<N> (runs its activate hook)\n"
-               "  d<N>          deactivate script S<N> (runs its deactivate hook)\n"
-               "  r             re-resolve every expression\n"
-               "  l             redraw the list\n"
-               "  q             quit\n"
+        return "The trainer lists its value entries as 1..N and its scripts as S1..Sm;\n"
+               "the two numberings are independent.\n"
                "\n"
-               "Value entries are numbered 1..N and scripts S1..Sm; the two spaces are\n"
-               "independent, so `f1` never touches script S1.\n";
+               "  Value column    double-click a value entry's cell, type a new value and\n"
+               "                  press Enter; Esc or a click elsewhere discards the edit,\n"
+               "                  and a text the entry's type or hex flag refuses keeps the\n"
+               "                  editor open with the reason on the status bar.\n"
+               "  Frozen / Active tick a value entry to freeze or unfreeze it, or a script\n"
+               "                  to activate it (running its activate hook) or deactivate\n"
+               "                  it (running its deactivate hook).\n"
+               "  File > Refresh now   re-resolve every expression.\n"
+               "  File > Close         end the session (Ctrl+W).\n"
+               "  Help > Help          this text (F1).\n"
+               "  Help > About         the entry and script counts and the target.\n"
+               "\n"
+               "The status bar shows the trainer's header on the left and the last\n"
+               "action or script message on the right, both refreshed by the live pass.\n";
     }
 
     std::string render_usage()
@@ -383,9 +134,9 @@ namespace slopkit::trainer::console
                "\n"
                "Without attachment flags the trainer attaches to the process name recorded\n"
                "when it was generated. Actions run before the list is printed; without any\n"
-               "action flag an interactive console is shown when stdin is a terminal.\n"
-               "A missing target keeps the interactive list or a --wait run waiting, and the\n"
-               "trainer attaches as soon as it appears.\n"
+               "action flag the trainer window opens when a display is available.\n"
+               "A missing target keeps the window or a --wait run waiting, and the trainer\n"
+               "attaches as soon as it appears.\n"
                "Scripts start idle; --activate N ticks script S<N> before the actions run.\n"
                "--verbose writes debug-level logging to <trainer>.log beside this file.\n";
     }

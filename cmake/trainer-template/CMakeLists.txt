@@ -2,10 +2,10 @@
 #
 # Configured and built by cmake/Trainer.cmake with cmake/toolchain-mingw64.cmake.
 # It is a separate CMake project because the template is a PE binary that must
-# link the same fetched Lua, sol2, Zydis and FTXUI revisions the host build uses,
-# and a bare compiler command cannot consume the FetchContent targets. Both builds
-# share the host build's download directory, so each repository is checked out
-# once.
+# link the same fetched Lua, sol2 and Zydis revisions the host build uses plus
+# the same statically linked mingw Qt 6 kit, and a bare compiler command cannot
+# consume the FetchContent targets. Both builds share the host build's download
+# directory, so each repository is checked out once.
 #
 # The project body lives in cmake/TrainerTemplate.cmake; this file carries only
 # the two commands CMake requires literally in the top-level file.

@@ -30,19 +30,23 @@ offers to cancel, overwrite the open table or merge the file.
 | Access Watch | Record every instruction that writes or accesses a watched address, and resolve an instruction's memory operands from live registers. The "find out what writes/accesses" commands attach the debug session on demand after a confirmation, so the Memory Viewer does not have to be opened first. | Implemented (Access Watch window) |
 | Referenced strings | Analyze a loaded module for the ASCII and UTF-16LE strings its code directly references and show each as a comment on the referencing disassembly line, with a filterable, per-module list in the Referenced strings window. | Implemented (Referenced strings window) |
 | Module / thread views | Inspect loaded modules and threads of the attached target. | Implemented (Process list detail) |
-| Standalone trainer | Turn the open table into self-contained console trainers (`File > Generate Trainer…`) that reproduce its live values, frozen writes and Lua scripts on a machine with no slopkit, Qt or plugin installed; a Linux executable and a 64-bit Windows one are written, each with the table's value entries, scripts and ReClass classes appended to a runtime template rather than a sidecar file. | Implemented (Generate Trainer…) |
+| Standalone trainer | Turn the open table into trainers (`File > Generate Trainer…`) that reproduce its live values, frozen writes and Lua scripts on a machine with no slopkit or plugin installed; a Linux executable and a 64-bit Windows one are written, each with the table's value entries, scripts and ReClass classes appended to a runtime template rather than a sidecar file. The trainer is a Qt 6 window: the Linux one needs the same Qt 6 runtime slopkit uses, and the Windows one links Qt statically and stays a single file. | Implemented (Generate Trainer…) |
 
 ## Quick start
 
 Dependencies (from the system repositories): CMake and Ninja, a C++23 compiler,
 the libzip development package (e.g. Fedora's `libzip-devel`) with `pkg-config`,
 Catch2, Qt 6 Widgets (`Qt6Core`, `Qt6Gui`, `Qt6Widgets`) and ImageMagick
-(build-time only, for the icon set). Lua, sol2, Zydis and FTXUI are not system
-packages: CMake fetches them with `FetchContent` — sol2, Zydis and FTXUI from
-their repositories at pinned revisions, Lua from the Lua team's official 5.4.7
-release tarball, pinned by its SHA-256 — so the first configure needs network
-access and downloads each once into `build/_deps`, which the Windows trainer
-template's cross-build reuses. The
+(build-time only, for the icon set). Lua, sol2 and Zydis are not system packages:
+CMake fetches them with `FetchContent` — sol2 and Zydis from their repositories
+at pinned revisions, Lua from the Lua team's official 5.4.7 release tarball,
+pinned by its SHA-256 — so the first configure needs network access and
+downloads each once into `build/_deps`, which the Windows trainer template's
+cross-build reuses. That template links a statically built mingw-w64 Qt 6, so
+the cross-build needs a static kit besides the mingw compilers: point
+`SLOPKIT_MINGW_QT_DIR` at a kit whose `Qt6Config.cmake` has `lib/libQt6Core.a`
+beside it (a shared kit is refused). Without one, configure warns and the
+Windows trainer is reported unavailable while the Linux one still works. The
 Wine/Proton resident agent is cross-compiled and
 needs the mingw-w64 compilers for both bitnesses (`x86_64-w64-mingw32-gcc` and
 `i686-w64-mingw32-gcc`); without them the build uses a prebuilt agent under
@@ -84,8 +88,10 @@ These flags work headlessly, with no display or GPU required.
 `File > Generate Trainer…` turns the open table into executables that carry its
 value entries and Lua scripts inside themselves and reproduce their behaviour —
 live values, frozen writes and scripted effects — on a machine that has neither
-slopkit, Qt nor any plugin installed. The same generation is reachable
-headlessly:
+slopkit nor any plugin installed. The generated Linux trainer is a Qt 6 window
+and therefore needs the same Qt 6 libraries slopkit itself needs; the Windows
+trainer links a statically built mingw Qt 6 and stays one file. The same
+generation is reachable headlessly:
 
 ```sh
 ./build/slopkit generate-trainer --table game.skt --target both --out ~/trainer
@@ -130,38 +136,38 @@ image also decides the pointer width, so a 32-bit game's pointer chains resolve
 with 4-byte pointers even though the loader hosting it is 64-bit. Reading and
 writing that memory follows the same kernel ptrace policy as any other target.
 
-The Windows trainer opens its full-screen list in a console window of its own when
-it was started from a Unix terminal under Wine. Such a process only borrowed that
-terminal, so an interactive run hands itself to a copy started with a new console
-and the original waits and passes its exit code back; the list is painted with the
-Win32 console API there, because a Wine console window does not interpret escape
-sequences. The Unix terminal only keeps what the trainer prints before the window
-opens. A native Windows console, or a Wine console that already has a visible
-window, is used as it is.
+When a display is available, a run without any action flag opens the trainer
+window: a table with the value entries as `1..N` and the scripts as `S1..Sm`,
+refreshed by the live pass. Its columns are `#`, `Description`, `Address`,
+`Type`, `Value`, `Frozen / Active`, `State`, `Interval` and `Message` — value
+rows fill the first six, script rows the last four. Double-click a `Value` cell,
+type the new value and press Enter; `Esc` or a click elsewhere discards the
+edit, and a text the entry's type or hex flag refuses keeps the editor open with
+the reason on the status bar. The `Frozen / Active` checkbox freezes or unfreezes
+a value entry and activates or deactivates a script (each running the script's
+`activate` / `deactivate` hook). `File > Refresh now` re-resolves every
+expression, `File > Close` (`Ctrl+W`) ends the session, `Help > Help` (`F1`)
+shows the window's help and `Help > About` names the trainer, its entry and
+script counts and its target. The status bar carries the header line on the left
+and the last action or script message on the right, both refreshed by the live
+pass.
 
-With a terminal it opens a full-screen list: click a row to toggle it, or select
-it and press Enter — a click on a value entry freezes or unfreezes it and a click
-on a script row activates or deactivates it. Arrow keys, Page Up/Down, Home and
-End move the selection and the wheel scrolls. Typing letters starts a command,
-which Enter runs: `f<N>` toggles freeze, `s <N> <value>` writes a value (hex
-honouring the entry's hex flag), `a<N>` activates script `S<N>` and `d<N>`
-deactivates it (each running the script's `activate` / `deactivate` hook), `r`
-re-resolves, `l` redraws, `?` shows the help and `q` quits.
+The Windows trainer keeps a console beside its window, because the template is a
+console-subsystem binary and that is where `--list` output and the exit code go;
+launched from the command line under Wine it therefore shows both the console
+and the window.
 
-The list shows the value entries as `1..N` — index, description, resolved
-address, type, value and a frozen marker — and then the scripts as `S1..Sm`, with
-each script's state (`idle`, `active` or `error`), tick interval and last
-message. The two numberings are independent, so `f1` never touches `S1`. Frozen
+The two numberings are independent, so entry `1` never touches `S1`. Frozen
 entries are re-written on every tick, and an active script's `update` hook runs on
 the interval it asks for, else `--interval` (250 ms by default), both inside
-`--wait` and in the interactive list. `--activate N` is repeatable and ticks a
+`--wait` and in the window. `--activate N` is repeatable and ticks a
 script before the requested actions run, so a headless run starts only the scripts
 it trusts — scripts always start idle otherwise. An entry whose expression cannot
 resolve shows the address recorded at generation time with an `unresolved` marker
 and is never written to; a symbol a script published resolves such expressions
 until that script is deactivated. A script's own failure marks that one script
 `error`, is reported in the list and leaves the other scripts and the exit code
-alone. Without a terminal, or with any of the flags above, the trainer prints the
+alone. Without a display, or with any of the flags above, the trainer prints the
 same rows as text and exits. Exit codes: `0` success, `1` usage error, `2` no
 embedded data, `3` target process not found, `4` memory access failure.
 

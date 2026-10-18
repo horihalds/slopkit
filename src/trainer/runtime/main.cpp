@@ -21,12 +21,13 @@
 #include "scan/value.hpp"
 #include "trainer/payload.hpp"
 #include "trainer/runtime/console.hpp"
+#include "trainer/runtime/gui/window.hpp"
 #include "trainer/runtime/logging.hpp"
 #include "trainer/runtime/payload_reader.hpp"
 #include "trainer/runtime/resolve.hpp"
+#include "trainer/runtime/rows.hpp"
 #include "trainer/runtime/scripts.hpp"
 #include "trainer/runtime/target.hpp"
-#include "trainer/runtime/tui.hpp"
 
 namespace slopkit::trainer
 {
@@ -264,14 +265,12 @@ namespace slopkit::trainer
         std::optional<std::string>
         apply_set(Resolver& resolver, const PayloadEntry& entry, LiveEntry& live, std::string_view text)
         {
-            const auto value = scan::parse_value(entry.type, text, entry.hex);
-            if (!value)
+            if (const auto refused = parse_value_text(entry, text))
             {
-                return std::format(
-                    "cannot read \"{}\" as {}: {}", text, scan::describe(entry.type), value.error().message);
+                return refused;
             }
 
-            const auto bytes = scan::encode_value(entry.type, *value);
+            const auto bytes = scan::encode_value(entry.type, scan::parse_value(entry.type, text, entry.hex).value());
             if (const auto written = resolver.write(entry, live, bytes); !written)
             {
                 return written.error();
@@ -514,7 +513,7 @@ namespace slopkit::trainer
         // One interactive action, applied to the session; the returned text is the
         // message the list shows. Everything it touches stays on the loop's own
         // thread, so the target is never reached from a second one.
-        std::string apply_action(const tui::Action&      action,
+        std::string apply_action(const Action&           action,
                                  const Payload&          payload,
                                  ScriptHost&             scripts,
                                  Resolver&               resolver,
@@ -535,16 +534,16 @@ namespace slopkit::trainer
 
             switch (action.kind)
             {
-            case tui::Action::Kind::none:
-            case tui::Action::Kind::quit:
+            case ActionKind::none:
+            case ActionKind::quit:
                 return {};
-            case tui::Action::Kind::refresh:
+            case ActionKind::refresh:
                 resolver.refresh_modules();
                 tick_scripts(scripts, resolver);
                 rewrite_frozen(payload, resolver, live);
                 refresh_all(payload, resolver, live);
                 return {};
-            case tui::Action::Kind::freeze:
+            case ActionKind::toggle_freeze:
             {
                 if (action.index == 0 || action.index > payload.entries.size())
                 {
@@ -562,26 +561,25 @@ namespace slopkit::trainer
                 }
                 return {};
             }
-            case tui::Action::Kind::set_value:
+            case ActionKind::set_value:
             {
                 if (action.index == 0 || action.index > payload.entries.size())
                 {
                     return entry_error();
                 }
-                return apply_set(resolver, payload.entries[action.index - 1], live[action.index - 1], action.value)
+                return apply_set(resolver, payload.entries[action.index - 1], live[action.index - 1], action.text)
                     .value_or(std::string {});
             }
-            case tui::Action::Kind::activate_script:
-            case tui::Action::Kind::deactivate_script:
+            case ActionKind::activate_script:
+            case ActionKind::deactivate_script:
             {
                 if (action.index == 0 || action.index > scripts.size())
                 {
                     return script_error();
                 }
 
-                const auto outcome = action.kind == tui::Action::Kind::activate_script
-                                       ? scripts.activate(action.index - 1)
-                                       : scripts.deactivate(action.index - 1);
+                const auto outcome = action.kind == ActionKind::activate_script ? scripts.activate(action.index - 1)
+                                                                                : scripts.deactivate(action.index - 1);
                 resolver.set_symbols(scripts.symbols());
 
                 // The hook's own output is the interesting part; a failure adds why.
@@ -605,10 +603,9 @@ namespace slopkit::trainer
                         ScriptHost&             scripts,
                         Resolver&               resolver,
                         std::vector<LiveEntry>& live,
-                        std::uint32_t           interval_ms,
-                        bool                    console_window)
+                        std::uint32_t           interval_ms)
         {
-            const auto perform = [&](const tui::Action& action)
+            const auto perform = [&](const Action& action)
             {
                 if (!session.ensure())
                 {
@@ -628,7 +625,13 @@ namespace slopkit::trainer
                 refresh_all(payload, resolver, live);
             };
 
-            return tui::run_tui(
+            gui::Options options;
+            options.title = payload.process_name.empty()
+                              ? QStringLiteral("slopkit-trainer")
+                              : QStringLiteral("slopkit-trainer: %1").arg(QString::fromStdString(payload.process_name));
+            options.interval_ms = interval_ms;
+
+            return gui::run(
                 payload,
                 live,
                 scripts.states(),
@@ -636,10 +639,9 @@ namespace slopkit::trainer
                 {
                     return session.pid();
                 },
-                interval_ms,
+                std::move(options),
                 perform,
-                step,
-                console_window);
+                step);
         }
 
         // `--verbose` is the only way a trainer writes a log, so start it before
@@ -658,7 +660,7 @@ namespace slopkit::trainer
                                      enable_verbose_logging(executable).string());
         }
 
-        int run(const Options& options, bool window_list)
+        int run(const Options& options)
         {
             if (options.verbose)
             {
@@ -705,7 +707,7 @@ namespace slopkit::trainer
             {
                 attach_failure = target.error().message;
             }
-            const bool interactive_session = !options.has_actions() && stdin_is_terminal();
+            const bool interactive_session = !options.has_actions() && gui::window_available();
             const bool wait_for_target =
                 !target && target.error().not_found && (options.wait_ms > 0 || interactive_session);
             if (!target && !wait_for_target)
@@ -820,7 +822,7 @@ namespace slopkit::trainer
                 pump(options.wait_ms, options.interval_ms, *payload, session, scripts, resolver, live);
             }
 
-            if (options.has_actions() || !stdin_is_terminal())
+            if (!interactive_session)
             {
                 if (!session.attached())
                 {
@@ -833,7 +835,7 @@ namespace slopkit::trainer
                 return kExitOk;
             }
 
-            return interactive(*payload, session, scripts, resolver, live, options.interval_ms, window_list);
+            return interactive(*payload, session, scripts, resolver, live, options.interval_ms);
         }
     }
 
@@ -851,17 +853,7 @@ namespace slopkit::trainer
             return kExitOk;
         }
 
-        // An interactive run may have to move to a console window before it
-        // attaches, so the borrowed terminal never sees the list.
-        bool window_list = false;
-        if (!options->has_actions() && stdin_is_terminal())
-        {
-            if (const auto exit_code = ensure_console_window(window_list))
-            {
-                return *exit_code;
-            }
-        }
-        return run(*options, window_list);
+        return run(*options);
     }
 
 }

@@ -8,42 +8,17 @@
 
 #include "trainer/payload.hpp"
 #include "trainer/runtime/resolve.hpp"
+#include "trainer/runtime/rows.hpp"
 #include "trainer/runtime/scripts.hpp"
 
 namespace slopkit::trainer::console
 {
-    enum class CommandKind
-    {
-        none,
-        freeze,
-        set_value,
-        activate_script,
-        deactivate_script,
-        refresh,
-        list,
-        quit,
-        help,
-        invalid,
-    };
-
-    struct Command
-    {
-        CommandKind kind {CommandKind::none};
-        std::size_t index {}; // 1-based, as displayed
-        std::string value;    // the text after `s <N>`
-        std::string text;     // the offending input for `invalid`
-    };
-
-    // `f<N>` / `f <N>` freeze, `s <N> <value>` set, `a<N>` / `a <N>` activate a
-    // script, `d<N>` / `d <N>` deactivate one, `r` re-resolve, `l` re-list,
-    // `q` quit and `?` help; anything else is `invalid`. Value entries and scripts
-    // are numbered independently.
-    [[nodiscard]] Command parse_command(std::string_view line);
-
     [[nodiscard]] std::string render_header(const Payload& payload, std::uint32_t pid);
 
     // One list line without its newline. The printed list and the interactive one
     // both render through these, so a row cannot look different in the two.
+    [[nodiscard]] std::string render_value_row(const RowView& row);
+    [[nodiscard]] std::string render_script_row(const RowView& row);
     [[nodiscard]] std::string render_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number);
     [[nodiscard]] std::string
     render_script_row(const PayloadScript& script, const ScriptState& state, std::size_t number);

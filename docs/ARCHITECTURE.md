@@ -895,10 +895,12 @@ scrollbar are the layout rule of [`docs/UI_DESIGN.md`](docs/UI_DESIGN.md).
 ## Generated trainers
 
 `Generate Trainer…` in the File menu and the `slopkit generate-trainer` command
-turn the open table into a standalone console trainer: one file that carries the
-table's value entries, scripts and ReClass classes inside itself and reproduces
-their live values, frozen writes and scripted effects on a machine with no
-slopkit, no Qt and no plugin.
+turn the open table into a standalone trainer: one file that carries the table's
+value entries, scripts and ReClass classes inside itself and reproduces their
+live values, frozen writes and scripted effects on a machine with no slopkit and
+no plugin. The Linux binary is a Qt 6 window and needs the same Qt 6 runtime
+slopkit itself uses; the Windows one links a static mingw Qt 6 and stays one
+file.
 
 `trainer::generate` (`src/trainer/generate.cpp`) does that by copying an installed
 runtime template and appending a version-2 payload: a `SLPKTRN1` header carrying the
@@ -1020,7 +1022,7 @@ the trainer or change its exit code.
 
 A trainer follows its process instead of ending with it, and it may start before
 the process does. The attach failure that says no such process is running is not
-fatal for the interactive list or a `--wait` run: `Resolver` and `ScriptHost` are
+fatal for the interactive run or a `--wait` run: `Resolver` and `ScriptHost` are
 bound to a `DetachedTarget` stand-in whose accesses fail cleanly, so every row
 shows unresolved, and the session retries the attach once a second. Startup
 actions that need a target (`--activate` and `--set`) are replayed by the first
@@ -1041,59 +1043,57 @@ every draw and says the trainer is waiting while there is none, and actions
 submitted while the target is absent answer that the trainer is waiting for it to
 appear.
 
-The list shows the value entries as `1..N` — index, description, resolved
-address, value type, value and the frozen and unresolved markers — and then the
-scripts as `S1..Sm` with their state, tick interval and last message, refreshing
-about four times a second. `f<N>` freezes or unfreezes an entry, `s <N> <value>`
-writes one (parsing in the entry's own hex flag), `a<N>` / `d<N>` activate and
-deactivate script `S<N>`, `r` re-resolves every expression, `l` redraws and `q`
-quits; the two numberings are independent and the help text says so. Frozen entries
-are re-written on every tick, which is what lets the trainer hold a value a game
-keeps overwriting.
+Both front-ends render one row core. `rows.{hpp,cpp}` turns the payload and the
+live state into `RowView`s — label, description, resolved address, type, value,
+frozen marker, state, interval and message — and `console::render_value_row` /
+`render_script_row` compose their printed line from those fields, so the window
+and the printed list cannot drift apart. Values are `1..N` and scripts `S1..Sm`;
+the two numberings are independent and the help text says so. Frozen entries are
+re-written on every tick, which is what lets the trainer hold a value a game keeps
+overwriting. `parse_value_text` is the one parse of a value text: `apply_action`
+writes through it and the window's editor validates with it.
 
-With a terminal, the interactive mode is a full-screen FTXUI list
-(`src/trainer/runtime/tui.{hpp,cpp}`): a click or Enter on a row toggles it — a
-value entry's freeze flag, a script's activation — and the keyboard keeps the whole
-command set above. The state (`tui::Model`: rows, selection, scroll window, input
-line, status message) knows neither FTXUI nor the target, so the interaction is
-unit-testable without a terminal, and `tui::run_tui` only renders it and maps
-events to a `tui::Action`; a Wine console window that cannot draw escape
-sequences is served by `tui::run_window` (`tui_win32.cpp`), which drives the same
-`Model` through the Win32 console API. The actions are applied by `main.cpp` to
-the same `ScriptHost`, `Resolver` and `LiveEntry` state the non-interactive flags
-drive, on the loop's own thread — script ticking and value refreshing happen
-through the `step` callback the loop calls on the interval, never on a second
-thread, so target access cannot race. The rows themselves are rendered by `console.cpp`, so
-the list and the printed output cannot drift apart. The non-interactive flags
-(`--list`, `--set N=VALUE`, `--freeze N`, `--activate N`, `--interval`, `--wait`)
-drive the same actions without a TTY, so the trainer can be scripted or run by a
-test; without them and with a terminal it runs the full-screen list, and the exit
-codes are the ones `README.md` documents.
+With a display, a run without any action flag opens a Qt 6 window
+(`src/trainer/runtime/gui/window.{hpp,cpp}`): a `QMainWindow` over one
+`QTableView` fed by `gui::RowsModel`, with `File` (`Refresh now`, `Close`) and
+`Help` (`Help`, `About`) menus and a status bar carrying `console::render_header`
+on the left and the last action or script message on the right.
+`RowsModel` holds the worker's immutable row snapshot and maps it onto the nine
+columns; a `Value` cell edits in place through
+`ui::components::ValidatingDelegate`, and the `Frozen / Active` column freezes a
+value entry or activates a script. A cell never mutates a snapshot: it
+validates, emits the `Action` it wants (the same `slopkit::trainer::Action` the
+worker applies) and repaints from the current snapshot, so a submitted change
+appears on the worker's next pass.
 
-The Windows build enters the full-screen list in a console window of its own when
-the trainer was started from a Unix terminal under Wine. Wine gives such a process
-a hidden console window whose input and output are that terminal, and the process
-cannot move to a window in place: only a process started with
-`CREATE_NEW_CONSOLE` gets one. An interactive run therefore hands itself to a
-child started that way (`CreateProcessW` in `ensure_console_window`,
-`target_windows.cpp`) and waits for it, passing its exit code back; the
-`SLOPKIT_TRAINER_WINDOW` environment variable stops the child from repeating the
-hand-off. The child's console window does not interpret escape sequences, so
-`run_window` (`tui_win32.cpp`) paints the same `Model` and the same rows and help
-text that FTXUI gets through `WriteConsoleOutputW`, reading the keyboard and mouse
-as console input and calling the same `step` on the interval. A native Windows
-console and a Wine console that already has a visible window run FTXUI directly,
-and the Linux build's `ensure_console_window` does nothing.
+Every target call stays off the GUI thread. `gui::SessionWorker` is a `QThread`
+that owns the trainer's existing `Session`, `ScriptHost`, `Resolver` and
+`LiveEntry` state through the same `perform(Action)` and `step()` callbacks
+`main.cpp` builds, runs its own `QTimer` on the session interval, applies the
+submitted actions, then calls `step()` and publishes a
+`std::shared_ptr<const std::vector<RowView>>` snapshot with the current header and
+message. The window hands that snapshot to `RowsModel` and never sees a `Target`.
+Because a `QThread` object lives in the thread that created it, `submit()` queues
+the action under a mutex and wakes the worker with a queued call on an object the
+worker thread owns, so no action can ever run on the GUI thread; closing the
+window stops the worker and waits for it before the session is released.
 
-A console queues the mouse button's state with every record and repeats it on
-records that are not clicks at all — Wine reports the state it believes while the
-pointer only moves or the window is activated, and a held button reads pressed on
-every record — so the pressed bit is not an input event. `run_window` therefore
-tracks the button and toggles a row on the release that ends a press
-(`tui::ClickTracker`), using the row under the pointer at the release; motion,
-wheel and focus records, and a press that never ends, ask for nothing. Reading the
-state directly let every such record toggle the row under the pointer, which is how
-the list could cycle on its own while its console window had focus.
+The non-interactive flags (`--list`, `--set N=VALUE`, `--freeze N`,
+`--activate N`, `--interval`, `--wait`) drive the same actions without a display,
+and any action flag forces the printed path even when one exists, so the trainer
+can be scripted or run by a test. Without them and with a display
+(`gui::window_available()`, which accepts `DISPLAY`, `WAYLAND_DISPLAY` or an
+explicit `QT_QPA_PLATFORM`) it runs the window; without a display it prints the
+rows and exits. The exit codes are the ones `README.md` documents.
+
+The Windows template is cross-compiled with mingw-w64 against the same source
+lists and a statically linked mingw Qt 6 kit (`SLOPKIT_MINGW_QT_DIR`), because
+the template is still one file with the payload appended and a shared Qt would
+demand sidecar DLLs. Without such a kit `cmake/Trainer.cmake` warns and does not
+build the template, so `trainer::generate` reports the windows target unavailable
+while the Linux one still works. The template stays a console-subsystem binary,
+so `--list` output and the exit code keep working from a terminal, and a window
+run launched that way keeps its console beside the window.
 
 The handle `attach` opens for the target carries `SYNCHRONIZE` on top of the
 query and VM rights, because `WindowsTarget::alive` asks `WaitForSingleObject`
@@ -1120,6 +1120,11 @@ next to the plugins (`SLOPKIT_TRAINER_RELATIVE_DIR`), which is where the generat
 looks. The Linux one is the `slopkit-trainer` target itself. The Windows one is a
 nested CMake cross-build (`cmake/TrainerTemplate.cmake` over
 `cmake/toolchain-mingw64.cmake`, driven by `cmake/Trainer.cmake`) of the same source
-list and the same dependency declarations, so it links the same fetched Lua, sol2,
-Zydis and FTXUI as the host build and, like it, statically links the C++ and mingw
-runtimes: it needs no DLL on the target machine.
+lists and the same dependency declarations, so it links the same fetched Lua,
+sol2 and Zydis as the host build, the same `slopkit_ui_common` presentation
+sources and a **statically linked** mingw Qt 6 kit (`SLOPKIT_MINGW_QT_DIR`). That
+kit is required because the template is still one file with the payload appended:
+a shared Qt would need sidecar DLLs, so the cross-build refuses a shared kit,
+warns, and leaves the windows target unavailable while the Linux one still works.
+The template also statically links the C++ and mingw runtimes, so it needs no DLL
+on the target machine.

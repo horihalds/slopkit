@@ -48,8 +48,9 @@ namespace slopkit::ui::dialogs
 
         layout->addWidget(widgets::section_header(tr("Generate Trainer"), this));
         layout->addWidget(widgets::hint_text(
-            tr("A trainer carries the table's value entries inside one executable and needs neither slopkit, Qt nor a "
-               "plugin on the machine it runs on."),
+            tr("A trainer carries the table's value entries inside one executable and needs neither slopkit nor a "
+               "plugin on the machine it runs on. The Linux trainer needs the same Qt 6 runtime slopkit itself "
+               "needs; the Windows one is self-contained because it links Qt statically."),
             this));
 
         auto* targets = new QHBoxLayout();

@@ -27,7 +27,7 @@ docs that hold the detail behind this map.
 | `src/script` | Lua scripting engine: a sol2 state, the `mem` and `structs` APIs, the type-token codec, the process-wide symbol registry and the hook-script generator |
 | `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
 | `src/trainer` | Qt-free trainer generation: the payload format and the generator that appends a table's value entries, scripts and ReClass classes to a copy of a runtime template |
-| `src/trainer/runtime` | Self-contained trainer and its Lua script host, with a full-screen clickable list on a terminal and the same rows printed as text without one (the Linux backend is built natively, the Windows backend is cross-compiled) |
+| `src/trainer/runtime` | Self-contained trainer and its Lua script host, with a Qt 6 window when a display is available and the same rows printed as text without one (the Linux backend is built natively, the Windows backend is cross-compiled) |
 | `src/ui` | Qt main window and shared UI infrastructure |
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, ReClass project tree, script editor, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
@@ -49,14 +49,14 @@ docs that hold the detail behind this map.
 | `tests/script` | Tests for `src/script` |
 | `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `script_helpers.hpp`, `memory_view_helpers.hpp`, `reclass_helpers.hpp`, `reclass_live_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
 | `tests/table` | Tests for `src/table` |
-| `tests/trainer` | Tests for `src/trainer`, including the TUI list model and the built trainer driven against a live process |
+| `tests/trainer` | Tests for `src/trainer`, including the row core, the Qt model and window run offscreen, and the built trainer driven against a live process |
 | `tests/ui` | Window/flow tests (the four subdirectories have their own rows) |
 | `tests/ui/components` | Tests for `src/ui/components` |
 | `tests/ui/dialogs` | Tests for `src/ui/dialogs` |
 | `tests/ui/models` | Tests for `src/ui/models` |
 | `tests/ui/panels` | Tests for `src/ui/panels` |
 | `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `icons/datatypes/*.svg` (node-kind glyphs), `fonts/*.ttf` with `OFL.txt` |
-| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair), `Dependencies.cmake` (fetches sol2, Zydis and FTXUI from their repositories at pinned revisions and Lua from the official 5.4.7 release tarball pinned by its SHA-256, for every build), `TrainerSources.cmake` (the trainer source lists) and `Trainer.cmake` (drives the Windows trainer cross-build, or warns and leaves the Linux-only build working) |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair), `Dependencies.cmake` (fetches sol2 and Zydis from their repositories at pinned revisions and Lua from the official 5.4.7 release tarball pinned by its SHA-256, for every build), `UiCommonSources.cmake` (the `slopkit_ui_common` source list both builds compile), `TrainerSources.cmake` (the trainer source lists) and `Trainer.cmake` (drives the Windows trainer cross-build against a static mingw Qt 6 kit, or warns and leaves the Linux-only build working) |
 | `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `SCRIPTING.md`, `WINE_AGENT.md`, `KNOWN_ISSUES.md` |
 | `reference/` | Read-only reference material — never modified |
 | `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |
@@ -74,7 +74,7 @@ docs that hold the detail behind this map.
 | expr | Address expression parsing (`base + offset...` and bracket pointer chains) and resolution with an injected per-level validator; a dependency-free leaf (it includes nothing outside `expr/`) | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | — |
 | reclass | ReClass structure model: the polymorphic `Node` hierarchy and its kinds, the derived class layout, the value codec, the dissect ladder and the archive member text; a dependency-free leaf (it includes nothing outside `reclass/`) | `reclass/nodes/{node,number,hex,text,vector,container,function}.hpp` (`Node`, `NodePtr`, `make_node`), `reclass/node.hpp` (`NodeKind`), `reclass/node_menu.hpp` (`node_menu_groups`, `node_menu_label`), `project.hpp`, `enum.hpp` (`EnumDescription`, `EnumValue`), `value.hpp`, `edit.hpp`, `dissect.hpp`, `serialize.hpp`, `cpp_header.hpp` (`cpp_header`) | `tests/reclass/*` | — |
 | trainer | Trainer payload format and the Qt-free generator: template discovery, the per-target copy-and-append write path and the reported script-entry count | `trainer/payload.hpp` (`Payload`, `PayloadEntry`, `PayloadScript`, `PayloadClass`, `TargetOs`, `encode_payload`, `decode_payload`), `trainer/generate.hpp` (`Request`, `Result`, `generate`, `template_directories`, `output_name`) | `tests/trainer/generate_test.cpp` | table, app, reclass, core |
-| trainer/runtime | Self-contained trainer: attach by pid or name (a Wine game by the guest executable's name, with the guest's own pointer width), module list of basenames and regions named after the module that owns their address, memory read/write, expression resolution, the refresh loop, the Lua script host (allocating a fresh mapping where the backend can, else a cave in the target's own writable or executable memory), the FTXUI list it drives (or the same list painted through the Win32 console API in a Wine console window) and the optional `--verbose` log it writes beside itself | `trainer/runtime/main.cpp`, `target.hpp` (`Target`, `attach`, `stdin_is_terminal`, `ensure_console_window`), `target_linux.cpp`, `target_windows.cpp`, `payload_reader.hpp` (`load_own_payload`), `resolve.hpp` (`Resolver`, `LiveEntry`), `console.hpp` (`parse_command`, `render_rows`), `scripts.hpp` (`ScriptHost`, `ScriptState`), `caves.hpp` (`CaveAllocator`), `logging.hpp` (`verbose_log_path`, `enable_verbose_logging`), `tui.hpp` (`Model`, `Action`, `run_tui`, `run_window`), `tui_win32.cpp` | `tests/trainer/console_test.cpp`, `tests/trainer/scripts_test.cpp`, `tests/trainer/target_test.cpp`, `tests/trainer/caves_test.cpp`, `tests/trainer/logging_test.cpp`, `tests/trainer/tui_test.cpp`, `tests/trainer/driver_test.cpp` | platform, expr, scan, core, script, reclass, FTXUI |
+| trainer/runtime | Self-contained trainer: attach by pid or name (a Wine game by the guest executable's name, with the guest's own pointer width), module list of basenames and regions named after the module that owns their address, memory read/write, expression resolution, the refresh loop, the Lua script host (allocating a fresh mapping where the backend can, else a cave in the target's own writable or executable memory), the row core both front-ends render, the Qt 6 window with its session worker and the optional `--verbose` log it writes beside itself | `trainer/runtime/main.cpp`, `action.hpp` (`Action`, `ActionKind`), `rows.hpp` (`RowView`, `build_rows`, `parse_value_text`), `target.hpp` (`Target`, `attach`), `target_linux.cpp`, `target_windows.cpp`, `payload_reader.hpp` (`load_own_payload`), `resolve.hpp` (`Resolver`, `LiveEntry`), `console.hpp` (`render_rows`, `render_help`), `scripts.hpp` (`ScriptHost`, `ScriptState`), `caves.hpp` (`CaveAllocator`), `logging.hpp` (`verbose_log_path`, `enable_verbose_logging`), `gui/window.hpp` (`TrainerWindow`, `run`, `window_available`), `gui/rows_model.hpp` (`RowsModel`), `gui/session_worker.hpp` (`SessionWorker`) | `tests/trainer/rows_test.cpp`, `tests/trainer/gui_test.cpp`, `tests/trainer/console_test.cpp`, `tests/trainer/scripts_test.cpp`, `tests/trainer/target_test.cpp`, `tests/trainer/caves_test.cpp`, `tests/trainer/logging_test.cpp`, `tests/trainer/driver_test.cpp` | platform, expr, scan, core, script, reclass, ui_common, Qt6 |
 | disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
 | analysis | Module string-reference sweep over an injected read seam | `analysis/string_references.hpp` (`find_string_references`, `StringReference`, `ModuleRange`, `StringScanResult`, `StringScanReport`, `describe`) | `tests/analysis/*` | disasm, process/types, core |
 | script | Lua scripting engine over the fetched Lua and sol2 (the trainer links it verbatim) | `script/engine.hpp` (`Engine`, `run_lifecycle`, `run_update`, `UpdateResult`, `check_syntax`), `script/types.hpp` (`RunResult`, `LifecycleResult`, `SymbolApi`), `script/symbols.hpp` (`SymbolTable`), `script/codec.hpp`, `script/hook_script.hpp` (`HookTarget`, `build_hook`, `render`), `script/hook.hpp` (`Spec`, `hook::install`, `hook::remove`), `script/api_catalog.hpp` (`api_catalog`, `ApiEntry`, `lua_standard_globals`, `lua_library_members`), `script/structs.hpp` (`install_structs`, `StructsContext`), `script/structs_view.hpp` (`build_class_index`, `class_index_of`, `ClassIndex`, `ClassDef`, `FieldDef`, `FieldValue`, `read_field`, `write_field`, `ByteSource`, `BufferSource`) | `tests/script/*` | Lua, sol2, scan, expr, disasm, reclass |
@@ -177,11 +177,13 @@ docs that hold the detail behind this map.
   `slopkit_platform` — and the Windows source list removes them together with
   `target_linux.cpp`, a mingw build having neither procfs nor a wine prefix. The
   trainer keeps two row namespaces apart — value entries stay `1..N`,
-  scripts are `S1..Sm` — so a new console command must say which one it addresses.
-- The trainer's interactive list is a cache, not the truth: `tui::Model` is
-  rebuilt from the session's `LiveEntry` and `ScriptState` on every frame and
-  `main.cpp` applies its actions to those, so nothing about a script's activation
-  or an entry's value may be stored in the model.
+  scripts are `S1..Sm` — so a new row action must say which one it addresses.
+- The trainer's window is a cache, not the truth: `gui::RowsModel` holds the
+  immutable `RowView` snapshot the worker publishes from the session's
+  `LiveEntry` and `ScriptState`, and `main.cpp` applies the submitted `Action`s to
+  those, so nothing about a script's activation or an entry's value may be stored
+  in the model. `gui::SessionWorker` owns every target call; nothing in
+  `gui/window.cpp` or `gui/rows_model.cpp` may reach a `Target`.
 - A `.skt` archive is versioned by `version.txt`: the writer emits
   `slopkit-table 6` (value and script entries with nesting, plus the class
   project); the reader also accepts `slopkit-table 5`, `slopkit-table 4` (no
@@ -232,15 +234,19 @@ docs that hold the detail behind this map.
   `MemoryView` do the same in their own `eventFilter`; put a new cell editor on
   that path rather than on the line editor's `returnPressed`.
 - Configure fails without ImageMagick, the libzip dev package and `pkg-config`.
-  Lua, sol2, Zydis and FTXUI are not system packages: `cmake/Dependencies.cmake`
-  fetches sol2, Zydis and FTXUI from their repositories at pinned revisions and
-  Lua from the official 5.4.7 release tarball pinned by its SHA-256, so the first
-  configure needs network access and the nested Windows trainer cross-build reuses
-  the host build's downloads through `SLOPKIT_SHARED_SOURCE_DIR` — only the source
-  trees are shared, because object files compiled by one toolchain must never be
-  linked by the other. FTXUI's own examples, tests, docs, modules, dev warnings and
-  install rules are switched off and its headers are SYSTEM, so third-party
-  diagnostics never reach the warning-free build stage.
+  Lua, sol2 and Zydis are not system packages: `cmake/Dependencies.cmake` fetches
+  sol2 and Zydis from their repositories at pinned revisions and Lua from the
+  official 5.4.7 release tarball pinned by its SHA-256, so the first configure
+  needs network access and the nested Windows trainer cross-build reuses the host
+  build's downloads through `SLOPKIT_SHARED_SOURCE_DIR` — only the source trees
+  are shared, because object files compiled by one toolchain must never be linked
+  by the other. Zydis's and sol2's own tests, tools and install rules are switched
+  off and their targets are SYSTEM, so third-party diagnostics never reach the
+  warning-free build stage. Qt 6 is a system package and every UI binary,
+  including both trainers, links it; the Windows template needs a statically
+  linked mingw Qt 6 kit, probed through `SLOPKIT_MINGW_QT_DIR` together with
+  `libQt6Core.a` (a shared kit is refused), and is simply not built when that kit
+  or the mingw C++ compiler is missing.
 - The `slopkit-agent` target cross-compiles the Wine resident agent with
   `x86_64-w64-mingw32-gcc` and `i686-w64-mingw32-gcc`; without them it copies a
   prebuilt pair from `src/plugins/wine_proton/agent/prebuilt/<bitness>` and

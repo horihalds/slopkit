@@ -429,15 +429,4 @@ namespace slopkit::trainer
         return error ? std::filesystem::path {} : path;
     }
 
-    bool stdin_is_terminal()
-    {
-        return ::isatty(STDIN_FILENO) != 0;
-    }
-
-    std::optional<int> ensure_console_window(bool& window_list)
-    {
-        window_list = false;
-        return std::nullopt;
-    }
-
 }

@@ -9,15 +9,24 @@
 #
 # `SLOPKIT_SOURCE_ROOT` must be set before this file is included.
 
+# The trainer window, its table model and the session thread: the third UI in
+# the project, built from the same presentation library as the app and the
+# sandbox.
+set(SLOPKIT_TRAINER_GUI_SOURCES
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/rows_model.cpp
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/session_worker.cpp
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/window.cpp)
+
 set(SLOPKIT_TRAINER_RUNTIME_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/caves.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/console.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/logging.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/payload_reader.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/resolve.cpp
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/rows.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/scripts.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_linux.cpp
-    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/tui.cpp)
+    ${SLOPKIT_TRAINER_GUI_SOURCES})
 
 # The Qt-free platform units the Linux target backend builds on: the procfs
 # parsers, the PE/ELF header readers and the Wine classification. The trainer's
@@ -80,5 +89,4 @@ list(REMOVE_ITEM SLOPKIT_TRAINER_WINDOWS_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_linux.cpp
     ${SLOPKIT_TRAINER_LINUX_SOURCES})
 list(APPEND SLOPKIT_TRAINER_WINDOWS_SOURCES
-    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_windows.cpp
-    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/tui_win32.cpp)
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/target_windows.cpp)
