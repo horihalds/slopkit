@@ -262,3 +262,11 @@ TEST_CASE("the window lists the rows and closes cleanly", "[trainer][gui]")
     QApplication::processEvents();
     CHECK(window.exit_code() == 0);
 }
+
+TEST_CASE("a chosen Qt platform counts as a display for the window gate", "[trainer][gui]")
+{
+    // The suite runs offscreen, and that explicit platform is what makes the
+    // generated trainer take the window path instead of the printed one.
+    REQUIRE_FALSE(qgetenv("QT_QPA_PLATFORM").isEmpty());
+    CHECK(slopkit::trainer::gui::window_available());
+}
