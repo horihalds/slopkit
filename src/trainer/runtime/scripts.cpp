@@ -197,6 +197,18 @@ namespace slopkit::trainer
         }
     }
 
+    void ScriptHost::deactivate_all()
+    {
+        for (std::size_t index = 0; index < states_.size(); ++index)
+        {
+            if (!states_[index].active)
+            {
+                continue;
+            }
+            static_cast<void>(deactivate(index));
+        }
+    }
+
     void ScriptHost::disable_all() noexcept
     {
         for (ScriptState& state : states_)

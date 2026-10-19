@@ -394,6 +394,13 @@ there:
   trainer's `--interval` (250 ms by default) as the fallback cadence;
   `update_interval` still wins, and its "due every pass" floor is the trainer's own
   interval.
+- Closing the trainer, or any run ending while scripts are active, runs each
+  still-active script's `deactivate()` once in saved table order while the target
+  is still attached — the same shutdown slopkit performs on quit. The hooks'
+  output is logged like any other; a refusal changes nothing else, since there is
+  no status line or exit code left to update. A target that has already exited is
+  the exception, because the trainer drops the dead handle without running a hook
+  against it.
 - The table's value entries keep the numbers `1..N` and its scripts are `S1..Sm`;
   the two numbering spaces are independent.
 - `mem.*`, `aobscan`, `assemble`, `expression`, `validate`, the global symbols

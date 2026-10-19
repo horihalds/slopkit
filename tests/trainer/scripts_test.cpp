@@ -249,6 +249,59 @@ end
     CHECK_FALSE(host.deactivate(0).has_value());
 }
 
+TEST_CASE("leaving deactivates every active script once", "[trainer][scripts]")
+{
+    FakeTarget target;
+    ScriptHost host {
+        target,
+        payload_with({
+                      PayloadScript {"First", R"(
+function activate()
+    mem.write(0x1000, "u8", 1)
+end
+function deactivate()
+    mem.write(0x1000, "u8", 0)
+end
+)"},
+                      PayloadScript {"Second", R"(
+function activate()
+    mem.write(0x1001, "u8", 1)
+end
+function deactivate()
+    mem.write(0x1001, "u8", 0)
+end
+)"},
+                      PayloadScript {"Idle", R"(
+function deactivate()
+    mem.write(0x1002, "u8", 0)
+end
+)"},
+                      }
+        ),
+        250
+    };
+
+    target.put<std::uint8_t>(2, 7);
+    REQUIRE(host.activate(0).has_value());
+    REQUIRE(host.activate(1).has_value());
+    CHECK(target.byte_at(0) == std::byte {1});
+    CHECK(target.byte_at(1) == std::byte {1});
+
+    host.deactivate_all();
+
+    CHECK_FALSE(host.states()[0].active);
+    CHECK_FALSE(host.states()[1].active);
+    CHECK(target.byte_at(0) == std::byte {0});
+    CHECK(target.byte_at(1) == std::byte {0});
+    // The script that was never active had no hook run for it.
+    CHECK(target.byte_at(2) == std::byte {7});
+
+    // A second pass runs nothing: the hooks already ran.
+    target.put<std::uint8_t>(0, 5);
+    host.deactivate_all();
+    CHECK(target.byte_at(0) == std::byte {5});
+}
+
 TEST_CASE("a failing script stops alone", "[trainer][scripts]")
 {
     FakeTarget target;

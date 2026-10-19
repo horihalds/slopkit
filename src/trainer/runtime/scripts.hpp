@@ -60,6 +60,11 @@ namespace slopkit::trainer
         [[nodiscard]] std::expected<void, std::string> activate(std::size_t index);
         [[nodiscard]] std::expected<void, std::string> deactivate(std::size_t index);
 
+        // Runs every active script's `deactivate` hook once, in table order, so a
+        // trainer that exits leaves the target as it found it. A failing hook is
+        // logged and forgotten: there is no exit code to change and no retry.
+        void deactivate_all();
+
         // Points the host at a new run of the target, dropping the old engine's
         // state. Scripts are left inactive; the caller decides which to activate.
         void rebind(const Target& target);

@@ -169,7 +169,11 @@ entries are re-written on every tick, and an active script's `update` hook runs 
 the interval it asks for, else `--interval` (250 ms by default), both inside
 `--wait` and in the window. `--activate N` is repeatable and ticks a
 script before the requested actions run, so a headless run starts only the scripts
-it trusts — scripts always start idle otherwise. An entry whose expression cannot
+it trusts — scripts always start idle otherwise. However a run ends, every script
+still active runs its `deactivate` hook once, in table order, while the target is
+alive — the shutdown slopkit performs on quit — so a closed trainer does not leave
+a hook behind; the hooks' output is logged and cannot change the exit code.
+An entry whose expression cannot
 resolve shows the address recorded at generation time with an `unresolved` marker
 and is never written to; a symbol a script published resolves such expressions
 until that script is deactivated. A script's own failure paints that script's

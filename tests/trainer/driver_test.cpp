@@ -529,6 +529,37 @@ end
     CHECK(target.read() == 4242);
 }
 
+TEST_CASE("the trainer deactivates its scripts when it exits", "[trainer][driver]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    const auto target  = spawn_target(0);
+    const auto address = literal_address(target.address);
+    generate_trainer({value_entry("Health", "base")},
+                     "script_exit",
+                     std::format(R"(
+function activate()
+    mem.write({}, "i32", 4242)
+end
+
+function deactivate()
+    mem.write({}, "i32", -1)
+end
+)",
+                                 address,
+                                 address));
+
+    const auto result = run_trainer(
+        generated_trainer("script_exit"),
+        {"--pid", std::to_string(target.pid), "--activate", "1", "--wait", "300", "--interval", "50", "--list"});
+    CHECK(result.exit_code == 0);
+    CHECK(target.read() == -1);
+}
+
 TEST_CASE("a script stays idle until it is activated", "[trainer][driver]")
 {
     if (!std::filesystem::is_regular_file(trainer_binary()))

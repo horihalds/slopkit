@@ -1027,6 +1027,15 @@ deactivating the script takes them away again. Every hook's output is printed, a
 failing hook marks that one script `error` and stops ticking it: no script can abort
 the trainer or change its exit code.
 
+However a run ends — the window closing, the last `--wait` pump finishing, or the
+requested actions completing — `run()` deactivates every script still active
+(`ScriptHost::deactivate_all`) in table order before the session, target and engine
+globals go away, which is the same shutdown the application's worker performs on
+quit. The outcome is logged under the `script` category and otherwise ignored: no
+retry, no status line and no change to the exit code. A target that has already
+exited is the exception, because the session cleared every flag when it dropped the
+dead handle, so no hook runs against it.
+
 A trainer follows its process instead of ending with it, and it may start before
 the process does. The attach failure that says no such process is running is not
 fatal for the interactive run or a `--wait` run: `Resolver` and `ScriptHost` are

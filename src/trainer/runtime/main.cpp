@@ -779,6 +779,21 @@ namespace slopkit::trainer
             }
             Session session {std::move(handle), detached, request, *payload, scripts, resolver, live};
 
+            // Slopkit's worker runs each active script's `deactivate` hook as it
+            // stops; the guard does the same however this run ends, while the
+            // session, the target and the engine's globals are still alive.
+            struct DeactivateOnExit
+            {
+                ScriptHost& scripts;
+
+                ~DeactivateOnExit()
+                {
+                    scripts.deactivate_all();
+                }
+            };
+
+            const DeactivateOnExit deactivate_on_exit {scripts};
+
             if (!scripts.class_error().empty())
             {
                 // `structs` is the only thing a class project backs, so a project
