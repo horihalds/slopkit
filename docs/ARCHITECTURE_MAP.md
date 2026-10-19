@@ -27,7 +27,7 @@ docs that hold the detail behind this map.
 | `src/script` | Lua scripting engine: a sol2 state, the `mem` and `structs` APIs, the type-token codec, the process-wide symbol registry and the hook-script generator |
 | `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
 | `src/trainer` | Qt-free trainer generation: the payload format and the generator that appends a table's value entries, scripts and ReClass classes to a copy of a runtime template |
-| `src/trainer/runtime` | Self-contained trainer and its Lua script host, with a platform window when a display is available — Qt 6 on Linux, native Win32 in the cross-compiled Windows template — and the same rows printed as text without one |
+| `src/trainer/runtime` | Self-contained trainer and its Lua script host, with a platform window when a display is available — Qt 6 on Linux, native Win32 in the cross-compiled Windows template — and the same rows printed as text without one; the window's Qt-free log feed (`gui/log_feed`) and the Qt pane (`gui/log_pane`) mirror `info`-and-above records on both targets |
 | `src/ui` | Qt main window and shared UI infrastructure |
 | `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, ReClass project tree, script editor, input boxes, message box, window geometry keeper, window centerer) |
 | `src/ui/dialogs` | Modal/top-level dialogs |
