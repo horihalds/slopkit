@@ -516,12 +516,14 @@ namespace slopkit::trainer::gui
         void WindowState::apply_snapshot()
         {
             std::shared_ptr<const std::vector<RowView>> rows;
+            std::shared_ptr<const std::vector<RowView>> previous;
             std::string                                 header;
             std::string                                 message;
             {
                 std::scoped_lock lock {mutex_};
                 if (pending_)
                 {
+                    previous   = std::move(displayed_);
                     displayed_ = std::move(pending_);
                 }
                 rows    = displayed_;
@@ -557,12 +559,30 @@ namespace slopkit::trainer::gui
                 }
                 else
                 {
+                    const bool comparable = previous && previous->size() == rows->size();
                     for (int row = 0; row < count; ++row)
                     {
+                        const auto index   = static_cast<std::size_t>(row);
+                        bool       repaint = false;
                         for (int column = 0; column < kColumnCount; ++column)
                         {
-                            auto text = cell_text((*rows)[static_cast<std::size_t>(row)], column);
+                            auto text = cell_text((*rows)[index], column);
                             ListView_SetItemText(list_, row, column, text.data());
+                            repaint = repaint || (comparable && text != cell_text((*previous)[index], column));
+                        }
+                        if (comparable)
+                        {
+                            const auto& view   = (*rows)[index];
+                            const auto& before = (*previous)[index];
+                            // Sub-item 0 always carries an empty string, so setting its text never
+                            // invalidates the cell: only the check box and the flags the custom
+                            // draw reads can change what it shows.
+                            repaint = repaint || checked(view) != checked(before) || view.failed != before.failed
+                                   || view.unresolved != before.unresolved;
+                        }
+                        if (repaint)
+                        {
+                            ListView_RedrawItems(list_, row, row);
                         }
                     }
                 }
