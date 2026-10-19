@@ -102,6 +102,19 @@ namespace slopkit::debug
             return;
         }
 
+        // Only the leader standing for the whole target: a worker thread that
+        // exits or dies takes its tid with it, but the session lives on.
+        if (!stop_requested_ && (stop.reason == StopReason::exited || stop.reason == StopReason::signalled)
+            && stop.tid != leader_)
+        {
+            slopkit::log::debug(log::category::debug,
+                                std::format("thread {} left the target ({}); the session continues",
+                                            stop.tid,
+                                            stop.reason == StopReason::exited ? "exited" : "killed"));
+            begin_run(leader_);
+            return;
+        }
+
         last_stop_ = stop;
 
         if (stop_requested_ || stop.reason == StopReason::exited || stop.reason == StopReason::signalled)

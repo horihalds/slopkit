@@ -6,11 +6,14 @@
 #include <cstdint>
 #include <cstdio>
 #include <expected>
+#include <format>
 #include <mutex>
 #include <span>
 #include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "platform/linux/procfs.hpp"
 
 namespace slopkit::platform
@@ -504,6 +507,35 @@ namespace slopkit::platform
                 if (!stop)
                 {
                     return std::unexpected(stop.error());
+                }
+                if (stop->reason == StopReason::exited || stop->reason == StopReason::signalled)
+                {
+                    bool last = false;
+                    {
+                        const std::lock_guard lock(mutex_);
+                        std::erase(tids_, stop->tid);
+                        requested_stops_.erase(stop->tid);
+                        last = tids_.empty() || stop->tid == leader_;
+                        if (last && tids_.empty())
+                        {
+                            attached_     = false;
+                            group_window_ = false;
+                            leader_       = 0;
+                            current_      = 0;
+                        }
+                        else if (!last)
+                        {
+                            current_ = tids_.front();
+                        }
+                    }
+                    if (last)
+                    {
+                        break;
+                    }
+                    std::erase(tids, stop->tid);
+                    log::debug(log::category::debug,
+                               std::format("thread {} left the target; the session continues", stop->tid));
+                    continue;
                 }
                 if (policy_ != ForeignSignalPolicy::forward)
                 {

@@ -1,5 +1,6 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -39,6 +40,9 @@ namespace
     volatile std::uint32_t g_go         = 0;
     volatile std::uint32_t g_marked     = 0;
     volatile std::uint32_t g_marked_tid = 0;
+    volatile std::uint32_t g_leave      = 0;
+    volatile std::uint32_t g_quit       = 0;
+    volatile std::uint32_t g_worker_tid = 0;
 
     extern "C" void usr1_handler(int)
     {
@@ -153,6 +157,18 @@ namespace
         {
             g_marked = g_marked + 1;
         }
+        return 0;
+    }
+
+    // Publishes its own tid, then leaves the thread group once the test raises
+    // g_leave. SYS_exit ends only this thread, never the leading process.
+    extern "C" int leaving_loop(void*)
+    {
+        g_worker_tid = static_cast<std::uint32_t>(::syscall(SYS_gettid));
+        while (g_leave == 0)
+        {
+        }
+        ::syscall(SYS_exit, 0);
         return 0;
     }
 
@@ -741,4 +757,106 @@ TEST_CASE("debug session leaves an excluded thread running", "[debug_session]")
 
     CHECK(session.detach().has_value());
     CHECK_FALSE(session.attached());
+}
+
+TEST_CASE("debug session survives a worker thread's exit", "[debug_session]")
+{
+    // A library thread leaves the group while the session is waiting. That is
+    // bookkeeping, not the target's end: the tid disappears from the attached
+    // set, the wait continues, and only the leader's own exit is reported.
+    ChildProcess child(
+        []
+        {
+            ::clone(leaving_loop,
+                    g_thread_stack.data() + g_thread_stack.size(),
+                    CLONE_THREAD | CLONE_VM | CLONE_SIGHAND | CLONE_FS | CLONE_FILES,
+                    nullptr);
+            for (;;)
+            {
+                if (g_quit != 0)
+                {
+                    ::_exit(0);
+                }
+                debug_target();
+            }
+        });
+
+    MemAccess    memory(child.pid());
+    DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
+    REQUIRE(await_threads(child.pid(), 2));
+
+    ProcessId worker = 0;
+    for (int waited = 0; waited < 2000 && worker == 0; waited += 5)
+    {
+        if (const auto value = read_u32(memory, reinterpret_cast<std::uint64_t>(&g_worker_tid)); value && *value != 0)
+        {
+            worker = *value;
+        }
+        else
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    REQUIRE(worker != 0);
+    REQUIRE(worker != child.pid());
+
+    std::promise<bool>                                        attached;
+    std::promise<void>                                        first_done;
+    std::promise<void>                                        quit_set;
+    std::expected<slopkit::platform::StopStatus, AccessError> first {std::unexpected(AccessError::internal)};
+    std::expected<slopkit::platform::StopStatus, AccessError> second {std::unexpected(AccessError::internal)};
+    bool                                                      wrote = false;
+    std::thread                                               runner(
+        [&session, &attached, &first_done, &quit_set, &first, &second, &wrote]
+        {
+            const std::array<std::byte, 1> flag {std::byte {1}};
+            const auto                     leader = session.attach();
+            attached.set_value(leader.has_value());
+            if (!leader)
+            {
+                return;
+            }
+            // Ptrace requests belong to the attaching thread, and the target is
+            // still stopped here, so the flag that frees the worker is written
+            // before the group is resumed.
+            wrote =
+                slopkit::platform::write_bytes(*leader, reinterpret_cast<std::uint64_t>(&g_leave), flag).has_value();
+            first = session.resume(0);
+            first_done.set_value();
+            quit_set.get_future().wait();
+            wrote  = wrote
+                  && slopkit::platform::write_bytes(*leader, reinterpret_cast<std::uint64_t>(&g_quit), flag).has_value();
+            second = session.resume(0);
+        });
+    REQUIRE(attached.get_future().get());
+
+    bool gone = false;
+    for (int waited = 0; waited < 2000; waited += 5)
+    {
+        const auto tids = session.attached_threads();
+        if (std::ranges::find(tids, worker) == tids.end())
+        {
+            gone = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(gone);
+
+    REQUIRE(session.interrupt(child.pid()).has_value());
+    first_done.get_future().wait();
+
+    REQUIRE(first.has_value());
+    CHECK(wrote);
+    CHECK(first->reason == StopReason::interrupt);
+    CHECK(first->tid == child.pid());
+    const auto remaining = session.attached_threads();
+    CHECK(std::ranges::find(remaining, worker) == remaining.end());
+
+    quit_set.set_value();
+    runner.join();
+
+    REQUIRE(second.has_value());
+    CHECK(second->reason == StopReason::exited);
+    CHECK(second->tid == child.pid());
 }

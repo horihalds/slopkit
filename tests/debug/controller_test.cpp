@@ -1,5 +1,6 @@
 #include <catch2/catch.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <variant>
@@ -1625,4 +1626,72 @@ TEST_CASE("controller names the signalled stop that cleared the code filter", "[
 
     CHECK(controller.code_filter().state() == CodeFilterState::idle);
     CHECK(controller.code_filter().reset_reason() == QStringLiteral("Target stopped by signal 11."));
+}
+
+TEST_CASE("controller survives a worker thread's exit", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.block_continue = true;
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+
+    std::vector<CodeFilterCandidate> candidates(2);
+    candidates[0].target = 0x1100;
+    candidates[1].target = 0x1200;
+    controller.start_code_filter(std::move(candidates));
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2
+                               && controller.state() == Controller::State::running;
+                       }));
+
+    std::vector<QString> infos;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&infos](Controller::MessageKind kind, const QString& text)
+                     {
+                         if (kind == Controller::MessageKind::info)
+                         {
+                             infos.push_back(text);
+                         }
+                     });
+
+    // A worker thread leaves: the session and its filter must survive.
+    const std::size_t before = backend.count("cont");
+    backend.queue_stop(StopEvent {StopReason::exited, 4243, 0, 0, std::nullopt, 0});
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return backend.count("cont") > before && controller.state() == Controller::State::running;
+                       }));
+
+    CHECK(controller.state() == Controller::State::running);
+    CHECK(controller.code_filter().state() == CodeFilterState::filtering);
+    CHECK(controller.code_filter().armed_count() == 2);
+    CHECK(controller.table().entries().size() == 2);
+    CHECK(std::ranges::find(infos, QStringLiteral("Target exited.")) == infos.end());
+    CHECK(backend.count("detach") == 0);
+
+    // The leader's own exit still ends the session and resets the filter.
+    backend.queue_stop(StopEvent {StopReason::exited, 4242, 0, 0, std::nullopt, 0});
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+
+    CHECK(std::ranges::find(infos, QStringLiteral("Target exited.")) != infos.end());
+    CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    CHECK(controller.code_filter().reset_reason() == QStringLiteral("Target exited."));
+    CHECK(controller.table().empty());
+    CHECK(backend.count("detach") == 1);
 }

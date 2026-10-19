@@ -251,6 +251,10 @@ beside the normal access path rather than in it, so the read/write path stays
   target's own handler and keeps waiting (`wine-proton`, because Wine's runtime
   signals the target constantly). A target *killed* by a signal is still reported
   so the controller can end the session.
+  Only the group leader stands for the whole target: an `exited` or `signalled`
+  stop reported for any other tid is bookkeeping — the tid leaves the attached
+  set, the wait continues and one `debug`-level record notes it — so a worker
+  thread finishing never ends the session.
 - `debug::PluginBackend` wraps its own plugin session, `debug::Worker` owns every
   call on one job thread — a tracee may only be ptraced by the thread that
   attached it — and `debug::Controller` is the UI-facing session owner: the
@@ -308,6 +312,8 @@ beside the normal access path rather than in it, so the read/write path stays
   drop the losing half and disarm it; a detach, an ended session or
   `Clear breakpoints` resets the filter together with the table and records why
   (`Filter cleared: <reason>.` in the window) instead of leaving a blank list.
+  A worker thread leaving the target is not a session end, so the filter keeps
+  its state, its armed candidates and its executed rows when one exits.
 - **Step Out** reuses the same table: from a stop it takes the caller's return
   address from the cached frame-pointer backtrace (`frames[1].pc`), arms one
   hidden software breakpoint there and submits the continue only from the
