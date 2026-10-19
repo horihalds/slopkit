@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <expected>
 #include <mutex>
 #include <span>
@@ -241,6 +242,7 @@ namespace slopkit::platform
             requested_stops_.clear();
             software_ = {};
             hardware_ = {};
+            restored_sites_.clear();
         }
         return result;
     }
@@ -440,8 +442,17 @@ namespace slopkit::platform
                         armed_sites.push_back(slot.address);
                     }
                 }
-                restored_sites = std::move(restored_sites_);
-                restored_sites_.clear();
+                for (const auto site : restored_sites_)
+                {
+                    if (std::ranges::any_of(software_,
+                                            [site](const SoftwareSlot& slot)
+                                            {
+                                                return slot.size != 0 && slot.address == site;
+                                            }))
+                    {
+                        restored_sites.push_back(site);
+                    }
+                }
             }
             for (const auto tid : tids)
             {
@@ -473,6 +484,19 @@ namespace slopkit::platform
                     }
                 }
                 (void)platform::cont(tid);
+            }
+            {
+                // Every thread has either been rewound and resumed or is stopped
+                // somewhere else, so no thread is parked at these restores any
+                // more. A site that is armed again keeps its entry: its parked
+                // threads were deliberately left stopped.
+                const std::lock_guard lock(mutex_);
+                std::erase_if(restored_sites_,
+                              [&](std::uint64_t site)
+                              {
+                                  return std::ranges::find(armed_sites, site) == armed_sites.end()
+                                      && std::ranges::find(restored_sites, site) != restored_sites.end();
+                              });
             }
             for (;;)
             {
@@ -699,6 +723,18 @@ namespace slopkit::platform
                     return std::unexpected(restored.error());
                 }
                 record.armed = false;
+                // A restored address keeps its slot record (address, size and
+                // original); a slot reused for another address invalidates the
+                // old entry.
+                std::erase_if(restored_sites_,
+                              [this](std::uint64_t site)
+                              {
+                                  return std::ranges::none_of(software_,
+                                                              [site](const SoftwareSlot& slot)
+                                                              {
+                                                                  return slot.size != 0 && slot.address == site;
+                                                              });
+                              });
                 if (std::ranges::find(restored_sites_, address) == restored_sites_.end())
                 {
                     restored_sites_.push_back(address);
@@ -836,6 +872,9 @@ namespace slopkit::platform
         if (const auto readable = platform::get_debug_register(tid, 7); readable)
         {
             return {};
+        }
+        else
+        {
         }
 
         if (const auto asked = platform::interrupt(tid); !asked)

@@ -60,6 +60,25 @@ TEST_CASE("recording a hit marks the candidate executed and frees its binding", 
     CHECK(filter.next_waiting() == 0x2000);
 }
 
+TEST_CASE("a restored site covers and counts a second arrival", "[debug][code-filter]")
+{
+    CodeFilter filter;
+    filter.start(candidates({0x1000}));
+    filter.mark_armed(0x1000, 9);
+
+    CHECK(filter.record(0x1000));
+    filter.mark_restored(0x1000);
+    CHECK(filter.covers(0x1000));
+    CHECK(filter.armed_count() == 0);
+    CHECK(filter.waiting_count() == 0);
+
+    CHECK_FALSE(filter.record(0x1000));
+    CHECK(filter.candidates()[0].executions == 2);
+    CHECK(filter.candidates()[0].breakpoint_id == 0);
+    CHECK(filter.candidates()[0].restored);
+    CHECK(filter.executed_count() == 1);
+}
+
 TEST_CASE("keep executed drops the unexecuted half and keep not executed mirrors it", "[debug][code-filter]")
 {
     CodeFilter filter;
@@ -95,4 +114,18 @@ TEST_CASE("resetting returns the filter to idle", "[debug][code-filter]")
     CHECK(filter.candidates().empty());
     CHECK_FALSE(filter.covers(0x1000));
     CHECK(filter.dropped_count() == 0);
+    CHECK(filter.reset_reason().isEmpty());
+}
+
+TEST_CASE("the reset reason survives until the next start", "[debug][code-filter]")
+{
+    CodeFilter filter;
+    filter.start(candidates({0x1000}));
+    CHECK(filter.reset_reason().isEmpty());
+
+    filter.reset(QStringLiteral("Target exited."));
+    CHECK(filter.reset_reason() == QStringLiteral("Target exited."));
+
+    filter.start(candidates({0x2000}));
+    CHECK(filter.reset_reason().isEmpty());
 }

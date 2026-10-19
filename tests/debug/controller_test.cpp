@@ -1476,6 +1476,58 @@ TEST_CASE("controller consumes a code-filter trap silently and refills the slot"
     CHECK(restored);
 }
 
+TEST_CASE("controller consumes a second trap at a restored code-filter site", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    int stopped_count = 0;
+    QObject::connect(&controller,
+                     &Controller::stopped,
+                     &controller,
+                     [&stopped_count]
+                     {
+                         ++stopped_count;
+                     });
+
+    controller.start_code_filter(std::vector<CodeFilterCandidate> {CodeFilterCandidate {.target = 0x1100},
+                                                                   CodeFilterCandidate {.target = 0x1200}});
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2;
+                       }));
+
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x1101, 0x1100, std::nullopt, 0});
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4243, 0x1101, 0x1100, std::nullopt, 0});
+    backend.queue_stop(StopEvent {StopReason::single_step, 4243, 0x2000, 0x2000, std::nullopt, 0});
+    controller.resume();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.last_stop().address == 0x2000;
+                       }));
+
+    CHECK(stopped_count == 1);
+    CHECK(controller.code_filter().state() == CodeFilterState::filtering);
+    CHECK(controller.code_filter().candidates()[0].executions == 2);
+    CHECK(controller.code_filter().covers(0x1100));
+    CHECK(controller.code_filter().armed_count() == 1);
+    CHECK(controller.code_filter().waiting_count() == 0);
+    CHECK(controller.table().software_at(0x1100) == nullptr);
+    CHECK(controller.table().software_at(0x1200) != nullptr);
+
+    // Both stopped threads were rewound to the site instead of running its tail.
+    CHECK(backend.last_resume_address() == 0x1100);
+}
+
 TEST_CASE("controller keeps only the executed code-filter candidates", "[debug][controller]")
 {
     FakeDebugBackend backend;
@@ -1511,6 +1563,7 @@ TEST_CASE("controller keeps only the executed code-filter candidates", "[debug][
 
     controller.clear_breakpoints();
     CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    CHECK(controller.code_filter().reset_reason() == QStringLiteral("the breakpoints were cleared."));
     CHECK(controller.table().empty());
 }
 
@@ -1540,5 +1593,36 @@ TEST_CASE("controller clears the code filter when the session ends", "[debug][co
                        }));
     CHECK(controller.code_filter().state() == CodeFilterState::idle);
     CHECK(controller.code_filter().candidates().empty());
+    CHECK(controller.code_filter().reset_reason() == QStringLiteral("Debug session closed."));
     CHECK(controller.table().empty());
+}
+
+TEST_CASE("controller names the signalled stop that cleared the code filter", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    controller.start_code_filter(std::vector<CodeFilterCandidate> {CodeFilterCandidate {.target = 0x1100}});
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 1;
+                       }));
+
+    backend.queue_stop(StopEvent {StopReason::signalled, 4242, 0, 0, std::nullopt, 11});
+    controller.resume();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+
+    CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    CHECK(controller.code_filter().reset_reason() == QStringLiteral("Target stopped by signal 11."));
 }

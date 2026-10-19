@@ -6,6 +6,8 @@
 #include <span>
 #include <vector>
 
+#include <QString>
+
 namespace slopkit::debug
 {
     struct CodeFilterCandidate
@@ -15,6 +17,7 @@ namespace slopkit::debug
         std::uint64_t breakpoint_id {};
         std::size_t   executions {};
         bool          visible {true};
+        bool          restored {};
     };
 
     enum class CodeFilterState
@@ -31,13 +34,15 @@ namespace slopkit::debug
     public:
         [[nodiscard]] CodeFilterState state() const noexcept;
         void                          start(std::vector<CodeFilterCandidate> candidates);
-        void                          reset();
+        void                          reset(QString reason = {});
+        [[nodiscard]] const QString&  reset_reason() const noexcept;
 
         [[nodiscard]] std::span<const CodeFilterCandidate> candidates() const noexcept;
 
         [[nodiscard]] bool covers(std::uint64_t address) const noexcept;
         bool               record(std::uint64_t address);
         void               mark_armed(std::uint64_t address, std::uint64_t breakpoint_id);
+        void               mark_restored(std::uint64_t address);
 
         [[nodiscard]] std::optional<std::uint64_t> next_waiting() const;
 
@@ -53,5 +58,6 @@ namespace slopkit::debug
     private:
         CodeFilterState                  state_ {CodeFilterState::idle};
         std::vector<CodeFilterCandidate> candidates_;
+        QString                          reset_reason_;
     };
 }

@@ -104,6 +104,20 @@ namespace slopkit::debug
 
         last_stop_ = stop;
 
+        if (stop_requested_ || stop.reason == StopReason::exited || stop.reason == StopReason::signalled)
+        {
+            const bool filter_site = stop.address >= 1 && code_filter_.covers(stop.address - 1);
+            slopkit::log::info(log::category::debug,
+                               std::format("session-ending stop: tid={} reason={} signal={} rip={:#x} filter-site={}",
+                                           stop.tid,
+                                           stop.reason == StopReason::exited      ? "exited"
+                                           : stop.reason == StopReason::signalled ? "signalled"
+                                                                                  : "interrupt",
+                                           stop.signal,
+                                           stop.address,
+                                           filter_site));
+        }
+
         if (stop_requested_)
         {
             stop_requested_ = false;

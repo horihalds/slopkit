@@ -90,9 +90,10 @@ namespace slopkit::platform
         [[nodiscard]] std::expected<void, process::AccessError> ensure_stopped(process::ProcessId tid);
         void rewind_before_continue(process::ProcessId tid, std::uint64_t address);
 
-        // Addresses whose trap byte was restored by this stop. A thread parked
-        // there waits one byte past a trap that is gone, so the next group
-        // continue has to put it back before running it.
+        // Addresses whose trap byte was restored. A thread parked there waits
+        // one byte past a trap that is gone, so a group continue has to put it
+        // back before running it. Entries outlive single-thread windows and are
+        // dropped once a group continue has resumed the threads parked there.
         std::vector<std::uint64_t> restored_sites_;
 
         mutable std::mutex                           mutex_;

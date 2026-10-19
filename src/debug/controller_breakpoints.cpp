@@ -110,7 +110,7 @@ namespace slopkit::debug
     {
         if (code_filter_.state() != CodeFilterState::idle)
         {
-            code_filter_.reset();
+            code_filter_.reset(QStringLiteral("the breakpoints were cleared."));
             filter_dirty_       = false;
             filter_arm_refused_ = false;
             filter_arm_pending_ = false;

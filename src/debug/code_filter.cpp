@@ -14,12 +14,19 @@ namespace slopkit::debug
     {
         candidates_ = std::move(candidates);
         state_      = CodeFilterState::filtering;
+        reset_reason_.clear();
     }
 
-    void CodeFilter::reset()
+    void CodeFilter::reset(QString reason)
     {
         state_ = CodeFilterState::idle;
         candidates_.clear();
+        reset_reason_ = std::move(reason);
+    }
+
+    const QString& CodeFilter::reset_reason() const noexcept
+    {
+        return reset_reason_;
     }
 
     std::span<const CodeFilterCandidate> CodeFilter::candidates() const noexcept
@@ -33,7 +40,7 @@ namespace slopkit::debug
                                    [address](const CodeFilterCandidate& candidate)
                                    {
                                        return candidate.visible && candidate.target == address
-                                           && candidate.breakpoint_id != 0 && candidate.executions == 0;
+                                           && (candidate.breakpoint_id != 0 || candidate.restored);
                                    });
     }
 
@@ -41,14 +48,28 @@ namespace slopkit::debug
     {
         for (CodeFilterCandidate& candidate : candidates_)
         {
-            if (candidate.visible && candidate.target == address && candidate.breakpoint_id != 0)
+            if (candidate.visible && candidate.target == address
+                && (candidate.breakpoint_id != 0 || candidate.restored))
             {
                 ++candidate.executions;
+                const bool live         = candidate.breakpoint_id != 0;
                 candidate.breakpoint_id = 0;
-                return true;
+                return live;
             }
         }
         return false;
+    }
+
+    void CodeFilter::mark_restored(std::uint64_t address)
+    {
+        for (CodeFilterCandidate& candidate : candidates_)
+        {
+            if (candidate.visible && candidate.target == address)
+            {
+                candidate.restored = true;
+                return;
+            }
+        }
     }
 
     void CodeFilter::mark_armed(std::uint64_t address, std::uint64_t breakpoint_id)

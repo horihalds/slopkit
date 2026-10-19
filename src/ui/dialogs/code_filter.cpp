@@ -284,6 +284,10 @@ namespace slopkit::ui::dialogs
         if (filter.state() == debug::CodeFilterState::idle)
         {
             header_->setText(tr("No candidates collected."));
+            if (!filter.reset_reason().isEmpty())
+            {
+                status_->set_status(widgets::StatusKind::info, tr("Filter cleared: %1").arg(filter.reset_reason()));
+            }
         }
         else
         {
@@ -293,11 +297,14 @@ namespace slopkit::ui::dialogs
                                  .arg(filter.waiting_count())
                                  .arg(filter.executed_count())
                                  .arg(filter.dropped_count()));
-        }
-
-        if (!summary_.isEmpty())
-        {
-            status_->set_status(widgets::StatusKind::info, summary_);
+            if (!summary_.isEmpty())
+            {
+                status_->set_status(widgets::StatusKind::info, summary_);
+            }
+            else
+            {
+                status_->clear_status();
+            }
         }
 
         update_controls();

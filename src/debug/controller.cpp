@@ -192,7 +192,7 @@ namespace slopkit::debug
         drop_capture();
         if (code_filter_.state() != CodeFilterState::idle)
         {
-            code_filter_.reset();
+            code_filter_.reset(reason);
             filter_dirty_       = false;
             filter_arm_pending_ = false;
             emit codeFilterChanged();
@@ -216,7 +216,7 @@ namespace slopkit::debug
         step_out_id_.reset();
         watch_       = AccessWatch {};
         watch_dirty_ = false;
-        code_filter_.reset();
+        code_filter_.reset(reason);
         filter_dirty_       = false;
         filter_arm_refused_ = false;
         filter_arm_pending_ = false;

@@ -286,22 +286,28 @@ beside the normal access path rather than in it, so the read/write path stays
   one at a time; on a running one it arms the whole burst inside a single
   invisible maintenance stop and resumes, so collecting never needs a manual
   pause. Arming stops at the first backend refusal so the surplus waits for a
-  slot. A trap whose address `debug::CodeFilter::covers()`
-  is consumed inside `apply_stop()` before the stop is reported: the controller
-  restores the original byte through the worker, drops the entry, arms the next
-  waiting candidate in the freed slot, and continues past the trap address — no
-  `stopped()` and no `stateChanged()`, while `codeFilterChanged()` is coalesced
-  like `watchChanged()`. A trap parks every thread that ran into the same patched
-  byte while only one of them is reported. The consume stop is not a group stop,
-  so the continue that follows reads each thread's `RIP`: every thread one byte
-  past the trap being consumed, or past a byte the stop already restored, is
-  rewound and runs the original instruction again, while a thread parked at any
-  other armed candidate is left stopped and its trap is reported instead of being
-  resumed away. Resuming such a thread from `trap + 1` runs the tail of the
-  patched instruction as garbage, which is how a collect corrupts a threaded
-  target. `Keep executed` / `Keep not executed` drop
-  the losing half and disarm it; a detach, an ended session or `Clear breakpoints`
-  resets the filter together with the table.
+  slot. A trap whose address `debug::CodeFilter::covers()` — an armed candidate,
+  or one whose byte was already restored by an earlier trap at the same site — is
+  consumed inside `apply_stop()` before the stop is reported: the controller
+  restores the original byte through the worker, marks the candidate restored,
+  records the arrival so `Executions` counts the second thread too, drops the
+  entry, arms the next waiting candidate in the freed slot, and continues past
+  the trap address — no `stopped()` and no `stateChanged()`, while
+  `codeFilterChanged()` is coalesced like `watchChanged()`. A trap parks every
+  thread that ran into the same patched byte while only one of them is reported.
+  The consume stop is not a group stop, so the continue that follows reads each
+  thread's `RIP`: every thread one byte past the trap being consumed, or past a
+  byte restored in an earlier continue, is rewound and runs the original
+  instruction again, while a thread parked at any other armed candidate is left
+  stopped and its trap is reported instead of being resumed away.
+  `platform::DebugSession` keeps the restored addresses until a group continue has
+  resumed the threads parked there and validates them against its software-slot
+  table, so a recycled slot cannot trigger a bogus rewind. Resuming such a thread
+  from `trap + 1` runs the tail of the patched instruction as garbage, which is
+  how a collect corrupts a threaded target. `Keep executed` / `Keep not executed`
+  drop the losing half and disarm it; a detach, an ended session or
+  `Clear breakpoints` resets the filter together with the table and records why
+  (`Filter cleared: <reason>.` in the window) instead of leaving a blank list.
 - **Step Out** reuses the same table: from a stop it takes the caller's return
   address from the cached frame-pointer backtrace (`frames[1].pc`), arms one
   hidden software breakpoint there and submits the continue only from the

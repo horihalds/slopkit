@@ -63,7 +63,7 @@ namespace slopkit::debug
                 ids.push_back(candidate.breakpoint_id);
             }
         }
-        code_filter_.reset();
+        code_filter_.reset(QStringLiteral("the Clear button was pressed."));
         filter_dirty_ = false;
         emit codeFilterChanged();
         slopkit::log::info(log::category::debug,
@@ -241,10 +241,13 @@ namespace slopkit::debug
         const Breakpoint*   entry   = breakpoints_.software_at(stop.trap_address);
         const std::uint64_t address = stop.trap_address;
         const std::uint32_t tid     = stop.tid != 0 ? stop.tid : active_tid();
+        code_filter_.record(address);
+        filter_dirty_ = true;
         if (entry == nullptr)
         {
             // A thread that ran into the trap after the byte was already restored
             // waits one byte past it; it has to run the original instruction.
+            slopkit::log::debug(log::category::debug, std::format("code-filter trap at restored {:#x}", address));
             const JobId stale = worker_.next_job_id();
             worker_.submit_continue(stale,
                                     tid,
@@ -259,8 +262,6 @@ namespace slopkit::debug
         const std::uint64_t breakpoint_id = entry->id;
         const std::uint32_t slot          = entry->slot;
 
-        code_filter_.record(address);
-        filter_dirty_ = true;
         slopkit::log::debug(log::category::debug, std::format("code-filter hit at {:#x}", address));
 
         // The byte is restored while the target is stopped at the trap, so the
@@ -280,6 +281,7 @@ namespace slopkit::debug
                                                    return;
                                                }
 
+                                               code_filter_.mark_restored(address);
                                                breakpoints_.remove(breakpoint_id);
                                                filter_dirty_ = true;
                                                arm_filter_candidate();

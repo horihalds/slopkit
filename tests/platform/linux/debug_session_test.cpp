@@ -14,6 +14,7 @@
 #include <dlfcn.h>
 #include <sched.h>
 #include <signal.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -128,6 +129,10 @@ namespace
     // A stack for the second thread; clone() is used instead of std::thread
     // because the child is forked from a process whose allocator may be locked.
     alignas(16) std::array<char, 128 * 1024> g_thread_stack {};
+
+    // page + 14: jmp to itself; page + 64: jmp back to page + 14, so the byte
+    // after the jump is an int3 that reports itself if a thread is not rewound.
+    alignas(4096) std::array<std::byte, 4096> g_parked_code {};
 
     extern "C" int thread_loop(void*)
     {
@@ -589,6 +594,64 @@ TEST_CASE("debug session runs a remote syscall at its stops", "[debug_session]")
     REQUIRE(session.set_register(*leader, "RIP", saved->rip).has_value());
     REQUIRE(session.set_register(*leader, "RAX", saved->rax).has_value());
     REQUIRE(session.detach().has_value());
+}
+
+TEST_CASE("debug session rewinds a parked thread past a restored trap", "[debug_session]")
+{
+    ChildProcess child(
+        []
+        {
+            ::mprotect(g_parked_code.data(), g_parked_code.size(), PROT_READ | PROT_WRITE | PROT_EXEC);
+            g_parked_code[14] = std::byte {0xEB};
+            g_parked_code[15] = std::byte {0xFE};
+            g_parked_code[64] = std::byte {0xEB};
+            g_parked_code[65] = std::byte {0xCC};
+            ::clone(thread_loop,
+                    g_thread_stack.data() + g_thread_stack.size(),
+                    CLONE_THREAD | CLONE_VM | CLONE_SIGHAND | CLONE_FS | CLONE_FILES,
+                    nullptr);
+            for (;;)
+            {
+                debug_target();
+            }
+        });
+
+    MemAccess    memory(child.pid());
+    DebugSession session(child.pid(), memory, ForeignSignalPolicy::suppress);
+    REQUIRE(await_threads(child.pid(), 2));
+
+    const auto leader = session.attach();
+    REQUIRE(leader.has_value());
+
+    const auto site = reinterpret_cast<std::uint64_t>(&g_parked_code[64]);
+    REQUIRE(session.arm_software(0, site, true).has_value());
+    REQUIRE(session.arm_software(0, site, false).has_value());
+
+    // A single-thread continue between the restore and the group continue must
+    // not drop the restored site.
+    REQUIRE(session.step(*leader).has_value());
+
+    const auto tids = session.attached_threads();
+    REQUIRE(tids.size() >= 2);
+    for (const auto tid : tids)
+    {
+        REQUIRE(session.set_register(tid, "RIP", site + 1).has_value());
+    }
+
+    std::expected<void, AccessError> interrupted {};
+    std::thread                      interrupter(
+        [&session, &interrupted, pid = *leader]
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            interrupted = session.interrupt(pid);
+        });
+    const auto stop = session.resume(0);
+    interrupter.join();
+
+    REQUIRE(interrupted.has_value());
+    REQUIRE(stop.has_value());
+    CHECK(stop->reason == StopReason::interrupt);
+    CHECK(session.detach().has_value());
 }
 
 TEST_CASE("debug session reports a killed target", "[debug_session]")
