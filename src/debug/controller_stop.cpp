@@ -54,7 +54,12 @@ namespace slopkit::debug
 
     void Controller::apply_stop(StopEvent stop)
     {
-        if (!stop_requested_ && (maintenance_stop_ || !pending_slot_ops_.empty()))
+        // Only the SIGSTOP the maintenance window asked for parks the whole
+        // group. A breakpoint stop parks a single thread, so treating it as the
+        // window would resume the group before the target has restored that
+        // trap, and the thread would run the tail of the patched instruction.
+        if (!stop_requested_ && stop.reason == StopReason::interrupt
+            && (maintenance_stop_ || !pending_slot_ops_.empty()))
         {
             apply_pending_slot_ops();
             return;

@@ -262,10 +262,13 @@ beside the normal access path rather than in it, so the read/write path stays
   disarms breakpoints through an invisible *maintenance stop*: it queues the
   requested arm/disarm, interrupts the group, applies the whole queue while it is
   stopped and continues. The stop is never reported — no `Stopped at` line, no
-  `stateChanged` — and a burst of ops costs one stop. Every memory read and write
-  of that burst goes through the thread the stop reported rather than the leader:
-  ptrace only reaches a target's memory through a stopped thread, and only one
-  thread of the group is stopped at a time.
+  `stateChanged` — and a burst of ops costs one stop. Only the interrupt the
+  window asked for parks the whole group, so applying the queue needs exactly that
+  stop: a breakpoint or watch trap that arrives while ops are still queued parks
+  one thread, is reported as the stop it is, and leaves the queue for the next
+  interrupt. Every memory read and write of the burst goes through the thread the
+  stop reported rather than the leader: ptrace only reaches a target's memory
+  through a stopped thread, and only one thread of the group is stopped at a time.
 - The **access watch** is one hidden hardware data breakpoint in the same
   `BreakpointTable` (its `hidden` flag keeps it out of the Breakpoints window
   while the slot accounting stays in one place). The controller consumes its
@@ -289,9 +292,14 @@ beside the normal access path rather than in it, so the read/write path stays
   waiting candidate in the freed slot, and continues past the trap address — no
   `stopped()` and no `stateChanged()`, while `codeFilterChanged()` is coalesced
   like `watchChanged()`. A trap parks every thread that ran into the same patched
-  byte while only one of them is reported, so the rewind of `RIP` covers all of
-  them and a thread that was not stopped refuses the register write and is left
-  alone. `Keep executed` / `Keep not executed` drop
+  byte while only one of them is reported. The consume stop is not a group stop,
+  so the continue that follows reads each thread's `RIP`: every thread one byte
+  past the trap being consumed, or past a byte the stop already restored, is
+  rewound and runs the original instruction again, while a thread parked at any
+  other armed candidate is left stopped and its trap is reported instead of being
+  resumed away. Resuming such a thread from `trap + 1` runs the tail of the
+  patched instruction as garbage, which is how a collect corrupts a threaded
+  target. `Keep executed` / `Keep not executed` drop
   the losing half and disarm it; a detach, an ended session or `Clear breakpoints`
   resets the filter together with the table.
 - **Step Out** reuses the same table: from a stop it takes the caller's return

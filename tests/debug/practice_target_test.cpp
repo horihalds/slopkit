@@ -48,6 +48,23 @@ namespace
         asm volatile("" ::: "memory");
     }
 
+    __attribute__((noinline)) void debug_cold_one()
+    {
+        asm volatile("" ::: "memory");
+    }
+
+    __attribute__((noinline)) void debug_cold_two()
+    {
+        asm volatile("" ::: "memory");
+    }
+
+    __attribute__((noinline)) void debug_cold_three()
+    {
+        asm volatile("" ::: "memory");
+    }
+
+    void (*volatile g_debug_cold[])() = {&debug_cold_one, &debug_cold_two, &debug_cold_three};
+
     // Keeping the address live stops the optimiser from discarding a function
     // that no caller names.
     void (*volatile g_never_called_target)() = &never_called_target;
@@ -618,18 +635,25 @@ TEST_CASE("a threaded practice target survives repeated running collects", "[deb
 
     // Both threads spin in the same function, so a trap parks more than one of
     // them: they all have to run the original instruction, or the target
-    // executes the tail of it as garbage.
+    // executes the tail of it as garbage. The unused candidates keep the arming
+    // window open long enough for a hit to land inside it, while the group is
+    // still parked for the sweep.
+    constexpr std::size_t kCandidates = 4;
     for (int round = 0; round < 5; ++round)
     {
-        std::vector<CodeFilterCandidate> candidates(2);
+        std::vector<CodeFilterCandidate> candidates(kCandidates);
         candidates[0].target = called;
         candidates[1].target = never;
+        for (std::size_t i = 2; i < kCandidates; ++i)
+        {
+            candidates[i].target = reinterpret_cast<std::uintptr_t>(g_debug_cold[i - 2]);
+        }
         controller.start_code_filter(std::move(candidates));
         INFO("round " << round << " error=" << last_error.toStdString());
         REQUIRE(pump_until(controller,
                            [&]
                            {
-                               return controller.code_filter().armed_count() == 2;
+                               return controller.code_filter().armed_count() == kCandidates;
                            }));
         REQUIRE(pump_until(controller,
                            [&]

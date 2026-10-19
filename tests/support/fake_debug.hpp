@@ -243,6 +243,7 @@ namespace slopkit::tests
                 last_resume_address_   = resume_address;
                 last_resume_step_size_ = resume_step_size;
             }
+            bool released_by_interrupt = false;
             if (block_continue.load())
             {
                 continue_entered = true;
@@ -252,7 +253,18 @@ namespace slopkit::tests
                                  {
                                      return continue_released.load();
                                  });
-                continue_released = false;
+                continue_released     = false;
+                released_by_interrupt = interrupted.load();
+            }
+            if (released_by_interrupt)
+            {
+                // The real backend reports the SIGSTOP the interrupt asked for
+                // as an interrupt stop, and only that stop parks the group.
+                const std::lock_guard lock(state_mutex_);
+                if (stop_replies_.empty())
+                {
+                    return StopEvent {slopkit::debug::StopReason::interrupt, 4242, 0x1001, 0x1001, std::nullopt, 0};
+                }
             }
             return next_stop();
         }

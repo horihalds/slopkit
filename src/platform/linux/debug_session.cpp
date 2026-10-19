@@ -429,19 +429,49 @@ namespace slopkit::platform
             {
                 return std::unexpected(hardware.error());
             }
-            if (resume_address != 0)
+            std::vector<std::uint64_t> armed_sites;
+            std::vector<std::uint64_t> restored_sites;
             {
-                // Every thread that ran into the restored trap waits one byte
-                // past it, and running on from there executes the tail of the
-                // instruction that was patched; a thread that was not parked
-                // refuses the write and is unaffected.
-                for (const auto tid : tids)
+                const std::lock_guard lock(mutex_);
+                for (const auto& slot : software_)
                 {
-                    rewind_before_continue(tid, resume_address);
+                    if (slot.armed)
+                    {
+                        armed_sites.push_back(slot.address);
+                    }
                 }
+                restored_sites = std::move(restored_sites_);
+                restored_sites_.clear();
             }
             for (const auto tid : tids)
             {
+                // A thread parked at a trap waits one byte past it, where the
+                // tail of the patched instruction would run as garbage. When it
+                // sits at the trap this continue is consuming, or at a trap
+                // whose byte was already restored, it has to run the original
+                // instruction again. At any other live trap it stays stopped, so
+                // that stop is reported instead of being resumed away.
+                const auto registers = platform::get_registers(tid);
+                if (registers && registers->rip >= 1)
+                {
+                    const std::uint64_t site = registers->rip - 1;
+                    if (resume_address != 0 && site == resume_address)
+                    {
+                        rewind_before_continue(tid, resume_address);
+                        (void)platform::cont(tid);
+                        continue;
+                    }
+                    if (std::ranges::find(armed_sites, site) != armed_sites.end())
+                    {
+                        continue;
+                    }
+                    if (std::ranges::find(restored_sites, site) != restored_sites.end())
+                    {
+                        rewind_before_continue(tid, site);
+                        (void)platform::cont(tid);
+                        continue;
+                    }
+                }
                 (void)platform::cont(tid);
             }
             for (;;)
@@ -669,6 +699,10 @@ namespace slopkit::platform
                     return std::unexpected(restored.error());
                 }
                 record.armed = false;
+                if (std::ranges::find(restored_sites_, address) == restored_sites_.end())
+                {
+                    restored_sites_.push_back(address);
+                }
             }
             return {};
         }

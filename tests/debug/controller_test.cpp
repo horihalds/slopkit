@@ -364,6 +364,42 @@ TEST_CASE("controller arms breakpoints while the target runs through one invisib
     }
 }
 
+TEST_CASE("controller reports a trap that lands inside the maintenance window", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    backend.block_continue = true;
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.continue_entered.load();
+                       }));
+
+    backend.clear_calls();
+    // The trap is queued before the interrupt releases the parked continue, so
+    // this is the stop that continue consumes: the target parked one thread on
+    // its own, the maintenance window never asked for a stop.
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x6001, 0x6000, std::nullopt, 0});
+
+    const auto id = controller.add_breakpoint("0x6000", Kind::software, 1);
+    REQUIRE(id.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+    REQUIRE(drain_until_idle(controller));
+
+    // Resuming from a single parked thread would let every other thread run on,
+    // so the trap is reported and the queued arm waits for the next stop.
+    CHECK(controller.last_stop().trap_address == 0x6000);
+    CHECK(backend.count("set_software_breakpoint") == 0);
+    const auto* entry = controller.table().find(*id);
+    REQUIRE(entry != nullptr);
+    CHECK_FALSE(entry->armed);
+}
+
 TEST_CASE("controller disarms a breakpoint while the target runs", "[debug][controller]")
 {
     FakeDebugBackend backend;
