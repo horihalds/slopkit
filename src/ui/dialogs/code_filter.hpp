@@ -69,6 +69,9 @@ namespace slopkit::ui::dialogs
                               std::uint32_t             pointer_size,
                               analysis::CodeTargetKinds kinds);
 
+        // The activated candidate's target, so the window's owner can open it.
+        void targetActivated(std::uint64_t address);
+
     private:
         void build_layout();
         void update_controls();

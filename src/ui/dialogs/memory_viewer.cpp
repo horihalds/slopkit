@@ -457,6 +457,16 @@ namespace slopkit::ui::dialogs
         }
     }
 
+    void MemoryViewerDialog::show_disassembly_at(std::uint64_t address)
+    {
+        disassembly_->navigate_to(address);
+        disassembly_->set_selected_address(address);
+        disassembly_->setFocus(Qt::OtherFocusReason);
+        show();
+        raise();
+        activateWindow();
+    }
+
     bool MemoryViewerDialog::go_to(const QString& text)
     {
         return view_->go_to(text);

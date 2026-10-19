@@ -2070,3 +2070,35 @@ TEST_CASE("a refused byte-view commit names its reason on the viewer's status li
 
     viewer.hide();
 }
+
+TEST_CASE("the viewer opens a listing address without moving the byte pane", "[ui]")
+{
+    application();
+
+    slopkit::process::AttachedTarget target = fake_target();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    attach_app_session(worker);
+
+    slopkit::ui::dialogs::MemoryViewerDialog viewer {worker, target, shared_debug_controller()};
+    auto*                                    view = viewer.findChild<slopkit::ui::components::MemoryView*>();
+    REQUIRE(view != nullptr);
+    auto* listing = viewer.findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+
+    viewer.set_address(0x1000);
+    REQUIRE_FALSE(listing->can_go_back());
+
+    viewer.show_disassembly_at(0x3000);
+    QCoreApplication::processEvents();
+
+    CHECK(listing->first_address() == 0x3000);
+    REQUIRE(listing->selected_address().has_value());
+    CHECK(*listing->selected_address() == 0x3000);
+    CHECK(view->first_byte() == 0x1000);
+    CHECK(listing->can_go_back());
+    CHECK(viewer.isVisible());
+
+    viewer.hide();
+}

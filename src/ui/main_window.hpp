@@ -142,6 +142,7 @@ namespace slopkit::ui
         void reattach_exited_trainer();
 
         void on_memory_view_requested(quint64 address);
+        void on_code_filter_target_activated(quint64 address);
 
         void on_found_values_requested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
         void on_add_address_requested();

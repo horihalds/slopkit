@@ -510,6 +510,10 @@ namespace slopkit::ui
         new WindowGeometryKeeper(*code_filter_, settings_, WindowId::code_filter, code_filter_.get());
         connect(
             code_filter_.get(), &dialogs::CodeFilterDialog::collectRequested, this, &MainWindow::collect_code_targets);
+        connect(code_filter_.get(),
+                &dialogs::CodeFilterDialog::targetActivated,
+                this,
+                &MainWindow::on_code_filter_target_activated);
         connect(&code_filter_->debug_gate(),
                 &ui::DebugSessionGate::progress,
                 this,
@@ -970,6 +974,12 @@ namespace slopkit::ui
         memory_view_->show();
         memory_view_->raise();
         memory_view_->activateWindow();
+    }
+
+    void MainWindow::on_code_filter_target_activated(quint64 address)
+    {
+        log::debug(log::category::ui, std::format("opening the disassembly at {:X}", address));
+        memory_view_->show_disassembly_at(address);
     }
 
     void MainWindow::on_add_address_requested()

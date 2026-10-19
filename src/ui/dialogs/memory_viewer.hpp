@@ -62,6 +62,10 @@ namespace slopkit::ui::dialogs
 
         void set_address(std::uint64_t address);
 
+        // Moves the disassembly listing to an address the user picked elsewhere,
+        // as a navigation: Back returns to where the listing was.
+        void show_disassembly_at(std::uint64_t address);
+
         [[nodiscard]] panels::DebuggerPanel* debugger_panel() const noexcept;
 
         [[nodiscard]] panels::DebugControls* debug_controls() const noexcept;

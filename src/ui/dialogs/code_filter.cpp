@@ -121,6 +121,17 @@ namespace slopkit::ui::dialogs
         table_->horizontalHeader()->setStretchLastSection(true);
         layout->addWidget(table_, 1);
 
+        connect(table_,
+                &QTableView::activated,
+                this,
+                [this](const QModelIndex& index)
+                {
+                    if (index.isValid())
+                    {
+                        emit targetActivated(model_->target_at(index.row()));
+                    }
+                });
+
         auto* buttons      = new QHBoxLayout();
         keep_executed_     = widgets::secondary_button(tr("Keep executed"), this);
         keep_not_executed_ = widgets::secondary_button(tr("Keep not executed"), this);

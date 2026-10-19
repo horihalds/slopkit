@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <QLabel>
+#include <QTableView>
 
 #include "support/ui_helpers.hpp"
 #include "ui/dialogs/code_filter.hpp"
@@ -115,6 +116,52 @@ TEST_CASE("the code filter window states why the list was cleared", "[ui]")
                        }));
     CHECK(header->text() == QStringLiteral("No candidates collected."));
     CHECK(dialog.status_text() == QStringLiteral("Filter cleared: Debug session closed."));
+}
+
+TEST_CASE("the code filter window activates a candidate's target", "[ui]")
+{
+    application();
+
+    slopkit::tests::FakeDebugBackend backend;
+    Controller                       controller {backend};
+    controller.start(42, "fake");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    slopkit::process::AttachedTarget target = fake_target();
+    CodeFilterDialog                 dialog {controller, target};
+
+    controller.start_code_filter(std::vector<CodeFilterCandidate> {CodeFilterCandidate {.target = 0x1000},
+                                                                   CodeFilterCandidate {.target = 0x1010}});
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2;
+                       }));
+    dialog.refresh();
+    REQUIRE(dialog.row_count() == 2);
+
+    std::uint64_t activated = 0;
+    QObject::connect(&dialog,
+                     &CodeFilterDialog::targetActivated,
+                     &dialog,
+                     [&](std::uint64_t address)
+                     {
+                         activated = address;
+                     });
+
+    auto* table = dialog.table();
+    REQUIRE(table != nullptr);
+    REQUIRE(table->model() != nullptr);
+    emit table->activated(table->model()->index(1, 0));
+    CHECK(activated == 0x1010);
+
+    activated = 0;
+    emit table->activated(QModelIndex());
+    CHECK(activated == 0);
 }
 
 TEST_CASE("the code filter window disables collect with no modules", "[ui]")

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "support/ui_helpers.hpp"
+#include "ui/components/disassembly_view.hpp"
 #include "ui/dialogs/add_script.hpp"
 #include "ui/dialogs/code_filter.hpp"
 #include "ui/dialogs/generate_trainer.hpp"
@@ -790,4 +791,31 @@ TEST_CASE("the Hook Instruction relay opens the address list's Add Script window
     REQUIRE(view != nullptr);
     REQUIRE(view->model() != nullptr);
     CHECK(view->model()->rowCount() == 0);
+}
+
+TEST_CASE("a code-filter activation opens the viewer's disassembly", "[ui]")
+{
+    application();
+
+    slopkit::plugin::PluginHost      host;
+    slopkit::process::PluginAccess   access {host};
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target;
+    slopkit::ui::SettingsController  settings {scratch_settings_file("code_filter_activation.ini")};
+    slopkit::ui::MainWindow          window {worker, target, host, settings, shared_debug_controller()};
+
+    auto* code_filter = window.code_filter();
+    REQUIRE(code_filter != nullptr);
+    emit code_filter->targetActivated(0x1234);
+    QCoreApplication::processEvents();
+
+    auto* viewer = window.memory_viewer();
+    REQUIRE(viewer != nullptr);
+    CHECK(viewer->isVisible());
+
+    auto* listing = viewer->findChild<slopkit::ui::components::DisassemblyView*>();
+    REQUIRE(listing != nullptr);
+    CHECK(listing->first_address() == 0x1234);
+    REQUIRE(listing->selected_address().has_value());
+    CHECK(*listing->selected_address() == 0x1234);
 }
