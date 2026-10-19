@@ -9,6 +9,8 @@
 #include "script/symbols.hpp"
 #include "support/fake_debug.hpp"
 
+using slopkit::debug::CodeFilterCandidate;
+using slopkit::debug::CodeFilterState;
 using slopkit::debug::Controller;
 using slopkit::debug::Kind;
 using slopkit::debug::StopEvent;
@@ -1131,5 +1133,225 @@ TEST_CASE("controller drops a pending step-out when the session ends", "[debug][
                        {
                            return controller.state() == Controller::State::idle;
                        }));
+    CHECK(controller.table().empty());
+}
+
+TEST_CASE("controller arms hidden breakpoints for a code filter", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    std::vector<CodeFilterCandidate> candidates(2);
+    candidates[0].target      = 0x1100;
+    candidates[0].instruction = 0x1000;
+    candidates[1].target      = 0x1200;
+    candidates[1].instruction = 0x1010;
+    controller.start_code_filter(std::move(candidates));
+
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2;
+                       }));
+    CHECK(controller.code_filter().state() == CodeFilterState::filtering);
+    CHECK(controller.code_filter().waiting_count() == 0);
+    CHECK(controller.code_filter().visible_count() == 2);
+    REQUIRE(controller.table().entries().size() == 2);
+    CHECK(controller.table().entries()[0].hidden);
+    CHECK(controller.table().entries()[1].hidden);
+    CHECK(controller.table().entries()[0].address == 0x1100);
+    CHECK(controller.table().entries()[1].address == 0x1200);
+}
+
+TEST_CASE("controller refuses to collect code targets while running", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    backend.block_continue = true;
+    Controller controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    int warnings = 0;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&warnings](Controller::MessageKind kind, const QString&)
+                     {
+                         warnings += kind == Controller::MessageKind::warning ? 1 : 0;
+                     });
+
+    controller.start_code_filter(std::vector<CodeFilterCandidate> {CodeFilterCandidate {.target = 0x1100}});
+    CHECK(warnings == 1);
+    CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    CHECK(controller.table().empty());
+
+    backend.block_continue = false;
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+}
+
+TEST_CASE("controller consumes a code-filter trap silently and refills the slot", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    // The blocker keeps the third candidate waiting when the filter starts, so
+    // the hit has a waiting candidate to refill the freed slot with.
+    const auto blocker = controller.add_breakpoint("0x1300", Kind::software, 1);
+    REQUIRE(blocker.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = controller.table().find(*blocker);
+                           return entry != nullptr && entry->armed;
+                       }));
+
+    int stopped_count = 0;
+    QObject::connect(&controller,
+                     &Controller::stopped,
+                     &controller,
+                     [&stopped_count]
+                     {
+                         ++stopped_count;
+                     });
+
+    std::vector<CodeFilterCandidate> candidates(3);
+    candidates[0].target = 0x1100;
+    candidates[1].target = 0x1200;
+    candidates[2].target = 0x1300;
+    controller.start_code_filter(std::move(candidates));
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2
+                               && controller.code_filter().waiting_count() == 1;
+                       }));
+
+    controller.remove_breakpoint(*blocker);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().find(*blocker) == nullptr;
+                       }));
+
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x1101, 0x1100, std::nullopt, 0});
+    backend.queue_stop(StopEvent {StopReason::breakpoint, 4242, 0x2001, 0x2000, std::nullopt, 0});
+    controller.resume();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.last_stop().trap_address == 0x2000;
+                       }));
+
+    CHECK(stopped_count == 1);
+    CHECK(controller.code_filter().candidates()[0].executions == 1);
+    CHECK(controller.code_filter().candidates()[0].breakpoint_id == 0);
+    CHECK(controller.code_filter().armed_count() == 2);
+    CHECK(controller.code_filter().waiting_count() == 0);
+    CHECK(controller.table().software_at(0x1100) == nullptr);
+    CHECK(controller.table().software_at(0x1300) != nullptr);
+
+    bool rewound = false;
+    for (const auto& [tid, name, value] : backend.register_writes())
+    {
+        (void)tid;
+        rewound = rewound || (name == "RIP" && value == 0x1100);
+    }
+    CHECK(rewound);
+
+    bool restored = false;
+    for (const auto& [slot, address, insert] : backend.software_calls())
+    {
+        (void)slot;
+        restored = restored || (address == 0x1100 && !insert);
+    }
+    CHECK(restored);
+}
+
+TEST_CASE("controller keeps only the executed code-filter candidates", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    std::vector<CodeFilterCandidate> candidates(2);
+    candidates[0].target = 0x1100;
+    candidates[1].target = 0x1200;
+    controller.start_code_filter(std::move(candidates));
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2;
+                       }));
+
+    controller.filter_code_targets(true);
+    CHECK(controller.code_filter().visible_count() == 0);
+    CHECK(controller.code_filter().dropped_count() == 2);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().empty();
+                       }));
+
+    controller.filter_code_targets(true);
+    CHECK(controller.code_filter().dropped_count() == 2);
+
+    controller.clear_breakpoints();
+    CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    CHECK(controller.table().empty());
+}
+
+TEST_CASE("controller clears the code filter when the session ends", "[debug][controller]")
+{
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+    controller.start(4242, "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    controller.start_code_filter(std::vector<CodeFilterCandidate> {CodeFilterCandidate {.target = 0x1100}});
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 1;
+                       }));
+
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+    CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    CHECK(controller.code_filter().candidates().empty());
     CHECK(controller.table().empty());
 }

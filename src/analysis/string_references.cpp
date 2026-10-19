@@ -20,45 +20,10 @@ namespace slopkit::analysis
 {
     namespace
     {
-        // A target can map thousands of regions; the report keeps only enough
-        // rejected regions to name the reasons without flooding the log.
-        constexpr std::size_t kMaxExcludedRegions = 16;
-
         [[nodiscard]] constexpr bool is_printable_ascii(std::byte value) noexcept
         {
             const auto byte = std::to_integer<unsigned char>(value);
             return byte >= 0x20 && byte <= 0x7E;
-        }
-
-        [[nodiscard]] bool overlaps_module(const ModuleRange& module, const process::RegionInfo& region) noexcept
-        {
-            return region.start < module.end && region.end > module.base;
-        }
-
-        [[nodiscard]] constexpr std::string_view reason_name(RegionReason reason) noexcept
-        {
-            switch (reason)
-            {
-            case RegionReason::not_readable:
-                return "not readable";
-            case RegionReason::not_executable:
-                return "not executable";
-            case RegionReason::no_path:
-                return "with no mapped file";
-            case RegionReason::outside_module:
-                return "outside the module";
-            case RegionReason::empty_module:
-                return "the module has no size";
-            }
-            return "unclassified";
-        }
-
-        void exclude(StringScanReport& report, std::uint64_t start, std::uint64_t end, RegionReason reason)
-        {
-            if (report.excluded.size() < kMaxExcludedRegions)
-            {
-                report.excluded.push_back(ExcludedRegion {start, end, reason});
-            }
         }
 
         // The readable region of the module that holds `address`, or nullptr when
@@ -139,22 +104,7 @@ namespace slopkit::analysis
         {
             return text;
         }
-
-        std::string skipped;
-        for (const RegionReason reason : {RegionReason::empty_module,
-                                          RegionReason::not_readable,
-                                          RegionReason::not_executable,
-                                          RegionReason::no_path,
-                                          RegionReason::outside_module})
-        {
-            const std::size_t count = std::ranges::count(report.excluded, reason, &ExcludedRegion::reason);
-            if (count == 0)
-            {
-                continue;
-            }
-            skipped += std::format("{}{} region(s) {}", skipped.empty() ? "" : ", ", count, reason_name(reason));
-        }
-        return std::format("{}; skipped {}", text, skipped);
+        return std::format("{}; skipped {}", text, describe_excluded_regions(report.excluded));
     }
 
     StringScanResult find_string_references(ReadIntoFn                           read,
@@ -172,7 +122,7 @@ namespace slopkit::analysis
 
         if (module.end <= module.base)
         {
-            exclude(report, module.base, module.end, RegionReason::empty_module);
+            exclude_region(report.excluded, module.base, module.end, RegionReason::empty_module);
             log::debug(log::category::scan,
                        std::format("referenced-string analysis of {}: {}", module.name, describe(report)));
             return scan;
@@ -245,12 +195,12 @@ namespace slopkit::analysis
 
             if (!region.readable)
             {
-                exclude(report, region.start, region.end, RegionReason::not_readable);
+                exclude_region(report.excluded, region.start, region.end, RegionReason::not_readable);
                 continue;
             }
             if (!region.executable)
             {
-                exclude(report, region.start, region.end, RegionReason::not_executable);
+                exclude_region(report.excluded, region.start, region.end, RegionReason::not_executable);
                 continue;
             }
             sweeps.push_back(SweepRange {std::max(region.start, module.base), std::min(region.end, module.end)});

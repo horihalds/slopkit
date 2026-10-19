@@ -190,6 +190,12 @@ namespace slopkit::debug
         }
         stop_requested_ = false;
         drop_capture();
+        if (code_filter_.state() != CodeFilterState::idle)
+        {
+            code_filter_.reset();
+            filter_dirty_ = false;
+            emit codeFilterChanged();
+        }
         const JobId id = worker_.next_job_id();
         worker_.submit_detach(id,
                               [this, reason = std::move(reason)](JobResult&& result)
@@ -209,7 +215,10 @@ namespace slopkit::debug
         step_out_id_.reset();
         watch_       = AccessWatch {};
         watch_dirty_ = false;
-        last_stop_   = StopEvent {};
+        code_filter_.reset();
+        filter_dirty_       = false;
+        filter_arm_refused_ = false;
+        last_stop_          = StopEvent {};
         registers_.clear();
         backtrace_.clear();
         breakpoints_.clear();
@@ -218,6 +227,7 @@ namespace slopkit::debug
         emit registersChanged();
         emit backtraceChanged();
         emit breakpointsChanged();
+        emit codeFilterChanged();
 
         const auto* detach = std::get_if<VoidResult>(&result);
         if (detach != nullptr && detach->error && detach->error != process::AccessError::not_found)

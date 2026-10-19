@@ -18,6 +18,7 @@ namespace slopkit::ui
         log,
         breakpoints,
         access_watch,
+        code_filter,
         memory_viewer,
         reclass
     };

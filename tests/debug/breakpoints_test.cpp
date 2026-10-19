@@ -1,5 +1,6 @@
 #include <catch2/catch.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 
@@ -30,6 +31,50 @@ TEST_CASE("breakpoint table allocates software slots in order", "[debug][breakpo
     CHECK(table.software_at(0x1000) == table.find(*first));
     CHECK(table.software_at(0x3000) == nullptr);
     CHECK(table.entries().size() == 2);
+}
+
+TEST_CASE("breakpoint table fills every software slot and reuses a removed one", "[debug][breakpoints]")
+{
+    BreakpointTable table;
+    const auto      started = std::chrono::steady_clock::now();
+    for (std::uint32_t i = 0; i < BreakpointTable::software_slots; ++i)
+    {
+        const auto id = table.add("s", 0x10000 + i * 4, Kind::software, 1);
+        REQUIRE(id.has_value());
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    CHECK(elapsed < std::chrono::seconds(5));
+
+    const auto overflow = table.add("s", 0x90000, Kind::software, 1);
+    REQUIRE_FALSE(overflow.has_value());
+    CHECK(overflow.error() == "no software slot is free");
+
+    std::uint64_t removed {};
+    for (const auto& entry : table.entries())
+    {
+        if (entry.slot == 5)
+        {
+            removed = entry.id;
+            break;
+        }
+    }
+    REQUIRE(removed != 0);
+    REQUIRE(table.remove(removed));
+
+    const auto reused = table.add("s", 0x90000, Kind::software, 1);
+    REQUIRE(reused.has_value());
+    CHECK(table.find(*reused)->slot == 5);
+}
+
+TEST_CASE("breakpoint table records the hidden flag", "[debug][breakpoints]")
+{
+    BreakpointTable table;
+    const auto      hidden = table.add("m+0x10", 0x1010, Kind::software, 1, true);
+    const auto      shown  = table.add("m+0x20", 0x1020, Kind::software, 1);
+    REQUIRE(hidden.has_value());
+    REQUIRE(shown.has_value());
+    CHECK(table.find(*hidden)->hidden);
+    CHECK_FALSE(table.find(*shown)->hidden);
 }
 
 TEST_CASE("breakpoint table refuses duplicates and exhausted hardware slots", "[debug][breakpoints]")

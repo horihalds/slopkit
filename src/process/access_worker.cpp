@@ -372,6 +372,26 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_code_targets(JobId                     id,
+                                           std::string               module,
+                                           std::uint64_t             base,
+                                           std::uint64_t             size,
+                                           disasm::MachineMode       mode,
+                                           analysis::CodeTargetKinds kinds,
+                                           JobCallback               on_done)
+    {
+        Request request;
+        request.kind              = JobKind::code_targets;
+        request.id                = id;
+        request.module_name       = std::move(module);
+        request.address           = base;
+        request.size              = static_cast<std::size_t>(size);
+        request.machine_mode      = mode;
+        request.code_target_kinds = kinds;
+        request.on_done           = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_write(
         JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done)
     {
@@ -506,6 +526,8 @@ namespace slopkit::process
             return "resolve-expressions";
         case JobKind::string_references:
             return "string-references";
+        case JobKind::code_targets:
+            return "code-targets";
         }
         return "unknown";
     }
@@ -550,6 +572,8 @@ namespace slopkit::process
             return do_resolve(request);
         case JobKind::string_references:
             return do_string_references(request);
+        case JobKind::code_targets:
+            return do_code_targets(request);
         }
         return ListResult {};
     }
@@ -1418,6 +1442,48 @@ namespace slopkit::process
         log::debug(
             log::category::scan,
             std::format("referenced-string scan of {}: {}", request.module_name, analysis::describe(result.report)));
+        return result;
+    }
+
+    CodeTargetsResult AccessWorker::do_code_targets(const Request& request)
+    {
+        CodeTargetsResult result;
+        result.module = request.module_name;
+        result.base   = request.address;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(
+                log::category::scan,
+                std::format("code-target analysis of {} requested without an attached target", request.module_name));
+            return result;
+        }
+
+        const auto regions = session_->regions();
+        if (!regions)
+        {
+            result.error = regions.error();
+            log::warning(log::category::scan,
+                         std::format("region list for the code-target analysis of {} is unavailable: {}",
+                                     request.module_name,
+                                     describe(regions.error())));
+            return result;
+        }
+
+        const analysis::ReadIntoFn read = [this](std::uint64_t address, std::span<std::byte> buffer)
+        {
+            return session_->read_into(address, buffer);
+        };
+        const analysis::ModuleRange module {
+            .name = request.module_name, .base = request.address, .end = request.address + request.size};
+
+        analysis::CodeTargetScanResult scan =
+            analysis::find_code_targets(read, module, *regions, request.machine_mode, request.code_target_kinds);
+        result.targets = std::move(scan.targets);
+        result.report  = std::move(scan.report);
+        log::debug(log::category::scan,
+                   std::format("code-target scan of {}: {}", request.module_name, analysis::describe(result.report)));
         return result;
     }
 }

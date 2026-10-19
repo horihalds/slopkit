@@ -2,22 +2,16 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <expected>
-#include <functional>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "analysis/module_range.hpp"
 #include "disasm/decoder.hpp"
 #include "process/types.hpp"
 
 namespace slopkit::analysis
 {
-    // Mirrors `scan::ReadIntoFn` without pulling in `process/access.hpp`, so the
-    // analysis stays a leaf usable off the worker thread.
-    using ReadIntoFn =
-        std::function<std::expected<std::size_t, process::AccessError>(std::uint64_t, std::span<std::byte>)>;
-
     struct StringReference
     {
         std::uint64_t instruction {};
@@ -31,29 +25,6 @@ namespace slopkit::analysis
         std::size_t min_length {4};
         std::size_t max_string_bytes {256};
         std::size_t chunk_size {64 * 1024};
-    };
-
-    struct ModuleRange
-    {
-        std::string   name;
-        std::uint64_t base {};
-        std::uint64_t end {};
-    };
-
-    enum class RegionReason
-    {
-        not_readable,
-        not_executable,
-        no_path,
-        outside_module,
-        empty_module,
-    };
-
-    struct ExcludedRegion
-    {
-        std::uint64_t start {};
-        std::uint64_t end {};
-        RegionReason  reason {RegionReason::outside_module};
     };
 
     // Why a sweep stopped where it did: the counters of every stage plus the

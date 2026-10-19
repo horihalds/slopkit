@@ -33,6 +33,7 @@
 #include "ui/dialogs/access_watch.hpp"
 #include "ui/dialogs/add_address.hpp"
 #include "ui/dialogs/breakpoints.hpp"
+#include "ui/dialogs/code_filter.hpp"
 #include "ui/dialogs/generate_trainer.hpp"
 #include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
@@ -192,6 +193,11 @@ namespace slopkit::ui
         return access_watch_.get();
     }
 
+    dialogs::CodeFilterDialog* MainWindow::code_filter() const noexcept
+    {
+        return code_filter_.get();
+    }
+
     dialogs::ReClassDialog* MainWindow::reclass() const noexcept
     {
         return reclass_.get();
@@ -256,6 +262,8 @@ namespace slopkit::ui
 
         access_watch_action_ = new QAction(tr("Access Watch"), this);
 
+        code_filter_action_ = new QAction(tr("Code Filter"), this);
+
         reclass_action_ = new QAction(tr("ReClass"), this);
 
         launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
@@ -290,6 +298,7 @@ namespace slopkit::ui
         view_menu->addAction(settings_action_);
         view_menu->addAction(breakpoints_action_);
         view_menu->addAction(access_watch_action_);
+        view_menu->addAction(code_filter_action_);
         view_menu->addAction(reclass_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
@@ -345,6 +354,10 @@ namespace slopkit::ui
                         add_address_->set_modules(modules);
                     }
                     debug_.set_modules(modules);
+                    if (code_filter_ != nullptr)
+                    {
+                        code_filter_->set_modules(modules);
+                    }
                     reclass_->set_modules(modules, std::move(regions));
                     memory_view_->set_modules(std::move(modules));
                 });
@@ -493,6 +506,18 @@ namespace slopkit::ui
         access_watch_ = std::make_unique<dialogs::AccessWatchDialog>(debug_, worker_, target_);
         new WindowGeometryKeeper(*access_watch_, settings_, WindowId::access_watch, access_watch_.get());
 
+        code_filter_ = std::make_unique<dialogs::CodeFilterDialog>(debug_, target_);
+        new WindowGeometryKeeper(*code_filter_, settings_, WindowId::code_filter, code_filter_.get());
+        connect(
+            code_filter_.get(), &dialogs::CodeFilterDialog::collectRequested, this, &MainWindow::collect_code_targets);
+        connect(&code_filter_->debug_gate(),
+                &ui::DebugSessionGate::progress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
+
         reclass_ = std::make_unique<dialogs::ReClassDialog>(address_table_.structures(), worker_, target_);
         new WindowGeometryKeeper(*reclass_, settings_, WindowId::reclass, reclass_.get());
         live_values_->add_surface(reclass_.get());
@@ -562,6 +587,7 @@ namespace slopkit::ui
                     address_list_->set_address_mode(mode);
                     debug_.set_address_mode(mode);
                     memory_view_->set_address_mode(mode);
+                    code_filter_->refresh();
                 });
 
         const ui::AddressMode persisted_mode = settings_.values().address_mode;
@@ -569,11 +595,13 @@ namespace slopkit::ui
         address_list_->set_address_mode(persisted_mode);
         debug_.set_address_mode(persisted_mode);
         memory_view_->set_address_mode(persisted_mode);
+        code_filter_->refresh();
 
         connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
         connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
         connect(breakpoints_action_, &QAction::triggered, this, &MainWindow::show_breakpoints);
         connect(access_watch_action_, &QAction::triggered, this, &MainWindow::show_access_watch);
+        connect(code_filter_action_, &QAction::triggered, this, &MainWindow::show_code_filter);
         connect(reclass_action_, &QAction::triggered, this, &MainWindow::show_reclass);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
@@ -646,6 +674,67 @@ namespace slopkit::ui
         access_watch_->show();
         access_watch_->raise();
         access_watch_->activateWindow();
+    }
+
+    void MainWindow::collect_code_targets(QString                   module,
+                                          std::uint64_t             base,
+                                          std::uint64_t             end,
+                                          std::uint32_t             pointer_size,
+                                          analysis::CodeTargetKinds kinds)
+    {
+        if (code_filter_ == nullptr)
+        {
+            return;
+        }
+
+        const process::JobId id   = worker_.next_job_id();
+        const std::string    name = module.toStdString();
+        log::info(log::category::ui, std::format("code filter collect of {} started ({:#x}-{:#x})", name, base, end));
+
+        const bool submitted = worker_.submit_code_targets(
+            id,
+            name,
+            base,
+            end - base,
+            disasm::machine_mode_for(pointer_size),
+            kinds,
+            [this](process::JobResult&& result)
+            {
+                if (code_filter_ == nullptr)
+                {
+                    return;
+                }
+                const auto& scan = std::get<process::CodeTargetsResult>(result);
+                if (scan.error.has_value())
+                {
+                    code_filter_->report_error(tr("Could not scan %1: %2")
+                                                   .arg(QString::fromStdString(scan.module),
+                                                        QString::fromStdString(std::string(describe(*scan.error)))));
+                    return;
+                }
+
+                analysis::CodeTargetScanResult converted;
+                converted.targets = scan.targets;
+                converted.report  = scan.report;
+                code_filter_->apply_scan(std::move(converted), scan.module, scan.base);
+            });
+
+        if (!submitted)
+        {
+            code_filter_->report_error(tr("Could not start the code-target scan."));
+        }
+    }
+
+    void MainWindow::show_code_filter()
+    {
+        if (code_filter_ == nullptr)
+        {
+            return;
+        }
+        code_filter_->refresh();
+        code_filter_->show();
+        code_filter_->raise();
+        code_filter_->activateWindow();
     }
 
     void MainWindow::show_reclass()

@@ -233,7 +233,7 @@ beside the normal access path rather than in it, so the read/write path stays
 - `platform::ptrace` is the only place that calls `ptrace`. Both bundled plugins
   and the test binary link it through `slopkit_platform`.
 - `platform::DebugSession` is the shared debugger core: it seizes the thread
-  group, owns the 64 software / 4 hardware breakpoint slots and the wait loop,
+  group, owns the 4096 software / 4 hardware breakpoint slots and the wait loop,
   and both `linux-proc` and `wine-proton` implement the ABI 1.4 `debug_*`
   operations as thin wrappers over it. Its group `attach()` takes an optional
   exclusion list — the tids a plugin names through
@@ -255,7 +255,7 @@ beside the normal access path rather than in it, so the read/write path stays
   call on one job thread — a tracee may only be ptraced by the thread that
   attached it — and `debug::Controller` is the UI-facing session owner: the
   breakpoint table, trap-to-breakpoint resolution, register/backtrace caching, the
-  access watch and the signals the panes render.
+  access watch, the code filter and the signals the panes render.
 - Starting a session attaches and leaves the target **running**; only a
   breakpoint hit, a watch hit or `Break` stops it. Because a debug register can
   only be written while its thread is in a ptrace stop, the controller arms and
@@ -271,6 +271,20 @@ beside the normal access path rather than in it, so the read/write path stays
   cap), marks the `watchChanged()` signal dirty and resumes immediately, so the
   target keeps running. A new watch replaces the running one; `Stop` disarms it
   without dropping the recorded rows.
+- The **code filter** reuses the table too. Collection is a target-free
+  `analysis::find_code_targets` sweep of the module's executable regions on the
+  access worker: only directly encoded `call`/`jmp`/`jcc` targets are kept,
+  deduplicated by target and limited to the module range.
+  `Controller::start_code_filter` adds one hidden software breakpoint per
+  candidate and arms them one at a time, stopping at the first backend refusal so
+  the surplus waits for a slot. A trap whose address `debug::CodeFilter::covers()`
+  is consumed inside `apply_stop()` before the stop is reported: the controller
+  restores the original byte through the worker, drops the entry, arms the next
+  waiting candidate in the freed slot, writes `RIP` back to the trap address and
+  continues — no `stopped()` and no `stateChanged()`, while `codeFilterChanged()`
+  is coalesced like `watchChanged()`. `Keep executed` / `Keep not executed` drop
+  the losing half and disarm it; a detach, an ended session or `Clear breakpoints`
+  resets the filter together with the table.
 - **Step Out** reuses the same table: from a stop it takes the caller's return
   address from the cached frame-pointer backtrace (`frames[1].pc`), arms one
   hidden software breakpoint there and submits the continue only from the

@@ -18,6 +18,7 @@
 #include <variant>
 #include <vector>
 
+#include "analysis/code_targets.hpp"
 #include "analysis/string_references.hpp"
 #include "disasm/decoder.hpp"
 #include "expr/resolver.hpp"
@@ -174,6 +175,15 @@ namespace slopkit::process
         std::optional<AccessError>             error;
     };
 
+    struct CodeTargetsResult
+    {
+        std::string                       module;
+        std::uint64_t                     base {};
+        std::vector<analysis::CodeTarget> targets;
+        analysis::CodeTargetScanReport    report;
+        std::optional<AccessError>        error;
+    };
+
     using JobResult = std::variant<ListResult,
                                    ProbeResult,
                                    AttachResult,
@@ -188,7 +198,8 @@ namespace slopkit::process
                                    TargetLivenessResult,
                                    MemoryMapResult,
                                    ResolveResult,
-                                   StringRefsResult>;
+                                   StringRefsResult,
+                                   CodeTargetsResult>;
 
     using JobCallback = std::move_only_function<void(JobResult&&)>;
 
@@ -222,6 +233,13 @@ namespace slopkit::process
                                       std::uint64_t       size,
                                       disasm::MachineMode mode,
                                       JobCallback         on_done);
+        bool submit_code_targets(JobId                     id,
+                                 std::string               module,
+                                 std::uint64_t             base,
+                                 std::uint64_t             size,
+                                 disasm::MachineMode       mode,
+                                 analysis::CodeTargetKinds kinds,
+                                 JobCallback               on_done);
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
@@ -274,6 +292,7 @@ namespace slopkit::process
             target_liveness,
             resolve_expressions,
             string_references,
+            code_targets,
         };
 
         struct Request
@@ -299,6 +318,7 @@ namespace slopkit::process
             // thread so the worker never reads the editing model.
             std::shared_ptr<const script::ClassIndex> classes;
             disasm::MachineMode                       machine_mode {disasm::MachineMode::long_64};
+            analysis::CodeTargetKinds                 code_target_kinds;
             JobCallback                               on_done;
         };
 
@@ -348,6 +368,7 @@ namespace slopkit::process
         TargetLivenessResult    do_target_liveness(const Request& request);
         ResolveResult           do_resolve(const Request& request);
         StringRefsResult        do_string_references(const Request& request);
+        CodeTargetsResult       do_code_targets(const Request& request);
 
         ProcessAccess&                access_;
         script::SymbolTable&          symbols_;

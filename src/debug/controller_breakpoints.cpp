@@ -108,6 +108,13 @@ namespace slopkit::debug
 
     void Controller::clear_breakpoints()
     {
+        if (code_filter_.state() != CodeFilterState::idle)
+        {
+            code_filter_.reset();
+            filter_dirty_       = false;
+            filter_arm_refused_ = false;
+            emit codeFilterChanged();
+        }
         if (watch_.state() == WatchState::watching)
         {
             watch_.stop();
@@ -118,25 +125,17 @@ namespace slopkit::debug
             const std::vector<Breakpoint> entries(breakpoints_.entries().begin(), breakpoints_.entries().end());
             for (const Breakpoint& entry : entries)
             {
-                if (entry.armed)
-                {
-                    pending_removals_.push_back(entry.id);
-                    request_slot_op(entry.id, false);
-                }
-                else
-                {
-                    breakpoints_.remove(entry.id);
-                }
+                // Queued even for an entry whose arm job is still pending, so
+                // the disarm follows the arm in the worker and restores the byte.
+                pending_removals_.push_back(entry.id);
+                request_slot_op(entry.id, false);
             }
             emit breakpointsChanged();
             return;
         }
         for (const Breakpoint& entry : breakpoints_.entries())
         {
-            if (entry.armed)
-            {
-                disarm(entry.id);
-            }
+            disarm(entry.id);
         }
         breakpoints_.clear();
         emit breakpointsChanged();
@@ -155,10 +154,13 @@ namespace slopkit::debug
     void Controller::disarm(std::uint64_t id)
     {
         const Breakpoint* entry = breakpoints_.find(id);
-        if (entry == nullptr || !entry->armed)
+        if (entry == nullptr)
         {
             return;
         }
+        // Also submitted for an entry whose arm job may still be in flight; the
+        // backend restores nothing when the slot is not armed yet, and the job
+        // order then still ends with the byte restored.
         submit_arm(*entry, false, QStringLiteral("Cannot disarm breakpoint %1").arg(id));
     }
 

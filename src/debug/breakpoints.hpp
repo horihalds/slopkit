@@ -58,13 +58,13 @@ namespace slopkit::debug
     {
     public:
         static constexpr std::uint32_t hardware_slots = 4;
-        static constexpr std::uint32_t software_slots = 64;
+        static constexpr std::uint32_t software_slots = 4096;
 
         [[nodiscard]] static std::size_t normalize_size(Kind kind, std::size_t size) noexcept;
         [[nodiscard]] static bool        valid_size(Kind kind, std::size_t size) noexcept;
 
         std::expected<std::uint64_t, std::string>
-        add(std::string expression, std::uint64_t address, Kind kind, std::size_t size);
+        add(std::string expression, std::uint64_t address, Kind kind, std::size_t size, bool hidden = false);
 
         bool remove(std::uint64_t id);
         void clear();

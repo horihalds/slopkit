@@ -6,6 +6,9 @@
 #include <format>
 #include <string>
 #include <thread>
+#include <vector>
+
+#include <QString>
 
 #include <sched.h>
 #include <signal.h>
@@ -22,10 +25,13 @@
 #include "process/types.hpp"
 #include "support/fake_debug.hpp"
 
+using slopkit::debug::CodeFilterCandidate;
+using slopkit::debug::CodeFilterState;
 using slopkit::debug::Controller;
 using slopkit::debug::Kind;
 using slopkit::debug::PluginBackend;
 using slopkit::debug::StopReason;
+using slopkit::tests::drain_until_idle;
 using slopkit::tests::pump_until;
 
 namespace
@@ -36,6 +42,15 @@ namespace
     {
         *g_counter = *g_counter + 1;
     }
+
+    __attribute__((noinline)) void never_called_target()
+    {
+        asm volatile("" ::: "memory");
+    }
+
+    // Keeping the address live stops the optimiser from discarding a function
+    // that no caller names.
+    void (*volatile g_never_called_target)() = &never_called_target;
 
     // A spare stack and body for a second thread, created with clone() because
     // the child is forked from a process whose allocator may be locked.
@@ -461,4 +476,116 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     const auto status = slopkit::platform::read_status(child.pid());
     REQUIRE(status.has_value());
     CHECK(status->tracer_pid == 0);
+}
+
+TEST_CASE("a code filter consumes its traps without stopping the practice target", "[debug][practice]")
+{
+    DebugChild child;
+    REQUIRE(child.pid() != 0);
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    PluginBackend backend(host);
+    Controller    controller(backend);
+
+    controller.start(child.pid(), "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    // A user breakpoint is the natural way into a stopped state here: an
+    // interrupt leaves a pending group-stop that the next continue would report.
+    const auto probe =
+        controller.add_breakpoint(hex(reinterpret_cast<std::uintptr_t>(&debug_target)), Kind::software, 1);
+    REQUIRE(probe.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.last_stop().trap_address
+                                      == reinterpret_cast<std::uintptr_t>(&debug_target);
+                       }));
+    controller.remove_breakpoint(*probe);
+    REQUIRE(drain_until_idle(controller));
+
+    QString last_error;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&last_error](Controller::MessageKind kind, const QString& text)
+                     {
+                         if (kind == Controller::MessageKind::warning || kind == Controller::MessageKind::error)
+                         {
+                             last_error = text;
+                         }
+                     });
+
+    bool stopped_emitted = false;
+    QObject::connect(&controller,
+                     &Controller::stopped,
+                     &controller,
+                     [&stopped_emitted]
+                     {
+                         stopped_emitted = true;
+                     });
+
+    const std::uint64_t called = reinterpret_cast<std::uintptr_t>(&debug_target);
+    const std::uint64_t never  = reinterpret_cast<std::uintptr_t>(g_never_called_target);
+    REQUIRE(called != 0);
+    REQUIRE(never != 0);
+    REQUIRE(called != never);
+
+    std::vector<CodeFilterCandidate> candidates(2);
+    candidates[0].target = called;
+    candidates[1].target = never;
+    controller.start_code_filter(std::move(candidates));
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2;
+                       }));
+
+    controller.resume();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().candidates()[0].executions >= 1
+                               && controller.table().software_at(called) == nullptr;
+                       }));
+
+    INFO("error=" << last_error.toStdString() << " state=" << static_cast<int>(controller.state())
+                  << " stopped=" << stopped_emitted << " reason=" << static_cast<int>(controller.last_stop().reason)
+                  << " trap=0x" << std::hex << controller.last_stop().trap_address << " called=0x" << called
+                  << " entries=" << controller.table().entries().size());
+    CHECK(controller.state() == Controller::State::running);
+    CHECK_FALSE(stopped_emitted);
+    CHECK(controller.code_filter().candidates()[0].executions == 1);
+    CHECK(controller.code_filter().candidates()[1].executions == 0);
+    CHECK(controller.table().software_at(called) == nullptr);
+    CHECK(controller.table().software_at(never) != nullptr);
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    controller.stop_code_filter();
+    CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().empty();
+                       }));
+
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
 }

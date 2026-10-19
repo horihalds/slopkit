@@ -5,6 +5,31 @@
 
 namespace slopkit::debug
 {
+    namespace
+    {
+        template<typename Predicate>
+        std::optional<std::uint32_t>
+        first_free_slot(std::span<const Breakpoint> entries, std::uint32_t slots, Predicate predicate)
+        {
+            std::vector<bool> used(slots, false);
+            for (const Breakpoint& entry : entries)
+            {
+                if (entry.slot < slots && predicate(entry))
+                {
+                    used[entry.slot] = true;
+                }
+            }
+            for (std::uint32_t slot = 0; slot < slots; ++slot)
+            {
+                if (!used[slot])
+                {
+                    return slot;
+                }
+            }
+            return std::nullopt;
+        }
+    }
+
     std::size_t BreakpointTable::normalize_size(Kind kind, std::size_t size) noexcept
     {
         if (kind == Kind::software || kind == Kind::hardware_execute)
@@ -25,36 +50,22 @@ namespace slopkit::debug
 
     std::optional<std::uint32_t> BreakpointTable::free_software_slot() const
     {
-        for (std::uint32_t slot = 0; slot < software_slots; ++slot)
-        {
-            const bool used = std::ranges::any_of(entries_,
-                                                  [slot](const Breakpoint& entry)
-                                                  {
-                                                      return !is_hardware(entry.kind) && entry.slot == slot;
-                                                  });
-            if (!used)
-            {
-                return slot;
-            }
-        }
-        return std::nullopt;
+        return first_free_slot(entries_,
+                               software_slots,
+                               [](const Breakpoint& entry)
+                               {
+                                   return !is_hardware(entry.kind);
+                               });
     }
 
     std::optional<std::uint32_t> BreakpointTable::free_hardware_slot() const
     {
-        for (std::uint32_t slot = 0; slot < hardware_slots; ++slot)
-        {
-            const bool used = std::ranges::any_of(entries_,
-                                                  [slot](const Breakpoint& entry)
-                                                  {
-                                                      return is_hardware(entry.kind) && entry.slot == slot;
-                                                  });
-            if (!used)
-            {
-                return slot;
-            }
-        }
-        return std::nullopt;
+        return first_free_slot(entries_,
+                               hardware_slots,
+                               [](const Breakpoint& entry)
+                               {
+                                   return is_hardware(entry.kind);
+                               });
     }
 
     bool BreakpointTable::covered(std::uint64_t address, Kind kind) const
@@ -67,7 +78,7 @@ namespace slopkit::debug
     }
 
     std::expected<std::uint64_t, std::string>
-    BreakpointTable::add(std::string expression, std::uint64_t address, Kind kind, std::size_t size)
+    BreakpointTable::add(std::string expression, std::uint64_t address, Kind kind, std::size_t size, bool hidden)
     {
         if (!valid_size(kind, size))
         {
@@ -106,6 +117,7 @@ namespace slopkit::debug
         entry.address          = address;
         entry.enabled          = true;
         entry.slot             = slot;
+        entry.hidden           = hidden;
         const std::uint64_t id = entry.id;
         entries_.push_back(std::move(entry));
         return id;

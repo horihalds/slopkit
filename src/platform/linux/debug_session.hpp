@@ -44,7 +44,7 @@ namespace slopkit::platform
         std::uint64_t frame_pointer {};
     };
 
-    inline constexpr std::size_t kSoftwareSlotCount = 64;
+    inline constexpr std::size_t kSoftwareSlotCount = 4096;
     inline constexpr std::size_t kHardwareSlotCount = 4;
 
     class DebugSession

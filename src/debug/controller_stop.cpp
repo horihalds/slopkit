@@ -16,6 +16,11 @@ namespace slopkit::debug
             watch_dirty_ = false;
             emit watchChanged();
         }
+        if (filter_dirty_)
+        {
+            filter_dirty_ = false;
+            emit codeFilterChanged();
+        }
         return drained;
     }
 
@@ -83,6 +88,13 @@ namespace slopkit::debug
                 begin_run(stop.tid);
                 return;
             }
+        }
+
+        if (!stop_requested_ && stop.reason == StopReason::breakpoint && !stop.breakpoint_slot
+            && code_filter_.covers(stop.trap_address))
+        {
+            resume_past_filter_trap(stop);
+            return;
         }
 
         last_stop_ = stop;

@@ -16,6 +16,7 @@
 #include "debug/access_watch.hpp"
 #include "debug/backend.hpp"
 #include "debug/breakpoints.hpp"
+#include "debug/code_filter.hpp"
 #include "debug/worker.hpp"
 #include "process/types.hpp"
 #include "script/symbols.hpp"
@@ -86,6 +87,11 @@ namespace slopkit::debug
         void                             clear_watch_hits();
         [[nodiscard]] const AccessWatch& watch() const noexcept;
 
+        void                            start_code_filter(std::vector<CodeFilterCandidate> candidates);
+        void                            stop_code_filter();
+        void                            filter_code_targets(bool keep_executed);
+        [[nodiscard]] const CodeFilter& code_filter() const noexcept;
+
         void write_register(std::string_view name, std::uint64_t value);
         void refresh();
 
@@ -107,6 +113,7 @@ namespace slopkit::debug
         void breakpointsChanged();
         void message(slopkit::debug::Controller::MessageKind kind, const QString& text);
         void watchChanged();
+        void codeFilterChanged();
 
     private:
         struct PendingSlotOp
@@ -126,6 +133,9 @@ namespace slopkit::debug
         void end_session(QString reason);
         void apply_detach(JobResult&& result, QString reason);
         void apply_stop(StopEvent stop);
+        void resume_past_filter_trap(const StopEvent& stop);
+        void stop_at_failed_filter_trap(const StopEvent& stop, std::uint64_t breakpoint_id);
+        void arm_filter_candidate();
         void begin_step_out_run();
         void submit_step_out_arm(std::uint64_t id);
         void disarm_step_out(const Breakpoint& entry);
@@ -164,6 +174,9 @@ namespace slopkit::debug
         std::vector<std::uint64_t>   pending_removals_;
         AccessWatch                  watch_;
         bool                         watch_dirty_ {false};
+        CodeFilter                   code_filter_;
+        bool                         filter_dirty_ {false};
+        bool                         filter_arm_refused_ {false};
         std::function<void()>        capture_;
         bool                         capture_pending_ {false};
         std::optional<std::uint64_t> step_out_id_ {};
