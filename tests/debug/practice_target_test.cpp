@@ -480,7 +480,7 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
 
 TEST_CASE("a code filter collects while the practice target keeps running", "[debug][practice]")
 {
-    DebugChild child;
+    DebugChild child(true);
     REQUIRE(child.pid() != 0);
 
     slopkit::plugin::PluginHost host;
@@ -574,6 +574,84 @@ TEST_CASE("a code filter collects while the practice target keeps running", "[de
                        {
                            return controller.table().empty();
                        }));
+
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+}
+
+TEST_CASE("a threaded practice target survives repeated running collects", "[debug][practice]")
+{
+    DebugChild child(true);
+    REQUIRE(child.pid() != 0);
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    PluginBackend backend(host);
+    Controller    controller(backend);
+
+    controller.start(child.pid(), "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    QString last_error;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&last_error](Controller::MessageKind kind, const QString& text)
+                     {
+                         if (kind == Controller::MessageKind::warning || kind == Controller::MessageKind::error)
+                         {
+                             last_error = text;
+                         }
+                     });
+
+    const std::uint64_t called = reinterpret_cast<std::uintptr_t>(&debug_target);
+    const std::uint64_t never  = reinterpret_cast<std::uintptr_t>(g_never_called_target);
+
+    // Both threads spin in the same function, so a trap parks more than one of
+    // them: they all have to run the original instruction, or the target
+    // executes the tail of it as garbage.
+    for (int round = 0; round < 5; ++round)
+    {
+        std::vector<CodeFilterCandidate> candidates(2);
+        candidates[0].target = called;
+        candidates[1].target = never;
+        controller.start_code_filter(std::move(candidates));
+        INFO("round " << round << " error=" << last_error.toStdString());
+        REQUIRE(pump_until(controller,
+                           [&]
+                           {
+                               return controller.code_filter().armed_count() == 2;
+                           }));
+        REQUIRE(pump_until(controller,
+                           [&]
+                           {
+                               return controller.code_filter().candidates()[0].executions >= 1;
+                           }));
+
+        controller.filter_code_targets(true);
+        CHECK_FALSE(controller.code_filter().candidates()[1].visible);
+
+        INFO("round " << round << " after keep: error=" << last_error.toStdString()
+                      << " state=" << static_cast<int>(controller.state()));
+        CHECK(controller.state() == Controller::State::running);
+        CHECK(last_error.isEmpty());
+
+        const std::uint32_t before = *g_counter;
+        CHECK(pump_until(controller,
+                         [&]
+                         {
+                             return *g_counter != before;
+                         }));
+    }
 
     controller.stop();
     REQUIRE(pump_until(controller,

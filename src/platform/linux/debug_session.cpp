@@ -342,6 +342,11 @@ namespace slopkit::platform
         return platform::detach(tid, signal);
     }
 
+    void DebugSession::rewind_before_continue(process::ProcessId tid, std::uint64_t address)
+    {
+        (void)platform::set_register(tid, "RIP", address);
+    }
+
     std::vector<process::ProcessId> DebugSession::attached_threads() const
     {
         const std::lock_guard lock(mutex_);
@@ -423,6 +428,17 @@ namespace slopkit::platform
             if (const auto hardware = apply_hardware(); !hardware)
             {
                 return std::unexpected(hardware.error());
+            }
+            if (resume_address != 0)
+            {
+                // Every thread that ran into the restored trap waits one byte
+                // past it, and running on from there executes the tail of the
+                // instruction that was patched; a thread that was not parked
+                // refuses the write and is unaffected.
+                for (const auto tid : tids)
+                {
+                    rewind_before_continue(tid, resume_address);
+                }
             }
             for (const auto tid : tids)
             {
@@ -619,12 +635,36 @@ namespace slopkit::platform
         }
         auto& record = software_[slot];
 
+        // ptrace reads and writes another process's memory through a thread that
+        // is stopped, and a breakpoint hit stops only the thread that ran into
+        // it; the leader may well still be running.
+        const process::ProcessId writer = current_ != 0 ? current_ : leader_;
+        const auto read_one = [this, writer, address]() -> std::expected<std::vector<std::byte>, process::AccessError>
+        {
+            auto bytes = platform::read_bytes(writer, address, 1);
+            if (!bytes && bytes.error() == process::AccessError::not_found && writer != leader_)
+            {
+                bytes = platform::read_bytes(leader_, address, 1);
+            }
+            return bytes;
+        };
+        const auto write_one =
+            [this, writer, address](std::span<const std::byte> data) -> std::expected<void, process::AccessError>
+        {
+            auto written = platform::write_bytes(writer, address, data);
+            if (!written && written.error() == process::AccessError::not_found && writer != leader_)
+            {
+                written = platform::write_bytes(leader_, address, data);
+            }
+            return written;
+        };
+
         if (!insert)
         {
             if (record.armed && record.address == address)
             {
                 const std::array<std::byte, 1> original {static_cast<std::byte>(record.original & 0xFF)};
-                if (const auto restored = platform::write_bytes(leader_, address, original); !restored)
+                if (const auto restored = write_one(original); !restored)
                 {
                     return std::unexpected(restored.error());
                 }
@@ -645,7 +685,7 @@ namespace slopkit::platform
             }
         }
 
-        const auto original = platform::read_bytes(leader_, address, 1);
+        const auto original = read_one();
         if (!original)
         {
             return std::unexpected(original.error());
@@ -655,7 +695,7 @@ namespace slopkit::platform
             return std::unexpected(process::AccessError::io_error);
         }
         const std::array<std::byte, 1> trap {std::byte {0xCC}};
-        if (const auto written = platform::write_bytes(leader_, address, trap); !written)
+        if (const auto written = write_one(trap); !written)
         {
             return std::unexpected(written.error());
         }

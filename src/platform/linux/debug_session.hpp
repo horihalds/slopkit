@@ -88,6 +88,7 @@ namespace slopkit::platform
     private:
         [[nodiscard]] std::expected<void, process::AccessError> apply_hardware();
         [[nodiscard]] std::expected<void, process::AccessError> ensure_stopped(process::ProcessId tid);
+        void rewind_before_continue(process::ProcessId tid, std::uint64_t address);
 
         mutable std::mutex                           mutex_;
         std::vector<process::ProcessId>              tids_;

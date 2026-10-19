@@ -262,7 +262,10 @@ beside the normal access path rather than in it, so the read/write path stays
   disarms breakpoints through an invisible *maintenance stop*: it queues the
   requested arm/disarm, interrupts the group, applies the whole queue while it is
   stopped and continues. The stop is never reported — no `Stopped at` line, no
-  `stateChanged` — and a burst of ops costs one stop.
+  `stateChanged` — and a burst of ops costs one stop. Every memory read and write
+  of that burst goes through the thread the stop reported rather than the leader:
+  ptrace only reaches a target's memory through a stopped thread, and only one
+  thread of the group is stopped at a time.
 - The **access watch** is one hidden hardware data breakpoint in the same
   `BreakpointTable` (its `hidden` flag keeps it out of the Breakpoints window
   while the slot accounting stays in one place). The controller consumes its
@@ -283,9 +286,12 @@ beside the normal access path rather than in it, so the read/write path stays
   slot. A trap whose address `debug::CodeFilter::covers()`
   is consumed inside `apply_stop()` before the stop is reported: the controller
   restores the original byte through the worker, drops the entry, arms the next
-  waiting candidate in the freed slot, writes `RIP` back to the trap address and
-  continues — no `stopped()` and no `stateChanged()`, while `codeFilterChanged()`
-  is coalesced like `watchChanged()`. `Keep executed` / `Keep not executed` drop
+  waiting candidate in the freed slot, and continues past the trap address — no
+  `stopped()` and no `stateChanged()`, while `codeFilterChanged()` is coalesced
+  like `watchChanged()`. A trap parks every thread that ran into the same patched
+  byte while only one of them is reported, so the rewind of `RIP` covers all of
+  them and a thread that was not stopped refuses the register write and is left
+  alone. `Keep executed` / `Keep not executed` drop
   the losing half and disarm it; a detach, an ended session or `Clear breakpoints`
   resets the filter together with the table.
 - **Step Out** reuses the same table: from a stop it takes the caller's return

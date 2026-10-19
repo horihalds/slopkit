@@ -1427,13 +1427,9 @@ TEST_CASE("controller consumes a code-filter trap silently and refills the slot"
     CHECK(controller.table().software_at(0x1100) == nullptr);
     CHECK(controller.table().software_at(0x1300) != nullptr);
 
-    bool rewound = false;
-    for (const auto& [tid, name, value] : backend.register_writes())
-    {
-        (void)tid;
-        rewound = rewound || (name == "RIP" && value == 0x1100);
-    }
-    CHECK(rewound);
+    // The rewind travels with the continue, so the session can put back every
+    // thread that was parked on the same trap.
+    CHECK(backend.last_resume_address() == 0x1100);
 
     bool restored = false;
     for (const auto& [slot, address, insert] : backend.software_calls())

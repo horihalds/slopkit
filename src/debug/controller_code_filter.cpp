@@ -238,22 +238,33 @@ namespace slopkit::debug
 
     void Controller::resume_past_filter_trap(const StopEvent& stop)
     {
-        const Breakpoint* entry = breakpoints_.software_at(stop.trap_address);
+        const Breakpoint*   entry   = breakpoints_.software_at(stop.trap_address);
+        const std::uint64_t address = stop.trap_address;
+        const std::uint32_t tid     = stop.tid != 0 ? stop.tid : active_tid();
         if (entry == nullptr)
         {
+            // A thread that ran into the trap after the byte was already restored
+            // waits one byte past it; it has to run the original instruction.
+            const JobId stale = worker_.next_job_id();
+            worker_.submit_continue(stale,
+                                    tid,
+                                    address,
+                                    1,
+                                    [this](JobResult&& result)
+                                    {
+                                        apply_run_result(std::move(result));
+                                    });
             return;
         }
         const std::uint64_t breakpoint_id = entry->id;
         const std::uint32_t slot          = entry->slot;
-        const std::uint64_t address       = stop.trap_address;
-        const std::uint32_t tid           = stop.tid != 0 ? stop.tid : active_tid();
 
         code_filter_.record(address);
         filter_dirty_ = true;
         slopkit::log::debug(log::category::debug, std::format("code-filter hit at {:#x}", address));
 
         // The byte is restored while the target is stopped at the trap, so the
-        // plain continue that follows runs the original instruction instead of
+        // continue that follows runs the original instruction instead of
         // re-patching the breakpoint and stepping over it.
         const JobId job = worker_.next_job_id();
         worker_.submit_software_breakpoint(job,
@@ -273,15 +284,15 @@ namespace slopkit::debug
                                                filter_dirty_ = true;
                                                arm_filter_candidate();
 
-                                               const JobId set = worker_.next_job_id();
-                                               worker_.submit_set_register(set,
-                                                                           tid,
-                                                                           "RIP",
-                                                                           address,
-                                                                           [this, tid](JobResult&&)
-                                                                           {
-                                                                               submit_resume(tid);
-                                                                           });
+                                               const JobId resume = worker_.next_job_id();
+                                               worker_.submit_continue(resume,
+                                                                       tid,
+                                                                       address,
+                                                                       1,
+                                                                       [this](JobResult&& result)
+                                                                       {
+                                                                           apply_run_result(std::move(result));
+                                                                       });
                                            });
     }
 
