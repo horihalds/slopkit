@@ -23,11 +23,13 @@
 namespace
 {
     using slopkit::scan::ValueType;
+    using slopkit::trainer::ItemKind;
     using slopkit::trainer::LiveEntry;
     using slopkit::trainer::Module;
     using slopkit::trainer::Payload;
     using slopkit::trainer::PayloadClass;
     using slopkit::trainer::PayloadEntry;
+    using slopkit::trainer::PayloadItem;
     using slopkit::trainer::PayloadScript;
     using slopkit::trainer::Region;
     using slopkit::trainer::Resolver;
@@ -165,7 +167,11 @@ namespace
         Payload payload;
         payload.pointer_size = 8;
         payload.process_name = "practice";
-        payload.scripts      = std::move(scripts);
+        for (std::size_t index = 0; index < scripts.size(); ++index)
+        {
+            payload.items.push_back(
+                PayloadItem {ItemKind::script, 0, static_cast<std::uint32_t>(index + 1), std::move(scripts[index])});
+        }
         return payload;
     }
 

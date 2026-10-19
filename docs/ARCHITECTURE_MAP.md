@@ -179,7 +179,10 @@ docs that hold the detail behind this map.
   neither procfs nor a wine prefix and no Qt. `SLOPKIT_TRAINER_WIN32_SOURCES`
   adds `gui/window_win32.cpp` in their place. The trainer keeps two row
   namespaces apart — value entries stay `1..N`, scripts are `S1..Sm` — so a new
-  row action must say which one it addresses.
+  row action must say which one it addresses. Both windows and the printed list
+  render `Payload::items` in its own order, which is the saved table's row order
+  with each item's `kind`, `number` and `depth`; grouping the kinds or reordering
+  the items would stop the trainer reading like the table it came from.
 - The trainer's window is a cache, not the truth: `gui::RowsModel` (and the
   Win32 window's displayed snapshot) holds the immutable `RowView` snapshot the
   worker publishes from the session's `LiveEntry` and `ScriptState`, and

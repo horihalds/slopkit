@@ -133,20 +133,24 @@ with 4-byte pointers even though the loader hosting it is 64-bit. Reading and
 writing that memory follows the same kernel ptrace policy as any other target.
 
 When a display is available, a run without any action flag opens the trainer
-window: a table with the value entries as `1..N` and the scripts as `S1..Sm`,
-refreshed by the live pass. Its columns are `#`, `Description`, `Address`,
-`Type`, `Value`, `Frozen / Active`, `State`, `Interval` and `Message` — value
-rows fill the first six, script rows the last four. Double-click a `Value` cell,
-type the new value and press Enter; `Esc` or a click elsewhere discards the
-edit, and a text the entry's type or hex flag refuses keeps the editor open with
-the reason on the status bar. The `Frozen / Active` checkbox freezes or unfreezes
-a value entry and activates or deactivates a script (each running the script's
-`activate` / `deactivate` hook). `File > Refresh now` re-resolves every
-expression, `File > Close` (`Ctrl+W`) ends the session, `Help > Help` (`F1`)
-shows the window's help and `Help > About` names the trainer, its entry and
-script counts and its target. The status bar carries the header line on the left
-and the last action or script message on the right, both refreshed by the live
-pass.
+window: a table whose rows are the table's own rows in the order they were
+saved, with a child indented under its parent, refreshed by the live pass. Its
+columns are an untitled check column, then `Description`, `Address`, `Type`,
+`Value`, `State`, `Interval` and `Message` — the first five as in slopkit's
+address list, the last three carrying the script detail. A script row shows
+`script` in `Type` and leaves `Address` and `Value` empty. The check column
+freezes or unfreezes a value entry and activates or deactivates a script (each
+running the script's `activate` / `deactivate` hook). The CLI numbers stay in
+use underneath: `--set N` and `--freeze N` address value entry `N`,
+`--activate N` addresses script `S<N>`, and each row names its own number in its
+tooltip. Double-click a `Value` cell, type the new value and press Enter; `Esc`
+or a click elsewhere discards the edit, and a text the entry's type or hex flag
+refuses keeps the editor open with the reason on the status bar.
+`File > Refresh now` re-resolves every expression, `File > Close` (`Ctrl+W`)
+ends the session, `Help > Help` (`F1`) shows the window's help and
+`Help > About` names the trainer, its entry and script counts and its target.
+The status bar carries the header line on the left and the last action or script
+message on the right, both refreshed by the live pass.
 
 The Windows trainer keeps a console beside its window, because the template is a
 console-subsystem binary and that is where `--list` output and the exit code go;

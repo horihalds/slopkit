@@ -204,13 +204,14 @@ namespace slopkit::trainer
 
         std::vector<LiveEntry> seed(const Payload& payload)
         {
+            const auto             entries = payload.values();
             std::vector<LiveEntry> live;
-            live.reserve(payload.entries.size());
-            for (const auto& entry : payload.entries)
+            live.reserve(entries.size());
+            for (const auto* entry : entries)
             {
                 LiveEntry state;
-                state.address = entry.last_address;
-                state.frozen  = entry.frozen;
+                state.address = entry->last_address;
+                state.frozen  = entry->frozen;
                 live.push_back(std::move(state));
             }
             return live;
@@ -218,21 +219,25 @@ namespace slopkit::trainer
 
         void refresh_all(const Payload& payload, Resolver& resolver, std::vector<LiveEntry>& live)
         {
-            for (std::size_t position = 0; position < payload.entries.size(); ++position)
+            const auto entries = payload.values();
+            const auto count   = std::min(entries.size(), live.size());
+            for (std::size_t position = 0; position < count; ++position)
             {
-                resolver.refresh(payload.entries[position], live[position]);
+                resolver.refresh(*entries[position], live[position]);
             }
         }
 
         void rewrite_frozen(const Payload& payload, Resolver& resolver, std::vector<LiveEntry>& live)
         {
-            for (std::size_t position = 0; position < payload.entries.size(); ++position)
+            const auto entries = payload.values();
+            const auto count   = std::min(entries.size(), live.size());
+            for (std::size_t position = 0; position < count; ++position)
             {
                 if (!live[position].frozen || live[position].bytes.empty())
                 {
                     continue;
                 }
-                static_cast<void>(resolver.write(payload.entries[position], live[position], live[position].bytes));
+                static_cast<void>(resolver.write(*entries[position], live[position], live[position].bytes));
             }
         }
 
@@ -456,9 +461,14 @@ namespace slopkit::trainer
                 resolver_.set_symbols(scripts_.symbols());
                 refresh_all(payload_, resolver_, live_);
 
+                const auto deferred_entries = payload_.values();
                 for (const auto& [index, text] : pending_set_)
                 {
-                    if (const auto message = apply_set(resolver_, payload_.entries[index], live_[index], text))
+                    if (index >= deferred_entries.size() || index >= live_.size())
+                    {
+                        continue;
+                    }
+                    if (const auto message = apply_set(resolver_, *deferred_entries[index], live_[index], text))
                     {
                         log::warning(log::category::app,
                                      std::format("deferred --set of entry {} failed: {}", index + 1, *message));
@@ -522,7 +532,7 @@ namespace slopkit::trainer
             const auto entry_error = [&payload, &action]
             {
                 return std::format(
-                    "this trainer carries {} entries, so there is no entry {}", payload.entries.size(), action.index);
+                    "this trainer carries {} entries, so there is no entry {}", payload.value_count(), action.index);
             };
             const auto script_error = [&scripts, &action]
             {
@@ -545,7 +555,7 @@ namespace slopkit::trainer
                 return {};
             case ActionKind::toggle_freeze:
             {
-                if (action.index == 0 || action.index > payload.entries.size())
+                if (action.index == 0 || action.index > payload.value_count())
                 {
                     return entry_error();
                 }
@@ -553,7 +563,7 @@ namespace slopkit::trainer
                 state.frozen = !state.frozen;
                 if (state.frozen && !state.bytes.empty())
                 {
-                    if (const auto written = resolver.write(payload.entries[action.index - 1], state, state.bytes);
+                    if (const auto written = resolver.write(*payload.values()[action.index - 1], state, state.bytes);
                         !written)
                     {
                         return written.error();
@@ -563,11 +573,11 @@ namespace slopkit::trainer
             }
             case ActionKind::set_value:
             {
-                if (action.index == 0 || action.index > payload.entries.size())
+                if (action.index == 0 || action.index > payload.value_count())
                 {
                     return entry_error();
                 }
-                return apply_set(resolver, payload.entries[action.index - 1], live[action.index - 1], action.text)
+                return apply_set(resolver, *payload.values()[action.index - 1], live[action.index - 1], action.text)
                     .value_or(std::string {});
             }
             case ActionKind::activate_script:
@@ -675,10 +685,10 @@ namespace slopkit::trainer
             }
             log::info(log::category::app,
                       std::format("payload: {} value entr(ies), {} script(s), {} class(es)",
-                                  payload->entries.size(),
-                                  payload->scripts.size(),
+                                  payload->value_count(),
+                                  payload->script_count(),
                                   payload->classes.size()));
-            if (payload->entries.empty() && payload->scripts.empty())
+            if (payload->items.empty())
             {
                 std::cerr << "slopkit-trainer: this trainer carries no entries and no scripts\n";
                 return kExitNoPayload;
@@ -794,6 +804,7 @@ namespace slopkit::trainer
                 rewrite_frozen(*payload, resolver, live);
             }
 
+            const auto value_entries = payload->values();
             for (const auto& [index, text] : options.set_values)
             {
                 if (index == 0 || index > live.size())
@@ -809,7 +820,7 @@ namespace slopkit::trainer
                     session.defer_set(index - 1, text);
                     continue;
                 }
-                if (const auto message = apply_set(resolver, payload->entries[index - 1], live[index - 1], text))
+                if (const auto message = apply_set(resolver, *value_entries[index - 1], live[index - 1], text))
                 {
                     std::cerr << "slopkit-trainer: " << *message << "\n";
                     return kExitAccess;

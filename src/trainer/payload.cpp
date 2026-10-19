@@ -14,7 +14,7 @@ namespace slopkit::trainer
 {
     namespace
     {
-        constexpr std::size_t kHeaderSize {36};
+        constexpr std::size_t kHeaderSize {32};
 
         void append_u8(std::vector<std::byte>& out, std::uint8_t value)
         {
@@ -149,9 +149,8 @@ namespace slopkit::trainer
             const auto version      = read_u32(cursor);
             const auto target_os    = read_u32(cursor);
             const auto pointer_size = read_u32(cursor);
-            const auto entry_count  = read_u32(cursor);
             const auto name_length  = read_u32(cursor);
-            const auto script_count = read_u32(cursor);
+            const auto item_count   = read_u32(cursor);
             const auto class_count  = read_u32(cursor);
             if (!cursor.ok)
             {
@@ -164,7 +163,7 @@ namespace slopkit::trainer
                     "and must be regenerated",
                     version));
             }
-            if (entry_count > region.size() || script_count > region.size() || class_count > region.size())
+            if (item_count > region.size() || class_count > region.size())
             {
                 return std::unexpected(std::string {"the trainer payload is malformed"});
             }
@@ -173,55 +172,91 @@ namespace slopkit::trainer
             payload.target_os    = target_os;
             payload.pointer_size = pointer_size;
             payload.process_name = read_text(cursor, name_length);
-            payload.entries.reserve(entry_count);
+            payload.items.reserve(item_count);
 
-            for (std::uint32_t index = 0; index < entry_count; ++index)
+            // The number is the CLI's handle on a row, so a record whose number is
+            // not its position within its own kind is refused instead of silently
+            // addressing the wrong entry.
+            std::uint32_t value_number  = 0;
+            std::uint32_t script_number = 0;
+            for (std::uint32_t index = 0; index < item_count; ++index)
             {
-                const auto description_length = read_u16(cursor);
-                const auto type               = read_u8(cursor);
-                const auto flags              = read_u8(cursor);
-                const auto bytes_length       = read_u32(cursor);
-                const auto expression_length  = read_u16(cursor);
-                const auto last_address       = read_u64(cursor);
+                const auto kind   = read_u8(cursor);
+                const auto depth  = read_u8(cursor);
+                const auto number = read_u32(cursor);
                 if (!cursor.ok)
                 {
                     return std::unexpected(std::string {"the trainer payload is malformed"});
                 }
 
-                PayloadEntry entry;
-                entry.type         = static_cast<scan::ValueType>(type);
-                entry.frozen       = (flags & kEntryFrozen) != 0;
-                entry.hex          = (flags & kEntryHex) != 0;
-                entry.last_address = last_address;
-                entry.description  = read_text(cursor, description_length);
-                const auto bytes   = read_block(cursor, bytes_length);
-                entry.bytes.assign(bytes.begin(), bytes.end());
-                entry.expression = read_text(cursor, expression_length);
-                if (!cursor.ok)
+                PayloadItem item;
+                item.depth  = depth;
+                item.number = number;
+                if (kind == static_cast<std::uint8_t>(ItemKind::value))
                 {
-                    return std::unexpected(std::string {"the trainer payload is malformed"});
-                }
-                payload.entries.push_back(std::move(entry));
-            }
+                    const auto description_length = read_u16(cursor);
+                    const auto type               = read_u8(cursor);
+                    const auto flags              = read_u8(cursor);
+                    const auto bytes_length       = read_u32(cursor);
+                    const auto expression_length  = read_u16(cursor);
+                    const auto last_address       = read_u64(cursor);
+                    if (!cursor.ok)
+                    {
+                        return std::unexpected(std::string {"the trainer payload is malformed"});
+                    }
 
-            payload.scripts.reserve(script_count);
-            for (std::uint32_t index = 0; index < script_count; ++index)
-            {
-                const auto description_length = read_u16(cursor);
-                const auto source_length      = read_u32(cursor);
-                if (!cursor.ok)
-                {
-                    return std::unexpected(std::string {"the trainer payload is malformed"});
-                }
+                    PayloadEntry entry;
+                    entry.type         = static_cast<scan::ValueType>(type);
+                    entry.frozen       = (flags & kEntryFrozen) != 0;
+                    entry.hex          = (flags & kEntryHex) != 0;
+                    entry.last_address = last_address;
+                    entry.description  = read_text(cursor, description_length);
+                    const auto bytes   = read_block(cursor, bytes_length);
+                    entry.bytes.assign(bytes.begin(), bytes.end());
+                    entry.expression = read_text(cursor, expression_length);
+                    if (!cursor.ok)
+                    {
+                        return std::unexpected(std::string {"the trainer payload is malformed"});
+                    }
 
-                PayloadScript script;
-                script.description = read_text(cursor, description_length);
-                script.source      = read_text(cursor, source_length);
-                if (!cursor.ok)
+                    ++value_number;
+                    if (number != value_number)
+                    {
+                        return std::unexpected(std::string {"the trainer payload is malformed"});
+                    }
+                    item.kind = ItemKind::value;
+                    item.data = std::move(entry);
+                }
+                else if (kind == static_cast<std::uint8_t>(ItemKind::script))
+                {
+                    const auto description_length = read_u16(cursor);
+                    const auto source_length      = read_u32(cursor);
+                    if (!cursor.ok)
+                    {
+                        return std::unexpected(std::string {"the trainer payload is malformed"});
+                    }
+
+                    PayloadScript script;
+                    script.description = read_text(cursor, description_length);
+                    script.source      = read_text(cursor, source_length);
+                    if (!cursor.ok)
+                    {
+                        return std::unexpected(std::string {"the trainer payload is malformed"});
+                    }
+
+                    ++script_number;
+                    if (number != script_number)
+                    {
+                        return std::unexpected(std::string {"the trainer payload is malformed"});
+                    }
+                    item.kind = ItemKind::script;
+                    item.data = std::move(script);
+                }
+                else
                 {
                     return std::unexpected(std::string {"the trainer payload is malformed"});
                 }
-                payload.scripts.push_back(std::move(script));
+                payload.items.push_back(std::move(item));
             }
 
             payload.classes.reserve(class_count);
@@ -253,6 +288,54 @@ namespace slopkit::trainer
         return target == TargetOs::windows ? "windows" : "linux";
     }
 
+    std::size_t Payload::value_count() const
+    {
+        std::size_t count = 0;
+        for (const auto& item : items)
+        {
+            count += item.kind == ItemKind::value ? 1 : 0;
+        }
+        return count;
+    }
+
+    std::size_t Payload::script_count() const
+    {
+        std::size_t count = 0;
+        for (const auto& item : items)
+        {
+            count += item.kind == ItemKind::script ? 1 : 0;
+        }
+        return count;
+    }
+
+    std::vector<const PayloadEntry*> Payload::values() const
+    {
+        std::vector<const PayloadEntry*> records;
+        records.reserve(value_count());
+        for (const auto& item : items)
+        {
+            if (const auto* entry = std::get_if<PayloadEntry>(&item.data))
+            {
+                records.push_back(entry);
+            }
+        }
+        return records;
+    }
+
+    std::vector<PayloadScript> Payload::script_records() const
+    {
+        std::vector<PayloadScript> records;
+        records.reserve(script_count());
+        for (const auto& item : items)
+        {
+            if (const auto* script = std::get_if<PayloadScript>(&item.data))
+            {
+                records.push_back(*script);
+            }
+        }
+        return records;
+    }
+
     std::vector<std::byte> encode_payload(const Payload& payload)
     {
         std::vector<std::byte> region;
@@ -260,31 +343,37 @@ namespace slopkit::trainer
         append_u32(region, kPayloadVersion);
         append_u32(region, payload.target_os);
         append_u32(region, payload.pointer_size);
-        append_u32(region, static_cast<std::uint32_t>(payload.entries.size()));
         append_u32(region, static_cast<std::uint32_t>(payload.process_name.size()));
-        append_u32(region, static_cast<std::uint32_t>(payload.scripts.size()));
+        append_u32(region, static_cast<std::uint32_t>(payload.items.size()));
         append_u32(region, static_cast<std::uint32_t>(payload.classes.size()));
         append_text(region, payload.process_name);
 
-        for (const auto& entry : payload.entries)
+        for (const auto& item : payload.items)
         {
-            append_u16(region, static_cast<std::uint16_t>(entry.description.size()));
-            append_u8(region, static_cast<std::uint8_t>(entry.type));
-            append_u8(region, flags_of(entry));
-            append_u32(region, static_cast<std::uint32_t>(entry.bytes.size()));
-            append_u16(region, static_cast<std::uint16_t>(entry.expression.size()));
-            append_u64(region, entry.last_address);
-            append_text(region, entry.description);
-            region.insert(region.end(), entry.bytes.begin(), entry.bytes.end());
-            append_text(region, entry.expression);
-        }
-
-        for (const auto& script : payload.scripts)
-        {
-            append_u16(region, static_cast<std::uint16_t>(script.description.size()));
-            append_u32(region, static_cast<std::uint32_t>(script.source.size()));
-            append_text(region, script.description);
-            append_text(region, script.source);
+            append_u8(region, static_cast<std::uint8_t>(item.kind));
+            append_u8(region, item.depth);
+            append_u32(region, item.number);
+            if (item.kind == ItemKind::value)
+            {
+                const auto& entry = std::get<PayloadEntry>(item.data);
+                append_u16(region, static_cast<std::uint16_t>(entry.description.size()));
+                append_u8(region, static_cast<std::uint8_t>(entry.type));
+                append_u8(region, flags_of(entry));
+                append_u32(region, static_cast<std::uint32_t>(entry.bytes.size()));
+                append_u16(region, static_cast<std::uint16_t>(entry.expression.size()));
+                append_u64(region, entry.last_address);
+                append_text(region, entry.description);
+                region.insert(region.end(), entry.bytes.begin(), entry.bytes.end());
+                append_text(region, entry.expression);
+            }
+            else
+            {
+                const auto& script = std::get<PayloadScript>(item.data);
+                append_u16(region, static_cast<std::uint16_t>(script.description.size()));
+                append_u32(region, static_cast<std::uint32_t>(script.source.size()));
+                append_text(region, script.description);
+                append_text(region, script.source);
+            }
         }
 
         for (const auto& type : payload.classes)

@@ -109,11 +109,11 @@ TEST_CASE("the generate-trainer command writes a trainer and prints its path", "
     const auto payload = slopkit::trainer::decode_payload(read_file(produced));
     REQUIRE(payload.has_value());
     CHECK(payload->process_name == "practice");
-    REQUIRE(payload->entries.size() == 1);
-    CHECK(payload->entries.front().description == "Health");
-    REQUIRE(payload->scripts.size() == 1);
-    CHECK(payload->scripts.front().description == "No reload");
-    CHECK(payload->scripts.front().source == "return true");
+    REQUIRE(payload->value_count() == 1);
+    CHECK(payload->values().front()->description == "Health");
+    REQUIRE(payload->script_count() == 1);
+    CHECK(payload->script_records().front().description == "No reload");
+    CHECK(payload->script_records().front().source == "return true");
 }
 
 TEST_CASE("the command defaults to both targets and to the table's own name", "[app][trainer]")
@@ -160,10 +160,10 @@ TEST_CASE("the command generates a trainer for a table that carries only scripts
 
     const auto payload = slopkit::trainer::decode_payload(read_file(produced));
     REQUIRE(payload.has_value());
-    CHECK(payload->entries.empty());
-    REQUIRE(payload->scripts.size() == 1);
-    CHECK(payload->scripts.front().description == "No reload");
-    CHECK(payload->scripts.front().source == "return true");
+    CHECK(payload->value_count() == 0);
+    REQUIRE(payload->script_count() == 1);
+    CHECK(payload->script_records().front().description == "No reload");
+    CHECK(payload->script_records().front().source == "return true");
 }
 
 TEST_CASE("the command rejects bad usage and an unreadable table", "[app][trainer]")

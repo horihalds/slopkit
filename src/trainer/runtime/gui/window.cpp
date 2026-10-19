@@ -21,6 +21,7 @@
 #include "trainer/runtime/console.hpp"
 #include "trainer/runtime/gui/rows_model.hpp"
 #include "trainer/runtime/gui/session_worker.hpp"
+#include "ui/components/indent_delegate.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/validating_delegate.hpp"
 #include "ui/fonts.hpp"
@@ -64,6 +65,7 @@ namespace slopkit::trainer::gui
 
         table_ = new QTableView(this);
         table_->setModel(model_);
+        table_->setItemDelegate(new ui::widgets::IndentDelegate(table_));
         table_->setItemDelegateForColumn(RowsModel::value, new ui::components::ValidatingDelegate(table_));
         table_->setSelectionBehavior(QAbstractItemView::SelectRows);
         table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -74,8 +76,9 @@ namespace slopkit::trainer::gui
 
         auto* columns = table_->horizontalHeader();
         columns->setSectionResizeMode(QHeaderView::ResizeToContents);
-        columns->setSectionResizeMode(RowsModel::description, QHeaderView::Interactive);
-        columns->setStretchLastSection(true);
+        columns->setSectionResizeMode(RowsModel::description, QHeaderView::Stretch);
+        columns->setSectionResizeMode(RowsModel::value, QHeaderView::Stretch);
+        columns->setStretchLastSection(false);
         setCentralWidget(table_);
 
         header_label_ = new QLabel(this);
@@ -182,8 +185,8 @@ namespace slopkit::trainer::gui
     {
         const auto pid    = pid_cache_.load();
         const auto target = pid == 0 ? tr("waiting for the target to appear") : tr("target pid %1").arg(pid);
-        const auto values = payload_.entries.size();
-        const auto count  = payload_.scripts.size();
+        const auto values = payload_.value_count();
+        const auto count  = payload_.script_count();
         ui::widgets::information(this,
                                  tr("About"),
                                  tr("%1\n\n%2 value entr%3, %4 script%5\n%6\n%7-byte pointers")

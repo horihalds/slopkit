@@ -296,6 +296,56 @@ TEST_CASE("the trainer lists a value of a running process", "[trainer][driver]")
     CHECK(result.output.find("unresolved") == std::string::npos);
 }
 
+TEST_CASE("the printed list follows the table's row order", "[trainer][driver]")
+{
+    if (!std::filesystem::is_regular_file(trainer_binary()))
+    {
+        WARN("the trainer template was not built; the driver case is skipped");
+        return;
+    }
+
+    const auto target = spawn_target(0);
+
+    const std::filesystem::path directory = std::filesystem::path {SLOPKIT_TMP_DIR} / "trainer_driver" / "order";
+    std::error_code             error;
+    std::filesystem::remove_all(directory, error);
+    std::filesystem::create_directories(directory, error);
+    REQUIRE_FALSE(error);
+
+    AddressTable table;
+    table.add(value_entry("Health", literal_address(target.address)));
+    static_cast<void>(table.add_script("Sneaky", "return true"));
+    table.add(value_entry("Armour", literal_address(target.address)));
+
+    Request request;
+    request.table            = &table;
+    request.pointer_size     = sizeof(void*);
+    request.linux_target     = true;
+    request.windows_target   = false;
+    request.output_directory = directory;
+    request.base_name        = "practice";
+    request.process_name     = "";
+
+    const auto generated = slopkit::trainer::generate(request);
+    REQUIRE(generated.has_value());
+    REQUIRE(generated->errors.empty());
+    REQUIRE(generated->written.size() == 1);
+
+    const auto result = run_trainer(directory / "practice.trainer", {"--pid", std::to_string(target.pid), "--list"});
+    CHECK(result.exit_code == 0);
+
+    const auto health = result.output.find("Health");
+    const auto script = result.output.find("Sneaky");
+    const auto armour = result.output.find("Armour");
+    REQUIRE(health != std::string::npos);
+    REQUIRE(script != std::string::npos);
+    REQUIRE(armour != std::string::npos);
+    CHECK(health < script);
+    CHECK(script < armour);
+    // The old grouping put a blank line between the value and the script blocks.
+    CHECK(result.output.find("\n\n") == std::string::npos);
+}
+
 TEST_CASE("a trainer waits for its target and attaches when it appears", "[trainer][driver]")
 {
     if (!std::filesystem::is_regular_file(trainer_binary()))

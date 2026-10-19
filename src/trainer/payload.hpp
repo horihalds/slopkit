@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "scan/types.hpp"
@@ -18,7 +19,7 @@ namespace slopkit::trainer
     // `kFingerSize` bytes of the file, and gives the payload's size.
     inline constexpr std::string_view kPayloadMagic {"SLPKTRN1"};
     inline constexpr std::string_view kFingerMagic {"SLPKTRN2"};
-    inline constexpr std::uint32_t    kPayloadVersion {2};
+    inline constexpr std::uint32_t    kPayloadVersion {3};
     inline constexpr std::size_t      kFingerSize {16};
 
     inline constexpr std::uint32_t kTargetLinux {0};
@@ -63,14 +64,34 @@ namespace slopkit::trainer
         std::string text;
     };
 
+    enum class ItemKind : std::uint8_t
+    {
+        value,
+        script,
+    };
+
+    // One row of the saved table: its kind, how deep it sits under its parent and
+    // the number the CLI addresses it by, all in the table's own row order.
+    struct PayloadItem
+    {
+        ItemKind                                  kind {};
+        std::uint8_t                              depth {};
+        std::uint32_t                             number {};
+        std::variant<PayloadEntry, PayloadScript> data;
+    };
+
     struct Payload
     {
-        std::uint32_t              target_os {kTargetLinux};
-        std::uint32_t              pointer_size {8};
-        std::string                process_name;
-        std::vector<PayloadEntry>  entries;
-        std::vector<PayloadScript> scripts;
-        std::vector<PayloadClass>  classes;
+        std::uint32_t             target_os {kTargetLinux};
+        std::uint32_t             pointer_size {8};
+        std::string               process_name;
+        std::vector<PayloadItem>  items;
+        std::vector<PayloadClass> classes;
+
+        [[nodiscard]] std::size_t                      value_count() const;
+        [[nodiscard]] std::size_t                      script_count() const;
+        [[nodiscard]] std::vector<const PayloadEntry*> values() const;
+        [[nodiscard]] std::vector<PayloadScript>       script_records() const;
     };
 
     [[nodiscard]] std::string_view target_name(TargetOs target) noexcept;

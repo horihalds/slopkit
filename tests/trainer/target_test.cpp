@@ -29,9 +29,11 @@ namespace
     using slopkit::scan::ValueType;
     using slopkit::trainer::attach;
     using slopkit::trainer::AttachRequest;
+    using slopkit::trainer::ItemKind;
     using slopkit::trainer::LiveEntry;
     using slopkit::trainer::Payload;
     using slopkit::trainer::PayloadEntry;
+    using slopkit::trainer::PayloadItem;
     using slopkit::trainer::PayloadScript;
     using slopkit::trainer::Resolver;
     using slopkit::trainer::ScriptHost;
@@ -142,8 +144,8 @@ end
         Payload payload;
         payload.pointer_size = 8;
         payload.process_name = image.name();
-        payload.entries.push_back(std::move(entry));
-        payload.scripts.push_back(std::move(script));
+        payload.items.push_back(PayloadItem {ItemKind::value, 0, 1, std::move(entry)});
+        payload.items.push_back(PayloadItem {ItemKind::script, 0, 1, std::move(script)});
         return payload;
     }
 }
@@ -201,7 +203,7 @@ TEST_CASE("a trainer's own target names a region after the module that owns it",
     LiveEntry     live;
 
     resolver.set_symbols(host.symbols());
-    resolver.refresh(payload.entries.front(), live);
+    resolver.refresh(*payload.values().front(), live);
     CHECK_FALSE(live.resolved);
 
     const auto activated = host.activate(0);
@@ -209,7 +211,7 @@ TEST_CASE("a trainer's own target names a region after the module that owns it",
     CHECK(host.states().front().active);
 
     resolver.set_symbols(host.symbols());
-    resolver.refresh(payload.entries.front(), live);
+    resolver.refresh(*payload.values().front(), live);
     REQUIRE(live.resolved);
     CHECK(live.address == image.hole());
     CHECK(live.bytes

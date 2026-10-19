@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -23,20 +24,21 @@ namespace slopkit::trainer
     // into a line, the Qt model puts them in columns, so the two cannot drift.
     struct RowView
     {
-        RowKind     kind {RowKind::value};
-        std::size_t number {}; // 1-based inside the row's own kind
-        std::string label;     // "1" / "S1"
-        std::string description;
-        std::string address; // resolved text, empty for scripts
-        std::string type;    // empty for scripts
-        std::string value;   // empty for scripts
-        bool        frozen {false};
-        bool        active {false}; // scripts only
-        bool        hex {false};
-        bool        unresolved {false};
-        std::string state; // "idle" | "active" | "error"
-        std::string interval;
-        std::string message; // a script's last message or a value's unresolved note
+        RowKind      kind {RowKind::value};
+        std::size_t  number {}; // 1-based inside the row's own kind
+        std::uint8_t depth {};  // nesting depth in the saved table
+        std::string  label;     // "1" / "S1"
+        std::string  description;
+        std::string  address; // resolved text, empty for scripts
+        std::string  type;    // "script" for scripts
+        std::string  value;   // empty for scripts
+        bool         frozen {false};
+        bool         active {false}; // scripts only
+        bool         hex {false};
+        bool         unresolved {false};
+        std::string  state; // "idle" | "active" | "error"
+        std::string  interval;
+        std::string  message; // a script's last message or a value's unresolved note
     };
 
     [[nodiscard]] RowView build_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number);

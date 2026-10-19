@@ -6,6 +6,7 @@
 #include <QFont>
 #include <QModelIndex>
 
+#include "ui/components/indent_delegate.hpp"
 #include "ui/fonts.hpp"
 #include "ui/text.hpp"
 #include "ui/theme.hpp"
@@ -18,8 +19,8 @@ namespace slopkit::trainer::gui
         {
             switch (column)
             {
-            case RowsModel::label:
-                return QStringLiteral("#");
+            case RowsModel::check:
+                return {};
             case RowsModel::description:
                 return QStringLiteral("Description");
             case RowsModel::address:
@@ -28,8 +29,6 @@ namespace slopkit::trainer::gui
                 return QStringLiteral("Type");
             case RowsModel::value:
                 return QStringLiteral("Value");
-            case RowsModel::check:
-                return QStringLiteral("Frozen / Active");
             case RowsModel::state:
                 return QStringLiteral("State");
             case RowsModel::interval:
@@ -45,8 +44,8 @@ namespace slopkit::trainer::gui
         {
             switch (column)
             {
-            case RowsModel::label:
-                return ui::to_qstring(row.label);
+            case RowsModel::check:
+                return {};
             case RowsModel::description:
                 return ui::to_qstring(row.description);
             case RowsModel::address:
@@ -117,9 +116,21 @@ namespace slopkit::trainer::gui
                 return checked(*row) ? Qt::Checked : Qt::Unchecked;
             }
             return {};
+        case Qt::ToolTipRole:
+            if (index.column() == description)
+            {
+                return row->kind == RowKind::value ? tr("entry %1").arg(row->number)
+                                                   : tr("script S%1").arg(row->number);
+            }
+            return {};
+        case ui::widgets::kDepthRole:
+            if (index.column() == description)
+            {
+                return static_cast<int>(row->depth);
+            }
+            return {};
         case Qt::FontRole:
-            if (index.column() == label || index.column() == address || index.column() == value
-                || index.column() == interval)
+            if (index.column() == address || index.column() == value || index.column() == interval)
             {
                 return ui::mono_font();
             }
@@ -128,10 +139,6 @@ namespace slopkit::trainer::gui
             if (index.column() == check)
             {
                 return static_cast<int>(Qt::AlignCenter);
-            }
-            if (index.column() == label)
-            {
-                return static_cast<int>(Qt::AlignRight | Qt::AlignVCenter);
             }
             return static_cast<int>(Qt::AlignLeft | Qt::AlignVCenter);
         case Qt::ForegroundRole:
@@ -209,13 +216,13 @@ namespace slopkit::trainer::gui
         {
             return false;
         }
-        if (row->kind != RowKind::value || row->number == 0 || row->number > payload_.entries.size())
+        if (row->kind != RowKind::value || row->number == 0 || row->number > payload_.value_count())
         {
             return false;
         }
 
         const auto typed = text.toString();
-        if (const auto refused = parse_value_text(payload_.entries[row->number - 1], typed.toStdString()))
+        if (const auto refused = parse_value_text(*payload_.values()[row->number - 1], typed.toStdString()))
         {
             emit statusChanged(QString::fromStdString(*refused));
             return false;

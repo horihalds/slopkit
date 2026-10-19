@@ -52,8 +52,8 @@ namespace slopkit::trainer
     }
 
     ScriptHost::ScriptHost(const Target& target, const Payload& payload, std::uint64_t fallback_interval_ms)
-        : target_ {&target}, scripts_ {payload.scripts}, fallback_interval_ms_ {fallback_interval_ms}, caves_ {target},
-          engine_ {std::make_unique<script::Engine>(memory_api(), symbols_.api())}
+        : target_ {&target}, scripts_ {payload.script_records()}, fallback_interval_ms_ {fallback_interval_ms},
+          caves_ {target}, engine_ {std::make_unique<script::Engine>(memory_api(), symbols_.api())}
     {
         states_.resize(scripts_.size());
         log::info(log::category::script,

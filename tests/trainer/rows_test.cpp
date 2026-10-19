@@ -20,10 +20,12 @@ namespace
     using slopkit::trainer::build_rows;
     using slopkit::trainer::build_script_row;
     using slopkit::trainer::build_value_row;
+    using slopkit::trainer::ItemKind;
     using slopkit::trainer::LiveEntry;
     using slopkit::trainer::parse_value_text;
     using slopkit::trainer::Payload;
     using slopkit::trainer::PayloadEntry;
+    using slopkit::trainer::PayloadItem;
     using slopkit::trainer::PayloadScript;
     using slopkit::trainer::RowKind;
     using slopkit::trainer::ScriptState;
@@ -48,12 +50,14 @@ namespace
     }
 }
 
-TEST_CASE("the rows are the value entries and then the scripts", "[trainer][rows]")
+TEST_CASE("the rows follow the saved table's order and nesting", "[trainer][rows]")
 {
     Payload payload;
-    payload.entries.push_back(value_entry("Health"));
-    payload.entries.push_back(value_entry("Armour"));
-    payload.scripts.push_back(PayloadScript {"No reload", "return true"});
+    payload.items.push_back(PayloadItem {ItemKind::value, 0, 1, value_entry("Health")});
+    payload.items.push_back(PayloadItem {
+        ItemKind::script, 0, 1, PayloadScript {"No reload", "return true"}
+    });
+    payload.items.push_back(PayloadItem {ItemKind::value, 1, 2, value_entry("Health.max")});
 
     std::vector<LiveEntry> live(2);
     live[0].address  = 0x7f2a12345678;
@@ -73,24 +77,58 @@ TEST_CASE("the rows are the value entries and then the scripts", "[trainer][rows
     CHECK(rows[0].kind == RowKind::value);
     CHECK(rows[0].label == "1");
     CHECK(rows[0].number == 1);
+    CHECK(rows[0].depth == 0);
     CHECK(rows[0].description == "Health");
     CHECK(rows[0].address == "0x7f2a12345678");
     CHECK(rows[0].value == "42");
     CHECK_FALSE(rows[0].unresolved);
 
-    CHECK(rows[1].kind == RowKind::value);
-    CHECK(rows[1].label == "2");
-    CHECK(rows[1].address == "-");
-    CHECK(rows[1].unresolved);
-    CHECK(rows[1].message == "unknown module 'practice'");
+    CHECK(rows[1].kind == RowKind::script);
+    CHECK(rows[1].label == "S1");
+    CHECK(rows[1].number == 1);
+    CHECK(rows[1].depth == 0);
+    CHECK(rows[1].description == "No reload");
+    CHECK(rows[1].type == "script");
+    CHECK(rows[1].address.empty());
+    CHECK(rows[1].value.empty());
+    CHECK(rows[1].state == "error");
+    CHECK(rows[1].interval == "250 ms");
+    CHECK(rows[1].message == "hp went negative");
 
+    CHECK(rows[2].kind == RowKind::value);
+    CHECK(rows[2].label == "2");
+    CHECK(rows[2].number == 2);
+    CHECK(rows[2].depth == 1);
+    CHECK(rows[2].description == "Health.max");
+    CHECK(rows[2].address == "-");
+    CHECK(rows[2].unresolved);
+    CHECK(rows[2].message == "unknown module 'practice'");
+}
+
+TEST_CASE("a script at either end of the table keeps its place", "[trainer][rows]")
+{
+    Payload payload;
+    payload.items.push_back(PayloadItem {
+        ItemKind::script, 0, 1, PayloadScript {"First", "return true"}
+    });
+    payload.items.push_back(PayloadItem {ItemKind::value, 0, 1, value_entry("Health")});
+    payload.items.push_back(PayloadItem {
+        ItemKind::script, 0, 2, PayloadScript {"Last", "return true"}
+    });
+
+    std::vector<LiveEntry>   live(1);
+    std::vector<ScriptState> states(2);
+
+    const auto rows = build_rows(payload, live, states);
+    REQUIRE(rows.size() == 3);
+    CHECK(rows[0].kind == RowKind::script);
+    CHECK(rows[0].label == "S1");
+    CHECK(rows[0].description == "First");
+    CHECK(rows[1].kind == RowKind::value);
+    CHECK(rows[1].label == "1");
     CHECK(rows[2].kind == RowKind::script);
-    CHECK(rows[2].label == "S1");
-    CHECK(rows[2].number == 1);
-    CHECK(rows[2].description == "No reload");
-    CHECK(rows[2].state == "error");
-    CHECK(rows[2].interval == "250 ms");
-    CHECK(rows[2].message == "hp went negative");
+    CHECK(rows[2].label == "S2");
+    CHECK(rows[2].description == "Last");
 }
 
 TEST_CASE("a script row reads idle, active or error", "[trainer][rows]")

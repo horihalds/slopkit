@@ -15,9 +15,8 @@
 
 namespace slopkit::trainer::gui
 {
-    // The table's nine columns: the value entries fill the first six, the scripts
-    // the last four, so both numberings stay independent exactly as the printed
-    // list documents.
+    // The address list's first five columns plus the trainer's three script
+    // columns, so the window reads like the table it was generated from.
     class RowsModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -25,12 +24,11 @@ namespace slopkit::trainer::gui
     public:
         enum Column
         {
-            label,
+            check,
             description,
             address,
             type,
             value,
-            check,
             state,
             interval,
             message,
@@ -46,9 +44,9 @@ namespace slopkit::trainer::gui
         [[nodiscard]] QVariant      headerData(int section, Qt::Orientation orientation, int role) const override;
         bool                        setData(const QModelIndex& index, const QVariant& value, int role) override;
 
-        // The worker's latest pass. Row count never changes (values then scripts),
-        // so a live pass repaints cells instead of resetting the model and never
-        // closes an open editor.
+        // The worker's latest pass. Row count never changes (the table's own row
+        // order), so a live pass repaints cells instead of resetting the model and
+        // never closes an open editor.
         void set_rows(std::shared_ptr<const std::vector<RowView>> rows);
 
         [[nodiscard]] const std::vector<RowView>& rows() const noexcept;

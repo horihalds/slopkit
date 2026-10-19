@@ -903,12 +903,18 @@ slopkit itself uses; the Windows one draws its own Win32 window, links no Qt and
 stays one file.
 
 `trainer::generate` (`src/trainer/generate.cpp`) does that by copying an installed
-runtime template and appending a version-2 payload: a `SLPKTRN1` header carrying the
-process name and the count of each record kind, one record per value entry
-(description, value type, frozen and hex flags, the recorded bytes, the expression
-and the address it last resolved to), one per script entry (description and source),
-one per ReClass member (`reclass::to_members`' `name`/`text`, the same text seam the
-`.skt` archive uses), then a `SLPKTRN2` finger holding the payload's size. Both the
+runtime template and appending a version-3 payload: a `SLPKTRN1` header carrying the
+process name and the item and class counts, then one item per table row **in the
+order the `.skt` stores them**, each opening with its kind, nesting depth and
+per-kind CLI number followed by its record — a value record (description, value
+type, frozen and hex flags, the recorded bytes, the expression and the address it
+last resolved to) or a script record (description and source) — then one record per
+ReClass member (`reclass::to_members`' `name`/`text`, the same text seam the `.skt`
+archive uses), then a `SLPKTRN2` finger holding the payload's size. The saved
+table's row order and nesting therefore drive the trainer's layout; the payload's
+`values()` and `script_records()` keep the two kinds addressable without losing
+that order, and the runtime rejects a record whose kind or number disagrees with its
+position. Both the
 ELF and the PE loader ignore trailing bytes, so the copy is a valid executable and
 a data file at once, and the runtime finds its own data by reading the last sixteen
 bytes of its own file. A payload whose version is not the runtime's own is refused
@@ -1010,8 +1016,8 @@ rebuilt with
 `reclass::from_members` and handed to the engine as its class fields, which is what
 makes `structs.get(name)` work; a project that cannot be parsed is reported once
 and leaves only `structs` unavailable. Scripts start idle — the `.skt` archive
-stores no Active column, so nothing runs behind the user's back — and the
-`Frozen / Active` checkbox (or `--activate N`) runs the corresponding lifecycle
+stores no Active column, so nothing runs behind the user's back — and the check
+column (or `--activate N`) runs the corresponding lifecycle
 hook. An active script's
 `update` hook runs on the interval it declares with `update_interval`, else on the
 trainer's own `--interval`, inside both the `--wait` pump and the interactive loop.
@@ -1044,36 +1050,45 @@ every draw and says the trainer is waiting while there is none, and actions
 submitted while the target is absent answer that the trainer is waiting for it to
 appear.
 
-Both front-ends render one row core. `rows.{hpp,cpp}` turns the payload and the
-live state into `RowView`s — label, description, resolved address, type, value,
-frozen marker, state, interval and message — and `console::render_value_row` /
-`render_script_row` compose their printed line from those fields, so the window
-and the printed list cannot drift apart. Values are `1..N` and scripts `S1..Sm`;
-the two numberings are independent and the help text says so. Frozen entries are
-re-written on every tick, which is what lets the trainer hold a value a game keeps
-overwriting. `parse_value_text` is the one parse of a value text: `apply_action`
-writes through it and the window's editor validates with it.
+Both front-ends render one row core. `rows.{hpp,cpp}` walks the payload's `items`
+and turns each row into a `RowView` — kind, label, description, nesting depth,
+resolved address, type, value, frozen marker, state, interval and message — in
+that same saved order, with a script row reading `script` in its type and leaving
+address and value empty. `console::render_value_row` / `render_script_row`
+compose their printed line from those fields and indent the description by two
+spaces per depth level, so the window and the printed list cannot drift apart.
+Values are `1..N` and scripts `S1..Sm`; the two numberings are independent, the
+help text says so and the number a row answers to is its tooltip. Frozen entries
+are re-written on every tick, which is what lets the trainer hold a value a game
+keeps overwriting. `parse_value_text` is the one parse of a value text:
+`apply_action` writes through it and the window's editor validates with it.
 
 With a display, a run without any action flag opens the platform window. On
 Linux it is a `QMainWindow` over one `QTableView` fed by `gui::RowsModel`
 (`src/trainer/runtime/gui/window_qt.hpp`, implemented in `gui/window.cpp`); on
-Windows `gui/window_win32.cpp` mirrors it with a `ListView`, a custom-drawn
-`Frozen / Active` check column and an `EDIT` control over a double-clicked value
-cell. Both implementations are declared by the Qt-free `gui/window.hpp`, which
+Windows `gui/window_win32.cpp` mirrors it with a `ListView`, a custom-drawn check
+column in the first column, an `EDIT` control over a double-clicked value cell and
+an info-tip naming the row's CLI number; a report-mode `ListView` cannot indent a
+sub-item, so its description is padded with two spaces per depth level. Both
+implementations are declared by the Qt-free `gui/window.hpp`, which
 holds `Options`, `Perform`, `Step`, `Pid`, `window_available()` and `run()`. Each
 has `File` (`Refresh now`, `Close`) and `Help` (`Help`, `About`) menus and a
 status bar carrying `console::render_header` on the left and the last action or
 script message on the right.
 
-`RowsModel` holds the worker's immutable row snapshot and maps it onto the nine
-columns; a `Value` cell edits in place through
-`ui::components::ValidatingDelegate`, and the `Frozen / Active` column freezes a
-value entry or activates a script. A cell never mutates a snapshot: it
-validates, emits the `Action` it wants (the same `slopkit::trainer::Action` the
-worker applies) and repaints from the current snapshot, so a submitted change
-appears on the worker's next pass. The Win32 window submits the same `Action`s
-from its check-column click and its edited value, and both front-ends carry the
-same nine `RowView` columns.
+`RowsModel` holds the worker's immutable row snapshot and maps it onto the eight
+columns: an untitled check column, `Description`, `Address`, `Type`, `Value`,
+`State`, `Interval` and `Message`. Its `description` cell reports `RowView::depth`
+through `ui::widgets::kDepthRole` so the address list's
+`ui::widgets::IndentDelegate` indents nested rows, its tooltip names the CLI
+number (`entry 3` / `script S2`), and the check column stays column 0. A `Value`
+cell edits in place through `ui::components::ValidatingDelegate`, and the check
+column freezes a value entry or activates a script. A cell never mutates a
+snapshot: it validates, emits the `Action` it wants (the same
+`slopkit::trainer::Action` the worker applies) and repaints from the current
+snapshot, so a submitted change appears on the worker's next pass. The Win32
+window submits the same `Action`s from its check-column click and its edited
+value, and both front-ends carry the same eight columns in the same order.
 
 Every target call stays off the GUI thread. `gui::SessionWorker` is a `QThread`
 that owns the trainer's existing `Session`, `ScriptHost`, `Resolver` and

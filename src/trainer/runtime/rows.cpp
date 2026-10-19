@@ -69,6 +69,7 @@ namespace slopkit::trainer
         row.number      = number;
         row.label       = std::format("S{}", number);
         row.description = script.description;
+        row.type        = "script";
         row.active      = state.active;
         row.state       = script_state(state);
         row.interval    = script_interval(state);
@@ -79,15 +80,36 @@ namespace slopkit::trainer
     std::vector<RowView>
     build_rows(const Payload& payload, std::span<const LiveEntry> live, std::span<const ScriptState> scripts)
     {
+        const auto           entries = payload.values();
+        const auto           records = payload.script_records();
         std::vector<RowView> rows;
-        rows.reserve(payload.entries.size() + payload.scripts.size());
-        for (std::size_t position = 0; position < payload.entries.size() && position < live.size(); ++position)
+        rows.reserve(payload.items.size());
+
+        std::size_t value_position  = 0;
+        std::size_t script_position = 0;
+        for (const auto& item : payload.items)
         {
-            rows.push_back(build_value_row(payload.entries[position], live[position], position + 1));
-        }
-        for (std::size_t position = 0; position < payload.scripts.size() && position < scripts.size(); ++position)
-        {
-            rows.push_back(build_script_row(payload.scripts[position], scripts[position], position + 1));
+            if (item.kind == ItemKind::value)
+            {
+                if (value_position < entries.size() && value_position < live.size())
+                {
+                    auto row  = build_value_row(*entries[value_position], live[value_position], value_position + 1);
+                    row.depth = item.depth;
+                    rows.push_back(std::move(row));
+                }
+                ++value_position;
+            }
+            else
+            {
+                if (script_position < records.size() && script_position < scripts.size())
+                {
+                    auto row =
+                        build_script_row(records[script_position], scripts[script_position], script_position + 1);
+                    row.depth = item.depth;
+                    rows.push_back(std::move(row));
+                }
+                ++script_position;
+            }
         }
         return rows;
     }

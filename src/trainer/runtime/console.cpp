@@ -18,6 +18,11 @@ namespace slopkit::trainer::console
             }
             return std::format("{}...", text.substr(0, kDescriptionWidth - 3));
         }
+
+        std::string described(const RowView& row)
+        {
+            return std::string(static_cast<std::size_t>(row.depth) * 2, ' ') + shorten(row.description);
+        }
     }
 
     std::string render_header(const Payload& payload, std::uint32_t pid)
@@ -27,10 +32,10 @@ namespace slopkit::trainer::console
         return std::format("slopkit-trainer: {} ({}), {} entr{}, {} script{}, {}-byte pointers\n",
                            name,
                            status,
-                           payload.entries.size(),
-                           payload.entries.size() == 1 ? "y" : "ies",
-                           payload.scripts.size(),
-                           payload.scripts.size() == 1 ? "" : "s",
+                           payload.value_count(),
+                           payload.value_count() == 1 ? "y" : "ies",
+                           payload.script_count(),
+                           payload.script_count() == 1 ? "" : "s",
                            payload.pointer_size);
     }
 
@@ -56,7 +61,7 @@ namespace slopkit::trainer::console
 
         return std::format("{:>3}  {:<24}  {:<14}  {:<9}  {:<18}{}",
                            row.number,
-                           shorten(row.description),
+                           described(row),
                            row.address,
                            row.type,
                            row.value,
@@ -65,12 +70,8 @@ namespace slopkit::trainer::console
 
     std::string render_script_row(const RowView& row)
     {
-        return std::format("S{}  {:<24}  {:<14}  {:<9}  {}",
-                           row.number,
-                           shorten(row.description),
-                           row.state,
-                           row.interval,
-                           row.message);
+        return std::format(
+            "S{}  {:<24}  {:<14}  {:<9}  {}", row.number, described(row), row.state, row.interval, row.message);
     }
 
     std::string render_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number)
@@ -87,36 +88,29 @@ namespace slopkit::trainer::console
     render_rows(const Payload& payload, std::span<const LiveEntry> live, std::span<const ScriptState> scripts)
     {
         std::string text;
-        bool        printed_value = false;
-        bool        printed_blank = false;
         for (const auto& row : build_rows(payload, live, scripts))
         {
-            // Scripts are a second numbering space: the rows above stay 1..N and
-            // a script is always addressed as S<n>, never by the entry number.
-            if (row.kind == RowKind::script && printed_value && !printed_blank)
-            {
-                text += '\n';
-                printed_blank = true;
-            }
             text += row.kind == RowKind::value ? render_value_row(row) : render_script_row(row);
             text += '\n';
-            printed_value = printed_value || row.kind == RowKind::value;
         }
         return text;
     }
 
     std::string render_help()
     {
-        return "The trainer lists its value entries as 1..N and its scripts as S1..Sm;\n"
-               "the two numberings are independent.\n"
+        return "The trainer lists the table's rows in the order it was saved, with a\n"
+               "child indented under its parent.\n"
                "\n"
+               "  Check column    tick a value entry to freeze or unfreeze it, or a script\n"
+               "                  to activate it (running its activate hook) or deactivate\n"
+               "                  it (running its deactivate hook).\n"
                "  Value column    double-click a value entry's cell, type a new value and\n"
                "                  press Enter; Esc or a click elsewhere discards the edit,\n"
                "                  and a text the entry's type or hex flag refuses keeps the\n"
                "                  editor open with the reason on the status bar.\n"
-               "  Frozen / Active tick a value entry to freeze or unfreeze it, or a script\n"
-               "                  to activate it (running its activate hook) or deactivate\n"
-               "                  it (running its deactivate hook).\n"
+               "  Numbers         the CLI addresses a value entry as N (--set N, --freeze N)\n"
+               "                  and a script as S<N> (--activate N); the two numberings are\n"
+               "                  independent, and a row's number is in its tooltip.\n"
                "  File > Refresh now   re-resolve every expression.\n"
                "  File > Close         end the session (Ctrl+W).\n"
                "  Help > Help          this text (F1).\n"

@@ -19,6 +19,7 @@ set(SLOPKIT_UI_COMMON_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/ui/platform.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/ui/text.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/ui/components/elided_tooltip_delegate.cpp
+    ${SLOPKIT_SOURCE_ROOT}/src/ui/components/indent_delegate.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/ui/components/validating_delegate.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/ui/components/input_box.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/ui/components/message_box.cpp

@@ -50,19 +50,18 @@ namespace slopkit::trainer::gui
         constexpr int kHelpCommand    = 1003;
         constexpr int kAboutCommand   = 1004;
 
-        constexpr int kLabelColumn  = 0;
+        constexpr int kCheckColumn  = 0;
         constexpr int kValueColumn  = 4;
-        constexpr int kCheckColumn  = 5;
-        constexpr int kColumnCount  = 9;
+        constexpr int kColumnCount  = 8;
         constexpr int kStatusHeight = 24;
         constexpr int kRowHeight    = 24;
 
         constexpr std::array<const wchar_t*, kColumnCount> kColumnTitles {
-            L"#", L"Description", L"Address", L"Type", L"Value", L"Frozen / Active", L"State", L"Interval", L"Message"};
+            L"", L"Description", L"Address", L"Type", L"Value", L"State", L"Interval", L"Message"};
 
-        constexpr std::array<bool, kColumnCount> kMonoColumn {true, false, true, true, true, true, false, true, false};
+        constexpr std::array<bool, kColumnCount> kMonoColumn {false, false, true, true, true, false, true, false};
 
-        constexpr std::array<int, kColumnCount> kColumnWidth {70, 250, 170, 110, 160, 120, 90, 90, 280};
+        constexpr std::array<int, kColumnCount> kColumnWidth {30, 250, 170, 110, 160, 90, 90, 280};
 
         std::wstring widen(std::string_view text)
         {
@@ -341,7 +340,7 @@ namespace slopkit::trainer::gui
                                     nullptr,
                                     instance_,
                                     nullptr);
-            ListView_SetExtendedListViewStyle(list_, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT);
+            ListView_SetExtendedListViewStyle(list_, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP);
             SendMessageW(list_, WM_SETFONT, reinterpret_cast<WPARAM>(ui_font_), TRUE);
 
             row_images_ = ImageList_Create(1, kRowHeight, ILC_COLOR32, 0, 1);
@@ -505,9 +504,9 @@ namespace slopkit::trainer::gui
             switch (column)
             {
             case 0:
-                return widen(row.label);
+                return {};
             case 1:
-                return widen(row.description);
+                return std::wstring(static_cast<std::size_t>(row.depth) * 2, L' ') + widen(row.description);
             case 2:
                 return widen(row.address);
             case 3:
@@ -515,12 +514,10 @@ namespace slopkit::trainer::gui
             case 4:
                 return widen(row.value);
             case 5:
-                return {};
-            case 6:
                 return widen(row.state);
-            case 7:
+            case 6:
                 return widen(row.interval);
-            case 8:
+            case 7:
                 return widen(row.message);
             default:
                 return {};
@@ -611,13 +608,13 @@ namespace slopkit::trainer::gui
 
             const auto* view = row_at(edit_row_);
             if (view == nullptr || view->kind != RowKind::value || view->number == 0
-                || view->number > payload_.entries.size())
+                || view->number > payload_.value_count())
             {
                 close_editor();
                 return;
             }
 
-            const auto reason = parse_value_text(payload_.entries[view->number - 1], narrow(text));
+            const auto reason = parse_value_text(*payload_.values()[view->number - 1], narrow(text));
             if (reason.has_value())
             {
                 set_message(std::format("value refused: {}", *reason));
@@ -659,10 +656,10 @@ namespace slopkit::trainer::gui
                 pid == 0 ? std::string {"waiting for the target to appear"} : std::format("target pid {}", pid);
             const auto text = std::format("{}\n\n{} value entr{}, {} script{}\n{}\n{}-byte pointers",
                                           options_.title,
-                                          payload_.entries.size(),
-                                          payload_.entries.size() == 1 ? "y" : "ies",
-                                          payload_.scripts.size(),
-                                          payload_.scripts.size() == 1 ? "" : "s",
+                                          payload_.value_count(),
+                                          payload_.value_count() == 1 ? "y" : "ies",
+                                          payload_.script_count(),
+                                          payload_.script_count() == 1 ? "" : "s",
                                           target,
                                           payload_.pointer_size);
             MessageBoxW(window_, widen(text).c_str(), L"About", MB_OK | MB_ICONINFORMATION);
@@ -696,7 +693,7 @@ namespace slopkit::trainer::gui
                     ListView_GetSubItemRect(g_state->list_,
                                             static_cast<int>(row),
                                             draw->iSubItem,
-                                            draw->iSubItem == kLabelColumn ? LVIR_LABEL : LVIR_BOUNDS,
+                                            draw->iSubItem == 0 ? LVIR_LABEL : LVIR_BOUNDS,
                                             &cell);
 
                     const bool selected =
@@ -734,6 +731,25 @@ namespace slopkit::trainer::gui
                     }
                     return CDRF_SKIPDEFAULT;
                 }
+            }
+
+            if (header.code == LVN_GETINFOTIP)
+            {
+                auto* info = reinterpret_cast<LPNMLVGETINFOTIPW>(lparam);
+                if (info == nullptr || info->iItem < 0 || g_state == nullptr)
+                {
+                    return 0;
+                }
+                const auto* view = g_state->row_at(static_cast<std::size_t>(info->iItem));
+                if (view == nullptr)
+                {
+                    return 0;
+                }
+                const auto text = view->kind == RowKind::value ? std::format("entry {}", view->number)
+                                                               : std::format("script S{}", view->number);
+                const auto wide = widen(text);
+                lstrcpynW(info->pszText, wide.c_str(), info->cchTextMax);
+                return 0;
             }
 
             if (header.code == NM_CLICK || header.code == NM_DBLCLK)

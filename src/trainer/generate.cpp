@@ -183,28 +183,44 @@ namespace slopkit::trainer
         payload.pointer_size = static_cast<std::uint32_t>(request.pointer_size);
         payload.process_name = request.process_name;
 
-        for (const auto& entry : request.table->entries())
+        // The saved table's row order is the trainer's; each row keeps its nesting
+        // depth and the number its own kind's CLI flags use.
+        std::uint32_t value_number  = 0;
+        std::uint32_t script_number = 0;
+        const auto    entries       = request.table->entries();
+        for (std::size_t index = 0; index < entries.size(); ++index)
         {
+            const auto& entry = entries[index];
+            const auto  depth = request.table->depth_of(index);
+
+            PayloadItem item;
+            item.depth = static_cast<std::uint8_t>(depth > 255 ? 255 : depth);
             if (entry.kind == table::EntryKind::script)
             {
                 PayloadScript script;
                 script.description = entry.description;
                 script.source      = entry.script;
-                payload.scripts.push_back(std::move(script));
+                item.kind          = ItemKind::script;
+                item.number        = ++script_number;
+                item.data          = std::move(script);
                 ++result.script_entries;
-                continue;
             }
-
-            PayloadEntry record;
-            record.description  = entry.description;
-            record.type         = entry.type;
-            record.frozen       = entry.active;
-            record.hex          = entry.hex;
-            record.bytes        = entry.bytes;
-            record.expression   = entry.expression;
-            record.last_address = entry.address;
-            payload.entries.push_back(std::move(record));
-            ++result.value_entries;
+            else
+            {
+                PayloadEntry record;
+                record.description  = entry.description;
+                record.type         = entry.type;
+                record.frozen       = entry.active;
+                record.hex          = entry.hex;
+                record.bytes        = entry.bytes;
+                record.expression   = entry.expression;
+                record.last_address = entry.address;
+                item.kind           = ItemKind::value;
+                item.number         = ++value_number;
+                item.data           = std::move(record);
+                ++result.value_entries;
+            }
+            payload.items.push_back(std::move(item));
         }
 
         for (const auto& member : reclass::to_members(request.table->structures()))
@@ -212,7 +228,7 @@ namespace slopkit::trainer
             payload.classes.push_back(PayloadClass {member.name, member.text});
         }
 
-        if (result.value_entries == 0 && payload.scripts.empty())
+        if (result.value_entries == 0 && result.script_entries == 0)
         {
             return std::unexpected(std::string {"the table has no value entries to embed"});
         }
