@@ -911,7 +911,7 @@ namespace slopkit::trainer::gui
                                             WS_OVERLAPPEDWINDOW,
                                             CW_USEDEFAULT,
                                             CW_USEDEFAULT,
-                                            1100,
+                                            748,
                                             560,
                                             nullptr,
                                             menu,

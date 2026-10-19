@@ -59,7 +59,7 @@ namespace slopkit::trainer::gui
           scripts_(scripts)
     {
         setWindowTitle(QString::fromStdString(options_.title));
-        resize(1024, 480);
+        resize(748, 480);
 
         model_ = new RowsModel(payload_, this);
 
