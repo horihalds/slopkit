@@ -36,9 +36,8 @@ namespace slopkit::trainer
         bool         active {false}; // scripts only
         bool         hex {false};
         bool         unresolved {false};
-        std::string  state; // "idle" | "active" | "error"
-        std::string  interval;
-        std::string  message; // a script's last message or a value's unresolved note
+        bool         failed {false}; // a script whose last run reported a failure
+        std::string  note;           // why an unresolved value row has no value
     };
 
     [[nodiscard]] RowView build_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number);

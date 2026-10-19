@@ -15,8 +15,9 @@
 
 namespace slopkit::trainer::gui
 {
-    // The address list's first five columns plus the trainer's three script
-    // columns, so the window reads like the table it was generated from.
+    // The address list's five columns, so the window reads like the table it was
+    // generated from; a script's state and message live in the check box and the
+    // log pane instead of extra columns.
     class RowsModel : public QAbstractTableModel
     {
         Q_OBJECT
@@ -29,9 +30,6 @@ namespace slopkit::trainer::gui
             address,
             type,
             value,
-            state,
-            interval,
-            message,
             column_count,
         };
 

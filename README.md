@@ -135,13 +135,13 @@ writing that memory follows the same kernel ptrace policy as any other target.
 When a display is available, a run without any action flag opens the trainer
 window: a table whose rows are the table's own rows in the order they were
 saved, with a child indented under its parent, refreshed by the live pass. Its
-columns are an untitled check column, then `Description`, `Address`, `Type`,
-`Value`, `State`, `Interval` and `Message` — the first five as in slopkit's
-address list, the last three carrying the script detail. A script row shows
-`script` in `Type` and leaves `Address` and `Value` empty. The check column
-freezes or unfreezes a value entry and activates or deactivates a script (each
-running the script's `activate` / `deactivate` hook). The CLI numbers stay in
-use underneath: `--set N` and `--freeze N` address value entry `N`,
+columns are an untitled check column, then `Description`, `Address`, `Type` and
+`Value` — the same five as slopkit's address list, so they fit the default window
+without a horizontal scrollbar. A script row shows `script` in `Type` and leaves
+`Address` and `Value` empty. The check column freezes or unfreezes a value entry
+and activates or deactivates a script (each running the script's `activate` /
+`deactivate` hook). The CLI numbers stay in use underneath: `--set N` and
+`--freeze N` address value entry `N`,
 `--activate N` addresses script `S<N>`, and each row names its own number in its
 tooltip. Double-click a `Value` cell, type the new value and press Enter; `Esc`
 or a click elsewhere discards the edit, and a text the entry's type or hex flag
@@ -150,13 +150,19 @@ refuses keeps the editor open with the reason on the status bar.
 ends the session, `Help > Help` (`F1`) shows the window's help and
 `Help > About` names the trainer, its entry and script counts and its target.
 The status bar carries the header line on the left and the last action or script
-message on the right, both refreshed by the live pass.
+message on the right, both refreshed by the live pass. Under the table a
+read-only log pane, separated by a draggable divider, keeps the script output
+(`print` lines), activation and deactivation results, action refusals and
+attach/re-attach notes; it follows the newest line only while you are already at
+the bottom, keeps the last 500 lines and paints warnings and errors in the
+theme's error colour.
 
 The Windows trainer keeps a console beside its window, because the template is a
 console-subsystem binary and that is where `--list` output and the exit code go;
 launched from the command line under Wine it therefore shows both the console
-and the window. Its window uses the system UI font for prose and a fixed-pitch
-face for addresses, values and intervals, so it follows the Windows theme.
+and the window. Its window carries the same five columns and the same log pane
+and uses the system UI font for prose and a fixed-pitch face for addresses and
+values, so it follows the Windows theme.
 
 The two numberings are independent, so entry `1` never touches `S1`. Frozen
 entries are re-written on every tick, and an active script's `update` hook runs on
@@ -166,19 +172,21 @@ script before the requested actions run, so a headless run starts only the scrip
 it trusts — scripts always start idle otherwise. An entry whose expression cannot
 resolve shows the address recorded at generation time with an `unresolved` marker
 and is never written to; a symbol a script published resolves such expressions
-until that script is deactivated. A script's own failure marks that one script
-`error`, is reported in the list and leaves the other scripts and the exit code
-alone. Without a display, or with any of the flags above, the trainer prints the
-same rows as text and exits. Exit codes: `0` success, `1` usage error, `2` no
-embedded data, `3` target process not found, `4` memory access failure.
+until that script is deactivated. A script's own failure paints that script's
+description in the error colour, reports the reason in the log pane and leaves
+the other scripts and the exit code alone. Without a display, or with any of the
+flags above, the trainer prints the same rows as text and exits. Exit codes: `0`
+success, `1` usage error, `2` no embedded data, `3` target process not found, `4`
+memory access failure.
 
 `--verbose` writes slopkit's debug-level log to `<trainer file>.log` beside the
 executable — `game.trainer.log` next to `game.trainer` — and prints that path on
-stderr. A run without the flag records nothing. The file carries the payload the
-trainer was generated from, the process it attached to, each script's activation
-and deactivation, each hook's output and failure, every class-project error and
-every `alloc`/`free`, which is where to look when a script behaves differently in
-a trainer than it does in slopkit.
+stderr. A run without the flag writes no file, though the interactive window
+always mirrors `info` and above into its pane; debug records stay in the file.
+The file carries the payload the trainer was generated from, the process it
+attached to, each script's activation and deactivation, each hook's output and
+failure, every class-project error and every `alloc`/`free`, which is where to
+look when a script behaves differently in a trainer than it does in slopkit.
 
 `./tools/install.sh` configures, builds and installs slopkit with its desktop entry and
 hicolor icons into `~/.local` by default, with no root needed; override the

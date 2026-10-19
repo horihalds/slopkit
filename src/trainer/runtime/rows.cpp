@@ -8,40 +8,6 @@
 
 namespace slopkit::trainer
 {
-    namespace
-    {
-        std::string script_state(const ScriptState& state)
-        {
-            if (state.failed)
-            {
-                return "error";
-            }
-            return state.active ? "active" : "idle";
-        }
-
-        std::string script_interval(const ScriptState& state)
-        {
-            return state.interval_ms > 0 ? std::format("{} ms", state.interval_ms) : std::string {"-"};
-        }
-
-        std::string script_message(const ScriptState& state)
-        {
-            if (state.message.empty())
-            {
-                return "-";
-            }
-            std::string text = state.message;
-            for (char& character : text)
-            {
-                if (character == '\n' || character == '\r')
-                {
-                    character = ' ';
-                }
-            }
-            return text;
-        }
-    }
-
     RowView build_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number)
     {
         RowView row;
@@ -57,7 +23,7 @@ namespace slopkit::trainer
         row.unresolved = !state.resolved;
         if (row.unresolved)
         {
-            row.message = state.note;
+            row.note = state.note;
         }
         return row;
     }
@@ -71,9 +37,7 @@ namespace slopkit::trainer
         row.description = script.description;
         row.type        = "script";
         row.active      = state.active;
-        row.state       = script_state(state);
-        row.interval    = script_interval(state);
-        row.message     = script_message(state);
+        row.failed      = state.failed;
         return row;
     }
 

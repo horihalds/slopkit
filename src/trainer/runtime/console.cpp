@@ -23,6 +23,37 @@ namespace slopkit::trainer::console
         {
             return std::string(static_cast<std::size_t>(row.depth) * 2, ' ') + shorten(row.description);
         }
+
+        std::string script_state(const ScriptState& state)
+        {
+            if (state.failed)
+            {
+                return "error";
+            }
+            return state.active ? "active" : "idle";
+        }
+
+        std::string script_interval(const ScriptState& state)
+        {
+            return state.interval_ms > 0 ? std::format("{} ms", state.interval_ms) : std::string {"-"};
+        }
+
+        std::string script_message(const ScriptState& state)
+        {
+            if (state.message.empty())
+            {
+                return "-";
+            }
+            std::string text = state.message;
+            for (char& character : text)
+            {
+                if (character == '\n' || character == '\r')
+                {
+                    character = ' ';
+                }
+            }
+            return text;
+        }
     }
 
     std::string render_header(const Payload& payload, std::uint32_t pid)
@@ -53,9 +84,9 @@ namespace slopkit::trainer::console
         if (row.unresolved)
         {
             annotations += " unresolved";
-            if (!row.message.empty())
+            if (!row.note.empty())
             {
-                annotations += std::format(" ({})", row.message);
+                annotations += std::format(" ({})", row.note);
             }
         }
 
@@ -68,10 +99,14 @@ namespace slopkit::trainer::console
                            annotations);
     }
 
-    std::string render_script_row(const RowView& row)
+    std::string render_script_row(const RowView& row, const ScriptState& state)
     {
-        return std::format(
-            "S{}  {:<24}  {:<14}  {:<9}  {}", row.number, described(row), row.state, row.interval, row.message);
+        return std::format("S{}  {:<24}  {:<14}  {:<9}  {}",
+                           row.number,
+                           described(row),
+                           script_state(state),
+                           script_interval(state),
+                           script_message(state));
     }
 
     std::string render_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number)
@@ -81,7 +116,7 @@ namespace slopkit::trainer::console
 
     std::string render_script_row(const PayloadScript& script, const ScriptState& state, std::size_t number)
     {
-        return render_script_row(build_script_row(script, state, number));
+        return render_script_row(build_script_row(script, state, number), state);
     }
 
     std::string
@@ -90,7 +125,15 @@ namespace slopkit::trainer::console
         std::string text;
         for (const auto& row : build_rows(payload, live, scripts))
         {
-            text += row.kind == RowKind::value ? render_value_row(row) : render_script_row(row);
+            if (row.kind == RowKind::value)
+            {
+                text += render_value_row(row);
+            }
+            else
+            {
+                const auto index = row.number == 0 ? scripts.size() : row.number - 1;
+                text += render_script_row(row, index < scripts.size() ? scripts[index] : ScriptState {});
+            }
             text += '\n';
         }
         return text;

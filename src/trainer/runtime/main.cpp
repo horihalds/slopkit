@@ -520,14 +520,20 @@ namespace slopkit::trainer
             }
         }
 
+        struct ActionResult
+        {
+            std::string message;
+            bool        refused {false};
+        };
+
         // One interactive action, applied to the session; the returned text is the
         // message the list shows. Everything it touches stays on the loop's own
         // thread, so the target is never reached from a second one.
-        std::string apply_action(const Action&           action,
-                                 const Payload&          payload,
-                                 ScriptHost&             scripts,
-                                 Resolver&               resolver,
-                                 std::vector<LiveEntry>& live)
+        ActionResult apply_action(const Action&           action,
+                                  const Payload&          payload,
+                                  ScriptHost&             scripts,
+                                  Resolver&               resolver,
+                                  std::vector<LiveEntry>& live)
         {
             const auto entry_error = [&payload, &action]
             {
@@ -557,7 +563,7 @@ namespace slopkit::trainer
             {
                 if (action.index == 0 || action.index > payload.value_count())
                 {
-                    return entry_error();
+                    return {entry_error(), true};
                 }
                 auto& state  = live[action.index - 1];
                 state.frozen = !state.frozen;
@@ -566,7 +572,7 @@ namespace slopkit::trainer
                     if (const auto written = resolver.write(*payload.values()[action.index - 1], state, state.bytes);
                         !written)
                     {
-                        return written.error();
+                        return {written.error(), true};
                     }
                 }
                 return {};
@@ -575,17 +581,21 @@ namespace slopkit::trainer
             {
                 if (action.index == 0 || action.index > payload.value_count())
                 {
-                    return entry_error();
+                    return {entry_error(), true};
                 }
-                return apply_set(resolver, *payload.values()[action.index - 1], live[action.index - 1], action.text)
-                    .value_or(std::string {});
+                if (const auto refused =
+                        apply_set(resolver, *payload.values()[action.index - 1], live[action.index - 1], action.text))
+                {
+                    return {*refused, true};
+                }
+                return {};
             }
             case ActionKind::activate_script:
             case ActionKind::deactivate_script:
             {
                 if (action.index == 0 || action.index > scripts.size())
                 {
-                    return script_error();
+                    return {script_error(), true};
                 }
 
                 const auto outcome = action.kind == ActionKind::activate_script ? scripts.activate(action.index - 1)
@@ -602,7 +612,7 @@ namespace slopkit::trainer
                     }
                     message += outcome.error();
                 }
-                return message;
+                return {std::move(message), !outcome.has_value()};
             }
             }
             return {};
@@ -619,10 +629,26 @@ namespace slopkit::trainer
             {
                 if (!session.ensure())
                 {
-                    return std::string {session.ever_attached() ? "the target has exited; waiting for it to reappear"
-                                                                : "waiting for the target to appear"};
+                    const std::string message = session.ever_attached()
+                                                  ? "the target has exited; waiting for it to reappear"
+                                                  : "waiting for the target to appear";
+                    log::warning(log::category::app, message);
+                    return message;
                 }
-                return apply_action(action, payload, scripts, resolver, live);
+
+                auto result = apply_action(action, payload, scripts, resolver, live);
+                if (!result.message.empty())
+                {
+                    if (result.refused)
+                    {
+                        log::warning(log::category::app, result.message);
+                    }
+                    else
+                    {
+                        log::info(log::category::app, result.message);
+                    }
+                }
+                return result.message;
             };
             const auto step = [&]
             {

@@ -14,6 +14,7 @@
 # sandbox. The Windows template replaces these with a native Win32 window so its
 # cross-build needs no Qt at all.
 set(SLOPKIT_TRAINER_QT_SOURCES
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/log_pane.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/rows_model.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/session_worker.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/window.cpp
@@ -27,6 +28,7 @@ set(SLOPKIT_TRAINER_WIN32_SOURCES
 set(SLOPKIT_TRAINER_RUNTIME_SOURCES
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/caves.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/console.cpp
+    ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/gui/log_feed.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/logging.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/payload_reader.cpp
     ${SLOPKIT_SOURCE_ROOT}/src/trainer/runtime/resolve.cpp

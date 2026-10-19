@@ -18,7 +18,7 @@ namespace slopkit::trainer::console
     // One list line without its newline. The printed list and the interactive one
     // both render through these, so a row cannot look different in the two.
     [[nodiscard]] std::string render_value_row(const RowView& row);
-    [[nodiscard]] std::string render_script_row(const RowView& row);
+    [[nodiscard]] std::string render_script_row(const RowView& row, const ScriptState& state);
     [[nodiscard]] std::string render_value_row(const PayloadEntry& entry, const LiveEntry& state, std::size_t number);
     [[nodiscard]] std::string
     render_script_row(const PayloadScript& script, const ScriptState& state, std::size_t number);

@@ -91,9 +91,7 @@ TEST_CASE("the rows follow the saved table's order and nesting", "[trainer][rows
     CHECK(rows[1].type == "script");
     CHECK(rows[1].address.empty());
     CHECK(rows[1].value.empty());
-    CHECK(rows[1].state == "error");
-    CHECK(rows[1].interval == "250 ms");
-    CHECK(rows[1].message == "hp went negative");
+    CHECK(rows[1].failed);
 
     CHECK(rows[2].kind == RowKind::value);
     CHECK(rows[2].label == "2");
@@ -102,7 +100,7 @@ TEST_CASE("the rows follow the saved table's order and nesting", "[trainer][rows
     CHECK(rows[2].description == "Health.max");
     CHECK(rows[2].address == "-");
     CHECK(rows[2].unresolved);
-    CHECK(rows[2].message == "unknown module 'practice'");
+    CHECK(rows[2].note == "unknown module 'practice'");
 }
 
 TEST_CASE("a script at either end of the table keeps its place", "[trainer][rows]")
@@ -131,20 +129,20 @@ TEST_CASE("a script at either end of the table keeps its place", "[trainer][rows
     CHECK(rows[2].description == "Last");
 }
 
-TEST_CASE("a script row reads idle, active or error", "[trainer][rows]")
+TEST_CASE("a script row carries its active and failed flags", "[trainer][rows]")
 {
     const PayloadScript script {"No reload", "return true"};
     ScriptState         state;
 
-    CHECK(build_script_row(script, state, 1).state == "idle");
-    CHECK(build_script_row(script, state, 1).active == false);
+    CHECK_FALSE(build_script_row(script, state, 1).active);
+    CHECK_FALSE(build_script_row(script, state, 1).failed);
 
     state.active = true;
-    CHECK(build_script_row(script, state, 1).state == "active");
     CHECK(build_script_row(script, state, 1).active);
+    CHECK_FALSE(build_script_row(script, state, 1).failed);
 
     state.failed = true;
-    CHECK(build_script_row(script, state, 1).state == "error");
+    CHECK(build_script_row(script, state, 1).failed);
 }
 
 TEST_CASE("a value row carries the freeze and hex markers", "[trainer][rows]")
@@ -191,9 +189,9 @@ TEST_CASE("the printed script line is the row's fields", "[trainer][rows]")
 
     const auto row = build_script_row(script, state, 2);
 
-    const auto expected = std::format(
-        "S{}  {:<24}  {:<14}  {:<9}  {}", row.number, row.description, row.state, row.interval, row.message);
-    CHECK(slopkit::trainer::console::render_script_row(row) == expected);
+    const auto expected =
+        std::format("S{}  {:<24}  {:<14}  {:<9}  {}", row.number, row.description, "active", "250 ms", "kept hp");
+    CHECK(slopkit::trainer::console::render_script_row(row, state) == expected);
     CHECK(slopkit::trainer::console::render_script_row(script, state, 2) == expected);
 }
 

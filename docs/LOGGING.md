@@ -25,6 +25,17 @@ aggregated summary instead of one record per item.
 Every failure is logged exactly once, at the layer that decides what to do about
 it. For example, `PluginHost` logs a rejected library, not `Plugin::load`.
 
+## Views
+
+An interactive generated trainer mirrors every record at `info` and above into
+the log pane at the bottom of its window through `gui::LogFeed`, independently of
+`--verbose`; `debug` records stay in the file, so a verbose session cannot flood
+the pane. The pane bounds itself to the newest 500 lines. A headless trainer
+(`--list`, `--set`, …) installs no sink and writes nothing unless `--verbose` is
+on. An interactive action logs its result under `app` at `info` when it completes
+and at `warning` when it refuses, so the pane keeps the history the status bar
+shows once.
+
 ## Categories
 
 The category vocabulary is `src/core/log_categories.hpp`; use the constants, never

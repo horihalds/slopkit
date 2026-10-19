@@ -1052,11 +1052,15 @@ appear.
 
 Both front-ends render one row core. `rows.{hpp,cpp}` walks the payload's `items`
 and turns each row into a `RowView` — kind, label, description, nesting depth,
-resolved address, type, value, frozen marker, state, interval and message — in
-that same saved order, with a script row reading `script` in its type and leaving
-address and value empty. `console::render_value_row` / `render_script_row`
-compose their printed line from those fields and indent the description by two
-spaces per depth level, so the window and the printed list cannot drift apart.
+resolved address, type, value, frozen marker, active flag, unresolved flag,
+failed flag and the note that explains an unresolved value — in that same saved
+order, with a script row reading `script` in its type and leaving address and
+value empty. `console::render_value_row` / `render_script_row` compose their
+printed line from those fields and indent the description by two spaces per
+depth level, so the window and the printed list cannot drift apart. The printed
+line takes the script's `ScriptState` as a second argument, because the row
+itself no longer carries the state, interval and message that `--list` prints;
+the window reads them from the check box and the log pane instead.
 Values are `1..N` and scripts `S1..Sm`; the two numberings are independent, the
 help text says so and the number a row answers to is its tooltip. Frozen entries
 are re-written on every tick, which is what lets the trainer hold a value a game
@@ -1076,19 +1080,33 @@ has `File` (`Refresh now`, `Close`) and `Help` (`Help`, `About`) menus and a
 status bar carrying `console::render_header` on the left and the last action or
 script message on the right.
 
-`RowsModel` holds the worker's immutable row snapshot and maps it onto the eight
-columns: an untitled check column, `Description`, `Address`, `Type`, `Value`,
-`State`, `Interval` and `Message`. Its `description` cell reports `RowView::depth`
-through `ui::widgets::kDepthRole` so the address list's
-`ui::widgets::IndentDelegate` indents nested rows, its tooltip names the CLI
-number (`entry 3` / `script S2`), and the check column stays column 0. A `Value`
-cell edits in place through `ui::components::ValidatingDelegate`, and the check
-column freezes a value entry or activates a script. A cell never mutates a
-snapshot: it validates, emits the `Action` it wants (the same
-`slopkit::trainer::Action` the worker applies) and repaints from the current
-snapshot, so a submitted change appears on the worker's next pass. The Win32
-window submits the same `Action`s from its check-column click and its edited
-value, and both front-ends carry the same eight columns in the same order.
+Below the table both windows carry a read-only log pane. `gui::LogFeed` is the
+Qt-free half: it registers a `log::Logger` sink, copies every `info`-and-above
+record into a mutex-guarded queue bounded to 500 entries and calls a wake
+callback. The sink runs on whatever thread logged, so it only queues and wakes —
+never touches a widget. The Qt window's wake is a queued `QMetaObject::invokeMethod`
+that drains `take_new()` into `gui::LogPane`; the Win32 window posts a `WM_APP`
+message and appends through `EM_SETSEL`/`EM_REPLACESEL` to a read-only mono `EDIT`
+control. `gui::log_line()` is the one formatter both use, so a record reads
+`HH:MM:SS  <level>  <message>` on either target. Debug records stay in the log
+file, which is what keeps a `--verbose` run's pane quiet.
+
+`RowsModel` holds the worker's immutable row snapshot and maps it onto the five
+columns: an untitled check column, `Description`, `Address`, `Type` and `Value`.
+Its `description` cell reports `RowView::depth` through `ui::widgets::kDepthRole`
+so the address list's `ui::widgets::IndentDelegate` indents nested rows, its
+tooltip names the CLI number (`entry 3` / `script S2`), and the check column stays
+column 0. A failed script paints its description in the theme's error colour, and
+an unresolved value row keeps a muted address with its note as the address cell's
+tooltip. A `Value` cell edits in place through
+`ui::components::ValidatingDelegate`, and the check column freezes a value entry
+or activates a script. A cell never mutates a snapshot: it validates, emits the
+`Action` it wants (the same `slopkit::trainer::Action` the worker applies) and
+repaints from the current snapshot, so a submitted change appears on the worker's
+next pass. The Win32 window submits the same `Action`s from its check-column
+click and its edited value, sizes its description column to the remaining client
+width so the five columns do not scroll sideways, and both front-ends carry the
+same five columns in the same order.
 
 Every target call stays off the GUI thread. `gui::SessionWorker` is a `QThread`
 that owns the trainer's existing `Session`, `ScriptHost`, `Resolver` and
@@ -1132,15 +1150,19 @@ read as an exit either: only a signalled handle ends the session, so an
 inconclusive probe leaves a live target attached instead of cycling between the
 waiting state and the same pid.
 
-A trainer installs no log sink of its own, so an ordinary run writes nothing.
-`--verbose` (`src/trainer/runtime/logging.cpp`) raises slopkit's logger to `debug`,
+A headless trainer installs no log sink of its own, so an ordinary run writes
+nothing; an interactive run installs only `gui::LogFeed`, which mirrors
+`info`-and-above records into the window and never writes a file. `--verbose`
+(`src/trainer/runtime/logging.cpp`) raises slopkit's logger to `debug`,
 adds the application's rolling file sink with a 1 MiB cap, and points it at the
 executable's own path with `.log` appended — `game.trainer.log` beside
 `game.trainer` — printing that path on stderr. The records are the trainer's
 lifecycle rather than its data: the payload's counts, the attach request and its
 outcome (or failure), a class project the engine could not parse, each script's
-activation, deactivation and every failed `update`, the lines a hook printed, and
-each `alloc`/`free` together with the region a write probe ruled out. Values are
+activation, deactivation and every failed `update`, the lines a hook printed,
+each interactive action's result under `app` (an `info` record for a completed
+action, a `warning` for a refusal), and each `alloc`/`free` together with the
+region a write probe ruled out. Values are
 not logged per tick, so a long session stays a small file; a script that behaves
 differently in a trainer than in slopkit can be diagnosed from the file without a
 debugger.

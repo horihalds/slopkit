@@ -11,6 +11,8 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMetaObject>
+#include <QSplitter>
 #include <QStatusBar>
 #include <QStyleFactory>
 #include <QTableView>
@@ -19,6 +21,8 @@
 #include "core/log.hpp"
 #include "core/log_categories.hpp"
 #include "trainer/runtime/console.hpp"
+#include "trainer/runtime/gui/log_feed.hpp"
+#include "trainer/runtime/gui/log_pane.hpp"
 #include "trainer/runtime/gui/rows_model.hpp"
 #include "trainer/runtime/gui/session_worker.hpp"
 #include "ui/components/indent_delegate.hpp"
@@ -79,7 +83,17 @@ namespace slopkit::trainer::gui
         columns->setSectionResizeMode(RowsModel::description, QHeaderView::Stretch);
         columns->setSectionResizeMode(RowsModel::value, QHeaderView::Stretch);
         columns->setStretchLastSection(false);
-        setCentralWidget(table_);
+
+        log_pane_ = new LogPane(this);
+        log_pane_->setMinimumHeight(log_pane_->fontMetrics().lineSpacing() * 3 + log_pane_->frameWidth() * 2);
+
+        auto* splitter = new QSplitter(Qt::Vertical, this);
+        splitter->addWidget(table_);
+        splitter->addWidget(log_pane_);
+        splitter->setStretchFactor(0, 3);
+        splitter->setStretchFactor(1, 1);
+        splitter->setChildrenCollapsible(false);
+        setCentralWidget(splitter);
 
         header_label_ = new QLabel(this);
         header_label_->setFont(ui::ui_font());
@@ -143,12 +157,29 @@ namespace slopkit::trainer::gui
                 });
         connect(worker_, &SessionWorker::rowsChanged, this, &TrainerWindow::show_snapshot);
 
+        feed_ = std::make_unique<LogFeed>(
+            [this]
+            {
+                if (wake_queued_.exchange(true, std::memory_order_acq_rel))
+                {
+                    return;
+                }
+                QMetaObject::invokeMethod(
+                    this,
+                    [this]
+                    {
+                        drain_log();
+                    },
+                    Qt::QueuedConnection);
+            });
+
         worker_->start();
     }
 
     TrainerWindow::~TrainerWindow()
     {
         stop_session();
+        feed_.reset();
     }
 
     RowsModel* TrainerWindow::rows_model() const noexcept
@@ -174,6 +205,12 @@ namespace slopkit::trainer::gui
         model_->set_rows(rows);
         header_label_->setText(header.trimmed());
         message_label_->setText(message);
+    }
+
+    void TrainerWindow::drain_log()
+    {
+        wake_queued_.store(false, std::memory_order_release);
+        log_pane_->append_records(feed_->take_new());
     }
 
     void TrainerWindow::show_help()

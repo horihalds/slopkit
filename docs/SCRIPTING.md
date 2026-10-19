@@ -421,15 +421,18 @@ there:
   runs — so a slot the game's own code writes into, like the one a hook updates,
   belongs in a mapping: borrowed padding can turn the value a script publishes back
   into the game's data.
-- Output and failure are per script: its `print` lines and the last hook's message
-  are shown beside it, and a script whose source does not compile or whose hook
-  fails is marked `error`, stops ticking and never affects the others. Nothing a
-  script does changes the trainer's exit code.
+- Output and failure are per script: its `print` lines, its activation and
+  deactivation results and the last failure appear in the log pane at the bottom
+  of the trainer window, and a script whose source does not compile or whose hook
+  fails is marked by its `Description` painting in the error colour, stops
+  ticking and never affects the others. Nothing a script does changes the
+  trainer's exit code.
 - `--verbose` writes a debug-level log to `<trainer file>.log` beside the
   executable: the payload's counts, the attach outcome, each script's activation
   and deactivation, the lines a hook printed, every hook failure and every
   `alloc` / `free`, which is where to look when a script behaves differently in a
-  trainer than it does here.
+  trainer than it does here. Debug records stay in that file; the pane shows
+  `info` and above regardless of `--verbose`.
 
 ## Where to look next
 

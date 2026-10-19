@@ -21,6 +21,8 @@ class QTableView;
 
 namespace slopkit::trainer::gui
 {
+    class LogFeed;
+    class LogPane;
     class RowsModel;
     class SessionWorker;
 
@@ -56,6 +58,7 @@ namespace slopkit::trainer::gui
         void show_help();
         void show_about();
         void stop_session();
+        void drain_log();
 
         Options                      options_;
         const Payload&               payload_;
@@ -64,9 +67,12 @@ namespace slopkit::trainer::gui
         std::span<const ScriptState> scripts_;
         RowsModel*                   model_ {};
         QTableView*                  table_ {};
+        LogPane*                     log_pane_ {};
         QLabel*                      header_label_ {};
         QLabel*                      message_label_ {};
         SessionWorker*               worker_ {};
+        std::unique_ptr<LogFeed>     feed_;
+        std::atomic<bool>            wake_queued_ {false};
         std::atomic<std::uint32_t>   pid_cache_ {0};
         int                          exit_code_ {};
     };

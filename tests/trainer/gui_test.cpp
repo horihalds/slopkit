@@ -10,12 +10,18 @@
 #include <vector>
 
 #include <QApplication>
+#include <QColor>
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QHeaderView>
 #include <QModelIndex>
+#include <QPlainTextEdit>
 #include <QString>
 #include <QStringList>
+#include <QTableView>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "scan/types.hpp"
 #include "trainer/payload.hpp"
 #include "trainer/runtime/gui/rows_model.hpp"
@@ -24,6 +30,7 @@
 #include "trainer/runtime/rows.hpp"
 #include "trainer/runtime/scripts.hpp"
 #include "ui/components/indent_delegate.hpp"
+#include "ui/theme.hpp"
 
 QApplication& slopkit_test_application();
 
@@ -87,7 +94,7 @@ namespace
     }
 }
 
-TEST_CASE("the trainer model renders the address list's columns and the script ones", "[trainer][gui]")
+TEST_CASE("the trainer model renders the address list's five columns", "[trainer][gui]")
 {
     slopkit_test_application();
 
@@ -99,7 +106,7 @@ TEST_CASE("the trainer model renders the address list's columns and the script o
     model.set_rows(sample_rows(payload, live, scripts));
 
     CHECK(model.columnCount() == RowsModel::column_count);
-    CHECK(model.columnCount() == 8);
+    CHECK(model.columnCount() == 5);
     CHECK(model.rowCount() == 2);
 
     CHECK(model.headerData(RowsModel::check, Qt::Horizontal, Qt::DisplayRole).toString().isEmpty());
@@ -109,11 +116,6 @@ TEST_CASE("the trainer model renders the address list's columns and the script o
           == QStringLiteral("Address"));
     CHECK(model.headerData(RowsModel::type, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Type"));
     CHECK(model.headerData(RowsModel::value, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Value"));
-    CHECK(model.headerData(RowsModel::state, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("State"));
-    CHECK(model.headerData(RowsModel::interval, Qt::Horizontal, Qt::DisplayRole).toString()
-          == QStringLiteral("Interval"));
-    CHECK(model.headerData(RowsModel::message, Qt::Horizontal, Qt::DisplayRole).toString()
-          == QStringLiteral("Message"));
     CHECK(model.headerData(RowsModel::value, Qt::Vertical, Qt::DisplayRole).isNull());
 
     CHECK(model.data(model.index(0, RowsModel::check), Qt::DisplayRole).toString().isEmpty());
@@ -130,7 +132,6 @@ TEST_CASE("the trainer model renders the address list's columns and the script o
     CHECK(model.data(model.index(1, RowsModel::type), Qt::DisplayRole).toString() == QStringLiteral("script"));
     CHECK(model.data(model.index(1, RowsModel::address), Qt::DisplayRole).toString().isEmpty());
     CHECK(model.data(model.index(1, RowsModel::value), Qt::DisplayRole).toString().isEmpty());
-    CHECK(model.data(model.index(1, RowsModel::state), Qt::DisplayRole).toString() == QStringLiteral("idle"));
     CHECK(model.data(model.index(1, RowsModel::value), Qt::EditRole).isNull());
     CHECK(model.data(model.index(1, RowsModel::description), Qt::ToolTipRole).toString()
           == QStringLiteral("script S1"));
@@ -143,6 +144,28 @@ TEST_CASE("the trainer model renders the address list's columns and the script o
     CHECK((model.flags(model.index(0, RowsModel::description)) & Qt::ItemIsEditable) == 0);
     CHECK((model.flags(model.index(0, RowsModel::check)) & Qt::ItemIsUserCheckable) != 0);
     CHECK((model.flags(model.index(1, RowsModel::check)) & Qt::ItemIsUserCheckable) != 0);
+}
+
+TEST_CASE("a failed script and an unresolved value keep their warnings", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    const auto               payload = sample_payload();
+    auto                     live    = sample_live();
+    std::vector<ScriptState> scripts(1);
+    live[0].resolved  = false;
+    live[0].note      = "unknown module 'practice'";
+    scripts[0].failed = true;
+
+    RowsModel model {payload};
+    model.set_rows(sample_rows(payload, live, scripts));
+
+    CHECK(model.data(model.index(1, RowsModel::description), Qt::ForegroundRole).value<QColor>()
+          == slopkit::ui::active_theme().error);
+    CHECK(model.data(model.index(0, RowsModel::address), Qt::ForegroundRole).value<QColor>()
+          == slopkit::ui::active_theme().text_muted);
+    CHECK(model.data(model.index(0, RowsModel::address), Qt::ToolTipRole).toString()
+          == QStringLiteral("unknown module 'practice'"));
 }
 
 TEST_CASE("the description reports the row's nesting depth", "[trainer][gui]")
@@ -306,6 +329,16 @@ TEST_CASE("the window lists the rows and closes cleanly", "[trainer][gui]")
 
     CHECK(window.rows_model()->rowCount() == 2);
     CHECK(window.rows_model()->rows().front().kind == RowKind::value);
+
+    const auto* table = window.findChild<QTableView*>();
+    REQUIRE(table != nullptr);
+    CHECK(table->horizontalHeader()->length() <= table->viewport()->width());
+
+    auto* pane = window.findChild<QPlainTextEdit*>();
+    REQUIRE(pane != nullptr);
+    slopkit::log::info(slopkit::log::category::app, "trainer pane line");
+    QApplication::processEvents();
+    CHECK(pane->toPlainText().contains(QStringLiteral("trainer pane line")));
 
     window.close();
     QApplication::processEvents();

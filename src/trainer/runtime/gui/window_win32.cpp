@@ -1,5 +1,6 @@
 #include "trainer/runtime/gui/window.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -34,6 +35,7 @@
 
 #include "trainer/payload.hpp"
 #include "trainer/runtime/console.hpp"
+#include "trainer/runtime/gui/log_feed.hpp"
 #include "trainer/runtime/resolve.hpp"
 #include "trainer/runtime/rows.hpp"
 #include "trainer/runtime/scripts.hpp"
@@ -44,24 +46,32 @@ namespace slopkit::trainer::gui
     {
         constexpr UINT kSnapshotMessage    = WM_APP + 1;
         constexpr UINT kCloseEditorMessage = WM_APP + 2;
+        constexpr UINT kLogMessage         = WM_APP + 3;
 
         constexpr int kRefreshCommand = 1001;
         constexpr int kCloseCommand   = 1002;
         constexpr int kHelpCommand    = 1003;
         constexpr int kAboutCommand   = 1004;
 
-        constexpr int kCheckColumn  = 0;
-        constexpr int kValueColumn  = 4;
-        constexpr int kColumnCount  = 8;
-        constexpr int kStatusHeight = 24;
-        constexpr int kRowHeight    = 24;
+        constexpr COLORREF kErrorColor = RGB(192, 0, 0);
+
+        constexpr int kCheckColumn       = 0;
+        constexpr int kDescriptionColumn = 1;
+        constexpr int kValueColumn       = 4;
+        constexpr int kColumnCount       = 5;
+        constexpr int kStatusHeight      = 24;
+        constexpr int kRowHeight         = 24;
+        constexpr int kLogMinimumHeight  = 3 * kRowHeight;
+        constexpr int kLogLineLimit      = 500;
 
         constexpr std::array<const wchar_t*, kColumnCount> kColumnTitles {
-            L"", L"Description", L"Address", L"Type", L"Value", L"State", L"Interval", L"Message"};
+            L"", L"Description", L"Address", L"Type", L"Value"};
 
-        constexpr std::array<bool, kColumnCount> kMonoColumn {false, false, true, true, true, false, true, false};
+        constexpr std::array<bool, kColumnCount> kMonoColumn {false, false, true, true, true};
 
-        constexpr std::array<int, kColumnCount> kColumnWidth {30, 250, 170, 110, 160, 90, 90, 280};
+        constexpr std::array<int, kColumnCount> kColumnWidth {30, 260, 170, 110, 160};
+
+        constexpr int kFixedColumnWidth = kColumnWidth[0] + kColumnWidth[2] + kColumnWidth[3] + kColumnWidth[4];
 
         std::wstring widen(std::string_view text)
         {
@@ -148,6 +158,7 @@ namespace slopkit::trainer::gui
 
             void create_children();
             void layout();
+            void drain_log();
             void apply_snapshot();
             void publish(std::shared_ptr<const std::vector<RowView>> rows, std::string header, std::string message);
             void set_message(std::string message);
@@ -166,6 +177,7 @@ namespace slopkit::trainer::gui
             HINSTANCE                      instance_ {};
             HWND                           window_ {};
             HWND                           list_ {};
+            HWND                           log_ {};
             HWND                           editor_ {};
             HWND                           header_ {};
             HWND                           message_ {};
@@ -173,6 +185,7 @@ namespace slopkit::trainer::gui
             HFONT                          mono_font_ {};
             HIMAGELIST                     row_images_ {};
             std::unique_ptr<SessionThread> session_;
+            std::unique_ptr<LogFeed>       feed_;
 
             const Payload&               payload_;
             std::span<const LiveEntry>   live_;
@@ -328,6 +341,28 @@ namespace slopkit::trainer::gui
                                      FIXED_PITCH | FF_MODERN,
                                      L"Consolas");
 
+            log_ = CreateWindowExW(WS_EX_CLIENTEDGE,
+                                   L"EDIT",
+                                   L"",
+                                   WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_READONLY
+                                       | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
+                                   0,
+                                   0,
+                                   0,
+                                   0,
+                                   window_,
+                                   nullptr,
+                                   instance_,
+                                   nullptr);
+            SendMessageW(log_, WM_SETFONT, reinterpret_cast<WPARAM>(mono_font_), TRUE);
+            SendMessageW(log_, EM_SETLIMITTEXT, static_cast<WPARAM>(0x7fffffff), 0);
+
+            feed_ = std::make_unique<LogFeed>(
+                [this]
+                {
+                    PostMessageW(window_, kLogMessage, 0, 0);
+                });
+
             list_ = CreateWindowExW(WS_EX_CLIENTEDGE,
                                     L"SysListView32",
                                     L"",
@@ -395,12 +430,64 @@ namespace slopkit::trainer::gui
             GetClientRect(window_, &client);
             const int width      = client.right - client.left;
             const int height     = client.bottom - client.top;
-            const int listHeight = height > kStatusHeight ? height - kStatusHeight : 0;
+            const int available  = height > kStatusHeight ? height - kStatusHeight : 0;
+            const int logHeight  = available > 0 ? std::max(kLogMinimumHeight, available / 4) : 0;
+            const int listHeight = std::max(0, available - logHeight);
             const int split      = width * 65 / 100;
 
+            ListView_SetColumnWidth(list_,
+                                    kDescriptionColumn,
+                                    std::max(120, width - kFixedColumnWidth - GetSystemMetrics(SM_CXVSCROLL) - 4));
             MoveWindow(list_, 0, 0, width, listHeight, TRUE);
-            MoveWindow(header_, 0, listHeight, split, kStatusHeight, TRUE);
-            MoveWindow(message_, split, listHeight, width - split, kStatusHeight, TRUE);
+            MoveWindow(log_, 0, listHeight, width, logHeight, TRUE);
+            MoveWindow(header_, 0, listHeight + logHeight, split, kStatusHeight, TRUE);
+            MoveWindow(message_, split, listHeight + logHeight, width - split, kStatusHeight, TRUE);
+        }
+
+        void WindowState::drain_log()
+        {
+            if (!feed_ || log_ == nullptr)
+            {
+                return;
+            }
+            const auto records = feed_->take_new();
+            if (records.empty())
+            {
+                return;
+            }
+
+            SCROLLINFO scroll {};
+            scroll.cbSize = sizeof(SCROLLINFO);
+            scroll.fMask  = SIF_RANGE | SIF_POS | SIF_PAGE;
+            GetScrollInfo(log_, SB_VERT, &scroll);
+            const bool follow = scroll.nPos + static_cast<int>(scroll.nPage) >= scroll.nMax;
+
+            std::wstring text;
+            for (const auto& record : records)
+            {
+                text += widen(log_line(record));
+                text += L"\r\n";
+            }
+            SendMessageW(log_, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
+            SendMessageW(log_, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(text.c_str()));
+
+            int lines = static_cast<int>(SendMessageW(log_, EM_GETLINECOUNT, 0, 0));
+            while (lines > kLogLineLimit)
+            {
+                const auto end = static_cast<int>(SendMessageW(log_, EM_LINEINDEX, 1, 0));
+                if (end <= 0)
+                {
+                    break;
+                }
+                SendMessageW(log_, EM_SETSEL, 0, static_cast<LPARAM>(end));
+                SendMessageW(log_, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(L""));
+                --lines;
+            }
+
+            if (follow)
+            {
+                SendMessageW(log_, WM_VSCROLL, SB_BOTTOM, 0);
+            }
         }
 
         void
@@ -513,12 +600,6 @@ namespace slopkit::trainer::gui
                 return widen(row.type);
             case 4:
                 return widen(row.value);
-            case 5:
-                return widen(row.state);
-            case 6:
-                return widen(row.interval);
-            case 7:
-                return widen(row.message);
             default:
                 return {};
             }
@@ -702,6 +783,14 @@ namespace slopkit::trainer::gui
                     FillRect(dc, &cell, GetSysColorBrush(selected ? COLOR_HIGHLIGHT : COLOR_WINDOW));
                     SetBkMode(dc, TRANSPARENT);
                     SetTextColor(dc, GetSysColor(selected ? COLOR_HIGHLIGHTTEXT : COLOR_WINDOWTEXT));
+                    if (!selected && view->failed && draw->iSubItem == 1)
+                    {
+                        SetTextColor(dc, kErrorColor);
+                    }
+                    if (!selected && view->unresolved && draw->iSubItem == 2)
+                    {
+                        SetTextColor(dc, GetSysColor(COLOR_GRAYTEXT));
+                    }
 
                     if (draw->iSubItem == kCheckColumn)
                     {
@@ -745,8 +834,12 @@ namespace slopkit::trainer::gui
                 {
                     return 0;
                 }
-                const auto text = view->kind == RowKind::value ? std::format("entry {}", view->number)
-                                                               : std::format("script S{}", view->number);
+                auto text = view->kind == RowKind::value ? std::format("entry {}", view->number)
+                                                         : std::format("script S{}", view->number);
+                if (!view->note.empty())
+                {
+                    text += std::format("\n{}", view->note);
+                }
                 const auto wide = widen(text);
                 lstrcpynW(info->pszText, wide.c_str(), info->cchTextMax);
                 return 0;
@@ -837,6 +930,12 @@ namespace slopkit::trainer::gui
                     state->close_editor();
                 }
                 return 0;
+            case kLogMessage:
+                if (state != nullptr)
+                {
+                    state->drain_log();
+                }
+                return 0;
             case WM_CLOSE:
                 if (state != nullptr)
                 {
@@ -845,6 +944,10 @@ namespace slopkit::trainer::gui
                 DestroyWindow(window);
                 return 0;
             case WM_DESTROY:
+                if (state != nullptr)
+                {
+                    state->feed_.reset();
+                }
                 PostQuitMessage(0);
                 return 0;
             default:

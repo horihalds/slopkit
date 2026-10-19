@@ -29,12 +29,6 @@ namespace slopkit::trainer::gui
                 return QStringLiteral("Type");
             case RowsModel::value:
                 return QStringLiteral("Value");
-            case RowsModel::state:
-                return QStringLiteral("State");
-            case RowsModel::interval:
-                return QStringLiteral("Interval");
-            case RowsModel::message:
-                return QStringLiteral("Message");
             default:
                 return {};
             }
@@ -54,12 +48,6 @@ namespace slopkit::trainer::gui
                 return ui::to_qstring(row.type);
             case RowsModel::value:
                 return ui::to_qstring(row.value);
-            case RowsModel::state:
-                return ui::to_qstring(row.state);
-            case RowsModel::interval:
-                return ui::to_qstring(row.interval);
-            case RowsModel::message:
-                return ui::to_qstring(row.message);
             default:
                 return {};
             }
@@ -122,6 +110,10 @@ namespace slopkit::trainer::gui
                 return row->kind == RowKind::value ? tr("entry %1").arg(row->number)
                                                    : tr("script S%1").arg(row->number);
             }
+            if (index.column() == address && !row->note.empty())
+            {
+                return ui::to_qstring(row->note);
+            }
             return {};
         case ui::widgets::kDepthRole:
             if (index.column() == description)
@@ -130,7 +122,7 @@ namespace slopkit::trainer::gui
             }
             return {};
         case Qt::FontRole:
-            if (index.column() == address || index.column() == value || index.column() == interval)
+            if (index.column() == address || index.column() == value)
             {
                 return ui::mono_font();
             }
@@ -146,7 +138,7 @@ namespace slopkit::trainer::gui
             {
                 return ui::active_theme().text_muted;
             }
-            if (row->state == "error" && (index.column() == state || index.column() == message))
+            if (row->failed && index.column() == description)
             {
                 return ui::active_theme().error;
             }
