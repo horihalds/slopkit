@@ -22,8 +22,8 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(sizeof(slopkit_agent_debug_trap) == 24);
     CHECK(sizeof(slopkit_agent_debug_hardware) == 24);
     CHECK(sizeof(slopkit_agent_debug_thread_watch) == 16);
-    CHECK(sizeof(slopkit_agent_debug) == 2656);
-    CHECK(sizeof(slopkit_agent_region) == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE) + 2656);
+    CHECK(sizeof(slopkit_agent_debug) == 99424);
+    CHECK(sizeof(slopkit_agent_region) == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE) + 99424);
 
     CHECK(offsetof(slopkit_agent_region, slots) == 48);
     CHECK(offsetof(slopkit_agent_region, debug) == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE));
@@ -33,8 +33,8 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(offsetof(slopkit_agent_debug, registers) == 200);
     CHECK(offsetof(slopkit_agent_debug, stage_value) == 352);
     CHECK(offsetof(slopkit_agent_debug, trap) == 504);
-    CHECK(offsetof(slopkit_agent_debug, hardware) == 2048);
-    CHECK(offsetof(slopkit_agent_debug, log_path) == 2144);
+    CHECK(offsetof(slopkit_agent_debug, hardware) == 98816);
+    CHECK(offsetof(slopkit_agent_debug, log_path) == 98912);
     CHECK(offsetof(slopkit_agent_slot, state) == 0);
     CHECK(offsetof(slopkit_agent_slot, request) == 8);
     CHECK(offsetof(slopkit_agent_slot, response) == 120);
@@ -87,7 +87,7 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(offsetof(slopkit_agent_module_entry, reserved) == 36);
 
     CHECK(SLOPKIT_AGENT_MAGIC == 0x534C4B41u);
-    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 6u);
+    CHECK(SLOPKIT_AGENT_PROTOCOL_VERSION == 7u);
     CHECK(SLOPKIT_AGENT_SLOT_COUNT == 4u);
     CHECK(SLOPKIT_AGENT_MAX_WORKERS == 4u);
     CHECK(SLOPKIT_AGENT_THREAD_MAGIC == 0x534C4F504B495421ull);
@@ -104,7 +104,7 @@ TEST_CASE("the resident agent protocol layout is fixed", "[wine-proton][agent]")
     CHECK(SLOPKIT_AGENT_OP_DEBUG_ATTACH == 12u);
     CHECK(SLOPKIT_AGENT_OP_DEBUG_DETACH == 13u);
     CHECK(SLOPKIT_AGENT_MODULE_FLAG_MAIN == 0x1u);
-    CHECK(SLOPKIT_AGENT_DEBUG_MAX_TRAPS == 64u);
+    CHECK(SLOPKIT_AGENT_DEBUG_MAX_TRAPS == 4096u);
     CHECK(SLOPKIT_AGENT_DEBUG_DR_SLOTS == 4u);
     CHECK(SLOPKIT_AGENT_DEBUG_REG_COUNT == 18u);
     CHECK(SLOPKIT_AGENT_DBG_STATE_IDLE == 0u);

@@ -9,9 +9,11 @@
 #define SLOPKIT_AGENT_MAGIC                  0x534C4B41u
 
 /* Bumped whenever the layout below changes. A mismatch is refused as a
-   protocol error, never waited on until a timeout. Version 6 adds the debug
-   control block (slopkit_agent_debug) used by the in-process VEH debugger. */
-#define SLOPKIT_AGENT_PROTOCOL_VERSION       6u
+   protocol error, never waited on until a timeout. Version 7 raises the debug
+   block's software-trap table to 4096 entries, which moves the fields after
+   it; version 6 added the debug control block (slopkit_agent_debug) used by
+   the in-process VEH debugger. */
+#define SLOPKIT_AGENT_PROTOCOL_VERSION       7u
 
 /* The ring of independent request slots one region carries: every slot has its
    own state word, request/response record and payload, so this many requests
@@ -168,7 +170,7 @@ typedef struct slopkit_agent_record
 } slopkit_agent_record;
 
 /* The debug control block's own capacity limits. */
-#define SLOPKIT_AGENT_DEBUG_MAX_TRAPS        64u
+#define SLOPKIT_AGENT_DEBUG_MAX_TRAPS        4096u
 #define SLOPKIT_AGENT_DEBUG_DR_SLOTS         4u
 #define SLOPKIT_AGENT_DEBUG_REG_COUNT        18u
 #define SLOPKIT_AGENT_DEBUG_MAX_EXCLUDED     8u
@@ -429,18 +431,18 @@ SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug_trap) == 24, "slopkit_age
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug_hardware) == 24, "slopkit_agent_debug_hardware layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug_thread_watch) == 16,
                             "slopkit_agent_debug_thread_watch layout changed");
-SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug) == 2656, "slopkit_agent_debug layout changed");
+SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_debug) == 99424, "slopkit_agent_debug layout changed");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, arg) == 48, "debug.arg moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, out) == 80, "debug.out moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, excluded_tid) == 112, "debug.excluded_tid moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, registers) == 200, "debug.registers moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, stage_value) == 352, "debug.stage_value moved");
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, trap) == 504, "debug.trap moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, hardware) == 2048, "debug.hardware moved");
-SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, log_path) == 2144, "debug.log_path moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, hardware) == 98816, "debug.hardware moved");
+SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_debug, log_path) == 98912, "debug.log_path moved");
 SLOPKIT_AGENT_STATIC_ASSERT(sizeof(slopkit_agent_region)
                                 == 48 + SLOPKIT_AGENT_SLOT_COUNT * (232 + SLOPKIT_AGENT_PAYLOAD_SIZE)
-                                       + 2656,
+                                       + 99424,
                             "slopkit_agent_region layout changed");
 
 SLOPKIT_AGENT_STATIC_ASSERT(offsetof(slopkit_agent_record, op) == 0, "record.op moved");
