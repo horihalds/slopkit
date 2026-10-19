@@ -193,7 +193,8 @@ namespace slopkit::debug
         if (code_filter_.state() != CodeFilterState::idle)
         {
             code_filter_.reset();
-            filter_dirty_ = false;
+            filter_dirty_       = false;
+            filter_arm_pending_ = false;
             emit codeFilterChanged();
         }
         const JobId id = worker_.next_job_id();
@@ -218,6 +219,7 @@ namespace slopkit::debug
         code_filter_.reset();
         filter_dirty_       = false;
         filter_arm_refused_ = false;
+        filter_arm_pending_ = false;
         last_stop_          = StopEvent {};
         registers_.clear();
         backtrace_.clear();

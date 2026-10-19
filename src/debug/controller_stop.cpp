@@ -281,6 +281,17 @@ namespace slopkit::debug
             emit breakpointsChanged();
         }
 
+        if (filter_arm_pending_)
+        {
+            if (code_filter_.state() != CodeFilterState::idle && !filter_arm_refused_
+                && code_filter_.next_waiting().has_value())
+            {
+                arm_filter_candidate();
+                return;
+            }
+            filter_arm_pending_ = false;
+        }
+
         if (maintenance_stop_)
         {
             maintenance_stop_ = false;

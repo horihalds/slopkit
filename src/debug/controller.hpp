@@ -136,6 +136,7 @@ namespace slopkit::debug
         void resume_past_filter_trap(const StopEvent& stop);
         void stop_at_failed_filter_trap(const StopEvent& stop, std::uint64_t breakpoint_id);
         void arm_filter_candidate();
+        void finish_filter_arm();
         void begin_step_out_run();
         void submit_step_out_arm(std::uint64_t id);
         void disarm_step_out(const Breakpoint& entry);
@@ -177,6 +178,7 @@ namespace slopkit::debug
         CodeFilter                   code_filter_;
         bool                         filter_dirty_ {false};
         bool                         filter_arm_refused_ {false};
+        bool                         filter_arm_pending_ {false};
         std::function<void()>        capture_;
         bool                         capture_pending_ {false};
         std::optional<std::uint64_t> step_out_id_ {};

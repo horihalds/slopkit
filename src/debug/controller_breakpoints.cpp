@@ -113,6 +113,7 @@ namespace slopkit::debug
             code_filter_.reset();
             filter_dirty_       = false;
             filter_arm_refused_ = false;
+            filter_arm_pending_ = false;
             emit codeFilterChanged();
         }
         if (watch_.state() == WatchState::watching)

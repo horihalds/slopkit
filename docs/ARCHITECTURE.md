@@ -275,9 +275,12 @@ beside the normal access path rather than in it, so the read/write path stays
   `analysis::find_code_targets` sweep of the module's executable regions on the
   access worker: only directly encoded `call`/`jmp`/`jcc` targets are kept,
   deduplicated by target and limited to the module range.
-  `Controller::start_code_filter` adds one hidden software breakpoint per
-  candidate and arms them one at a time, stopping at the first backend refusal so
-  the surplus waits for a slot. A trap whose address `debug::CodeFilter::covers()`
+  `Controller::start_code_filter` accepts a stopped or a running target. On a
+  stopped one it adds one hidden software breakpoint per candidate and arms them
+  one at a time; on a running one it arms the whole burst inside a single
+  invisible maintenance stop and resumes, so collecting never needs a manual
+  pause. Arming stops at the first backend refusal so the surplus waits for a
+  slot. A trap whose address `debug::CodeFilter::covers()`
   is consumed inside `apply_stop()` before the stop is reported: the controller
   restores the original byte through the worker, drops the entry, arms the next
   waiting candidate in the freed slot, writes `RIP` back to the trap address and

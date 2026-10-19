@@ -15,9 +15,9 @@ namespace slopkit::debug
 
     void Controller::start_code_filter(std::vector<CodeFilterCandidate> candidates)
     {
-        if (state_ != State::stopped)
+        if (state_ != State::stopped && state_ != State::running)
         {
-            notify(MessageKind::warning, QStringLiteral("Pause the target before collecting code targets."));
+            notify(MessageKind::warning, QStringLiteral("Attach the debugger before collecting code targets."));
             return;
         }
         if (code_filter_.state() != CodeFilterState::idle)
@@ -30,12 +30,26 @@ namespace slopkit::debug
         filter_dirty_ = true;
         slopkit::log::info(log::category::debug,
                            std::format("code filter started with {} candidate(s)", code_filter_.candidates().size()));
-        arm_filter_candidate();
+        if (state_ == State::running)
+        {
+            filter_arm_pending_ = true;
+            if (!maintenance_stop_)
+            {
+                maintenance_stop_ = true;
+                interrupt();
+            }
+        }
+        else
+        {
+            arm_filter_candidate();
+        }
         emit codeFilterChanged();
     }
 
     void Controller::stop_code_filter()
     {
+        filter_arm_refused_ = false;
+        filter_arm_pending_ = false;
         if (code_filter_.state() == CodeFilterState::idle)
         {
             return;
@@ -50,8 +64,7 @@ namespace slopkit::debug
             }
         }
         code_filter_.reset();
-        filter_dirty_       = false;
-        filter_arm_refused_ = false;
+        filter_dirty_ = false;
         emit codeFilterChanged();
         slopkit::log::info(log::category::debug,
                            std::format("code filter cleared, {} breakpoint(s) removed", ids.size()));
@@ -141,15 +154,18 @@ namespace slopkit::debug
     {
         if (code_filter_.state() == CodeFilterState::idle)
         {
+            finish_filter_arm();
             return;
         }
         if (state_ != State::stopped && state_ != State::running)
         {
+            finish_filter_arm();
             return;
         }
         const std::optional<std::uint64_t> next = code_filter_.next_waiting();
         if (!next.has_value())
         {
+            finish_filter_arm();
             return;
         }
 
@@ -165,6 +181,7 @@ namespace slopkit::debug
                        QStringLiteral("Cannot arm more filter breakpoints; %1 candidate(s) stay waiting.")
                            .arg(code_filter_.waiting_count()));
             }
+            finish_filter_arm();
             return;
         }
 
@@ -184,6 +201,7 @@ namespace slopkit::debug
                 const auto* armed = std::get_if<VoidResult>(&result);
                 if (armed == nullptr)
                 {
+                    finish_filter_arm();
                     return;
                 }
                 if (!armed->error)
@@ -206,7 +224,16 @@ namespace slopkit::debug
                         MessageKind::warning,
                         QStringLiteral("The target refused a filter breakpoint: %1").arg(failure_text(*armed->error)));
                 }
+                finish_filter_arm();
             });
+    }
+
+    void Controller::finish_filter_arm()
+    {
+        if (filter_arm_pending_)
+        {
+            apply_pending_slot_ops();
+        }
     }
 
     void Controller::resume_past_filter_trap(const StopEvent& stop)

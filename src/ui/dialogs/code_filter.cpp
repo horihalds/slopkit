@@ -232,12 +232,6 @@ namespace slopkit::ui::dialogs
             status_->set_status(widgets::StatusKind::warning, tr("Pick a module before collecting."));
             return;
         }
-        if (controller_.state() != debug::Controller::State::stopped)
-        {
-            status_->set_status(widgets::StatusKind::info, tr("Pause the target to collect."));
-            return;
-        }
-
         const std::string               name         = module->name;
         const std::uint64_t             base         = module->base;
         const std::uint64_t             end          = module->base + module->size;
@@ -311,27 +305,27 @@ namespace slopkit::ui::dialogs
 
     void CodeFilterDialog::update_controls()
     {
-        const bool stopped = controller_.state() == debug::Controller::State::stopped;
-        const bool active  = controller_.code_filter().state() != debug::CodeFilterState::idle;
+        const bool active = controller_.code_filter().state() != debug::CodeFilterState::idle;
 
-        collect_->setEnabled(stopped && !modules_.empty());
+        collect_->setEnabled(!modules_.empty());
         keep_executed_->setEnabled(active);
         keep_not_executed_->setEnabled(active);
         clear_->setEnabled(active);
 
-        if (!stopped)
+        if (modules_.empty())
         {
-            hint_->set_status(widgets::StatusKind::info, tr("Pause the target to collect."));
+            hint_->set_status(widgets::StatusKind::info, tr("Attach to a target to collect."));
         }
         else if (active)
         {
-            hint_->set_status(widgets::StatusKind::info,
-                              tr("Filter the list with the Keep buttons, then resume the target."));
+            hint_->set_status(
+                widgets::StatusKind::info,
+                tr("Filter the list with the Keep buttons; the filter keeps collecting while the target runs."));
         }
         else
         {
             hint_->set_status(widgets::StatusKind::info,
-                              tr("Collect targets, then filter them with the Keep buttons."));
+                              tr("Collect while the target runs; hits mark themselves executed."));
         }
     }
 

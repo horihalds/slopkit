@@ -478,6 +478,111 @@ TEST_CASE("a real debug session runs against a spawned target", "[debug][practic
     CHECK(status->tracer_pid == 0);
 }
 
+TEST_CASE("a code filter collects while the practice target keeps running", "[debug][practice]")
+{
+    DebugChild child;
+    REQUIRE(child.pid() != 0);
+
+    slopkit::plugin::PluginHost host;
+    host.discover({SLOPKIT_PLUGIN_DIR});
+
+    PluginBackend backend(host);
+    Controller    controller(backend);
+
+    controller.start(child.pid(), "linux-proc");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    QString last_error;
+    QObject::connect(&controller,
+                     &Controller::message,
+                     &controller,
+                     [&last_error](Controller::MessageKind kind, const QString& text)
+                     {
+                         if (kind == Controller::MessageKind::warning || kind == Controller::MessageKind::error)
+                         {
+                             last_error = text;
+                         }
+                     });
+
+    bool stopped_emitted = false;
+    QObject::connect(&controller,
+                     &Controller::stopped,
+                     &controller,
+                     [&stopped_emitted]
+                     {
+                         stopped_emitted = true;
+                     });
+
+    const std::uint64_t called = reinterpret_cast<std::uintptr_t>(&debug_target);
+    const std::uint64_t never  = reinterpret_cast<std::uintptr_t>(g_never_called_target);
+    REQUIRE(called != 0);
+    REQUIRE(never != 0);
+    REQUIRE(called != never);
+
+    std::vector<CodeFilterCandidate> candidates(2);
+    candidates[0].target = called;
+    candidates[1].target = never;
+    controller.start_code_filter(std::move(candidates));
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 2;
+                       }));
+
+    CHECK(controller.state() == Controller::State::running);
+    CHECK_FALSE(stopped_emitted);
+    CHECK(last_error.isEmpty());
+
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().candidates()[0].executions >= 1
+                               && controller.table().software_at(called) == nullptr;
+                       }));
+    CHECK(controller.state() == Controller::State::running);
+    CHECK_FALSE(stopped_emitted);
+    CHECK(last_error.isEmpty());
+    CHECK(controller.code_filter().candidates()[1].executions == 0);
+    CHECK(controller.table().software_at(never) != nullptr);
+
+    controller.start_code_filter(std::vector<CodeFilterCandidate> {CodeFilterCandidate {.target = never}});
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.code_filter().armed_count() == 1
+                               && controller.code_filter().waiting_count() == 0;
+                       }));
+    CHECK(controller.state() == Controller::State::running);
+    CHECK_FALSE(stopped_emitted);
+    CHECK(last_error.isEmpty());
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+
+    controller.stop_code_filter();
+    CHECK(controller.code_filter().state() == CodeFilterState::idle);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.table().empty();
+                       }));
+
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+}
+
 TEST_CASE("a code filter consumes its traps without stopping the practice target", "[debug][practice]")
 {
     DebugChild child;
