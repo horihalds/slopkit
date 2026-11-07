@@ -61,6 +61,20 @@ Read the routing table first, then only the file it points at.
 
 - When a plan is completed, automatically create a git commit for the changes.
 - If the current branch has an upstream, also push the commit.
+- Commit only after the definition of done below passes; never commit a red
+  `tools/verify.sh` run.
+- Before staging, inspect `git status` and `git diff` and stage only the files the
+  task touched. Never stage secrets, credentials, generated build output, `tmp/`
+  or anything under `reference/`.
+- Keep one commit per coherent change. Write the subject in the imperative mood
+  and make it concise; use the body to explain why when the subject cannot. Do not
+  add AI or tool attribution.
+- Do not amend, rebase or force-push commits that are already on the upstream
+  branch; add a new commit instead.
+- `origin` is `git@github.com:horihalds/slopkit.git`. Only the `horihalds` SSH key
+  has write access, so every fetch and push must use it:
+  `GIT_SSH_COMMAND='ssh -i ~/.ssh/id_ed25519_horihalds' git push`. The repository's
+  local `core.sshCommand` already selects that key.
 
 ## Definition of done
 
