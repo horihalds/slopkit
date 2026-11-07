@@ -1,0 +1,279 @@
+#include <catch2/catch.hpp>
+
+#include <QPushButton>
+
+#include <cstdint>
+#include <tuple>
+
+#include "debug/controller.hpp"
+#include "process/attachment.hpp"
+#include "support/fake_debug.hpp"
+#include "support/fake_process.hpp"
+#include "ui/panels/debug_controls.hpp"
+
+using slopkit::debug::Controller;
+using slopkit::tests::FakeDebugBackend;
+using slopkit::tests::pump_until;
+using slopkit::ui::panels::DebugControls;
+
+namespace
+{
+    slopkit::process::AttachedTarget attached_target()
+    {
+        slopkit::process::AttachedTarget target;
+        target.pid          = 4242;
+        target.plugin_id    = "linux-proc";
+        target.can_debug    = true;
+        target.session_live = true;
+        return target;
+    }
+}
+
+TEST_CASE("the debug control bar gates the controls on the session state", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+
+    const slopkit::process::AttachedTarget target = attached_target();
+    DebugControls                          bar(controller, target);
+
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
+    CHECK(bar.start_stop_button()->isEnabled());
+    CHECK_FALSE(bar.resume_button()->isEnabled());
+    CHECK_FALSE(bar.break_button()->isEnabled());
+    CHECK_FALSE(bar.step_into_button()->isEnabled());
+    CHECK_FALSE(bar.step_over_button()->isEnabled());
+    CHECK(bar.breakpoints_button()->isEnabled());
+
+    int requests = 0;
+    QObject::connect(&bar,
+                     &DebugControls::breakpointsRequested,
+                     &bar,
+                     [&requests]
+                     {
+                         ++requests;
+                     });
+    bar.breakpoints_button()->click();
+    CHECK(requests == 1);
+
+    backend.block_continue = true;
+    bar.start_stop_button()->click();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Stop Debugging"));
+    CHECK(bar.start_stop_button()->isEnabled());
+    CHECK_FALSE(bar.resume_button()->isEnabled());
+    CHECK_FALSE(bar.step_into_button()->isEnabled());
+    CHECK_FALSE(bar.step_over_button()->isEnabled());
+    CHECK(bar.break_button()->isEnabled());
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+    CHECK(bar.resume_button()->isEnabled());
+    CHECK(bar.step_into_button()->isEnabled());
+    CHECK(bar.step_over_button()->isEnabled());
+    CHECK_FALSE(bar.break_button()->isEnabled());
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Stop Debugging"));
+
+    backend.continue_released = false;
+    controller.resume();
+    CHECK_FALSE(bar.resume_button()->isEnabled());
+    CHECK(bar.break_button()->isEnabled());
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped;
+                       }));
+    CHECK(bar.resume_button()->isEnabled());
+    CHECK_FALSE(bar.break_button()->isEnabled());
+
+    bar.start_stop_button()->click();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
+    CHECK(bar.start_stop_button()->isEnabled());
+}
+
+TEST_CASE("the debug control bar's disabled toggle attaches nothing", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+
+    const slopkit::process::AttachedTarget detached;
+    DebugControls                          bar(controller, detached);
+
+    CHECK(bar.start_stop_button()->text() == QStringLiteral("Start Debugging"));
+    CHECK_FALSE(bar.start_stop_button()->isEnabled());
+    bar.start_stop_button()->click();
+    CHECK(controller.state() == Controller::State::idle);
+    CHECK(backend.count("attach") == 0);
+}
+
+TEST_CASE("the debug control bar re-gates the toggle when the attached target changes", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+
+    slopkit::process::AttachedTarget target;
+    DebugControls                    bar(controller, target);
+    CHECK_FALSE(bar.start_stop_button()->isEnabled());
+
+    target.pid          = 4242;
+    target.plugin_id    = "linux-proc";
+    target.can_debug    = true;
+    target.session_live = true;
+    bar.refresh_target_state();
+    CHECK(bar.start_stop_button()->isEnabled());
+
+    target.clear();
+    bar.refresh_target_state();
+    CHECK_FALSE(bar.start_stop_button()->isEnabled());
+}
+
+TEST_CASE("the debug control bar makes Step Out a live run control", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    backend.block_continue = true;
+    backend.set_register_file(slopkit::tests::default_registers(0x5000));
+    backend.set_frames({
+        slopkit::debug::Frame {0x5000, 0},
+         slopkit::debug::Frame {0x6000, 0}
+    });
+    Controller controller(backend);
+
+    const slopkit::process::AttachedTarget target = attached_target();
+    DebugControls                          bar(controller, target);
+
+    CHECK_FALSE(bar.step_out_button()->isEnabled());
+
+    controller.start(target.pid, target.plugin_id);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+    CHECK_FALSE(bar.step_out_button()->isEnabled());
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped
+                               && controller.backtrace().size() == 2;
+                       }));
+    CHECK(bar.step_out_button()->isEnabled());
+    CHECK(bar.step_out_button()->toolTip().isEmpty());
+
+    bar.step_out_button()->click();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running && backend.count("cont") >= 1;
+                       }));
+    REQUIRE(backend.software_calls().size() == 1);
+    CHECK(std::get<1>(backend.software_calls().front()) == 0x6000);
+    CHECK(std::get<2>(backend.software_calls().front()));
+
+    controller.interrupt();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::stopped && controller.breakpoints().empty();
+                       }));
+}
+
+TEST_CASE("the debug control bar gates Toggle Breakpoint on a session and a selection", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    backend.block_continue = true;
+    Controller controller(backend);
+
+    const slopkit::process::AttachedTarget target = attached_target();
+    DebugControls                          bar(controller, target);
+
+    bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
+    CHECK_FALSE(bar.toggle_breakpoint_button()->isEnabled());
+    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Start the debugger to set breakpoints."));
+
+    controller.start(target.pid, target.plugin_id);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+    bar.set_selected_instruction(std::nullopt, QString());
+    CHECK_FALSE(bar.toggle_breakpoint_button()->isEnabled());
+    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Select an instruction in the listing first."));
+
+    bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
+    CHECK(bar.toggle_breakpoint_button()->isEnabled());
+    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Set a breakpoint at 0x0000000000002000."));
+
+    std::uint64_t requested_address = 0;
+    QString       requested_text;
+    QObject::connect(&bar,
+                     &DebugControls::toggleBreakpointRequested,
+                     &bar,
+                     [&](std::uint64_t address, const QString& expression)
+                     {
+                         requested_address = address;
+                         requested_text    = expression;
+                     });
+    bar.toggle_breakpoint_button()->click();
+    CHECK(requested_address == 0x2000);
+    CHECK(requested_text == QStringLiteral("0000000000002000"));
+
+    const auto added = controller.table().add(
+        QStringLiteral("0000000000002000").toStdString(), 0x2000, slopkit::debug::Kind::software, 1);
+    REQUIRE(added.has_value());
+    bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
+    CHECK(bar.toggle_breakpoint_button()->toolTip() == QStringLiteral("Remove the breakpoint at 0x0000000000002000."));
+
+    controller.stop();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+    bar.set_selected_instruction(0x2000, QStringLiteral("0000000000002000"));
+    CHECK_FALSE(bar.toggle_breakpoint_button()->isEnabled());
+}
+
+TEST_CASE("the debug control bar disables its commands for a plugin without debug support", "[ui][panels][debugger]")
+{
+    slopkit::test::application();
+    FakeDebugBackend backend;
+    Controller       controller(backend);
+
+    slopkit::process::AttachedTarget target = attached_target();
+    target.can_debug                        = false;
+    DebugControls bar(controller, target);
+
+    CHECK_FALSE(bar.start_stop_button()->isEnabled());
+    CHECK_FALSE(bar.toggle_breakpoint_button()->isEnabled());
+    CHECK_FALSE(bar.resume_button()->isEnabled());
+    CHECK_FALSE(bar.break_button()->isEnabled());
+    CHECK_FALSE(bar.step_into_button()->isEnabled());
+    CHECK_FALSE(bar.step_over_button()->isEnabled());
+    CHECK_FALSE(bar.step_out_button()->isEnabled());
+    CHECK_FALSE(bar.breakpoints_button()->isEnabled());
+    CHECK(bar.start_stop_button()->toolTip() == QStringLiteral("The target's plugin cannot debug."));
+}

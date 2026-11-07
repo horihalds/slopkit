@@ -1,0 +1,1405 @@
+#include "ui/main_window.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <format>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
+
+#include <QAction>
+#include <QDir>
+#include <QEvent>
+#include <QFileInfo>
+#include <QKeySequence>
+#include <QMenu>
+#include <QMenuBar>
+#include <QSplitter>
+#include <QStatusBar>
+#include <QVBoxLayout>
+#include <QWidget>
+
+#include "app/sandbox.hpp"
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+#include "debug/controller.hpp"
+#include "trainer/generate.hpp"
+#include "ui/components/message_box.hpp"
+#include "ui/components/widgets.hpp"
+#include "ui/components/window_centerer.hpp"
+#include "ui/components/window_geometry.hpp"
+#include "ui/dialogs/access_watch.hpp"
+#include "ui/dialogs/add_address.hpp"
+#include "ui/dialogs/breakpoints.hpp"
+#include "ui/dialogs/code_filter.hpp"
+#include "ui/dialogs/generate_trainer.hpp"
+#include "ui/dialogs/log.hpp"
+#include "ui/dialogs/memory_viewer.hpp"
+#include "ui/dialogs/process_list.hpp"
+#include "ui/dialogs/reclass.hpp"
+#include "ui/dialogs/settings.hpp"
+#include "ui/dialogs/table_settings.hpp"
+#include "ui/live_values.hpp"
+#include "ui/panels/address_list_panel.hpp"
+#include "ui/panels/companion_bar.hpp"
+#include "ui/panels/debug_controls.hpp"
+#include "ui/panels/found_list_panel.hpp"
+#include "ui/panels/scanner_panel.hpp"
+#include "ui/script_updates.hpp"
+#include "ui/settings.hpp"
+#include "ui/text.hpp"
+#include "ui/theme.hpp"
+
+namespace slopkit::ui
+{
+    namespace
+    {
+        bool ask_sandbox_attach(QWidget* parent, process::ProcessId pid)
+        {
+            return widgets::confirm(
+                parent,
+                QStringLiteral("Attach to the practice target?"),
+                QStringLiteral("Attach to the practice target (pid %1)?").arg(static_cast<qulonglong>(pid)),
+                widgets::MessageBoxButton::yes);
+        }
+    }
+
+    MainWindow::MainWindow(process::AccessWorker&   worker,
+                           process::AttachedTarget& target,
+                           plugin::PluginHost&      host,
+                           SettingsController&      settings,
+                           debug::Controller&       debug,
+                           script::SymbolTable&     symbols,
+                           const QString&           initial_table_path,
+                           QWidget*                 parent)
+        : QMainWindow(parent), worker_(worker), target_(target), host_(host), settings_(settings), debug_(debug),
+          symbols_(symbols), initial_table_path_(initial_table_path)
+    {
+        sandbox_launcher_ = []
+        {
+            return app::launch_sandbox();
+        };
+        sandbox_attach_prompt_ = [](QWidget* parent, process::ProcessId pid)
+        {
+            return ask_sandbox_attach(parent, pid);
+        };
+        sandbox_terminator_ = [](std::int64_t pid)
+        {
+            return app::terminate_sandbox(pid);
+        };
+
+        setWindowTitle(QStringLiteral("slopkit"));
+        setWindowIcon(widgets::application_icon());
+        resize(748, 768);
+
+        build_actions();
+        build_menus();
+        build_status_bar();
+        build_central();
+        build_dialogs();
+        refresh_target_label();
+
+        new WindowGeometryKeeper(*this, settings_, WindowId::main, this);
+
+        if (!initial_table_path_.isEmpty())
+        {
+            static_cast<void>(open_table_request(initial_table_path_));
+        }
+
+        tick_timer_ = new QTimer(this);
+        connect(tick_timer_, &QTimer::timeout, this, &MainWindow::on_tick);
+        tick_timer_->start(50);
+    }
+
+    MainWindow::~MainWindow()
+    {
+        stop_owned_sandbox();
+    }
+
+    bool MainWindow::open_table_request(const QString& path)
+    {
+        auto parsed = address_list_->parse_table(path);
+        if (!parsed)
+        {
+            return false;
+        }
+
+        if (address_table_.empty())
+        {
+            address_list_->adopt_table(path, std::move(*parsed));
+            return true;
+        }
+
+        const dialogs::TableConflictInfo info {
+            .incoming_path    = path,
+            .incoming_entries = parsed->size(),
+            .current_path     = address_list_->table_path(),
+            .current_entries  = address_table_.size(),
+        };
+
+        switch (table_conflict_prompt_(this, info))
+        {
+        case dialogs::TableConflictChoice::overwrite:
+            address_list_->adopt_table(path, std::move(*parsed));
+            return true;
+        case dialogs::TableConflictChoice::merge:
+            static_cast<void>(address_list_->merge_table(*parsed));
+            return true;
+        case dialogs::TableConflictChoice::cancel:
+            address_list_->report_status("Open cancelled.", false);
+            return false;
+        }
+        std::unreachable();
+    }
+
+    void MainWindow::set_table_conflict_prompt(TableConflictPrompt prompt)
+    {
+        table_conflict_prompt_ = std::move(prompt);
+    }
+
+    void MainWindow::set_sandbox_launcher(SandboxLauncher launcher)
+    {
+        sandbox_launcher_ = std::move(launcher);
+    }
+
+    void MainWindow::set_sandbox_attach_prompt(SandboxAttachPrompt prompt)
+    {
+        sandbox_attach_prompt_ = std::move(prompt);
+    }
+
+    void MainWindow::set_sandbox_terminator(SandboxTerminator terminator)
+    {
+        sandbox_terminator_ = std::move(terminator);
+    }
+
+    dialogs::MemoryViewerDialog* MainWindow::memory_viewer() const noexcept
+    {
+        return memory_view_.get();
+    }
+
+    dialogs::LogDialog* MainWindow::log() const noexcept
+    {
+        return log_.get();
+    }
+
+    dialogs::BreakpointsDialog* MainWindow::breakpoints() const noexcept
+    {
+        return breakpoints_.get();
+    }
+
+    dialogs::AccessWatchDialog* MainWindow::access_watch() const noexcept
+    {
+        return access_watch_.get();
+    }
+
+    dialogs::CodeFilterDialog* MainWindow::code_filter() const noexcept
+    {
+        return code_filter_.get();
+    }
+
+    dialogs::ReClassDialog* MainWindow::reclass() const noexcept
+    {
+        return reclass_.get();
+    }
+
+    void MainWindow::on_open_table_requested()
+    {
+        const std::optional<QString> path = address_list_->choose_table_path();
+        if (!path.has_value())
+        {
+            return;
+        }
+        static_cast<void>(open_table_request(*path));
+    }
+
+    void MainWindow::build_actions()
+    {
+        quit_action_ = new QAction(tr("Quit"), this);
+        connect(quit_action_,
+                &QAction::triggered,
+                this,
+                [this]
+                {
+                    log::debug(log::category::ui, "quit requested");
+                    close();
+                });
+
+        open_process_action_ = new QAction(tr("Open Process"), this);
+        open_process_action_->setIcon(widgets::action_icon(widgets::ActionIcon::target));
+        open_process_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+T")));
+        open_process_action_->setShortcutContext(Qt::WindowShortcut);
+
+        open_table_action_ = new QAction(tr("Open Table"), this);
+        open_table_action_->setIcon(widgets::action_icon(widgets::ActionIcon::folder));
+        open_table_action_->setShortcut(QKeySequence::Open);
+        open_table_action_->setShortcutContext(Qt::WindowShortcut);
+
+        save_table_action_ = new QAction(tr("Save Table"), this);
+        save_table_action_->setIcon(widgets::action_icon(widgets::ActionIcon::diskette));
+        save_table_action_->setShortcut(QKeySequence::Save);
+        save_table_action_->setShortcutContext(Qt::WindowShortcut);
+
+        save_table_as_action_ = new QAction(tr("Save Table As"), this);
+        save_table_as_action_->setIcon(widgets::action_icon(widgets::ActionIcon::diskette));
+        save_table_as_action_->setShortcut(QKeySequence::SaveAs);
+        save_table_as_action_->setShortcutContext(Qt::WindowShortcut);
+
+        generate_trainer_action_ = new QAction(tr("Generate Trainer…"), this);
+        generate_trainer_action_->setIcon(widgets::action_icon(widgets::ActionIcon::diskette));
+        // Generation needs a table; the File menu refreshes this every time it opens.
+        generate_trainer_action_->setEnabled(false);
+        connect(generate_trainer_action_, &QAction::triggered, this, &MainWindow::show_generate_trainer);
+
+        add_script_action_ = new QAction(tr("Add Script…"), this);
+        add_script_action_->setIcon(widgets::action_icon(widgets::ActionIcon::file));
+
+        log_action_ = new QAction(tr("Log"), this);
+
+        settings_action_ = new QAction(tr("Settings"), this);
+
+        breakpoints_action_ = new QAction(tr("Breakpoints"), this);
+
+        access_watch_action_ = new QAction(tr("Access Watch"), this);
+
+        code_filter_action_ = new QAction(tr("Code Filter"), this);
+
+        reclass_action_ = new QAction(tr("ReClass"), this);
+
+        launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
+
+        about_action_ = new QAction(tr("About slopkit"), this);
+    }
+
+    void MainWindow::build_menus()
+    {
+        QMenu* file_menu = menuBar()->addMenu(tr("File"));
+        file_menu->addAction(open_process_action_);
+        file_menu->addAction(open_table_action_);
+        file_menu->addAction(save_table_action_);
+        file_menu->addAction(save_table_as_action_);
+        file_menu->addAction(generate_trainer_action_);
+        file_menu->addAction(add_script_action_);
+        file_menu->addSeparator();
+        file_menu->addAction(quit_action_);
+
+        // Generation needs a table, and the moment the menu opens is when that is
+        // certain: the address list panel owns the table's lifetime.
+        connect(file_menu,
+                &QMenu::aboutToShow,
+                this,
+                [this]
+                {
+                    generate_trainer_action_->setEnabled(!address_table_.empty());
+                });
+
+        QMenu* view_menu = menuBar()->addMenu(tr("View"));
+        view_menu->addAction(log_action_);
+        view_menu->addAction(settings_action_);
+        view_menu->addAction(breakpoints_action_);
+        view_menu->addAction(access_watch_action_);
+        view_menu->addAction(code_filter_action_);
+        view_menu->addAction(reclass_action_);
+
+        QMenu* help_menu = menuBar()->addMenu(tr("Help"));
+        help_menu->addAction(launch_sandbox_action_);
+        help_menu->addSeparator();
+        help_menu->addAction(about_action_);
+    }
+
+    void MainWindow::build_status_bar()
+    {
+        process_label_ = new QLabel(to_qstring(target_.label()), this);
+        process_label_->setObjectName(QStringLiteral("process_label"));
+        statusBar()->addWidget(process_label_);
+
+        address_status_ = new widgets::StatusLabel(this);
+        address_status_->setObjectName(QStringLiteral("address_status"));
+        statusBar()->addPermanentWidget(address_status_, 1);
+    }
+
+    void MainWindow::build_central()
+    {
+        scanner_       = new panels::ScannerPanel(worker_, target_, this);
+        found_list_    = new panels::FoundListPanel(scanner_->engine(), address_table_, this);
+        companion_bar_ = new panels::CompanionBar(this);
+
+        connect(companion_bar_,
+                &panels::CompanionBar::memoryViewRequested,
+                this,
+                [this]
+                {
+                    on_memory_view_requested(scanner_->main_module_address());
+                });
+        connect(found_list_, &panels::FoundListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
+        connect(companion_bar_, &panels::CompanionBar::logRequested, this, &MainWindow::show_log);
+        connect(companion_bar_, &panels::CompanionBar::settingsRequested, this, &MainWindow::show_settings);
+        connect(companion_bar_, &panels::CompanionBar::breakpointsRequested, this, &MainWindow::show_breakpoints);
+        connect(
+            companion_bar_, &panels::CompanionBar::accessWatchWindowRequested, this, &MainWindow::show_access_watch);
+        connect(companion_bar_, &panels::CompanionBar::reclassRequested, this, &MainWindow::show_reclass);
+        connect(found_list_, &panels::FoundListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
+        connect(
+            found_list_, &panels::FoundListPanel::changeValuesRequested, this, &MainWindow::on_found_values_requested);
+        connect(scanner_,
+                &panels::ScannerPanel::memoryMapApplied,
+                this,
+                [this](std::vector<process::ModuleInfo> modules, std::vector<process::RegionInfo> regions)
+                {
+                    log::debug(log::category::ui, std::format("memory map applied: {} module(s)", modules.size()));
+                    found_list_->set_modules(modules);
+                    address_list_->set_modules(modules);
+                    if (add_address_ != nullptr)
+                    {
+                        add_address_->set_modules(modules);
+                    }
+                    debug_.set_modules(modules);
+                    if (code_filter_ != nullptr)
+                    {
+                        code_filter_->set_modules(modules);
+                    }
+                    reclass_->set_modules(modules, std::move(regions));
+                    memory_view_->set_modules(std::move(modules));
+                });
+        connect(&debug_,
+                &debug::Controller::stateChanged,
+                this,
+                [this]
+                {
+                    scanner_->set_debug_session_active(debug_.state() != debug::Controller::State::idle);
+                });
+        scanner_->set_debug_session_active(debug_.state() != debug::Controller::State::idle);
+
+        address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
+        connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
+        connect(address_list_, &panels::AddressListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
+        connect(
+            address_list_, &panels::AddressListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
+        connect(
+            address_list_, &panels::AddressListPanel::editEntryRequested, this, &MainWindow::on_edit_entry_requested);
+        connect(
+            address_list_, &panels::AddressListPanel::tableSettingsRequested, this, &MainWindow::show_table_settings);
+        connect(address_list_, &panels::AddressListPanel::tableLoaded, this, &MainWindow::on_table_loaded);
+        connect(address_list_,
+                &panels::AddressListPanel::statusChanged,
+                this,
+                [this](const QString& message, bool is_error)
+                {
+                    address_status_->set_status(is_error ? widgets::StatusKind::error : widgets::StatusKind::info,
+                                                message);
+                });
+        connect(open_table_action_, &QAction::triggered, this, &MainWindow::on_open_table_requested);
+        connect(launch_sandbox_action_, &QAction::triggered, this, &MainWindow::on_launch_sandbox_requested);
+        connect(save_table_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table);
+        connect(save_table_as_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::save_table_as);
+        connect(add_script_action_, &QAction::triggered, address_list_, &panels::AddressListPanel::add_script);
+
+        auto* middle_splitter = new QSplitter(Qt::Horizontal, this);
+        middle_splitter->addWidget(found_list_);
+        middle_splitter->addWidget(scanner_);
+        middle_splitter->setStretchFactor(0, 1);
+        middle_splitter->setStretchFactor(1, 1);
+
+        // The companion bar spans the window, so it sits beside the scan zone in
+        // an upper column and the vertical splitter keeps two children.
+        auto* upper        = new QWidget(this);
+        auto* upper_layout = new QVBoxLayout(upper);
+        upper_layout->setContentsMargins(0, 0, 0, 0);
+        upper_layout->setSpacing(0);
+        upper_layout->addWidget(middle_splitter, 1);
+        upper_layout->addWidget(companion_bar_);
+
+        auto* vertical_splitter = new QSplitter(Qt::Vertical, this);
+        vertical_splitter->addWidget(upper);
+        vertical_splitter->addWidget(address_list_);
+        vertical_splitter->setStretchFactor(0, 0);
+        vertical_splitter->setStretchFactor(1, 1);
+
+        scan_progress_ = new QProgressBar(this);
+        scan_progress_->setRange(0, 100);
+        scan_progress_->setValue(0);
+        scan_progress_->setFormat(QStringLiteral("%p%"));
+
+        auto* column        = new QWidget(this);
+        auto* column_layout = new QVBoxLayout(column);
+        column_layout->setContentsMargins(0, 0, 0, 0);
+        column_layout->addWidget(scan_progress_);
+        column_layout->addWidget(vertical_splitter, 1);
+        setCentralWidget(column);
+
+        apply_tab_order();
+    }
+
+    void MainWindow::apply_tab_order()
+    {
+        widgets::chain_tab_order({scanner_->tab_order_last(), found_list_->tab_order_first()});
+        widgets::chain_tab_order({found_list_->tab_order_last(), companion_bar_->tab_order_first()});
+        widgets::chain_tab_order({companion_bar_->tab_order_last(), address_list_->tab_order_first()});
+    }
+
+    void MainWindow::build_dialogs()
+    {
+        process_list_ = new dialogs::ProcessListDialog(worker_, target_, this);
+        new WindowCenterer(*process_list_);
+        connect(process_list_,
+                &dialogs::ProcessListDialog::targetChanged,
+                this,
+                [this]
+                {
+                    log::info(log::category::ui, std::format("target changed to {}", target_.label()));
+                    refresh_target_label();
+                });
+
+        add_address_ = new dialogs::AddAddressDialog(address_table_, worker_, this, symbols_);
+        new WindowCenterer(*add_address_);
+
+        connect(add_address_,
+                &dialogs::AddAddressDialog::entryEdited,
+                address_list_,
+                [this](std::size_t row)
+                {
+                    address_list_->note_entry_edited(row);
+                });
+
+        table_settings_ = new dialogs::TableSettingsDialog(address_table_, target_, this);
+        new WindowCenterer(*table_settings_);
+
+        memory_view_ = std::make_unique<dialogs::MemoryViewerDialog>(worker_, target_, debug_, nullptr, symbols_);
+        new WindowGeometryKeeper(*memory_view_, settings_, WindowId::memory_viewer, memory_view_.get());
+
+        live_values_ = new LiveValues(worker_, target_, settings_, this);
+        live_values_->add_surface(found_list_);
+        live_values_->add_surface(address_list_);
+        live_values_->add_surface(memory_view_.get());
+
+        // The ticked scripts' `update` hooks share that cadence, after the read
+        // pass; a failed tick was already deactivated by the worker, so the
+        // address list only clears the row and reports the reason.
+        script_updates_ =
+            std::make_unique<ScriptUpdates>(worker_,
+                                            [this]
+                                            {
+                                                return script::class_index_of(address_table_.structures());
+                                            });
+        script_updates_->set_failure_handler(
+            [this](const process::ScriptUpdateFailure& failure)
+            {
+                address_list_->note_script_update_failed(failure);
+            });
+        live_values_->add_ticker(script_updates_.get());
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::liveRefreshRequested,
+                live_values_,
+                &LiveValues::request_now);
+
+        connect(memory_view_->debug_controls(),
+                &panels::DebugControls::breakpointsRequested,
+                this,
+                &MainWindow::show_breakpoints);
+
+        log_ = std::make_unique<dialogs::LogDialog>();
+        new WindowGeometryKeeper(*log_, settings_, WindowId::log, log_.get());
+
+        breakpoints_ = std::make_unique<dialogs::BreakpointsDialog>(debug_);
+        new WindowGeometryKeeper(*breakpoints_, settings_, WindowId::breakpoints, breakpoints_.get());
+
+        access_watch_ = std::make_unique<dialogs::AccessWatchDialog>(debug_, worker_, target_);
+        new WindowGeometryKeeper(*access_watch_, settings_, WindowId::access_watch, access_watch_.get());
+
+        code_filter_ = std::make_unique<dialogs::CodeFilterDialog>(debug_, target_);
+        new WindowGeometryKeeper(*code_filter_, settings_, WindowId::code_filter, code_filter_.get());
+        connect(
+            code_filter_.get(), &dialogs::CodeFilterDialog::collectRequested, this, &MainWindow::collect_code_targets);
+        connect(code_filter_.get(),
+                &dialogs::CodeFilterDialog::targetActivated,
+                this,
+                &MainWindow::on_code_filter_target_activated);
+        connect(&code_filter_->debug_gate(),
+                &ui::DebugSessionGate::progress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
+
+        reclass_ = std::make_unique<dialogs::ReClassDialog>(address_table_.structures(), worker_, target_);
+        new WindowGeometryKeeper(*reclass_, settings_, WindowId::reclass, reclass_.get());
+        live_values_->add_surface(reclass_.get());
+        connect(reclass_.get(), &dialogs::ReClassDialog::searchRequested, this, &MainWindow::search_for_value);
+        connect(reclass_.get(), &dialogs::ReClassDialog::accessWatchRequested, this, &MainWindow::start_access_watch);
+
+        connect(access_watch_.get(),
+                &dialogs::AccessWatchDialog::followRequested,
+                this,
+                [this](std::uint64_t address)
+                {
+                    on_memory_view_requested(address);
+                });
+        connect(&access_watch_->debug_gate(),
+                &ui::DebugSessionGate::progress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::instructionAccessesResolved,
+                this,
+                &MainWindow::show_instruction_accesses);
+        connect(&memory_view_->debug_gate(),
+                &ui::DebugSessionGate::progress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::instructionAccessesProgress,
+                this,
+                [this](const QString& text, bool error)
+                {
+                    address_list_->report_status(text.toStdString(), error);
+                });
+        connect(memory_view_.get(),
+                &dialogs::MemoryViewerDialog::hookScriptRequested,
+                address_list_,
+                &panels::AddressListPanel::add_hook_script);
+
+        settings_dialog_ = new dialogs::SettingsDialog(host_, scanner_->engine(), settings_, this);
+        new WindowCenterer(*settings_dialog_);
+        connect(settings_dialog_,
+                &dialogs::SettingsDialog::alignmentChanged,
+                this,
+                [this](quint64 alignment)
+                {
+                    scanner_->set_default_alignment(alignment);
+                });
+
+        connect(&settings_,
+                &SettingsController::darkThemeChanged,
+                this,
+                [](bool dark)
+                {
+                    apply_theme(dark ? dark_theme() : light_theme());
+                });
+        connect(&settings_,
+                &SettingsController::addressModeChanged,
+                this,
+                [this](ui::AddressMode mode)
+                {
+                    found_list_->set_address_mode(mode);
+                    address_list_->set_address_mode(mode);
+                    debug_.set_address_mode(mode);
+                    memory_view_->set_address_mode(mode);
+                    code_filter_->refresh();
+                });
+
+        const ui::AddressMode persisted_mode = settings_.values().address_mode;
+        found_list_->set_address_mode(persisted_mode);
+        address_list_->set_address_mode(persisted_mode);
+        debug_.set_address_mode(persisted_mode);
+        memory_view_->set_address_mode(persisted_mode);
+        code_filter_->refresh();
+
+        connect(open_process_action_, &QAction::triggered, this, &MainWindow::show_process_list);
+        connect(log_action_, &QAction::triggered, this, &MainWindow::show_log);
+        connect(breakpoints_action_, &QAction::triggered, this, &MainWindow::show_breakpoints);
+        connect(access_watch_action_, &QAction::triggered, this, &MainWindow::show_access_watch);
+        connect(code_filter_action_, &QAction::triggered, this, &MainWindow::show_code_filter);
+        connect(reclass_action_, &QAction::triggered, this, &MainWindow::show_reclass);
+        connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
+        connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
+
+        const Settings& persisted = settings_.values();
+        address_list_->set_table_path(persisted.last_table_path);
+        address_list_->set_dialog_directory(persisted.last_directory);
+        log_->set_dialog_directory(persisted.last_directory);
+
+        connect(address_list_, &panels::AddressListPanel::tablePathChanged, this, &MainWindow::remember_table_path);
+        connect(log_.get(), &dialogs::LogDialog::logSaved, this, &MainWindow::remember_file_path);
+
+        if (initial_table_path_.isEmpty() && persisted.auto_load_last_table && !persisted.last_table_path.isEmpty())
+        {
+            static_cast<void>(address_list_->load_table(persisted.last_table_path));
+        }
+    }
+
+    void MainWindow::show_process_list()
+    {
+        log::debug(log::category::ui, "opening Process List dialog");
+        process_list_->show();
+        process_list_->raise();
+        process_list_->activateWindow();
+    }
+
+    void MainWindow::show_add_address()
+    {
+        log::debug(log::category::ui, "opening Add Address dialog");
+        add_address_->begin_add();
+        add_address_->show();
+        add_address_->raise();
+        add_address_->activateWindow();
+    }
+
+    void MainWindow::show_table_settings()
+    {
+        log::debug(log::category::ui, "opening Table Settings dialog");
+        table_settings_->show();
+        table_settings_->raise();
+        table_settings_->activateWindow();
+    }
+
+    void MainWindow::show_log()
+    {
+        log::debug(log::category::ui, "opening Log dialog");
+        log_->show();
+        log_->raise();
+        log_->activateWindow();
+    }
+
+    void MainWindow::show_breakpoints()
+    {
+        if (breakpoints_ == nullptr)
+        {
+            return;
+        }
+        breakpoints_->refresh();
+        breakpoints_->show();
+        breakpoints_->raise();
+        breakpoints_->activateWindow();
+    }
+
+    void MainWindow::show_access_watch()
+    {
+        if (access_watch_ == nullptr)
+        {
+            return;
+        }
+        access_watch_->show();
+        access_watch_->raise();
+        access_watch_->activateWindow();
+    }
+
+    void MainWindow::collect_code_targets(QString                   module,
+                                          std::uint64_t             base,
+                                          std::uint64_t             end,
+                                          std::uint32_t             pointer_size,
+                                          analysis::CodeTargetKinds kinds)
+    {
+        if (code_filter_ == nullptr)
+        {
+            return;
+        }
+
+        const process::JobId id   = worker_.next_job_id();
+        const std::string    name = module.toStdString();
+        log::info(log::category::ui, std::format("code filter collect of {} started ({:#x}-{:#x})", name, base, end));
+
+        const bool submitted = worker_.submit_code_targets(
+            id,
+            name,
+            base,
+            end - base,
+            disasm::machine_mode_for(pointer_size),
+            kinds,
+            [this](process::JobResult&& result)
+            {
+                if (code_filter_ == nullptr)
+                {
+                    return;
+                }
+                const auto& scan = std::get<process::CodeTargetsResult>(result);
+                if (scan.error.has_value())
+                {
+                    code_filter_->report_error(tr("Could not scan %1: %2")
+                                                   .arg(QString::fromStdString(scan.module),
+                                                        QString::fromStdString(std::string(describe(*scan.error)))));
+                    return;
+                }
+
+                analysis::CodeTargetScanResult converted;
+                converted.targets = scan.targets;
+                converted.report  = scan.report;
+                code_filter_->apply_scan(std::move(converted), scan.module, scan.base);
+            });
+
+        if (!submitted)
+        {
+            code_filter_->report_error(tr("Could not start the code-target scan."));
+        }
+    }
+
+    void MainWindow::show_code_filter()
+    {
+        if (code_filter_ == nullptr)
+        {
+            return;
+        }
+        code_filter_->refresh();
+        code_filter_->show();
+        code_filter_->raise();
+        code_filter_->activateWindow();
+    }
+
+    void MainWindow::show_reclass()
+    {
+        if (reclass_ == nullptr)
+        {
+            return;
+        }
+        reclass_->show();
+        reclass_->raise();
+        reclass_->activateWindow();
+    }
+
+    void MainWindow::start_access_watch(std::uint64_t address, std::size_t width, debug::Kind kind)
+    {
+        if (access_watch_ == nullptr)
+        {
+            return;
+        }
+        access_watch_->arm_watch(address, kind, ui::watch_size(width));
+    }
+
+    void MainWindow::search_for_value(const QString& text, int bytes)
+    {
+        if (scanner_ == nullptr)
+        {
+            return;
+        }
+        scanner_->prime_value(text, bytes);
+    }
+
+    void MainWindow::show_instruction_accesses(std::uint64_t                   instruction,
+                                               std::size_t                     instruction_length,
+                                               std::vector<ui::ResolvedAccess> accesses)
+    {
+        if (access_watch_ == nullptr)
+        {
+            return;
+        }
+        show_access_watch();
+        access_watch_->show_instruction_accesses(instruction, instruction_length, std::move(accesses));
+    }
+
+    void MainWindow::show_settings()
+    {
+        log::debug(log::category::ui, "opening Settings dialog");
+        settings_dialog_->show();
+        settings_dialog_->raise();
+        settings_dialog_->activateWindow();
+    }
+
+    void MainWindow::show_about()
+    {
+        settings_dialog_->select_about();
+        show_settings();
+    }
+
+    void MainWindow::show_generate_trainer()
+    {
+        if (address_table_.empty())
+        {
+            address_list_->report_status("Open a table before generating a trainer.", true);
+            return;
+        }
+
+        const QString   table_path = address_list_->table_path();
+        const QFileInfo table_file {table_path};
+        const auto&     settings  = settings_.values();
+        const QString   directory = !settings.last_directory.isEmpty()
+                                      ? settings.last_directory
+                                      : (table_file.exists() ? table_file.absolutePath() : QDir::currentPath());
+        const QString   base_name =
+            table_file.completeBaseName().isEmpty() ? QStringLiteral("trainer") : table_file.completeBaseName();
+
+        trainer::Request request;
+        request.table            = &address_table_;
+        request.process_name     = target_.valid() ? target_.name : address_table_.settings().target_process;
+        // The width of this session's target; the trainer prefers the live one's own.
+        request.pointer_size     = sizeof(void*);
+        request.linux_target     = true;
+        request.windows_target   = false;
+        request.output_directory = directory.toStdString();
+        request.base_name        = base_name.toStdString();
+
+        dialogs::GenerateTrainerDialog dialog {request, this};
+        WindowCenterer                 centerer {dialog};
+        connect(&dialog,
+                &dialogs::GenerateTrainerDialog::trainersGenerated,
+                this,
+                [this](const QString& chosen)
+                {
+                    settings_.set_last_directory(chosen);
+                });
+        dialog.exec();
+    }
+
+    void MainWindow::on_launch_sandbox_requested()
+    {
+        const auto result = sandbox_launcher_();
+        if (!result)
+        {
+            log::warning(log::category::ui, std::format("launch practice target failed: {}", result.error()));
+            address_list_->report_status(result.error(), true);
+            return;
+        }
+        log::info(log::category::ui, std::format("practice target started (pid {})", *result));
+        address_list_->report_status(std::format("Practice target started (pid {}).", *result), false);
+
+        const auto pid = static_cast<process::ProcessId>(*result);
+        if (!sandbox_attach_prompt_(this, pid))
+        {
+            return;
+        }
+        lookup_and_attach(
+            [pid](std::span<const process::ProcessInfo> processes)
+            {
+                const auto found = std::ranges::find(processes, pid, &process::ProcessInfo::pid);
+                return found == processes.end() ? nullptr : &*found;
+            },
+            "Practice target",
+            std::string {"Practice target attach: the launched process was not found."});
+    }
+
+    void MainWindow::remember_table_path(const QString& path)
+    {
+        settings_.set_last_table_path(path);
+        settings_.set_last_directory(QFileInfo(path).absolutePath());
+    }
+
+    void MainWindow::remember_file_path(const QString& path)
+    {
+        settings_.set_last_directory(QFileInfo(path).absolutePath());
+    }
+
+    bool MainWindow::event(QEvent* event)
+    {
+        if (event->type() == QEvent::WindowActivate)
+        {
+            scanner_->focus_value_input();
+        }
+        return QMainWindow::event(event);
+    }
+
+    void MainWindow::on_tick()
+    {
+        // The completion hook already drains on its own; this is the safety net
+        // for a wake-up that raced with a busy UI.
+        worker_.drain();
+        scanner_->refresh();
+        found_list_->refresh();
+        address_list_->refresh();
+        scan_progress_->setValue(scanner_->progress_percent());
+        run_freeze_pass();
+        refresh_target_label();
+        live_values_->poll();
+        check_target_liveness();
+        reattach_exited_trainer();
+    }
+
+    void MainWindow::on_found_values_requested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes)
+    {
+        if (addresses.empty())
+        {
+            return;
+        }
+        if (!target_.valid())
+        {
+            address_status_->set_status(widgets::StatusKind::error, tr("Not attached; cannot write."));
+            return;
+        }
+        if (found_write_pending_.has_value())
+        {
+            address_status_->set_status(widgets::StatusKind::info, tr("A write is already in progress."));
+            return;
+        }
+
+        std::vector<process::WriteItem> items;
+        items.reserve(addresses.size());
+        for (const std::uint64_t address : addresses)
+        {
+            items.push_back(process::WriteItem {.id = 0, .address = address, .bytes = bytes});
+        }
+
+        const std::size_t    count  = addresses.size();
+        const process::JobId job_id = worker_.next_job_id();
+        found_write_pending_        = job_id;
+        const bool submitted        = worker_.submit_freeze(
+            job_id,
+            std::move(items),
+            [this, job_id, count](process::JobResult&& result)
+            {
+                if (found_write_pending_ != job_id)
+                {
+                    return;
+                }
+                found_write_pending_.reset();
+
+                const auto& freeze = std::get<process::FreezeResult>(result);
+                if (freeze.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("found list write failed after {} of {} address(es): {}",
+                                             freeze.written,
+                                             count,
+                                             process::describe(*freeze.error)));
+                    address_status_->set_status(
+                        widgets::StatusKind::error,
+                        tr("Write failed: %1").arg(to_qstring(process::describe(*freeze.error))));
+                    return;
+                }
+                log::info(log::category::ui, std::format("found list wrote {} address(es)", freeze.written));
+                if (freeze.written == 1)
+                {
+                    address_status_->set_status(widgets::StatusKind::info, tr("Value written."));
+                }
+                else
+                {
+                    address_status_->set_status(widgets::StatusKind::info,
+                                                tr("%1 values written.").arg(static_cast<qulonglong>(freeze.written)));
+                }
+            });
+        if (!submitted)
+        {
+            found_write_pending_.reset();
+            address_status_->set_status(widgets::StatusKind::error, tr("Write unavailable."));
+        }
+    }
+
+    void MainWindow::on_memory_view_requested(quint64 address)
+    {
+        log::debug(log::category::ui, std::format("opening Memory Viewer at {:X}", address));
+        memory_view_->set_address(address);
+        memory_view_->show();
+        memory_view_->raise();
+        memory_view_->activateWindow();
+    }
+
+    void MainWindow::on_code_filter_target_activated(quint64 address)
+    {
+        log::debug(log::category::ui, std::format("opening the disassembly at {:X}", address));
+        memory_view_->show_disassembly_at(address);
+    }
+
+    void MainWindow::on_add_address_requested()
+    {
+        show_add_address();
+    }
+
+    void MainWindow::on_edit_entry_requested(std::size_t row)
+    {
+        log::debug(log::category::ui, std::format("opening Edit Address dialog on row {}", row));
+        add_address_->edit_entry(row);
+        add_address_->show();
+        add_address_->raise();
+        add_address_->activateWindow();
+    }
+
+    void MainWindow::on_table_loaded()
+    {
+        if (reclass_ != nullptr)
+        {
+            reclass_->refresh_project();
+        }
+
+        const table::TableSettings& settings = address_table_.settings();
+
+        const bool use_path = settings.match_exe_path && !settings.exe_path.empty();
+
+        trainer_identifier_.clear();
+        trainer_match_exe_path_ = settings.match_exe_path;
+        if (settings.auto_attach && (use_path || !settings.target_process.empty()))
+        {
+            const std::string identifier = use_path ? settings.exe_path : settings.target_process;
+            if (!app::is_sandbox_identifier(identifier))
+            {
+                trainer_identifier_ = identifier;
+            }
+        }
+
+        if (!settings.auto_attach)
+        {
+            return;
+        }
+        if (!use_path && settings.target_process.empty())
+        {
+            return;
+        }
+
+        if (target_.valid())
+        {
+            log::info(log::category::ui, std::format("auto attach skipped: already attached to {}", target_.label()));
+            address_list_->report_status("Table auto attach skipped: already attached.", false);
+            return;
+        }
+
+        const std::string identifier     = use_path ? settings.exe_path : settings.target_process;
+        const bool        match_exe_path = settings.match_exe_path;
+
+        if (app::is_sandbox_identifier(identifier))
+        {
+            start_sandbox_for_table();
+            return;
+        }
+
+        lookup_and_attach(
+            [use_path, match_exe_path, identifier](std::span<const process::ProcessInfo> processes)
+            {
+                return use_path ? process::match_process_by_exe_path(processes, identifier)
+                                : process::match_process_by_name(processes, identifier, match_exe_path);
+            },
+            "Table auto",
+            std::format("Table auto attach: no process matching {} '{}'.",
+                        use_path ? "executable path" : "process name",
+                        identifier));
+    }
+
+    void MainWindow::start_sandbox_for_table()
+    {
+        const auto launched = sandbox_launcher_();
+        if (!launched)
+        {
+            log::warning(log::category::ui, std::format("launch practice target failed: {}", launched.error()));
+            address_list_->report_status(launched.error(), true);
+            return;
+        }
+
+        owned_sandbox_pid_ = *launched;
+        log::info(log::category::ui, std::format("practice target started (pid {})", *launched));
+        address_list_->report_status(std::format("Practice target started (pid {}).", *launched), false);
+
+        const auto pid = static_cast<process::ProcessId>(*launched);
+        lookup_and_attach(
+            [pid](std::span<const process::ProcessInfo> processes)
+            {
+                const auto found = std::ranges::find(processes, pid, &process::ProcessInfo::pid);
+                return found == processes.end() ? nullptr : &*found;
+            },
+            "Table auto",
+            std::string {"Table auto attach: the launched practice target was not found."});
+    }
+
+    void MainWindow::stop_owned_sandbox()
+    {
+        if (!owned_sandbox_pid_.has_value())
+        {
+            return;
+        }
+        if (!target_.valid() || target_.pid != static_cast<process::ProcessId>(*owned_sandbox_pid_))
+        {
+            return;
+        }
+
+        const std::int64_t pid    = *owned_sandbox_pid_;
+        const auto         result = sandbox_terminator_(pid);
+        if (result)
+        {
+            log::info(log::category::app, std::format("practice target (pid {}) stopped", pid));
+            return;
+        }
+        log::warning(log::category::app,
+                     std::format("stopping practice target (pid {}) failed: {}", pid, result.error()));
+    }
+
+    void MainWindow::lookup_and_attach(ProcessMatcher match, std::string_view context, std::string missing)
+    {
+        if (target_lookup_pending_.has_value())
+        {
+            return;
+        }
+
+        const std::string    context_text = std::string(context);
+        const process::JobId job_id       = worker_.next_job_id();
+        target_lookup_pending_            = job_id;
+
+        log::debug(log::category::ui, std::format("{} attach: listing processes", context_text));
+
+        const bool submitted = worker_.submit_list(
+            job_id,
+            [this, job_id, context_text, missing, match = std::move(match)](process::JobResult&& result)
+            {
+                if (target_lookup_pending_ != job_id)
+                {
+                    return;
+                }
+                target_lookup_pending_.reset();
+
+                auto& listed = std::get<process::ListResult>(result);
+                if (listed.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("{} attach failed: {}", context_text, process::describe(*listed.error)));
+                    address_list_->report_status(
+                        std::format("{} attach failed: {}", context_text, process::describe(*listed.error)), true);
+                    return;
+                }
+
+                const process::ProcessInfo* found = match(listed.processes);
+                if (found == nullptr)
+                {
+                    log::warning(log::category::ui, missing);
+                    address_list_->report_status(missing, true);
+                    return;
+                }
+                submit_process_attach(*found, context_text);
+            });
+        if (!submitted)
+        {
+            target_lookup_pending_.reset();
+            log::warning(log::category::ui, std::format("{} attach unavailable", context_text));
+            address_list_->report_status(std::format("{} attach unavailable.", context_text), true);
+        }
+    }
+
+    void MainWindow::submit_process_attach(const process::ProcessInfo& info, std::string_view context)
+    {
+        if (auto_attach_pending_.has_value())
+        {
+            return;
+        }
+
+        // Keep the process identity before the listing result goes away.
+        const process::ProcessId pid      = info.pid;
+        const std::string        pname    = info.name;
+        const std::string        exe_path = info.exe_path;
+        const std::string        plugin   = info.plugin_id;
+        const std::string        prefix(context);
+
+        const process::JobId attach_job = worker_.next_job_id();
+        auto_attach_pending_            = attach_job;
+
+        log::debug(log::category::ui, std::format("{} attach: pid {} via {}", prefix, pid, plugin));
+
+        const bool submitted = worker_.submit_attach_app(
+            attach_job,
+            pid,
+            plugin,
+            [this, attach_job, pid, pname, exe_path, prefix](process::JobResult&& attach_result)
+            {
+                if (auto_attach_pending_ != attach_job)
+                {
+                    return;
+                }
+                auto_attach_pending_.reset();
+
+                const auto& attached = std::get<process::AttachResult>(attach_result);
+                if (attached.error)
+                {
+                    target_.clear();
+                    log::warning(
+                        log::category::ui,
+                        std::format("{} attach to pid {} failed: {}", prefix, pid, process::describe(*attached.error)));
+                    address_list_->report_status(
+                        std::format("{} attach failed: {}", prefix, process::describe(*attached.error)), true);
+                    refresh_target_label();
+                    return;
+                }
+
+                target_.clear();
+                target_.pid          = pid;
+                target_.name         = pname;
+                target_.exe_path     = exe_path;
+                target_.plugin_id    = attached.info->plugin_id;
+                target_.method       = attached.info->method;
+                target_.can_debug    = attached.info->can_debug;
+                target_.session_live = true;
+                log::info(log::category::ui,
+                          std::format("{} attached to pid {} via {}", prefix, pid, attached.info->plugin_id));
+                refresh_target_label();
+                if (attached.info->read_error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("{} attach to pid {} cannot read memory: {}",
+                                             prefix,
+                                             pid,
+                                             process::describe(*attached.info->read_error)));
+                    address_list_->report_status(std::format("Attached to {}; memory not readable ({}).",
+                                                             pname,
+                                                             process::describe(*attached.info->read_error)),
+                                                 true);
+                }
+                else
+                {
+                    address_list_->report_status(std::format("Attached to {}.", pname), false);
+                }
+            });
+        if (!submitted)
+        {
+            auto_attach_pending_.reset();
+            log::warning(log::category::ui, std::format("{} attach unavailable", prefix));
+            address_list_->report_status(std::format("{} attach unavailable.", prefix), true);
+        }
+    }
+
+    void MainWindow::check_target_liveness()
+    {
+        constexpr int kTicksPerCheck = 20;
+
+        if (!target_.valid() || target_liveness_pending_.has_value())
+        {
+            liveness_ticks_ = 0;
+            return;
+        }
+        if (++liveness_ticks_ < kTicksPerCheck)
+        {
+            return;
+        }
+        liveness_ticks_ = 0;
+
+        const process::ProcessId pid    = target_.pid;
+        const process::JobId     job_id = worker_.next_job_id();
+        target_liveness_pending_        = job_id;
+        const bool submitted            = worker_.submit_target_liveness(
+            job_id,
+            pid,
+            [this, job_id, pid](process::JobResult&& result)
+            {
+                if (target_liveness_pending_ != job_id)
+                {
+                    return;
+                }
+                target_liveness_pending_.reset();
+
+                if (std::get<process::TargetLivenessResult>(result).alive)
+                {
+                    return;
+                }
+                if (!target_.valid() || target_.pid != pid)
+                {
+                    return;
+                }
+
+                log::warning(log::category::process, std::format("target pid {} exited; scripts deactivated", pid));
+
+                const process::JobId detach_id = worker_.next_job_id();
+                static_cast<void>(worker_.submit_detach(detach_id, [](process::JobResult&&) {}));
+                target_.clear();
+                refresh_target_label();
+                address_list_->refresh();
+                address_list_->report_status(std::format("Target pid {} exited; scripts deactivated.", pid), false);
+            });
+        if (!submitted)
+        {
+            target_liveness_pending_.reset();
+        }
+    }
+
+    void MainWindow::reattach_exited_trainer()
+    {
+        constexpr int kTicksPerAttempt = 20;
+
+        if (target_.valid() || trainer_identifier_.empty() || trainer_reattach_pending_.has_value()
+            || target_lookup_pending_.has_value() || auto_attach_pending_.has_value())
+        {
+            trainer_reattach_ticks_ = 0;
+            return;
+        }
+        if (++trainer_reattach_ticks_ < kTicksPerAttempt)
+        {
+            return;
+        }
+        trainer_reattach_ticks_ = 0;
+
+        const std::string    identifier     = trainer_identifier_;
+        const bool           match_exe_path = trainer_match_exe_path_;
+        const process::JobId job_id         = worker_.next_job_id();
+        trainer_reattach_pending_           = job_id;
+
+        const bool submitted =
+            worker_.submit_list(job_id,
+                                [this, job_id, identifier, match_exe_path](process::JobResult&& result)
+                                {
+                                    if (trainer_reattach_pending_ != job_id)
+                                    {
+                                        return;
+                                    }
+                                    trainer_reattach_pending_.reset();
+
+                                    const auto& listed = std::get<process::ListResult>(result);
+                                    if (listed.error || target_.valid())
+                                    {
+                                        return;
+                                    }
+
+                                    const process::ProcessInfo* found =
+                                        match_exe_path
+                                            ? process::match_process_by_exe_path(listed.processes, identifier)
+                                            : process::match_process_by_name(listed.processes, identifier, true);
+                                    if (found == nullptr)
+                                    {
+                                        return;
+                                    }
+
+                                    log::info(log::category::process,
+                                              std::format("trainer target '{}' reappeared; re-attaching", identifier));
+                                    submit_process_attach(*found, "Trainer re");
+                                });
+        if (!submitted)
+        {
+            trainer_reattach_pending_.reset();
+        }
+    }
+
+    void MainWindow::refresh_target_label()
+    {
+        process_label_->setText(to_qstring(target_.label()));
+        found_list_->set_target_attached(target_.valid(), target_.can_debug);
+        companion_bar_->set_target_attached(target_.valid(), target_.can_debug);
+
+        const bool    debug_available = !target_.valid() || target_.can_debug;
+        const QString debug_tip       = debug_available ? QString() : tr("The target's plugin cannot debug.");
+        for (QAction* action : {breakpoints_action_, access_watch_action_, code_filter_action_})
+        {
+            action->setEnabled(debug_available);
+            action->setToolTip(debug_tip);
+        }
+
+        table_settings_->refresh_target();
+        memory_view_->refresh_target_state();
+    }
+
+    void MainWindow::run_freeze_pass()
+    {
+        if (!target_.valid() || freeze_pending_.has_value())
+        {
+            return;
+        }
+
+        const auto now_seconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto items = address_table_.freeze_items(now_seconds);
+        if (items.empty())
+        {
+            return;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        freeze_pending_             = job_id;
+        log::debug(log::category::ui, std::format("freeze pass submitted for {} item(s)", items.size()));
+        const bool submitted = worker_.submit_freeze(
+            job_id,
+            std::move(items),
+            [this, job_id](process::JobResult&& result)
+            {
+                if (freeze_pending_ != job_id)
+                {
+                    return;
+                }
+                freeze_pending_.reset();
+                const auto& frozen = std::get<process::FreezeResult>(result);
+                if (frozen.error)
+                {
+                    log::warning(log::category::ui,
+                                 std::format("freeze pass failed: {}", process::describe(*frozen.error)));
+                    address_list_->report_active_error(process::describe(*frozen.error));
+                }
+            });
+        if (!submitted)
+        {
+            freeze_pending_.reset();
+        }
+    }
+
+}

@@ -1,0 +1,381 @@
+#include "ui/models/found_results_model.hpp"
+
+#include <algorithm>
+#include <cstddef>
+#include <numeric>
+#include <optional>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include <QBrush>
+
+#include "scan/value.hpp"
+#include "ui/components/elided_tooltip_delegate.hpp"
+#include "ui/fonts.hpp"
+#include "ui/text.hpp"
+#include "ui/theme.hpp"
+
+namespace slopkit::ui::models
+{
+    namespace
+    {
+        int compare_bytes(std::span<const std::byte> lhs, std::span<const std::byte> rhs)
+        {
+            if (std::lexicographical_compare(lhs.begin(), lhs.end(), rhs.begin(), rhs.end()))
+            {
+                return -1;
+            }
+            return std::lexicographical_compare(rhs.begin(), rhs.end(), lhs.begin(), lhs.end()) ? 1 : 0;
+        }
+
+        int compare_addresses(std::uint64_t lhs, std::uint64_t rhs)
+        {
+            return lhs < rhs ? -1 : (lhs > rhs ? 1 : 0);
+        }
+
+        int hit_tier(const ui::ModuleSpans& spans, std::uint64_t address)
+        {
+            if (const ui::ModuleSpan* main = spans.main();
+                main != nullptr && address >= main->base && address < main->end)
+            {
+                return 0;
+            }
+            return spans.containing(address) != nullptr ? 1 : 2;
+        }
+    }
+
+    FoundResultsModel::FoundResultsModel(QObject* parent)
+        : QAbstractTableModel(parent), hits_(std::make_shared<const scan::ScanResults>())
+    {
+    }
+
+    int FoundResultsModel::rowCount(const QModelIndex& parent) const
+    {
+        return parent.isValid() ? 0 : static_cast<int>(order_.size());
+    }
+
+    int FoundResultsModel::columnCount(const QModelIndex& parent) const
+    {
+        return parent.isValid() ? 0 : column_count;
+    }
+
+    QVariant FoundResultsModel::data(const QModelIndex& index, int role) const
+    {
+        if (!index.isValid() || index.row() < 0 || index.row() >= static_cast<int>(order_.size()))
+        {
+            return {};
+        }
+
+        const auto& hit = hits_->hits[static_cast<std::size_t>(order_[static_cast<std::size_t>(index.row())])];
+
+        switch (role)
+        {
+        case Qt::DisplayRole:
+            switch (index.column())
+            {
+            case address:
+                return address_text(hit.address);
+            case value:
+            {
+                const LiveCell* cell = live_cell_at(index.row());
+                if (cell != nullptr && cell->has_reading)
+                {
+                    if (!cell->readable)
+                    {
+                        return tr("?");
+                    }
+                    if (cell->bytes.has_value())
+                    {
+                        return to_qstring(scan::format_value(config_.value_type, *cell->bytes, config_.hex));
+                    }
+                }
+                return to_qstring(scan::format_value(config_.value_type, hits_->value(hit), config_.hex));
+            }
+            case previous:
+            {
+                const std::span<const std::byte> previous = hits_->previous(hit);
+                return previous.empty() ? QString()
+                                        : to_qstring(scan::format_value(config_.value_type, previous, config_.hex));
+            }
+            default:
+                break;
+            }
+            break;
+        case Qt::FontRole:
+            return QVariant::fromValue(mono_font());
+        case Qt::TextAlignmentRole:
+            return static_cast<int>(Qt::AlignLeft | Qt::AlignVCenter);
+        case Qt::ForegroundRole:
+            if (index.column() == address && static_hits_[static_cast<std::size_t>(index.row())])
+            {
+                return QBrush(active_theme().success);
+            }
+            if (index.column() == value)
+            {
+                const LiveCell* cell = live_cell_at(index.row());
+                if (cell != nullptr && cell->has_reading)
+                {
+                    if (!cell->readable)
+                    {
+                        return active_theme().text_muted;
+                    }
+                    if (cell->changed)
+                    {
+                        return active_theme().warning;
+                    }
+                }
+            }
+            break;
+        case Qt::ToolTipRole:
+            if (index.column() == value)
+            {
+                const LiveCell* cell = live_cell_at(index.row());
+                if (cell != nullptr && cell->has_reading && !cell->readable)
+                {
+                    return tr("Not readable");
+                }
+            }
+            break;
+        case widgets::kFullTextRole:
+            if (index.column() == address)
+            {
+                return ui::format_cell_address_full(address_mode_, module_spans_, hit.address);
+            }
+            break;
+        default:
+            break;
+        }
+        return {};
+    }
+
+    QVariant FoundResultsModel::headerData(int section, Qt::Orientation orientation, int role) const
+    {
+        if (orientation == Qt::Horizontal && role == Qt::DisplayRole)
+        {
+            switch (section)
+            {
+            case address:
+                return tr("Address");
+            case value:
+                return tr("Value");
+            case previous:
+                return tr("Previous");
+            default:
+                break;
+            }
+        }
+        return QAbstractTableModel::headerData(section, orientation, role);
+    }
+
+    void FoundResultsModel::sort(int column, Qt::SortOrder order)
+    {
+        sort_column_ = column;
+        sort_order_  = order;
+
+        beginResetModel();
+        rebuild_window();
+        endResetModel();
+    }
+
+    void FoundResultsModel::set_snapshot(scan::ScanSnapshot snapshot, scan::ScanConfig config)
+    {
+        beginResetModel();
+        hits_ = std::move(snapshot.result_hits);
+        if (!hits_)
+        {
+            hits_ = std::make_shared<const scan::ScanResults>(std::move(snapshot.page));
+        }
+        config_ = std::move(config);
+        cells_.clear();
+        rebuild_window();
+        endResetModel();
+    }
+
+    void FoundResultsModel::clear()
+    {
+        set_snapshot(scan::ScanSnapshot {}, scan::ScanConfig {});
+    }
+
+    const scan::ScanHit* FoundResultsModel::hit_at(int row) const
+    {
+        if (row < 0 || row >= static_cast<int>(order_.size()))
+        {
+            return nullptr;
+        }
+        return &hits_->hits[static_cast<std::size_t>(order_[static_cast<std::size_t>(row)])];
+    }
+
+    std::span<const std::byte> FoundResultsModel::value_at(int row) const
+    {
+        const scan::ScanHit* hit = hit_at(row);
+        return hit == nullptr ? std::span<const std::byte> {} : hits_->value(*hit);
+    }
+
+    void FoundResultsModel::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        ui::ModuleSpans spans;
+        spans.set_modules(modules);
+        if (spans == module_spans_)
+        {
+            return;
+        }
+
+        beginResetModel();
+        module_spans_ = std::move(spans);
+        rebuild_window();
+        endResetModel();
+    }
+
+    void FoundResultsModel::set_address_mode(ui::AddressMode mode)
+    {
+        if (address_mode_ == mode)
+        {
+            return;
+        }
+        address_mode_ = mode;
+        cells_.clear();
+        if (!order_.empty())
+        {
+            emit dataChanged(index(0, address),
+                             index(static_cast<int>(order_.size()) - 1, value),
+                             {Qt::DisplayRole, Qt::ForegroundRole});
+        }
+    }
+
+    QString FoundResultsModel::address_text(std::uint64_t address) const
+    {
+        return ui::format_cell_address(address_mode_, module_spans_, address);
+    }
+
+    QString FoundResultsModel::copy_text(int row, CopyFormat format) const
+    {
+        const scan::ScanHit* hit = hit_at(row);
+        if (hit == nullptr)
+        {
+            return {};
+        }
+        if (format == CopyFormat::absolute)
+        {
+            return ui::format_absolute(hit->address);
+        }
+        if (format == CopyFormat::module_relative)
+        {
+            return ui::format_cell_address_full(ui::AddressMode::module_relative, module_spans_, hit->address);
+        }
+        return ui::format_cell_address_full(address_mode_, module_spans_, hit->address) + QStringLiteral(": ")
+             + to_qstring(scan::format_value(config_.value_type, hits_->value(*hit), config_.hex));
+    }
+
+    bool FoundResultsModel::is_static(std::uint64_t address) const
+    {
+        return module_spans_.containing(address) != nullptr;
+    }
+
+    bool FoundResultsModel::is_main_hit(std::uint64_t address) const
+    {
+        const ui::ModuleSpan* main = module_spans_.main();
+        return main != nullptr && address >= main->base && address < main->end;
+    }
+
+    std::vector<LiveRequest> FoundResultsModel::next_live_request()
+    {
+        return cells_.request(order_.size(),
+                              [this](std::size_t row)
+                              {
+                                  const auto  hit_index = static_cast<std::size_t>(order_[row]);
+                                  const auto& hit       = hits_->hits[hit_index];
+                                  return LiveCandidate {.address  = hit.address,
+                                                        .size     = hits_->value(hit).size(),
+                                                        .identity = hit.address,
+                                                        .readable = hit.readable != 0};
+                              });
+    }
+
+    void FoundResultsModel::apply_live_readings(std::span<const LiveReading> readings)
+    {
+        cells_.apply(
+            readings,
+            [this](std::size_t row, std::uint64_t identity)
+            {
+                if (row >= order_.size())
+                {
+                    return false;
+                }
+                const auto hit_index = static_cast<std::size_t>(order_[row]);
+                return hit_index < hits_->hits.size() && hits_->hits[hit_index].address == identity;
+            },
+            [this](std::size_t first, std::size_t last)
+            {
+                emit dataChanged(index(static_cast<int>(first), value),
+                                 index(static_cast<int>(last), value),
+                                 {Qt::DisplayRole, Qt::ForegroundRole});
+            });
+    }
+
+    const LiveCell* FoundResultsModel::live_cell_at(int row) const
+    {
+        if (row < 0 || row >= static_cast<int>(cells_.size()))
+        {
+            return nullptr;
+        }
+        return cells_.at(static_cast<std::size_t>(row));
+    }
+
+    void FoundResultsModel::rebuild_window()
+    {
+        const std::size_t total = hits_->hits.size();
+        const std::size_t shown = std::min<std::size_t>(total, scan::kDisplayPage);
+
+        order_.resize(total);
+        std::iota(order_.begin(), order_.end(), 0);
+        std::partial_sort(order_.begin(),
+                          order_.begin() + static_cast<std::ptrdiff_t>(shown),
+                          order_.end(),
+                          [this](int lhs, int rhs)
+                          {
+                              const int left_tier =
+                                  hit_tier(module_spans_, hits_->hits[static_cast<std::size_t>(lhs)].address);
+                              const int right_tier =
+                                  hit_tier(module_spans_, hits_->hits[static_cast<std::size_t>(rhs)].address);
+                              if (left_tier != right_tier)
+                              {
+                                  return left_tier < right_tier;
+                              }
+
+                              const auto& left  = hits_->hits[static_cast<std::size_t>(lhs)];
+                              const auto& right = hits_->hits[static_cast<std::size_t>(rhs)];
+
+                              int by = compare_addresses(left.address, right.address);
+                              switch (sort_column_)
+                              {
+                              case value:
+                                  by = compare_bytes(hits_->value(left), hits_->value(right));
+                                  break;
+                              case previous:
+                                  by = compare_bytes(hits_->previous(left), hits_->previous(right));
+                                  break;
+                              default:
+                                  break;
+                              }
+                              if (by == 0)
+                              {
+                                  by = compare_addresses(left.address, right.address);
+                              }
+                              return sort_order_ == Qt::AscendingOrder ? by < 0 : by > 0;
+                          });
+        order_.resize(shown);
+        cells_.clear();
+        refresh_static_flags();
+    }
+
+    void FoundResultsModel::refresh_static_flags()
+    {
+        static_hits_.resize(order_.size());
+        for (std::size_t i = 0; i < order_.size(); ++i)
+        {
+            static_hits_[i] = is_static(hits_->hits[static_cast<std::size_t>(order_[i])].address);
+        }
+    }
+
+}

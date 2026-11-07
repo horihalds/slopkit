@@ -1,0 +1,100 @@
+#include "expr/resolver.hpp"
+
+#include <cctype>
+#include <format>
+
+namespace slopkit::expr
+{
+    namespace
+    {
+        bool equals_case_insensitive(std::string_view left, std::string_view right)
+        {
+            if (left.size() != right.size())
+            {
+                return false;
+            }
+            for (std::size_t i = 0; i < left.size(); ++i)
+            {
+                const auto lower = [](char value)
+                {
+                    return static_cast<char>(std::tolower(static_cast<unsigned char>(value)));
+                };
+                if (lower(left[i]) != lower(right[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    std::expected<std::uint64_t, ResolveError> evaluate(const Expression&       expression,
+                                                        Modules                 modules,
+                                                        Symbols                 symbols,
+                                                        const PointerReader&    reader,
+                                                        Options                 options,
+                                                        const AddressValidator& validate)
+    {
+        std::uint64_t address    = 0;
+        bool          base_found = false;
+        for (const auto& module : modules)
+        {
+            if (equals_case_insensitive(module.name, expression.base))
+            {
+                address    = module.base;
+                base_found = true;
+                break;
+            }
+        }
+        if (!base_found)
+        {
+            for (const auto& symbol : symbols)
+            {
+                if (equals_case_insensitive(symbol.name, expression.base))
+                {
+                    address    = symbol.value;
+                    base_found = true;
+                    break;
+                }
+            }
+        }
+        if (!base_found)
+        {
+            const auto literal = parse_literal(expression.base);
+            if (!literal)
+            {
+                return std::unexpected(
+                    ResolveError {std::format("unknown module or literal '{}'", expression.base), 0});
+            }
+            address = *literal;
+        }
+
+        std::size_t level = 0;
+        for (const auto& offset : expression.offsets)
+        {
+            address += offset.value;
+            for (std::size_t step = 0; step < offset.dereferences; ++step)
+            {
+                ++level;
+                if (validate)
+                {
+                    const auto valid = validate(address, options.pointer_size);
+                    if (valid && !*valid)
+                    {
+                        return std::unexpected(ResolveError {
+                            std::format("the address {:X} at level {} is not readable", address, level), level});
+                    }
+                }
+                const auto pointer = reader(address);
+                if (!pointer)
+                {
+                    return std::unexpected(ResolveError {
+                        std::format("cannot read pointer at level {}: {}", level, pointer.error()), level});
+                }
+                address = *pointer;
+            }
+        }
+        return address;
+    }
+
+}

@@ -1,0 +1,253 @@
+#pragma once
+
+#include <algorithm>
+#include <cstddef>
+#include <expected>
+#include <memory>
+#include <span>
+#include <string_view>
+#include <vector>
+
+#include "process/types.hpp"
+
+namespace slopkit::process
+{
+    class SessionBackend
+    {
+    public:
+        virtual ~SessionBackend() = default;
+
+        [[nodiscard]] virtual ProcessId        pid() const noexcept                = 0;
+        [[nodiscard]] virtual std::string_view plugin_id() const noexcept          = 0;
+        [[nodiscard]] virtual AccessMethod     advertised_methods() const noexcept = 0;
+        [[nodiscard]] virtual AccessMethod     last_method() const noexcept        = 0;
+
+        virtual std::expected<std::vector<std::byte>, AccessError> read(std::uint64_t address, std::size_t size) = 0;
+        virtual std::expected<std::size_t, AccessError>            write(std::uint64_t              address,
+                                                                         std::span<const std::byte> data)        = 0;
+
+        virtual std::expected<std::size_t, AccessError> read_into(std::uint64_t address, std::span<std::byte> buffer)
+        {
+            auto data = read(address, buffer.size());
+            if (!data)
+            {
+                return std::unexpected(data.error());
+            }
+            const std::size_t count = std::min<std::size_t>(data->size(), buffer.size());
+            std::copy_n(data->begin(), static_cast<std::ptrdiff_t>(count), buffer.begin());
+            return count;
+        }
+
+        virtual std::expected<std::vector<ModuleInfo>, AccessError> modules() = 0;
+        virtual std::expected<std::vector<ThreadInfo>, AccessError> threads() = 0;
+        virtual std::expected<std::vector<RegionInfo>, AccessError> regions() = 0;
+
+        [[nodiscard]] virtual bool supports_debug() const noexcept
+        {
+            return false;
+        }
+
+        [[nodiscard]] virtual bool supports_suspend() const noexcept
+        {
+            return false;
+        }
+
+        virtual std::expected<void, AccessError> suspend()
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
+
+        virtual std::expected<void, AccessError> resume()
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
+
+        [[nodiscard]] virtual bool supports_allocation() const noexcept
+        {
+            return false;
+        }
+
+        virtual std::expected<std::uint64_t, AccessError> allocate(std::size_t, std::uint64_t)
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
+
+        virtual std::expected<void, AccessError> free(std::uint64_t)
+        {
+            return std::unexpected(AccessError::unsupported);
+        }
+
+        virtual std::expected<bool, AccessError> validate(std::uint64_t address, std::size_t size)
+        {
+            const auto data = read(address, size);
+            return data.has_value() && data->size() >= size;
+        }
+    };
+
+    class Session
+    {
+    public:
+        Session() = default;
+
+        explicit Session(std::unique_ptr<SessionBackend> backend) : backend_(std::move(backend)) {}
+
+        ~Session() = default;
+
+        Session(Session&&) noexcept            = default;
+        Session& operator=(Session&&) noexcept = default;
+        Session(const Session&)                = delete;
+        Session& operator=(const Session&)     = delete;
+
+        [[nodiscard]] ProcessId pid() const noexcept
+        {
+            return backend_ ? backend_->pid() : 0;
+        }
+
+        [[nodiscard]] std::string_view plugin_id() const noexcept
+        {
+            return backend_ ? backend_->plugin_id() : std::string_view {};
+        }
+
+        [[nodiscard]] AccessMethod advertised_methods() const noexcept
+        {
+            return backend_ ? backend_->advertised_methods() : AccessMethod::none;
+        }
+
+        [[nodiscard]] AccessMethod last_method() const noexcept
+        {
+            return backend_ ? backend_->last_method() : AccessMethod::none;
+        }
+
+        std::expected<std::vector<std::byte>, AccessError> read(std::uint64_t address, std::size_t size)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->read(address, size);
+        }
+
+        std::expected<std::size_t, AccessError> write(std::uint64_t address, std::span<const std::byte> data)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->write(address, data);
+        }
+
+        std::expected<std::size_t, AccessError> read_into(std::uint64_t address, std::span<std::byte> buffer)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->read_into(address, buffer);
+        }
+
+        std::expected<std::vector<ModuleInfo>, AccessError> modules()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->modules();
+        }
+
+        std::expected<std::vector<ThreadInfo>, AccessError> threads()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->threads();
+        }
+
+        std::expected<std::vector<RegionInfo>, AccessError> regions()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->regions();
+        }
+
+        [[nodiscard]] bool supports_debug() const noexcept
+        {
+            return backend_ ? backend_->supports_debug() : false;
+        }
+
+        [[nodiscard]] bool supports_suspend() const noexcept
+        {
+            return backend_ ? backend_->supports_suspend() : false;
+        }
+
+        std::expected<void, AccessError> suspend()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->suspend();
+        }
+
+        std::expected<void, AccessError> resume()
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->resume();
+        }
+
+        [[nodiscard]] bool supports_allocation() const noexcept
+        {
+            return backend_ ? backend_->supports_allocation() : false;
+        }
+
+        std::expected<std::uint64_t, AccessError> allocate(std::size_t size, std::uint64_t near_address)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->allocate(size, near_address);
+        }
+
+        std::expected<void, AccessError> free(std::uint64_t address)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->free(address);
+        }
+
+        std::expected<bool, AccessError> validate(std::uint64_t address, std::size_t size)
+        {
+            if (!backend_)
+            {
+                return std::unexpected(AccessError::internal);
+            }
+            return backend_->validate(address, size);
+        }
+
+        [[nodiscard]] explicit operator bool() const noexcept
+        {
+            return backend_ != nullptr;
+        }
+
+    private:
+        std::unique_ptr<SessionBackend> backend_;
+    };
+
+    class ProcessAccess
+    {
+    public:
+        virtual ~ProcessAccess() = default;
+
+        virtual std::expected<std::vector<ProcessInfo>, AccessError> list_processes()                 = 0;
+        virtual std::expected<Session, AccessError> attach(ProcessId pid, std::string_view plugin_id) = 0;
+    };
+
+}

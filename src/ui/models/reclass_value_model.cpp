@@ -1,0 +1,1191 @@
+#include "ui/models/reclass_value_model.hpp"
+
+#include <algorithm>
+#include <cstring>
+#include <string>
+#include <utility>
+
+#include "reclass/value.hpp"
+#include "ui/text.hpp"
+
+namespace slopkit::ui::models
+{
+    namespace
+    {
+        constexpr auto kResolveInterval = std::chrono::seconds(1);
+
+        QString joined(const std::vector<reclass::ValuePart>& parts)
+        {
+            QString text;
+            for (const reclass::ValuePart& part : parts)
+            {
+                text += to_qstring(part.text);
+            }
+            return text;
+        }
+
+        // One byte as the number fields spell a number: bare or `0x`-prefixed
+        // hex, or `#` for decimal.
+        std::optional<std::byte> parse_byte_value(const QString& text)
+        {
+            QString digits = text.trimmed();
+            int     base   = 16;
+            if (digits.startsWith(QLatin1Char('#')))
+            {
+                digits.remove(0, 1);
+                base = 10;
+            }
+            else if (digits.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive))
+            {
+                digits.remove(0, 2);
+            }
+            if (digits.isEmpty())
+            {
+                return std::nullopt;
+            }
+
+            bool                     ok    = false;
+            const unsigned long long value = digits.toULongLong(&ok, base);
+            if (!ok || value > 0xFF)
+            {
+                return std::nullopt;
+            }
+            return static_cast<std::byte>(value);
+        }
+    }
+
+    ReclassValueModel::ReclassValueModel(process::AccessWorker&   worker,
+                                         process::AttachedTarget& target,
+                                         QObject*                 parent)
+        : QObject(parent), worker_(worker), target_(target)
+    {
+    }
+
+    void ReclassValueModel::set_structure(ReclassStructureModel& structure)
+    {
+        structure_ = &structure;
+        invalidate();
+    }
+
+    void ReclassValueModel::set_modules(std::vector<process::ModuleInfo> modules,
+                                        std::vector<process::RegionInfo> regions)
+    {
+        modules_.set_modules(modules);
+        regions_.set_regions(regions);
+        force_resolve_ = true;
+    }
+
+    void ReclassValueModel::invalidate()
+    {
+        cells_.invalidate();
+        force_resolve_ = true;
+    }
+
+    bool ReclassValueModel::attached() const
+    {
+        return target_.valid();
+    }
+
+    void ReclassValueModel::sync_classes()
+    {
+        if (structure_ == nullptr)
+        {
+            return;
+        }
+
+        std::vector<ClassAddress>          updated;
+        const std::vector<reclass::Class>& project_classes = structure_->project().classes();
+        updated.reserve(project_classes.size());
+        for (const reclass::Class& type : project_classes)
+        {
+            ClassAddress entry;
+            entry.id         = type.id;
+            entry.expression = type.address_expression;
+
+            const auto previous = std::ranges::find_if(classes_,
+                                                       [&](const ClassAddress& candidate)
+                                                       {
+                                                           return candidate.id == type.id;
+                                                       });
+            if (previous != classes_.end() && previous->expression == entry.expression)
+            {
+                entry.address = previous->address;
+            }
+            updated.push_back(std::move(entry));
+        }
+
+        if (updated != classes_)
+        {
+            classes_       = std::move(updated);
+            force_resolve_ = true;
+        }
+    }
+
+    const ReclassValueModel::ClassAddress* ReclassValueModel::class_address_at(std::size_t index) const
+    {
+        return index < classes_.size() ? &classes_[index] : nullptr;
+    }
+
+    std::optional<std::uint64_t> ReclassValueModel::class_address(std::size_t class_index)
+    {
+        sync_classes();
+        const ClassAddress* type = class_address_at(class_index);
+        return type == nullptr ? std::nullopt : type->address;
+    }
+
+    QString ReclassValueModel::short_address(std::uint64_t address) const
+    {
+        return QString::number(address, 16).toUpper();
+    }
+
+    QString ReclassValueModel::format_address(std::uint64_t address) const
+    {
+        return format_padded_hex(address);
+    }
+
+    bool ReclassValueModel::editable(const ReclassRow& row) const
+    {
+        if (!attached())
+        {
+            return false;
+        }
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || !reclass::is_editable(node->kind()))
+        {
+            return false;
+        }
+        return block_view(row.block).readable && node_address(row).has_value();
+    }
+
+    bool ReclassValueModel::byte_editable(const ReclassRow& row) const
+    {
+        if (!attached() || row.hidden)
+        {
+            return false;
+        }
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        // A hex node's whole value is not typed into, but one byte of its dump
+        // still is; every other kind that can be typed into is poked one byte at
+        // a time from the Ascii column.
+        if (!reclass::is_editable(node->kind()) && !reclass::is_hex_kind(node->kind()))
+        {
+            return false;
+        }
+        return block_view(row.block).readable && node_address(row).has_value();
+    }
+
+    bool ReclassValueModel::reading_editable(const ReclassRow& row, reclass::NodeReading reading) const
+    {
+        if (!attached() || row.hidden)
+        {
+            return false;
+        }
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        const std::vector<reclass::NodeReading> readings = reclass::node_readings(node->kind());
+        if (std::ranges::find(readings, reading) == readings.end())
+        {
+            return false;
+        }
+        return block_view(row.block).readable && node_address(row).has_value();
+    }
+
+    QString ReclassValueModel::reading_datatype(const ReclassRow& row, reclass::NodeReading reading) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return {};
+        }
+        const reclass::NodeKind                 kind     = node->kind();
+        const std::vector<reclass::NodeReading> readings = reclass::node_readings(kind);
+        if (std::ranges::find(readings, reading) == readings.end())
+        {
+            return {};
+        }
+
+        // Each reading is named by the kind that spells it: the float and the
+        // integer of the cell's own width, the raw bits by the cell's own kind.
+        switch (reading)
+        {
+        case reclass::NodeReading::floating:
+            return to_qstring(reclass::describe(kind == reclass::NodeKind::hex64 ? reclass::NodeKind::float64
+                                                                                 : reclass::NodeKind::float32));
+        case reclass::NodeReading::integer:
+            switch (reclass::kind_size(kind))
+            {
+            case 1:
+                return to_qstring(reclass::describe(reclass::NodeKind::int8));
+            case 2:
+                return to_qstring(reclass::describe(reclass::NodeKind::int16));
+            case 4:
+                return to_qstring(reclass::describe(reclass::NodeKind::int32));
+            default:
+                return to_qstring(reclass::describe(reclass::NodeKind::int64));
+            }
+        case reclass::NodeReading::raw:
+            return to_qstring(reclass::describe(kind));
+        }
+        return {};
+    }
+
+    bool ReclassValueModel::write_byte(const ReclassRow& row, std::size_t byte_offset, const QString& text)
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        if (!attached())
+        {
+            emit statusChanged(tr("Not attached; cannot write."), true);
+            return false;
+        }
+        if (!reclass::is_editable(node->kind()) && !reclass::is_hex_kind(node->kind()))
+        {
+            emit statusChanged(
+                tr("%1 values cannot be written from the grid.").arg(to_qstring(reclass::describe(node->kind()))),
+                true);
+            return false;
+        }
+        if (write_job_.has_value())
+        {
+            emit statusChanged(tr("A write is already in progress."), true);
+            return false;
+        }
+
+        const std::optional<std::uint64_t> address = node_address(row);
+        if (!address.has_value())
+        {
+            emit statusChanged(tr("The node's address is unknown; cannot write."), true);
+            return false;
+        }
+        if (!block_view(row.block).readable)
+        {
+            emit statusChanged(tr("The node's block was not read; cannot write."), true);
+            return false;
+        }
+        if (byte_offset >= node->value_size())
+        {
+            emit statusChanged(tr("Byte: the node is smaller than that byte."), true);
+            return false;
+        }
+
+        const std::optional<std::byte> value = parse_byte_value(text);
+        if (!value.has_value())
+        {
+            emit statusChanged(tr("Byte: expected one hex byte such as 1A."), true);
+            return false;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        write_job_                  = job_id;
+
+        const std::vector<std::byte>     written {*value};
+        const std::optional<CachedRange> range     = cached_range(row, byte_offset);
+        const bool                       submitted = worker_.submit_write(
+            job_id,
+            row.node_id,
+            *address + byte_offset,
+            written,
+            [this, job_id, range, written](process::JobResult&& result)
+            {
+                if (write_job_ != job_id)
+                {
+                    return;
+                }
+                write_job_.reset();
+
+                if (!std::holds_alternative<process::WriteResult>(result))
+                {
+                    emit statusChanged(tr("The write did not complete."), true);
+                    return;
+                }
+                if (const auto& complete = std::get<process::WriteResult>(result); complete.error.has_value())
+                {
+                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*complete.error))),
+                                       true);
+                    return;
+                }
+                if (range.has_value())
+                {
+                    patch_cached_bytes(*range, written);
+                    emit valuesChanged();
+                }
+                emit statusChanged(tr("Byte written."), false);
+            });
+        if (!submitted)
+        {
+            write_job_.reset();
+            emit statusChanged(tr("The write was refused."), true);
+            return false;
+        }
+        return true;
+    }
+
+    bool ReclassValueModel::write_value(const ReclassRow& row, const QString& text)
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        if (!attached())
+        {
+            emit statusChanged(tr("Not attached; cannot write."), true);
+            return false;
+        }
+        if (!reclass::is_editable(node->kind()))
+        {
+            emit statusChanged(
+                tr("%1 values cannot be written from the grid.").arg(to_qstring(reclass::describe(node->kind()))),
+                true);
+            return false;
+        }
+        if (write_job_.has_value())
+        {
+            emit statusChanged(tr("A write is already in progress."), true);
+            return false;
+        }
+
+        const std::optional<std::uint64_t> address = node_address(row);
+        if (!address.has_value())
+        {
+            emit statusChanged(tr("The node's address is unknown; cannot write."), true);
+            return false;
+        }
+        if (!block_view(row.block).readable)
+        {
+            emit statusChanged(tr("The node's block was not read; cannot write."), true);
+            return false;
+        }
+
+        const auto parsed = reclass::parse_node_value(node->kind(), text.toStdString(), node->hex);
+        if (!parsed)
+        {
+            emit statusChanged(tr("Value: %1").arg(to_qstring(parsed.error())), true);
+            return false;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        write_job_                  = job_id;
+
+        const std::vector<std::byte>     written   = *parsed;
+        const std::optional<CachedRange> range     = cached_range(row, 0);
+        const bool                       submitted = worker_.submit_write(
+            job_id,
+            row.node_id,
+            *address,
+            written,
+            [this, job_id, range, written](process::JobResult&& result)
+            {
+                if (write_job_ != job_id)
+                {
+                    return;
+                }
+                write_job_.reset();
+
+                if (!std::holds_alternative<process::WriteResult>(result))
+                {
+                    emit statusChanged(tr("The write did not complete."), true);
+                    return;
+                }
+                if (const auto& complete = std::get<process::WriteResult>(result); complete.error.has_value())
+                {
+                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*complete.error))),
+                                       true);
+                    return;
+                }
+                if (range.has_value())
+                {
+                    patch_cached_bytes(*range, written);
+                    emit valuesChanged();
+                }
+                emit statusChanged(tr("Value written."), false);
+            });
+        if (!submitted)
+        {
+            write_job_.reset();
+            emit statusChanged(tr("The write was refused."), true);
+            return false;
+        }
+        return true;
+    }
+
+    QString ReclassValueModel::reading_name(reclass::NodeReading reading)
+    {
+        switch (reading)
+        {
+        case reclass::NodeReading::floating:
+            return tr("Float");
+        case reclass::NodeReading::integer:
+            return tr("Integer");
+        case reclass::NodeReading::raw:
+            return tr("Bits");
+        }
+        return {};
+    }
+
+    bool ReclassValueModel::write_reading(const ReclassRow& row, reclass::NodeReading reading, const QString& text)
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return false;
+        }
+        if (!attached())
+        {
+            emit statusChanged(tr("Not attached; cannot write."), true);
+            return false;
+        }
+        if (!reading_editable(row, reading))
+        {
+            emit statusChanged(tr("The %1 reading cannot be written here.").arg(reading_name(reading)), true);
+            return false;
+        }
+        if (write_job_.has_value())
+        {
+            emit statusChanged(tr("A write is already in progress."), true);
+            return false;
+        }
+
+        const std::optional<std::uint64_t> address = node_address(row);
+        if (!address.has_value())
+        {
+            emit statusChanged(tr("The node's address is unknown; cannot write."), true);
+            return false;
+        }
+        if (!block_view(row.block).readable)
+        {
+            emit statusChanged(tr("The node's block was not read; cannot write."), true);
+            return false;
+        }
+
+        const auto parsed = reclass::parse_node_reading(
+            reading, node->kind(), text.toStdString(), reading == reclass::NodeReading::raw);
+        if (!parsed)
+        {
+            emit statusChanged(tr("%1: %2").arg(reading_name(reading), to_qstring(parsed.error())), true);
+            return false;
+        }
+
+        const process::JobId job_id = worker_.next_job_id();
+        write_job_                  = job_id;
+
+        const std::vector<std::byte>     written   = *parsed;
+        const std::optional<CachedRange> range     = cached_range(row, 0);
+        const bool                       submitted = worker_.submit_write(
+            job_id,
+            row.node_id,
+            *address,
+            written,
+            [this, job_id, range, written](process::JobResult&& result)
+            {
+                if (write_job_ != job_id)
+                {
+                    return;
+                }
+                write_job_.reset();
+
+                if (!std::holds_alternative<process::WriteResult>(result))
+                {
+                    emit statusChanged(tr("The write did not complete."), true);
+                    return;
+                }
+                if (const auto& complete = std::get<process::WriteResult>(result); complete.error.has_value())
+                {
+                    emit statusChanged(tr("Write failed: %1").arg(to_qstring(process::describe(*complete.error))),
+                                       true);
+                    return;
+                }
+                if (range.has_value())
+                {
+                    patch_cached_bytes(*range, written);
+                    emit valuesChanged();
+                }
+                emit statusChanged(tr("Reading written."), false);
+            });
+        if (!submitted)
+        {
+            write_job_.reset();
+            emit statusChanged(tr("The write was refused."), true);
+            return false;
+        }
+        return true;
+    }
+
+    std::optional<ReclassValueModel::CachedRange> ReclassValueModel::cached_range(const ReclassRow& row,
+                                                                                  std::size_t       byte_offset) const
+    {
+        if (structure_ == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (row.block >= blocks.size())
+        {
+            return std::nullopt;
+        }
+
+        // A class instance shares its parent's bytes, so the reading that owns
+        // them is the block the pass actually read.
+        std::size_t owner = row.block;
+        while (owner != 0 && !blocks[owner].via_pointer)
+        {
+            owner = blocks[owner].parent_block;
+        }
+
+        const BlockView view = block_view(row.block);
+        if (!view.readable)
+        {
+            return std::nullopt;
+        }
+        const std::size_t index = view.start + row.offset - blocks[row.block].base_offset + byte_offset;
+        if (index >= view.bytes.size())
+        {
+            return std::nullopt;
+        }
+        return CachedRange {.cell = owner, .index = index};
+    }
+
+    void ReclassValueModel::patch_cached_bytes(const CachedRange& range, std::span<const std::byte> bytes)
+    {
+        LiveCell& cell = cells_.cell(range.cell);
+        if (!cell.bytes.has_value() || cell.changed_bytes.size() != cell.bytes->size()
+            || range.index >= cell.bytes->size())
+        {
+            return;
+        }
+
+        const std::size_t count = std::min(bytes.size(), cell.bytes->size() - range.index);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            (*cell.bytes)[range.index + i]      = bytes[i];
+            cell.changed_bytes[range.index + i] = 1;
+        }
+        cell.changed = true;
+    }
+
+    void ReclassValueModel::maybe_resolve_addresses()
+    {
+        sync_classes();
+        if (structure_ == nullptr || !attached() || resolve_job_.has_value())
+        {
+            return;
+        }
+
+        std::vector<process::ResolveRequest> requests;
+        std::string                          signature;
+        for (const ClassAddress& type : classes_)
+        {
+            if (type.expression.empty())
+            {
+                continue;
+            }
+            requests.push_back(process::ResolveRequest {.key = type.id, .expression = type.expression});
+            signature += std::to_string(type.id);
+            signature += ':';
+            signature += type.expression;
+            signature += ';';
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (requests.empty())
+        {
+            resolve_signature_.clear();
+            force_resolve_ = false;
+            return;
+        }
+        if (!force_resolve_ && signature == resolve_signature_ && now - last_resolve_ < kResolveInterval)
+        {
+            return;
+        }
+        force_resolve_     = false;
+        resolve_signature_ = signature;
+        last_resolve_      = now;
+
+        const process::JobId id = worker_.next_job_id();
+        resolve_job_            = id;
+
+        const auto submitted_requests = requests;
+        const bool submitted          = worker_.submit_resolve_expressions(
+            id,
+            std::move(requests),
+            module_refs(modules_),
+            8,
+            [this, id, submitted_requests](process::JobResult&& result)
+            {
+                if (!resolve_job_.has_value() || *resolve_job_ != id)
+                {
+                    return;
+                }
+                resolve_job_.reset();
+
+                if (!std::holds_alternative<process::ResolveResult>(result))
+                {
+                    return;
+                }
+                const auto& resolved = std::get<process::ResolveResult>(result);
+                if (resolved.error.has_value())
+                {
+                    return;
+                }
+
+                bool changed = false;
+                for (const process::ResolveItemResult& item : resolved.items)
+                {
+                    const auto request = std::ranges::find_if(submitted_requests,
+                                                              [&](const process::ResolveRequest& candidate)
+                                                              {
+                                                                  return candidate.key == item.key;
+                                                              });
+                    if (request == submitted_requests.end())
+                    {
+                        continue;
+                    }
+
+                    const auto type = std::ranges::find_if(classes_,
+                                                           [&](const ClassAddress& candidate)
+                                                           {
+                                                               return candidate.id == item.key;
+                                                           });
+                    if (type == classes_.end() || type->expression != request->expression)
+                    {
+                        continue;
+                    }
+                    if (type->address != item.address)
+                    {
+                        type->address = item.address;
+                        changed       = true;
+                    }
+                }
+
+                if (changed)
+                {
+                    emit addressesChanged();
+                    emit valuesChanged();
+                }
+            });
+        if (!submitted)
+        {
+            resolve_job_.reset();
+        }
+    }
+
+    std::span<const std::byte> ReclassValueModel::block_bytes(std::size_t block) const
+    {
+        const LiveCell* cell = cells_.at(block);
+        if (cell == nullptr || !cell->has_reading || !cell->readable || !cell->bytes.has_value())
+        {
+            return {};
+        }
+        // Bytes read at another base describe whatever stood there before: the
+        // block is unread until the pass that follows a move reads it.
+        const std::optional<std::uint64_t> base = block_base(block);
+        if (!base.has_value() || *base != cell->identity)
+        {
+            return {};
+        }
+        return *cell->bytes;
+    }
+
+    std::span<const std::uint8_t> ReclassValueModel::block_changed(std::size_t block) const
+    {
+        const LiveCell* cell = cells_.at(block);
+        if (cell == nullptr || !cell->has_reading || !cell->readable)
+        {
+            return {};
+        }
+        const std::optional<std::uint64_t> base = block_base(block);
+        if (!base.has_value() || *base != cell->identity)
+        {
+            return {};
+        }
+        return cell->changed_bytes;
+    }
+
+    std::optional<std::uint64_t> ReclassValueModel::block_base(std::size_t index) const
+    {
+        if (structure_ == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (index >= blocks.size())
+        {
+            return std::nullopt;
+        }
+
+        const ReclassBlock& block = blocks[index];
+        if (index == 0)
+        {
+            const ClassAddress* type = class_address_at(block.class_index);
+            return type == nullptr ? std::nullopt : type->address;
+        }
+
+        const std::size_t start  = block.base_offset - blocks[block.parent_block].base_offset;
+        const auto        parent = block_base(block.parent_block);
+        if (!parent.has_value())
+        {
+            return std::nullopt;
+        }
+        if (!block.via_pointer)
+        {
+            return *parent + start;
+        }
+
+        // A pointer block sits wherever the pointer's own bytes point, which
+        // are read from the parent's previous pass. A class array's element
+        // sits one stride further on for each element the index has walked.
+        const std::span<const std::byte> bytes = block_bytes(block.parent_block);
+        if (bytes.size() < start + 8)
+        {
+            return std::nullopt;
+        }
+        std::uint64_t target = 0;
+        std::memcpy(&target, bytes.data() + start, sizeof(target));
+        return target == 0 ? std::nullopt : std::optional<std::uint64_t> {target + block.element_offset};
+    }
+
+    ReclassValueModel::BlockView ReclassValueModel::block_view(std::size_t index) const
+    {
+        const auto base = block_base(index);
+        if (!base.has_value() || structure_ == nullptr)
+        {
+            return {};
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (index == 0)
+        {
+            const std::span<const std::byte> bytes = block_bytes(0);
+            return BlockView {
+                .bytes = bytes, .changed = block_changed(0), .start = 0, .base = *base, .readable = !bytes.empty()};
+        }
+
+        const ReclassBlock& block = blocks[index];
+        const std::size_t   start = block.base_offset - blocks[block.parent_block].base_offset;
+
+        if (block.via_pointer)
+        {
+            const std::span<const std::byte> bytes = block_bytes(index);
+            return BlockView {
+                .bytes = bytes, .changed = block_changed(index), .start = 0, .base = *base, .readable = !bytes.empty()};
+        }
+
+        // A class instance lives inside its parent's memory.
+        const BlockView parent = block_view(block.parent_block);
+        if (!parent.readable || parent.start + start >= parent.bytes.size())
+        {
+            return BlockView {.bytes = {}, .changed = {}, .start = 0, .base = *base, .readable = false};
+        }
+        return BlockView {.bytes    = parent.bytes,
+                          .changed  = parent.changed,
+                          .start    = parent.start + start,
+                          .base     = *base,
+                          .readable = true};
+    }
+
+    std::vector<LiveRequest> ReclassValueModel::requests()
+    {
+        sync_classes();
+        if (structure_ == nullptr || !attached())
+        {
+            cells_.clear();
+            return {};
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (blocks.empty())
+        {
+            cells_.clear();
+            return {};
+        }
+
+        return cells_.request(blocks.size(),
+                              [this](std::size_t block)
+                              {
+                                  // A candidate that is not readable asks for no
+                                  // read at all, whatever its address fields say.
+                                  const LiveCandidate skip {.address = 0, .size = 0, .identity = 0, .readable = false};
+
+                                  const std::vector<ReclassBlock>& current = structure_->blocks();
+                                  if (block >= current.size())
+                                  {
+                                      return skip;
+                                  }
+
+                                  const ReclassBlock& info = current[block];
+                                  // A class instance shares its parent's bytes, so
+                                  // only the class itself and the pointer blocks
+                                  // are read.
+                                  if (info.size == 0 || (!info.via_pointer && block != 0))
+                                  {
+                                      return skip;
+                                  }
+
+                                  const auto base = block_base(block);
+                                  if (!base.has_value())
+                                  {
+                                      return skip;
+                                  }
+
+                                  return LiveCandidate {
+                                      .address = *base, .size = info.size, .identity = *base, .readable = true};
+                              });
+    }
+
+    void ReclassValueModel::apply_readings(std::span<const LiveReading> readings)
+    {
+        if (structure_ == nullptr)
+        {
+            return;
+        }
+        cells_.apply(
+            readings,
+            [this](std::size_t block, std::uint64_t identity)
+            {
+                // The block still sits where it did when it was asked
+                // for; a pointer that moved drops its stale reading.
+                const auto base = block_base(block);
+                return base.has_value() && *base == identity;
+            },
+            [](std::size_t, std::size_t) {});
+        emit valuesChanged();
+    }
+
+    const reclass::Node* ReclassValueModel::node_of(const ReclassRow& row) const
+    {
+        if (structure_ == nullptr)
+        {
+            return nullptr;
+        }
+        return row.node;
+    }
+
+    std::optional<std::uint64_t> ReclassValueModel::node_address(const ReclassRow& row) const
+    {
+        if (structure_ == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (row.block >= blocks.size())
+        {
+            return std::nullopt;
+        }
+        const auto base = block_base(row.block);
+        if (!base.has_value())
+        {
+            return std::nullopt;
+        }
+        return *base + (row.offset - blocks[row.block].base_offset);
+    }
+
+    std::span<const std::byte> ReclassValueModel::node_bytes(const ReclassRow& row) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || structure_ == nullptr)
+        {
+            return {};
+        }
+
+        const std::size_t size = node->value_size();
+        const BlockView   view = block_view(row.block);
+        if (size == 0 || !view.readable)
+        {
+            return {};
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        const std::size_t                index  = view.start + row.offset - blocks[row.block].base_offset;
+        if (index + size > view.bytes.size())
+        {
+            return {};
+        }
+        return view.bytes.subspan(index, size);
+    }
+
+    std::span<const std::uint8_t> ReclassValueModel::node_changed_bytes(const ReclassRow& row) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || structure_ == nullptr)
+        {
+            return {};
+        }
+
+        const std::size_t size = node->value_size();
+        const BlockView   view = block_view(row.block);
+        if (size == 0 || !view.readable || view.changed.size() != view.bytes.size())
+        {
+            return {};
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        const std::size_t                index  = view.start + row.offset - blocks[row.block].base_offset;
+        if (index + size > view.changed.size())
+        {
+            return {};
+        }
+        return view.changed.subspan(index, size);
+    }
+
+    bool ReclassValueModel::inside_region(std::uint64_t address) const
+    {
+        const process::RegionInfo* region = regions_.containing(address);
+        return region != nullptr && region->readable;
+    }
+
+    QString ReclassValueModel::address_text(const ReclassRow& row) const
+    {
+        if (!attached())
+        {
+            return tr("Attach to a target first.");
+        }
+        if (structure_ == nullptr)
+        {
+            return {};
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (row.block >= blocks.size())
+        {
+            return {};
+        }
+        if (row.block == 0)
+        {
+            const ClassAddress* type = class_address_at(blocks[0].class_index);
+            if (type == nullptr || !type->address.has_value())
+            {
+                return tr("not resolved yet");
+            }
+        }
+
+        const auto address = node_address(row);
+        if (!address.has_value())
+        {
+            return QStringLiteral("?");
+        }
+        return short_address(*address);
+    }
+
+    std::vector<reclass::ValuePart> ReclassValueModel::value_parts(const ReclassRow& row) const
+    {
+        if (!attached())
+        {
+            return {
+                {"?", false}
+            };
+        }
+
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || node->value_size() == 0)
+        {
+            return {};
+        }
+
+        const std::span<const std::byte> bytes = node_bytes(row);
+        if (bytes.empty())
+        {
+            return {
+                {"?", false}
+            };
+        }
+
+        // A hex cell's readings are the hints field's, so its value cell draws
+        // its own bytes and nothing more.
+        if (reclass::is_hex_kind(node->kind()))
+        {
+            std::vector<reclass::ValuePart> parts = reclass::format_node_value_parts(node->kind(), bytes, node->hex);
+            std::erase_if(parts,
+                          [](const reclass::ValuePart& part)
+                          {
+                              return part.reading;
+                          });
+            return parts;
+        }
+
+        // A pointer node's address is the pointer field's, and a container or a
+        // function draws no value of its own.
+        if (reclass::is_pointer_kind(node->kind()))
+        {
+            return {};
+        }
+        const std::string value = reclass::format_node_value_text(*node, structure_->project(), bytes);
+        if (value.empty())
+        {
+            return {};
+        }
+        return {
+            {.text = "= ", .label = true},
+            {.text = value}
+        };
+    }
+
+    std::vector<ReclassValueModel::HintRun> ReclassValueModel::hint_parts(const ReclassRow& row) const
+    {
+        if (!attached())
+        {
+            return {};
+        }
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr)
+        {
+            return {};
+        }
+
+        const std::span<const std::byte> bytes = node_bytes(row);
+        std::vector<HintRun>             runs;
+        for (const reclass::NodeReading reading : reclass::node_readings(node->kind()))
+        {
+            const std::string text = reclass::format_node_reading(reading, node->kind(), bytes);
+            if (text.empty())
+            {
+                continue;
+            }
+            runs.push_back({.reading = reading, .text = QLatin1Char('(') + to_qstring(text) + QLatin1Char(')')});
+        }
+        return runs;
+    }
+
+    QString ReclassValueModel::hint_text(const ReclassRow& row) const
+    {
+        QString text;
+        for (const HintRun& run : hint_parts(row))
+        {
+            if (!text.isEmpty())
+            {
+                text += QLatin1Char(' ');
+            }
+            text += run.text;
+        }
+        return text;
+    }
+
+    QString ReclassValueModel::pointer_text(const ReclassRow& row) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || !attached())
+        {
+            return {};
+        }
+
+        // Only a pointer or a wide enough hex cell can hold an address at all.
+        const reclass::NodeKind kind = node->kind();
+        const std::size_t       size = reclass::kind_size(kind);
+        if (size < 4 || (!reclass::is_pointer_kind(kind) && !reclass::is_hex_kind(kind)))
+        {
+            return {};
+        }
+
+        const std::span<const std::byte> bytes = node_bytes(row);
+        if (bytes.size() < size)
+        {
+            return {};
+        }
+
+        // The tag names the kind of memory the address lands in, so a heap byte
+        // reads differently from an image address; an address in no readable
+        // region is no pointer at all.
+        const std::uint64_t        address = reclass::read_node_value(kind, bytes);
+        const process::RegionInfo* region  = regions_.containing(address);
+        if (region == nullptr || !region->readable)
+        {
+            return {};
+        }
+        return QStringLiteral("-> <") + to_qstring(region_label(*region)) + QStringLiteral(">")
+             + short_address(address);
+    }
+
+    QString ReclassValueModel::value_text(const ReclassRow& row) const
+    {
+        return joined(value_parts(row));
+    }
+
+    QString ReclassValueModel::ascii_text(const ReclassRow& row) const
+    {
+        return ascii_full_text(row).left(static_cast<qsizetype>(kAsciiMaxChars));
+    }
+
+    QString ReclassValueModel::ascii_full_text(const ReclassRow& row) const
+    {
+        if (!attached())
+        {
+            return QStringLiteral("?");
+        }
+
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || node->value_size() == 0)
+        {
+            return {};
+        }
+
+        const std::span<const std::byte> bytes = node_bytes(row);
+        if (bytes.empty())
+        {
+            return QStringLiteral("?");
+        }
+
+        QString text;
+        text.reserve(static_cast<qsizetype>(bytes.size()));
+        for (const std::byte byte : bytes)
+        {
+            const int value = std::to_integer<int>(byte);
+            text.append(value >= 0x20 && value < 0x7F ? QChar(value) : QLatin1Char('.'));
+        }
+        return text;
+    }
+
+    QString ReclassValueModel::edit_text(const ReclassRow& row) const
+    {
+        const reclass::Node* node = node_of(row);
+        if (node == nullptr || !attached())
+        {
+            return {};
+        }
+
+        const std::span<const std::byte> bytes = node_bytes(row);
+        if (bytes.empty())
+        {
+            return {};
+        }
+        return to_qstring(reclass::format_node_value(node->kind(), bytes, node->hex));
+    }
+
+    ReclassValueModel::LiveState ReclassValueModel::live_state(const ReclassRow& row) const
+    {
+        if (structure_ == nullptr || !attached())
+        {
+            return LiveState::none;
+        }
+
+        const std::vector<ReclassBlock>& blocks = structure_->blocks();
+        if (row.block >= blocks.size())
+        {
+            return LiveState::none;
+        }
+
+        // A nested class instance shares its parent's bytes, so the block that
+        // was actually read decides for the whole chain.
+        std::size_t block = row.block;
+        while (block != 0 && !blocks[block].via_pointer)
+        {
+            block = blocks[block].parent_block;
+        }
+
+        const LiveCell* cell = cells_.at(block);
+        if (cell == nullptr || !cell->has_reading)
+        {
+            return LiveState::none;
+        }
+        return cell->readable ? LiveState::readable : LiveState::unreadable;
+    }
+
+}

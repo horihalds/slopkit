@@ -1,0 +1,284 @@
+# Architecture Map
+
+Fast-lookup map of the repo: where components live and the conventions a
+newcomer would otherwise get wrong. `AGENTS.md` routes each kind of task to the
+document that owns it; read this map second, and only search the codebase broadly
+when it does not answer where something is. `AGENTS.md` also routes to the sibling
+docs that hold the detail behind this map.
+
+## 1. Directory map
+
+| Directory | Responsibility |
+| --- | --- |
+| `(repo root)` | Top-level build entry point: `CMakeLists.txt` |
+| `src/analysis` | Target-free module analysis (referenced-string and code-target sweeps) over an injected read seam |
+| `src/app` | Process entry, CLI/headless modes, single-instance handoff, sandbox launch |
+| `src/core` | Shared logging (`log.hpp`, `log_categories.hpp`) and version string |
+| `src/debug` | Debugger core: session controller (split over `controller*.cpp`), worker, backends, breakpoints, step-over, access watch, code filter |
+| `src/disasm` | Zydis-backed instruction decoding and assembling |
+| `src/expr` | Address expression parsing (`base + offset...` and `[ ... ]` pointer chains) and module/symbol/literal resolution with an injected per-level validator |
+| `src/platform/linux` | Linux primitives (ptrace, procfs, memory, modules, desktop entries, Wine) shared with plugins and the trainer's Linux target backend |
+| `src/plugin` | Plugin C ABI, host-side facade and loader/discovery |
+| `src/plugins/{support,linux_proc,wine_proton,mpfshost}` | Shared plugin ABI plumbing and the three bundled plugins; `wine_proton/agent/` holds the cross-compiled resident agent DLL, its injector and the shared protocol header |
+| `src/process` | Access seam, `AccessWorker`, plugin access, attachment metadata, shared types |
+| `src/reclass` | Target-free ReClass structure model: node kinds, the derived layout, the value codec, the dissect ladder and the `.skt` member text |
+| `src/sandbox` | Standalone practice-target binary (`slopkit-sandbox`) |
+| `src/scan` | Multithreaded value-scan engine, matcher, sources, value types |
+| `src/script` | Lua scripting engine: a sol2 state, the `mem` and `structs` APIs, the type-token codec, the process-wide symbol registry and the hook-script generator |
+| `src/table` | Address table model, `.skt` ZIP archive serializer, per-table settings |
+| `src/trainer` | Qt-free trainer generation: the payload format and the generator that appends a table's value entries, scripts and ReClass classes to a copy of a runtime template |
+| `src/trainer/runtime` | Self-contained trainer and its Lua script host, with a platform window when a display is available — Qt 6 on Linux, native Win32 in the cross-compiled Windows template — and the same rows printed as text without one; the window's Qt-free log feed (`gui/log_feed`) and the Qt pane (`gui/log_pane`) mirror `info`-and-above records on both targets |
+| `src/ui` | Qt main window and shared UI infrastructure |
+| `src/ui/components` | Reusable widgets/views (memory view, disassembly view, ReClass node grid, ReClass project tree, script editor, input boxes, message box, window geometry keeper, window centerer) |
+| `src/ui/dialogs` | Modal/top-level dialogs |
+| `src/ui/models` | Qt item models for tables and lists |
+| `src/ui/panels` | Docked panes (address list, found list, scanner, debugger), the window-wide companion bar, the one-line debug control bar, the Memory Viewer's menu bar and the shared debugger command enablement; the address list's and the found list's multi-row selection, the address list's shared `Del` action, its multi-row delete and the two surfaces' multi-value `Change value…` live here |
+| `tests/analysis` | Tests for `src/analysis` |
+| `tests/app` | Tests for `src/app` |
+| `tests/core` | Tests for `src/core` |
+| `tests/debug` | Tests for `src/debug` (incl. the practice target) |
+| `tests/disasm` | Tests for `src/disasm` |
+| `tests/expr` | Tests for `src/expr` |
+| `tests/fixtures` | Plugin fixture libraries used by loader tests (never part of the app) |
+| `tests/platform/linux` | Tests for `src/platform/linux` |
+| `tests/plugin` | Plugin host + bundled plugin tests |
+| `tests/process` | Tests for `src/process` |
+| `tests/reclass` | Tests for `src/reclass` |
+| `tests/sandbox` | Tests for `src/sandbox` |
+| `tests/scan` | Tests for `src/scan` |
+| `tests/script` | Tests for `src/script` |
+| `tests/support` | Shared test helpers (`fake_process`, `fake_debug`, `access_worker_helpers.hpp`, `sandbox_helpers.hpp`, `scan_helpers.hpp`, `script_helpers.hpp`, `memory_view_helpers.hpp`, `reclass_helpers.hpp`, `reclass_live_helpers.hpp`, `ui_helpers.hpp`, `test_main.cpp`) |
+| `tests/table` | Tests for `src/table` |
+| `tests/trainer` | Tests for `src/trainer`, including the row core, the Qt model and window run offscreen, and the built trainer driven against a live process |
+| `tests/ui` | Window/flow tests (the four subdirectories have their own rows) |
+| `tests/ui/components` | Tests for `src/ui/components` |
+| `tests/ui/dialogs` | Tests for `src/ui/dialogs` |
+| `tests/ui/models` | Tests for `src/ui/models` |
+| `tests/ui/panels` | Tests for `src/ui/panels` |
+| `assets/` | Desktop/MIME files (`slopkit.desktop.in`, `application-x-slopkit-table.xml`), `icons/*.svg` (app icon + action glyphs), `icons/datatypes/*.svg` (node-kind glyphs), `fonts/*.ttf` with `OFL.txt` |
+| `cmake/` | Build helpers `EmbedIcon.cmake` (rasterises icons/glyphs), `EmbedFont.cmake` (embeds fonts), `StripDebugInfo.cmake` (strips installed binaries and installs `.debug` sidecars), `Agent.cmake` (cross-compiles the Wine resident agent with mingw-w64, or falls back to a prebuilt pair), `Dependencies.cmake` (fetches sol2 and Zydis from their repositories at pinned revisions and Lua from the official 5.4.7 release tarball pinned by its SHA-256, for every build), `UiCommonSources.cmake` (the `slopkit_ui_common` source list), `TrainerSources.cmake` (the trainer source lists, including the Win32 window that replaces the Qt one in the Windows template) and `Trainer.cmake` (drives the Windows trainer cross-build, or warns and leaves the Linux-only build working) |
+| `docs/` | Prose: `ARCHITECTURE.md`, this map, `TESTING.md`, `UI_DESIGN.md`, `LOGGING.md`, `SCRIPTING.md`, `WINE_AGENT.md`, `KNOWN_ISSUES.md` |
+| `reference/` | Read-only reference material — never modified |
+| `tools` | Repo dev tooling: `configure.sh`, `build.sh`, `install.sh`, `test.sh`, `verify.sh`, `docs-check.sh` — see `docs/TESTING.md` |
+
+## 2. Module / component table
+
+| Component | Purpose | Key headers / classes | Tests | Depends on |
+| --- | --- | --- | --- | --- |
+| app | Entry point, CLI modes, instance handoff, sandbox launch | `app/cli.hpp` (`run`), `instance.hpp`, `instance_server.hpp`, `sandbox.hpp` | `tests/app/*` | core, plugin, process, ui, platform |
+| core | Logging sinks/categories and version | `core/log.hpp`, `log_categories.hpp`, `version.hpp` | `tests/core/*` | — |
+| plugin | Plugin C ABI, host facade, loader | `plugin/plugin_api.h`, `plugin.hpp` (`Plugin`), `plugin_host.hpp` (`PluginHost`) | `tests/plugin/*` | process, core |
+| process | Access seam, worker (incl. the referenced-string and code-target analysis jobs), attachment metadata (including the plugin's debug capability) | `process/access.hpp` (`ProcessAccess`), `access_worker.hpp` (`AccessWorker`, `StringRefsResult`, `CodeTargetsResult`), `attachment.hpp` (`AttachedTarget`), `plugin_access.hpp`, `types.hpp` (`ModuleInfo`, `owning_module_name`) | `tests/process/*` | plugin, analysis |
+| scan | Multithreaded value scanner and byte-pattern matcher | `scan/engine.hpp` (`ScanEngine`), `results.hpp` (`ScanHit`, `ScanResults`), `matcher.hpp`, `pattern.hpp` (`BytePattern`), `source.hpp`, `value.hpp`, `types.hpp` | `tests/scan/*` | process, expr |
+| table | Address table (it also owns the ReClass class project), `.skt` archive serialization, table settings | `table/address_table.hpp`, `serializer.hpp`, `table_zip.hpp`, `entry_name.hpp`, `table_settings.hpp` | `tests/table/*` | expr, scan, reclass, libzip |
+| expr | Address expression parsing (`base + offset...` and bracket pointer chains) and resolution with an injected per-level validator; a dependency-free leaf (it includes nothing outside `expr/`) | `expr/expression.hpp`, `expr/resolver.hpp` | `tests/expr/*` | — |
+| reclass | ReClass structure model: the polymorphic `Node` hierarchy and its kinds, the derived class layout, the value codec, the dissect ladder and the archive member text; a dependency-free leaf (it includes nothing outside `reclass/`) | `reclass/nodes/{node,number,hex,text,vector,container,function}.hpp` (`Node`, `NodePtr`, `make_node`), `reclass/node.hpp` (`NodeKind`), `reclass/node_menu.hpp` (`node_menu_groups`, `node_menu_label`), `project.hpp`, `enum.hpp` (`EnumDescription`, `EnumValue`), `value.hpp`, `edit.hpp`, `dissect.hpp`, `serialize.hpp`, `cpp_header.hpp` (`cpp_header`) | `tests/reclass/*` | — |
+| trainer | Trainer payload format and the Qt-free generator: template discovery, the per-target copy-and-append write path and the reported script-entry count | `trainer/payload.hpp` (`Payload`, `PayloadEntry`, `PayloadScript`, `PayloadClass`, `TargetOs`, `encode_payload`, `decode_payload`), `trainer/generate.hpp` (`Request`, `Result`, `generate`, `template_directories`, `output_name`) | `tests/trainer/generate_test.cpp` | table, app, reclass, core |
+| trainer/runtime | Self-contained trainer: attach by pid or name (a Wine game by the guest executable's name, with the guest's own pointer width), module list of basenames and regions named after the module that owns their address, memory read/write, expression resolution, the refresh loop, the Lua script host (allocating a fresh mapping where the backend can, else a cave in the target's own writable or executable memory), the row core every front-end renders, the log pane both windows feed from one sink, the platform window with its session worker and the optional `--verbose` log it writes beside itself | `trainer/runtime/main.cpp`, `action.hpp` (`Action`, `ActionKind`), `rows.hpp` (`RowView`, `build_rows`, `parse_value_text`), `target.hpp` (`Target`, `attach`), `target_linux.cpp`, `target_windows.cpp`, `payload_reader.hpp` (`load_own_payload`), `resolve.hpp` (`Resolver`, `LiveEntry`), `console.hpp` (`render_rows`, `render_help`), `scripts.hpp` (`ScriptHost`, `ScriptState`), `caves.hpp` (`CaveAllocator`), `logging.hpp` (`verbose_log_path`, `enable_verbose_logging`), `gui/window.hpp` (`Perform`, `Step`, `Pid`, `Options`, `run`, `window_available`), `gui/window_qt.hpp` (`TrainerWindow`), `gui/window_win32.cpp` (the Win32 window and its `SessionThread`), `gui/rows_model.hpp` (`RowsModel`), `gui/session_worker.hpp` (`SessionWorker`), `gui/log_feed.hpp` (`LogFeed`, `log_line`), `gui/log_pane.hpp` (`LogPane`) | `tests/trainer/rows_test.cpp`, `tests/trainer/gui_test.cpp`, `tests/trainer/console_test.cpp`, `tests/trainer/log_feed_test.cpp`, `tests/trainer/scripts_test.cpp`, `tests/trainer/target_test.cpp`, `tests/trainer/caves_test.cpp`, `tests/trainer/logging_test.cpp`, `tests/trainer/driver_test.cpp` | platform, expr, scan, core, script, reclass, ui_common and Qt6 on Linux only |
+| disasm | Zydis decode/assemble | `disasm/decoder.hpp`, `disasm/assembler.hpp` | `tests/disasm/*` | Zydis |
+| analysis | Module sweeps over an injected read seam: referenced strings and directly encoded branch targets | `analysis/module_range.hpp` (`ReadIntoFn`, `ModuleRange`, `RegionReason`, `ExcludedRegion`), `analysis/string_references.hpp` (`find_string_references`, `StringReference`, `StringScanResult`, `StringScanReport`, `describe`), `analysis/code_targets.hpp` (`find_code_targets`, `CodeTarget`, `CodeTargetKind`, `CodeTargetKinds`, `CodeTargetScanResult`, `CodeTargetScanReport`, `describe`) | `tests/analysis/*` | disasm, process/types, core |
+| script | Lua scripting engine over the fetched Lua and sol2 (the trainer links it verbatim) | `script/engine.hpp` (`Engine`, `run_lifecycle`, `run_update`, `UpdateResult`, `check_syntax`), `script/types.hpp` (`RunResult`, `LifecycleResult`, `SymbolApi`), `script/symbols.hpp` (`SymbolTable`), `script/codec.hpp`, `script/hook_script.hpp` (`HookTarget`, `build_hook`, `render`), `script/hook.hpp` (`Spec`, `hook::install`, `hook::remove`), `script/api_catalog.hpp` (`api_catalog`, `ApiEntry`, `lua_standard_globals`, `lua_library_members`), `script/structs.hpp` (`install_structs`, `StructsContext`), `script/structs_view.hpp` (`build_class_index`, `class_index_of`, `ClassIndex`, `ClassDef`, `FieldDef`, `FieldValue`, `read_field`, `write_field`, `ByteSource`, `BufferSource`) | `tests/script/*` | Lua, sol2, scan, expr, disasm, reclass |
+| debug | Debugger core: controller, worker, backends, breakpoints | `debug/controller.hpp` (`Controller`; `controller*.cpp` holds the per-concern definitions), `worker.hpp`, `backend.hpp`, `plugin_backend.hpp`, `breakpoints.hpp`, `step_over.hpp`, `access_watch.hpp`, `code_filter.hpp` (`CodeFilter`, `CodeFilterCandidate`) | `tests/debug/*` | process, plugin, platform |
+| platform/linux | Linux primitives shared with plugins | `platform/linux/debug_session.hpp` (`DebugSession`), `ptrace.hpp`, `procfs.hpp`, `memory.hpp`, `process_control.hpp`, `module_entry.hpp`, `proc_text.hpp`, `desktop_entry.hpp`, `wine.hpp` | `tests/platform/linux/*` | core |
+| sandbox | Practice-target window, values and the `slopkit-sandbox` entry point | `sandbox/main.cpp`, `sandbox/sandbox_window.hpp`, `sandbox_values.hpp` | `tests/sandbox/*` | ui/components, core |
+| ui | Main window, settings, live values, table file, theme/fonts | `ui/main_window.hpp` (`MainWindow`), `app.hpp`, `settings.hpp` (per-window geometries), `platform.hpp` (`preferred_platform_spec`), `text.hpp` (`to_qstring`), `live_values.hpp` (`LiveSurface`, `LiveTicker`), `script_updates.hpp` (`ScriptUpdates`), `debug_session.hpp`, `access_watch.hpp`, `completion_notifier.hpp`, `log_notifier.hpp`, `theme.hpp`, `datatype_palette.hpp` (`datatype_icon_name`, `datatype_colour`), `fonts.hpp`, `table_file.hpp`, `address_format.hpp` | `tests/ui/*` | process, plugin, table, scan, debug |
+| ui/components | Reusable widgets/views/delegates | `ui/components/memory_view*.hpp` (view + document), `disassembly_*.hpp` (view + document), `script_editor.hpp` (`ScriptEditor`, `set_class_fields`), `script_highlighter.hpp` (`ScriptHighlighter`), `script_context.hpp` (`identifier_at`, `enclosing_call`, `document_names`, `instance_class`, `expression_instance_class`), `script_completion.hpp` (`ScriptCompletionPopup`, `ScriptCompletionModel`), `navigation_history.hpp`, `neutral_scroller.hpp`, `input_box.hpp`, `message_box.hpp`, `window_geometry.hpp` (`WindowGeometryKeeper`), `window_centerer.hpp` (`WindowCenterer`), `widgets.hpp` (`ActionIcon`, `datatype_icon`), `code_patch.hpp`, `address_table_view.hpp` (`AddressTableView`), `indent_delegate.hpp` (`IndentDelegate`, `kDepthRole`), `validating_delegate.hpp` (`ValidatingDelegate`: a cell editor that keeps the editor open while the model refuses its text), `elided_tooltip_delegate.hpp`, `reclass_view.hpp` (`ReClassView`), `project_view.hpp` (`ProjectView`), `row_menu.hpp`, `referenced_strings.hpp` (`ReferencedStringTable`) | `tests/ui/components/*` | ui, disasm |
+| ui/dialogs | Dialog windows | `ui/dialogs/*` (`ProcessListDialog`, `AddAddressDialog`, `AddScriptDialog`, `BreakpointsDialog`, `MemoryViewerDialog`, `ReClassDialog`, `SettingsDialog`, `TableSettingsDialog`, `TableConflict`, `LogDialog`, `AccessWatchDialog`, `CodeFilterDialog`, `ModuleChooserDialog`, `ReferencedStringsDialog`, `CppExportDialog`, `GenerateTrainerDialog`) | `tests/ui/dialogs/*` | ui, process, debug, script, reclass, trainer |
+| ui/models | Qt item models | `ui/models/{address_table,found_results,process_list,breakpoint,register,call_stack}_model.hpp`, `watch_hits_model.hpp`, `instruction_access_model.hpp`, `code_filter_model.hpp`, `referenced_string_model.hpp`, `reclass_structure_model.hpp`, `reclass_value_model.hpp`, `reclass_proxy_model.hpp`, `live_cells.hpp` | `tests/ui/models/*` | table, debug, reclass, ui/components |
+| ui/panels | Docked panes (the address list's extended selection, its shared `Del` action and the multi-row delete included) | `ui/panels/{address_list,found_list,scanner,debugger}_panel.hpp`, `ui/panels/debug_controls.hpp`, `ui/panels/debug_enablement.hpp`, `ui/panels/viewer_menu.hpp` | `tests/ui/panels/*` | ui/models, ui/components, debug |
+| plugins/support | Shared bundled-plugin ABI plumbing, including the optional per-plugin `allocate`/`free`/`close_session` hooks, the `regions`/`modules`/`range_is_readable`/`read`/`write` introspection hooks and the optional `debug_excluded_threads` hook that keeps a plugin's own in-target threads running through a debug attach | `plugins/support/plugin_support.hpp` (`PluginProfile`, `entry<Profile>`), `session.hpp`, `allocate.hpp` (ABI 1.6 nearest-free-gap `mmap`/`munmap`), `validate.hpp` (ABI 1.7 chunked readability probe), `memory.hpp` (`AccessFault`, `MemoryResult`, the `MemAccess` error/method mapping) | via the bundled plugins (shared helpers in `tests/support`) | plugin, platform |
+| plugins/linux_proc | Bundled Linux process plugin (profile + entry) | `plugins/linux_proc/linux_proc_plugin.cpp` | `tests/plugin/linux_proc*` | plugin, support, platform |
+| plugins/wine_proton | Bundled Wine/Proton plugin (profile + entry) and its resident agent | `plugins/wine_proton/wine_proton_plugin.cpp`, `wine_target.hpp`, `agent_transport.hpp`, `agent_client.hpp`, `agent_service.hpp`, `agent_regions.hpp`, `agent_modules.hpp`, `agent/slopkit_agent_protocol.h` (see [`docs/WINE_AGENT.md`](docs/WINE_AGENT.md)) | `tests/plugin/wine_proton*`, `tests/plugin/agent_*` | plugin, support, platform |
+| plugins/mpfshost | Bundled QEMU/KVM guest plugin over the system `mpfshost` daemon: synthetic guest pids, the client wire transport and the PTE-backed region list | `plugins/mpfshost/mpfshost_plugin.cpp`, `mpfshost_client.hpp`, `mpfshost_helpers.hpp` | `tests/plugin/mpfshost_helpers_test.cpp` | plugin, support |
+
+## 3. Entry points and data flow
+
+- `src/main.cpp` → `slopkit::app::run()` (`src/app/cli.cpp`) handles argv: headless commands (`--version`, `--list-plugins`, `--list-processes`, scan), otherwise it hands a table path to a running instance (`src/app/instance*`) or builds `ui::App` / `MainWindow`.
+- Plugin discovery: `PluginHost::discover()` over `app::plugin_search_directories()`.
+- Trainer generation: the File menu's `Generate Trainer…` dialog and `slopkit generate-trainer` both call `trainer::generate`, which copies the installed runtime template from `SLOPKIT_TRAINER_DIR` (or `SLOPKIT_TRAINER_RELATIVE_DIR` next to the executable) and appends the payload; the generated file reads its own tail at startup (`trainer/runtime/payload_reader.cpp`) and never touches slopkit again.
+- Reads/writes: UI → `process::AccessWorker` job → `ProcessAccess` plugin session (`process_vm_*` then procfs for both local plugins; `wine-proton` never routes bytes through its resident agent; `mpfshost` carries them over the daemon socket) → `AccessWorker::drain()` applies results on the UI thread.
+- Scans: scanner panel → `scan::ScanEngine` worker thread → `MemorySource`; the UI polls `snapshot()`.
+  With `Pause the game while scanning`, the panel suspends the target through the access worker before the engine starts and resumes it once the engine stops.
+- Live values: `ui::LiveValues` batches every registered `LiveSurface` request into one worker job per interval, then asks each registered `LiveTicker` — `ui::ScriptUpdates` submits the one job that runs the ticked scripts' `update` hooks — after the read pass, so a slow hook can delay at most one batched read; a script is left out of that job until its own declared `update_interval` has elapsed.
+- Debug: `debug::Controller` → `debug::Worker` job thread → `debug::PluginBackend` → plugin `debug_*` → `platform::DebugSession`/`ptrace`; `drain()` applies results; start is gated by `ui::DebugSessionGate`.
+- Code filter: `CodeFilterDialog` → `MainWindow` → `AccessWorker::submit_code_targets` → `analysis::find_code_targets`; the returned targets become hidden software breakpoints through `Controller::start_code_filter`, and each filter trap is consumed inside `apply_stop()` by `debug::CodeFilter` and resumed before a stop is reported. An activated candidate row (`CodeFilterDialog::targetActivated`) goes back through `MainWindow` to `MemoryViewerDialog::show_disassembly_at`, which moves only the disassembly listing.
+- Tables: `table::AddressTable` backs `ui::models::AddressTableModel`; a drag nests or reorders rows through `AddressTable::move_row` (the model's `drop_row`, driven by `ui::components::AddressTableView`), and the nesting is written on each `index.txt` line; `.skt` is a ZIP archive (`table/serializer.cpp` over `table/table_zip.cpp`), opened via `MainWindow::open_table_request()`. The table keeps a single-row cursor and the sorted, unique multi-row selection the address list mirrors from its view; every mutation remaps the two together, and `remove_rows` erases a whole selection's subtrees in one pass under `table` with one aggregated record.
+- Scripts: the address list's `Run Script` and a script row's `Active` checkbox submit `AccessWorker::submit_script`; the checkbox passes the `activate`/`deactivate` hook name and the worker calls `script::Engine::run_lifecycle`. The worker's `script::Engine` (one per attached session) runs the chunk with `print` captured, logs the printed lines under the `script` category and reports the outcome in the status line. It also deactivates a still-active script — running its `deactivate` hook and ignoring the verdict — when it stops, before the session is released. While a script stays ticked, `AccessWorker::submit_script_updates` runs `script::Engine::run_update` for every remembered script in one job in activation order, leaving out a script whose own declared `update_interval` has not elapsed — a hook-less chunk is skipped silently and a failing tick deactivates that script in the same job — driven by `ui::LiveValues` after the read pass and skipped entirely while no script is ticked. The `rsymbol`/`ssymbol`/`usymbol` globals write a process-wide `script::SymbolTable` (owned by `ui::App`); the worker takes a snapshot in its resolve job and every typed-address parser resolves a base as module → symbol → literal, so a symbol survives a detach and is lost only when slopkit exits. The same engine also exposes the typed `read_*`/`write` one-liners, the `label`/`symbol`/`expression` resolvers, the target-allocation `alloc`/`dealloc` pair (backed by the plugin ABI 1.6 `allocate_memory`/`free_memory`) and the `validate(address[, size])` predicate (backed by the plugin ABI 1.7 `validate_memory` with a host probe-read fallback). The `assemble` global encodes the listing's own instructions with `disasm::assemble_block` — the CPU mode follows the target's pointer size — and writes the bytes in one `MemoryApi::write`, returning `true, size` or `false, reason`. The Add/Edit Script dialog's `Verify` button instead calls `script::check_syntax` on the UI thread — a target-free compile of the same `@script` chunk — so it needs no worker job and no session. The listing's `Hook Instruction...` command runs entirely on the UI thread from the decoded cache: `components::DisassemblyDocument::hook_analysis` gathers the window and pattern facts, `script::hook_script` renders the Lua, `MemoryViewerDialog::hookScriptRequested` is relayed by `MainWindow` to `AddressListPanel::add_hook_script`, which opens the Add Script window prefilled — no row is created until Add.
+
+- Structures (ReClass): the `View > ReClass` window keeps a `reclass::Project` of
+  classes pinned to address expressions. `ReclassStructureModel` turns the
+  selected class into rows and memory blocks, `ReclassValueModel` resolves the
+  class addresses (keyed by class id) and submits one read per visible block
+  through `AccessWorker`, and `ReclassProxyModel` fuses the two into the one
+  tree the view shows. A cell's whole value writes through the proxy's `setData`
+  and one byte of a `hexN` dump or `Ascii` character through
+  `ReclassValueModel::write_byte`, which is the only path that can address a part
+  of a cell; `ui::components::ProjectView` shows the project's classes
+  and enums and drives the selected class, and its node menu's `Search for Equal
+  Values` and `Find Out What Writes/Accesses This Address` hand the node's value
+  to the scanner panel and its address to the Access Watch rather than reading
+  the target itself. The window is a registered `LiveSurface`, so it refreshes
+  on the shared cadence and creates no timer of its own; `table::AddressTable`
+  owns the project and `table/serializer.cpp` writes it as the archive's
+  `reclass/` members.
+
+## 4. Conventions
+
+- C++23 (`-std=c++23`), namespaces `slopkit::<module>` mirroring `src/<module>`;
+  `#pragma once`, `[[nodiscard]]` on accessors, `Q_OBJECT` classes in headers
+  (AUTOMOC).
+- Reach for the standard library first: `std::expected`, `std::optional`,
+  `std::variant`, `std::span`, `std::string_view`, `std::format` / `std::print`,
+  `std::ranges` and views, `std::flat_map`, `std::mdspan`. Use the language
+  features that simplify code (concepts, `constexpr`/`consteval`, structured
+  bindings, designated initializers, `if consteval`, deducing `this`,
+  `std::unreachable`); if a C++23 feature is unavailable in the project's
+  compiler or standard library, fall back to the closest C++20/17 equivalent and
+  mention it.
+- Value semantics and RAII: `std::unique_ptr`/`std::make_unique` over raw
+  `new`/`delete`; no C-style casts, raw arrays, `NULL` or C string/IO functions
+  when a standard C++ alternative exists. Owner classes delete copy, and often
+  move.
+- Errors return `std::expected`/`std::optional` (e.g. `expr::parse`,
+  `app::launch_sandbox`); worker results use `std::variant`.
+- Source layout: all sources under `src/`, each `.hpp` next to its same-named
+  `.cpp`, sub-folders group modules; tests under `tests/` mirror the `src` module
+  tree and CMake picks them up automatically. CMake globs sources with
+  `CONFIGURE_DEPENDS`, so new files are picked up on the next configure.
+- UI rule (owned by `docs/UI_DESIGN.md` and mandated by `AGENTS.md`): never touch
+  a target on the UI thread. Access goes through `AccessWorker`; debug through the
+  debug worker.
+- Formatting follows `.clang-format` and is enforced by `clang-format-check`.
+- Never add a dependency without asking the owner; the system dependency list is
+  owned by `README.md`.
+
+## 5. Gotchas
+
+- Generated/build-time files: icons, action glyphs and datatype glyphs (`cmake/EmbedIcon.cmake`),
+  embedded fonts (`cmake/EmbedFont.cmake`), Qt resources, and
+  `build/slopkit.desktop` from `assets/slopkit.desktop.in`. Never edit `build/`.
+- Must stay in sync: `SLOPKIT_TRAINER_DIR` / `SLOPKIT_TRAINER_RELATIVE_DIR` in
+  `CMakeLists.txt` with the generator's template lookup, the `Trainer.cmake`
+  install rules and the trainer runtime's own file name; the payload layout in
+  `src/trainer/payload.hpp` with the generator that writes it and the runtime
+  that reads it, so a field change bumps `kPayloadVersion` and both sides
+  together. `assets/application-x-slopkit-table.xml` MIME magic (the ZIP
+  signature `PK\003\004`) with the bytes `src/table/table_zip.cpp` writes;
+  `SLOPKIT_PLUGIN_RELATIVE_DIR` in
+  `CMakeLists.txt`; `SLOPKIT_ACTION_ICON_NAMES` with `widgets::ActionIcon` and `SLOPKIT_DATATYPE_ICON_NAMES` with `ui::datatype_palette`; the
+  plugin ABI version in `src/plugin/plugin_api.h` with the host handshake;
+  `src/plugins/wine_proton/agent/slopkit_agent_protocol.h` with both the
+  mingw-w64 agent and the Linux plugin, so a layout change bumps its
+  `SLOPKIT_AGENT_PROTOCOL_VERSION` and both static-assert sets together.
+- The trainer's source lists live in `cmake/TrainerSources.cmake` and feed the
+  native trainer target and the Windows cross-build alike, so a script-engine
+  source added there must stay out of `SLOPKIT_TRAINER_RUNTIME_SOURCES`:
+  `slopkit_tests` compiles those through the app-source glob and would define them
+  twice. The Linux platform units the target backend reads Wine through are
+  `SLOPKIT_TRAINER_LINUX_SOURCES` for the same reason — the tests take them from
+  `slopkit_platform` — and the Windows source list removes them together with
+  `target_linux.cpp` and `SLOPKIT_TRAINER_QT_SOURCES`, a mingw build having
+  neither procfs nor a wine prefix and no Qt. `SLOPKIT_TRAINER_WIN32_SOURCES`
+  adds `gui/window_win32.cpp` in their place. The trainer keeps two row
+  namespaces apart — value entries stay `1..N`, scripts are `S1..Sm` — so a new
+  row action must say which one it addresses. Both windows and the printed list
+  render `Payload::items` in its own order, which is the saved table's row order
+  with each item's `kind`, `number` and `depth`; grouping the kinds or reordering
+  the items would stop the trainer reading like the table it came from. Both
+  windows paint the same five columns — check, `Description`, `Address`, `Type`,
+  `Value` — so a `RowView` field added for an extra column would have to be
+  mirrored in the Win32 `cell_text` and the column array as well, which is why
+  script state and messages live in the check box and the log pane instead.
+- The trainer's window is a cache, not the truth: `gui::RowsModel` (and the
+  Win32 window's displayed snapshot) holds the immutable `RowView` snapshot the
+  worker publishes from the session's `LiveEntry` and `ScriptState`, and
+  `main.cpp` applies the submitted `Action`s to those, so nothing about a script's
+  activation or an entry's value may be stored in the window. `gui::SessionWorker`
+  and the Win32 `SessionThread` own every target call; nothing in
+  `gui/window.cpp`, `gui/window_win32.cpp` or `gui/rows_model.cpp` may reach a
+  `Target`, and the About box reads the pid the worker published. The log pane is
+  not part of that snapshot: `gui::LogFeed` owns the `log::Logger` sink, queues
+  records under a mutex and only wakes the UI thread, which drains them through
+  `take_new()` into `gui::LogPane` or the Win32 edit control. A sink must never
+  touch a widget, and a window must never render a record it did not drain first.
+- A `.skt` archive is versioned by `version.txt`: the writer emits
+  `slopkit-table 6` (value and script entries with nesting, plus the class
+  project); the reader also accepts `slopkit-table 5`, `slopkit-table 4` (no
+  nesting) and `slopkit-table 3` (value entries only). An entry's kind is its
+  member extension: `entries/<stem>.txt` is a value entry and a
+  `entries/<stem>.lua` member's whole body is the script verbatim.
+  `index.txt` lists both kinds in row order; a child's line appends
+  ` parent="entries/<parent member>"` to name its parent, which must be listed
+  before it. The class project rides in its own member group: `reclass/index.txt`
+  opens with the payload version `v2` and then lists the classes in order,
+  `reclass/classes/<stem>.txt` holds one class each (its own `v2`, its name and
+  address, then one line per node carrying the kind's parameters) and
+  `reclass/enums.txt` holds the project's enums. An archive written by versions
+  3–5 has none, and a class member without the `v2` line returns as padding.
+- `.skt` address tables are registered as `application/x-slopkit-table`, so a
+  double-click opens slopkit with the slopkit icon; `tools/install.sh` finishes
+  the MIME/desktop registration and the per-user default handler for a `$HOME`
+  prefix (a system prefix only prints the commands). A second launch hands its
+  `<table.skt>` path to the running instance over the per-user abstract socket in
+  `src/app/instance*`, which then runs the same open flow as File > Open Table.
+- `slopkit_tests` compiles every app source except the `main.cpp` entry points
+  (`src/main.cpp`, `src/sandbox/main.cpp`, `src/trainer/runtime/main.cpp`), plus
+  the sandbox sources minus `src/sandbox/main.cpp` and the trainer runtime sources
+  minus `main.cpp`, and depends on the `slopkit-trainer` target so the driver test
+  finds the template in the build tree; the fixture plugins are separate libraries,
+  so a change anywhere can trigger a large rebuild.
+- Widget tests run headless via `QT_QPA_PLATFORM=offscreen`; set it when running
+  `slopkit_tests` directly. CTest enforces a 15s timeout per test.
+- A test fake driven from a worker thread keeps its state behind a lock and
+  exposes snapshot accessors instead of public fields, so the test thread never
+  reads a record mid-write — see `tests/support/fake_debug.hpp`.
+- A job's side effect and its completion are two steps: `AccessWorker::run()`
+  performs the job on the worker thread and only then queues the completion that
+  `drain()` invokes on the UI thread. A test that asserts anything the completion
+  produces — a log record, a model refresh, a repaint — must wait for the drained
+  completion, never for the worker-thread side effect. `pump` and `pump_ui`
+  (`tests/support/access_worker_helpers.hpp`, `tests/support/fake_process.hpp`)
+  drain until `AccessWorker::idle()`, and `drain_until_idle`
+  (`tests/support/fake_debug.hpp`) does the same for `Controller::idle()` — worked
+  example in `tests/ui/components/memory_view_document_test.cpp`.
+- An in-place cell editor must take the `Return` itself: a `QLineEdit` that leaves
+  the key unhandled hands it up to its parent, where a dialog presses its own
+  default button, and the base `QStyledItemDelegate::eventFilter` reports the
+  commit whatever the model answered, which would close an editor the model just
+  refused. `ui::components::ValidatingDelegate` does both — it writes through the
+  model's `setData`, keeps the editor open with the text selected while that
+  answers `false`, and stops the key — and the custom-painted `ReClassView` and
+  `MemoryView` do the same in their own `eventFilter`; put a new cell editor on
+  that path rather than on the line editor's `returnPressed`.
+- Configure fails without ImageMagick, the libzip dev package and `pkg-config`.
+  Lua, sol2 and Zydis are not system packages: `cmake/Dependencies.cmake` fetches
+  sol2 and Zydis from their repositories at pinned revisions and Lua from the
+  official 5.4.7 release tarball pinned by its SHA-256, so the first configure
+  needs network access and the nested Windows trainer cross-build reuses the host
+  build's downloads through `SLOPKIT_SHARED_SOURCE_DIR` — only the source trees
+  are shared, because object files compiled by one toolchain must never be linked
+  by the other. Zydis's and sol2's own tests, tools and install rules are switched
+  off and their targets are SYSTEM, so third-party diagnostics never reach the
+  warning-free build stage. Qt 6 is a system package and the Linux UI binaries,
+  including the trainer, link it; the Windows trainer template links no Qt at all
+  and is simply not built when the mingw C++ compiler is missing.
+- The `slopkit-agent` target cross-compiles the Wine resident agent with
+  `x86_64-w64-mingw32-gcc` and `i686-w64-mingw32-gcc`; without them it copies a
+  prebuilt pair from `src/plugins/wine_proton/agent/prebuilt/<bitness>` and
+  otherwise fails with an actionable message (`cmake/Agent.cmake`). Those
+  Windows sources are C11 with `-nostdlib`, not C++, so the C++ style rules do
+  not apply to them. The agent's protocol is versioned, so a protocol change
+  makes any prebuilt pair in that directory unusable — the handshake refuses a
+  version or record-size mismatch — and a refreshed pair must ship in the same
+  change.
+
+## 6. Maintaining this map
+
+- When you add, remove, rename, or move a file or component, or change a
+  component's responsibility, update this map in the same task.
+- Update only the affected entries. Use `git diff --stat` or the files you
+  just touched to decide what changed; do not re-explore the whole project.
+- Re-derive the rows you touch from `git ls-files <dir>` rather than memory, so
+  the listing stays checkable.
+- Keep prose to a minimum. Relative links and anchor citations are guarded by
+  the `docs-links-check` CTest test (`tools/docs-check.sh`).

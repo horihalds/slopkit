@@ -1,0 +1,354 @@
+#include <catch2/catch.hpp>
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <QApplication>
+#include <QColor>
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QHeaderView>
+#include <QModelIndex>
+#include <QPlainTextEdit>
+#include <QString>
+#include <QStringList>
+#include <QTableView>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+#include "scan/types.hpp"
+#include "trainer/payload.hpp"
+#include "trainer/runtime/gui/rows_model.hpp"
+#include "trainer/runtime/gui/window_qt.hpp"
+#include "trainer/runtime/resolve.hpp"
+#include "trainer/runtime/rows.hpp"
+#include "trainer/runtime/scripts.hpp"
+#include "ui/components/indent_delegate.hpp"
+#include "ui/theme.hpp"
+
+QApplication& slopkit_test_application();
+
+namespace
+{
+    using slopkit::scan::ValueType;
+    using slopkit::trainer::Action;
+    using slopkit::trainer::ActionKind;
+    using slopkit::trainer::build_rows;
+    using slopkit::trainer::ItemKind;
+    using slopkit::trainer::LiveEntry;
+    using slopkit::trainer::Payload;
+    using slopkit::trainer::PayloadEntry;
+    using slopkit::trainer::PayloadItem;
+    using slopkit::trainer::PayloadScript;
+    using slopkit::trainer::RowKind;
+    using slopkit::trainer::RowView;
+    using slopkit::trainer::ScriptState;
+    using slopkit::trainer::gui::Options;
+    using slopkit::trainer::gui::RowsModel;
+    using slopkit::trainer::gui::TrainerWindow;
+
+    std::vector<std::byte> int_bytes(std::uint32_t value)
+    {
+        std::vector<std::byte> bytes(4);
+        for (std::size_t position = 0; position < bytes.size(); ++position)
+        {
+            bytes[position] = static_cast<std::byte>((value >> (position * 8)) & 0xff);
+        }
+        return bytes;
+    }
+
+    Payload sample_payload()
+    {
+        Payload payload;
+        payload.process_name = "practice";
+
+        PayloadEntry health;
+        health.description = "Health";
+        health.type        = ValueType::int32;
+        payload.items.push_back(PayloadItem {ItemKind::value, 0, 1, health});
+
+        PayloadScript no_reload {"No reload", "return true"};
+        payload.items.push_back(PayloadItem {ItemKind::script, 0, 1, no_reload});
+        return payload;
+    }
+
+    std::vector<LiveEntry> sample_live()
+    {
+        std::vector<LiveEntry> live(1);
+        live[0].address  = 0x7f2a12345678;
+        live[0].resolved = true;
+        live[0].bytes    = int_bytes(42);
+        return live;
+    }
+
+    std::shared_ptr<const std::vector<RowView>>
+    sample_rows(const Payload& payload, std::span<const LiveEntry> live, std::span<const ScriptState> scripts)
+    {
+        return std::make_shared<const std::vector<RowView>>(build_rows(payload, live, scripts));
+    }
+}
+
+TEST_CASE("the trainer model renders the address list's five columns", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    const auto               payload = sample_payload();
+    const auto               live    = sample_live();
+    std::vector<ScriptState> scripts(1);
+
+    RowsModel model {payload};
+    model.set_rows(sample_rows(payload, live, scripts));
+
+    CHECK(model.columnCount() == RowsModel::column_count);
+    CHECK(model.columnCount() == 5);
+    CHECK(model.rowCount() == 2);
+
+    CHECK(model.headerData(RowsModel::check, Qt::Horizontal, Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.headerData(RowsModel::description, Qt::Horizontal, Qt::DisplayRole).toString()
+          == QStringLiteral("Description"));
+    CHECK(model.headerData(RowsModel::address, Qt::Horizontal, Qt::DisplayRole).toString()
+          == QStringLiteral("Address"));
+    CHECK(model.headerData(RowsModel::type, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Type"));
+    CHECK(model.headerData(RowsModel::value, Qt::Horizontal, Qt::DisplayRole).toString() == QStringLiteral("Value"));
+    CHECK(model.headerData(RowsModel::value, Qt::Vertical, Qt::DisplayRole).isNull());
+
+    CHECK(model.data(model.index(0, RowsModel::check), Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.data(model.index(0, RowsModel::description), Qt::DisplayRole).toString() == QStringLiteral("Health"));
+    CHECK(model.data(model.index(0, RowsModel::address), Qt::DisplayRole).toString()
+          == QStringLiteral("0x7f2a12345678"));
+    CHECK(model.data(model.index(0, RowsModel::type), Qt::DisplayRole).toString() == QStringLiteral("4 Bytes"));
+    CHECK(model.data(model.index(0, RowsModel::value), Qt::DisplayRole).toString() == QStringLiteral("42"));
+    CHECK(model.data(model.index(0, RowsModel::value), Qt::EditRole).toString() == QStringLiteral("42"));
+    CHECK(model.data(model.index(0, RowsModel::description), Qt::ToolTipRole).toString() == QStringLiteral("entry 1"));
+
+    CHECK(model.data(model.index(1, RowsModel::description), Qt::DisplayRole).toString()
+          == QStringLiteral("No reload"));
+    CHECK(model.data(model.index(1, RowsModel::type), Qt::DisplayRole).toString() == QStringLiteral("script"));
+    CHECK(model.data(model.index(1, RowsModel::address), Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.data(model.index(1, RowsModel::value), Qt::DisplayRole).toString().isEmpty());
+    CHECK(model.data(model.index(1, RowsModel::value), Qt::EditRole).isNull());
+    CHECK(model.data(model.index(1, RowsModel::description), Qt::ToolTipRole).toString()
+          == QStringLiteral("script S1"));
+
+    CHECK(model.data(model.index(0, RowsModel::check), Qt::CheckStateRole).toInt() == Qt::Unchecked);
+    CHECK(model.data(model.index(1, RowsModel::check), Qt::CheckStateRole).toInt() == Qt::Unchecked);
+
+    CHECK((model.flags(model.index(0, RowsModel::value)) & Qt::ItemIsEditable) != 0);
+    CHECK((model.flags(model.index(1, RowsModel::value)) & Qt::ItemIsEditable) == 0);
+    CHECK((model.flags(model.index(0, RowsModel::description)) & Qt::ItemIsEditable) == 0);
+    CHECK((model.flags(model.index(0, RowsModel::check)) & Qt::ItemIsUserCheckable) != 0);
+    CHECK((model.flags(model.index(1, RowsModel::check)) & Qt::ItemIsUserCheckable) != 0);
+}
+
+TEST_CASE("a failed script and an unresolved value keep their warnings", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    const auto               payload = sample_payload();
+    auto                     live    = sample_live();
+    std::vector<ScriptState> scripts(1);
+    live[0].resolved  = false;
+    live[0].note      = "unknown module 'practice'";
+    scripts[0].failed = true;
+
+    RowsModel model {payload};
+    model.set_rows(sample_rows(payload, live, scripts));
+
+    CHECK(model.data(model.index(1, RowsModel::description), Qt::ForegroundRole).value<QColor>()
+          == slopkit::ui::active_theme().error);
+    CHECK(model.data(model.index(0, RowsModel::address), Qt::ForegroundRole).value<QColor>()
+          == slopkit::ui::active_theme().text_muted);
+    CHECK(model.data(model.index(0, RowsModel::address), Qt::ToolTipRole).toString()
+          == QStringLiteral("unknown module 'practice'"));
+}
+
+TEST_CASE("the description reports the row's nesting depth", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    Payload      payload;
+    PayloadEntry parent;
+    parent.description = "Parent";
+    parent.type        = ValueType::int32;
+
+    PayloadEntry child = parent;
+    child.description  = "Parent.child";
+
+    PayloadEntry other = parent;
+    other.description  = "Other";
+
+    payload.items.push_back(PayloadItem {ItemKind::value, 0, 1, parent});
+    payload.items.push_back(PayloadItem {ItemKind::value, 1, 2, child});
+    payload.items.push_back(PayloadItem {ItemKind::value, 0, 3, other});
+
+    std::vector<LiveEntry>   live(3);
+    std::vector<ScriptState> scripts;
+
+    RowsModel model {payload};
+    model.set_rows(sample_rows(payload, live, scripts));
+
+    REQUIRE(model.rowCount() == 3);
+    CHECK(model.data(model.index(0, RowsModel::description), slopkit::ui::widgets::kDepthRole).toInt() == 0);
+    CHECK(model.data(model.index(1, RowsModel::description), slopkit::ui::widgets::kDepthRole).toInt() == 1);
+    CHECK(model.data(model.index(2, RowsModel::description), slopkit::ui::widgets::kDepthRole).toInt() == 0);
+}
+
+TEST_CASE("the value cell refuses a text the entry cannot hold", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    const auto               payload = sample_payload();
+    const auto               live    = sample_live();
+    std::vector<ScriptState> scripts(1);
+
+    RowsModel model {payload};
+    model.set_rows(sample_rows(payload, live, scripts));
+
+    std::vector<Action> submitted;
+    QStringList         refusals;
+    QObject::connect(&model,
+                     &RowsModel::submitRequested,
+                     [&](const Action& action)
+                     {
+                         submitted.push_back(action);
+                     });
+    QObject::connect(&model,
+                     &RowsModel::statusChanged,
+                     [&](const QString& text)
+                     {
+                         refusals.push_back(text);
+                     });
+
+    CHECK_FALSE(model.setData(model.index(0, RowsModel::value), QStringLiteral("hello"), Qt::EditRole));
+    CHECK(submitted.empty());
+    REQUIRE(refusals.size() == 1);
+    CHECK(refusals.first().contains(QStringLiteral("hello")));
+    CHECK(model.rows().front().value == "42");
+}
+
+TEST_CASE("an accepted value submits one set action and leaves the snapshot alone", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    const auto               payload = sample_payload();
+    const auto               live    = sample_live();
+    std::vector<ScriptState> scripts(1);
+
+    RowsModel model {payload};
+    model.set_rows(sample_rows(payload, live, scripts));
+
+    std::vector<Action> submitted;
+    QObject::connect(&model,
+                     &RowsModel::submitRequested,
+                     [&](const Action& action)
+                     {
+                         submitted.push_back(action);
+                     });
+
+    CHECK(model.setData(model.index(0, RowsModel::value), QStringLiteral("7"), Qt::EditRole));
+    REQUIRE(submitted.size() == 1);
+    CHECK(submitted[0].kind == ActionKind::set_value);
+    CHECK(submitted[0].index == 1);
+    CHECK(submitted[0].text == "7");
+    CHECK(model.rows().front().value == "42");
+}
+
+TEST_CASE("the check column toggles a value's freeze and a script's activity", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    const auto               payload = sample_payload();
+    const auto               live    = sample_live();
+    std::vector<ScriptState> scripts(1);
+
+    RowsModel model {payload};
+    model.set_rows(sample_rows(payload, live, scripts));
+
+    std::vector<Action> submitted;
+    QObject::connect(&model,
+                     &RowsModel::submitRequested,
+                     [&](const Action& action)
+                     {
+                         submitted.push_back(action);
+                     });
+
+    CHECK(model.setData(model.index(0, RowsModel::check), Qt::Checked, Qt::CheckStateRole));
+    REQUIRE(submitted.size() == 1);
+    CHECK(submitted[0].kind == ActionKind::toggle_freeze);
+    CHECK(submitted[0].index == 1);
+
+    CHECK(model.setData(model.index(1, RowsModel::check), Qt::Checked, Qt::CheckStateRole));
+    REQUIRE(submitted.size() == 2);
+    CHECK(submitted[1].kind == ActionKind::activate_script);
+    CHECK(submitted[1].index == 1);
+
+    CHECK(model.setData(model.index(1, RowsModel::check), Qt::Unchecked, Qt::CheckStateRole));
+    REQUIRE(submitted.size() == 3);
+    CHECK(submitted[2].kind == ActionKind::deactivate_script);
+    CHECK(submitted[2].index == 1);
+}
+
+TEST_CASE("the window lists the rows and closes cleanly", "[trainer][gui]")
+{
+    slopkit_test_application();
+
+    const auto               payload = sample_payload();
+    auto                     live    = sample_live();
+    std::vector<ScriptState> scripts(1);
+
+    TrainerWindow window(
+        payload,
+        live,
+        scripts,
+        []
+        {
+            return std::uint32_t {0};
+        },
+        Options {"slopkit-trainer: practice", 20},
+        [](const Action&)
+        {
+            return std::string {};
+        },
+        [] {});
+    window.show();
+
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (window.rows_model()->rowCount() == 0 && elapsed.elapsed() < 2000)
+    {
+        QApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds {5});
+    }
+    QApplication::processEvents();
+
+    CHECK(window.rows_model()->rowCount() == 2);
+    CHECK(window.rows_model()->rows().front().kind == RowKind::value);
+
+    const auto* table = window.findChild<QTableView*>();
+    REQUIRE(table != nullptr);
+    CHECK(table->horizontalHeader()->length() <= table->viewport()->width());
+
+    auto* pane = window.findChild<QPlainTextEdit*>();
+    REQUIRE(pane != nullptr);
+    slopkit::log::info(slopkit::log::category::app, "trainer pane line");
+    QApplication::processEvents();
+    CHECK(pane->toPlainText().contains(QStringLiteral("trainer pane line")));
+
+    window.close();
+    QApplication::processEvents();
+    CHECK(window.exit_code() == 0);
+}
+
+TEST_CASE("a chosen Qt platform counts as a display for the window gate", "[trainer][gui]")
+{
+    // The suite runs offscreen, and that explicit platform is what makes the
+    // generated trainer take the window path instead of the printed one.
+    REQUIRE_FALSE(qgetenv("QT_QPA_PLATFORM").isEmpty());
+    CHECK(slopkit::trainer::gui::window_available());
+}

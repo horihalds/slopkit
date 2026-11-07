@@ -1,0 +1,474 @@
+#include <catch2/catch.hpp>
+
+#include <cstddef>
+#include <initializer_list>
+#include <span>
+#include <string>
+#include <vector>
+
+#include "disasm/decoder.hpp"
+
+namespace
+{
+    using slopkit::disasm::MachineMode;
+
+    [[nodiscard]] std::vector<std::byte> bytes(std::initializer_list<unsigned> values)
+    {
+        std::vector<std::byte> result;
+        result.reserve(values.size());
+        for (const unsigned value : values)
+        {
+            result.push_back(static_cast<std::byte>(value));
+        }
+        return result;
+    }
+}
+
+TEST_CASE("known encodings decode to the expected instruction text", "[disasm]")
+{
+    const auto push = bytes({0x55});
+    REQUIRE(slopkit::disasm::decode(push, 0x1000).has_value());
+    CHECK(slopkit::disasm::decode(push, 0x1000)->text == "PUSH RBP");
+
+    const auto mov = bytes({0x48, 0x89, 0xE5});
+    REQUIRE(slopkit::disasm::decode(mov, 0x1000).has_value());
+    CHECK(slopkit::disasm::decode(mov, 0x1000)->text == "MOV RBP, RSP");
+
+    const auto ret = bytes({0xC3});
+    REQUIRE(slopkit::disasm::decode(ret, 0x1000).has_value());
+    CHECK(slopkit::disasm::decode(ret, 0x1000)->text == "RET");
+
+    const auto syscall = bytes({0x0F, 0x05});
+    REQUIRE(slopkit::disasm::decode(syscall, 0x1000).has_value());
+    CHECK(slopkit::disasm::decode(syscall, 0x1000)->text == "SYSCALL");
+}
+
+TEST_CASE("decode reports the instruction length and address", "[disasm]")
+{
+    const auto mov         = bytes({0x48, 0x89, 0xE5});
+    const auto instruction = *slopkit::disasm::decode(mov, 0x4000);
+    CHECK(instruction.address == 0x4000);
+    CHECK(instruction.length == 3);
+    CHECK(instruction.valid);
+}
+
+TEST_CASE("decode_block advances the address by each instruction length", "[disasm]")
+{
+    const auto code         = bytes({0x55, 0x48, 0x89, 0xE5, 0xC3});
+    const auto instructions = slopkit::disasm::decode_block(code, 0x2000, 10);
+
+    REQUIRE(instructions.size() == 3);
+    CHECK(instructions[0].text == "PUSH RBP");
+    CHECK(instructions[0].address == 0x2000);
+    CHECK(instructions[1].text == "MOV RBP, RSP");
+    CHECK(instructions[1].address == 0x2001);
+    CHECK(instructions[2].text == "RET");
+    CHECK(instructions[2].address == 0x2004);
+}
+
+TEST_CASE("decode_block honours the requested count", "[disasm]")
+{
+    const auto code = bytes({0x55, 0x55, 0x55});
+    CHECK(slopkit::disasm::decode_block(code, 0x2000, 2).size() == 2);
+}
+
+TEST_CASE("a truncated tail decodes to a .byte row and stops a block sweep", "[disasm]")
+{
+    const auto code        = bytes({0x48, 0x89});
+    const auto instruction = *slopkit::disasm::decode(code, 0x2000);
+    CHECK_FALSE(instruction.valid);
+    CHECK(instruction.length == 1);
+    CHECK(instruction.text == ".byte 0x48");
+
+    CHECK(slopkit::disasm::decode_block(code, 0x2000, 10).empty());
+}
+
+TEST_CASE("an undecodable byte becomes a .byte row without stopping the listing", "[disasm]")
+{
+    const auto invalid = *slopkit::disasm::decode(bytes({0x06}), 0x3000);
+    CHECK_FALSE(invalid.valid);
+    CHECK(invalid.length == 1);
+    CHECK(invalid.text == ".byte 0x06");
+
+    const auto stream       = bytes({0xC3, 0x06, 0xC3});
+    const auto instructions = slopkit::disasm::decode_block(stream, 0x3000, 10);
+    REQUIRE(instructions.size() == 3);
+    CHECK(instructions[0].text == "RET");
+    CHECK_FALSE(instructions[1].valid);
+    CHECK(instructions[1].text == ".byte 0x06");
+    CHECK(instructions[2].text == "RET");
+}
+
+TEST_CASE("the machine mode changes how the same bytes decode", "[disasm]")
+{
+    const auto code = bytes({0x48});
+
+    const auto sixty_four = *slopkit::disasm::decode(code, 0x1000, MachineMode::long_64);
+    CHECK_FALSE(sixty_four.valid);
+
+    const auto thirty_two = *slopkit::disasm::decode(code, 0x1000, MachineMode::legacy_32);
+    CHECK(thirty_two.valid);
+    CHECK(thirty_two.text == "DEC EAX");
+}
+
+TEST_CASE("an empty buffer decodes to nothing", "[disasm]")
+{
+    CHECK_FALSE(slopkit::disasm::decode({}, 0x1000).has_value());
+    CHECK(slopkit::disasm::decode_block({}, 0x1000, 10).empty());
+}
+
+TEST_CASE("a relative branch reports the address slice its text prints", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x74, 0x15}), 0x2000);
+    CHECK(instruction.text == "JZ 0x2017");
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].offset == 3);
+    CHECK(instruction.addresses[0].length == 6);
+    CHECK(instruction.addresses[0].address == 0x2017);
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length) == "0x2017");
+}
+
+TEST_CASE("32-bit relative branches report their address slice", "[disasm]")
+{
+    const auto jmp = *slopkit::disasm::decode(bytes({0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(jmp.text == "JMP 0x1005");
+    REQUIRE(jmp.addresses.size() == 1);
+    CHECK(jmp.addresses[0].address == 0x1005);
+    CHECK(jmp.text.substr(jmp.addresses[0].offset, jmp.addresses[0].length) == "0x1005");
+
+    const auto call = *slopkit::disasm::decode(bytes({0xE8, 0x10, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(call.text == "CALL 0x1015");
+    REQUIRE(call.addresses.size() == 1);
+    CHECK(call.addresses[0].address == 0x1015);
+}
+
+TEST_CASE("a prefixed relative branch reports its address slice", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x67, 0xE3, 0x12}), 0x1000);
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].offset == 6);
+    CHECK(instruction.addresses[0].length == 6);
+    CHECK(instruction.addresses[0].address == 0x1015);
+}
+
+TEST_CASE("RIP-relative and indirect memory operands report their address slice", "[disasm]")
+{
+    const auto mov = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    CHECK(mov.text == "MOV RAX, [0x12FE]");
+    REQUIRE(mov.addresses.size() == 1);
+    CHECK(mov.addresses[0].address == 0x12FE);
+    CHECK(mov.text.substr(mov.addresses[0].offset, mov.addresses[0].length) == "0x12FE");
+
+    const auto call = *slopkit::disasm::decode(bytes({0xFF, 0x15, 0x0A, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(call.addresses.size() == 1);
+    CHECK(call.addresses[0].address == 0x1010);
+
+    const auto push = *slopkit::disasm::decode(bytes({0xFF, 0x35, 0x0A, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(push.addresses.size() == 1);
+    CHECK(push.addresses[0].address == 0x1010);
+
+    const auto lea = *slopkit::disasm::decode(bytes({0x48, 0x8D, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    REQUIRE(lea.addresses.size() == 1);
+    CHECK(lea.addresses[0].address == 0x12FE);
+}
+
+TEST_CASE("an absolute memory operand reports its address slice", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}), 0x1000);
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].address == 0x402000);
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length) == "0x402000");
+}
+
+TEST_CASE("a segment-relative absolute operand is printed unpadded", "[disasm]")
+{
+    const auto instruction =
+        *slopkit::disasm::decode(bytes({0x65, 0x48, 0x8B, 0x04, 0x25, 0x58, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(instruction.text == "MOV RAX, GS:[0x58]");
+    REQUIRE(instruction.addresses.size() == 1);
+    CHECK(instruction.addresses[0].address == 0x58);
+    CHECK(instruction.text.substr(instruction.addresses[0].offset, instruction.addresses[0].length) == "0x58");
+}
+
+TEST_CASE("instructions without a printed address carry no slices", "[disasm]")
+{
+    CHECK(slopkit::disasm::decode(bytes({0x55}), 0x1000)->addresses.empty());
+    CHECK(slopkit::disasm::decode(bytes({0x48, 0x89, 0xD8}), 0x1000)->addresses.empty());
+    CHECK(slopkit::disasm::decode(bytes({0xC3}), 0x1000)->addresses.empty());
+
+    CHECK(slopkit::disasm::decode(bytes({0x48, 0xB8, 0x00, 0x20, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), 0x1000)
+              ->addresses.empty());
+
+    const auto dot_byte = *slopkit::disasm::decode(bytes({0x06}), 0x1000);
+    CHECK_FALSE(dot_byte.valid);
+    CHECK(dot_byte.addresses.empty());
+
+    const auto truncated = *slopkit::disasm::decode(bytes({0x48, 0x89}), 0x1000);
+    CHECK_FALSE(truncated.valid);
+    CHECK(truncated.addresses.empty());
+}
+
+TEST_CASE("decode classifies registers, immediates and displacements", "[disasm]")
+{
+    const auto mov =
+        *slopkit::disasm::decode(bytes({0x48, 0xB8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    CHECK(mov.text == "MOV RAX, 0x1");
+    REQUIRE(mov.tokens.size() == 2);
+    CHECK(mov.tokens[0].kind == slopkit::disasm::TokenKind::cpu_register);
+    CHECK(mov.text.substr(mov.tokens[0].offset, mov.tokens[0].length) == "RAX");
+    CHECK(mov.tokens[1].kind == slopkit::disasm::TokenKind::immediate);
+    CHECK(mov.text.substr(mov.tokens[1].offset, mov.tokens[1].length) == "0x1");
+
+    const auto load = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x5D, 0xFC}), 0x1000);
+    CHECK(load.text == "MOV RBX, [RBP-0x4]");
+    REQUIRE(load.tokens.size() == 3);
+    CHECK(load.tokens[0].kind == slopkit::disasm::TokenKind::cpu_register);
+    CHECK(load.text.substr(load.tokens[0].offset, load.tokens[0].length) == "RBX");
+    CHECK(load.tokens[1].kind == slopkit::disasm::TokenKind::cpu_register);
+    CHECK(load.text.substr(load.tokens[1].offset, load.tokens[1].length) == "RBP");
+    CHECK(load.tokens[2].kind == slopkit::disasm::TokenKind::displacement);
+    CHECK(load.text.substr(load.tokens[2].offset, load.tokens[2].length) == "0x4");
+
+    for (const auto& instruction : {mov, load})
+    {
+        for (const auto& span : instruction.tokens)
+        {
+            CHECK(span.length > 0);
+            CHECK(span.offset + span.length <= instruction.text.size());
+        }
+    }
+}
+
+TEST_CASE("mnemonics, brackets and commas are not classified", "[disasm]")
+{
+    const auto load = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x5D, 0xFC}), 0x1000);
+    for (const auto& span : load.tokens)
+    {
+        const std::string slice = load.text.substr(span.offset, span.length);
+        CHECK(slice != "MOV");
+        CHECK(slice != "[");
+        CHECK(slice != "]");
+        CHECK(slice != ",");
+    }
+
+    CHECK(slopkit::disasm::decode(bytes({0xC3}), 0x1000)->tokens.empty());
+    CHECK(slopkit::disasm::decode(bytes({0x06}), 0x1000)->tokens.empty());
+}
+
+TEST_CASE("decode_block keeps every slice inside its own instruction", "[disasm]")
+{
+    const auto code         = bytes({0x74, 0x15, 0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0xC3});
+    const auto instructions = slopkit::disasm::decode_block(code, 0x2000, 10);
+
+    REQUIRE(instructions.size() == 3);
+    REQUIRE(instructions[0].addresses.size() == 1);
+    CHECK(instructions[0].addresses[0].address == 0x2017);
+
+    REQUIRE(instructions[1].addresses.size() == 1);
+    CHECK(instructions[1].address == 0x2002);
+    CHECK(instructions[1].addresses[0].address == 0x2002 + 7 + 0x2F7);
+
+    CHECK(instructions[2].addresses.empty());
+
+    for (const auto& instruction : instructions)
+    {
+        for (const auto& ref : instruction.addresses)
+        {
+            CHECK(ref.offset + ref.length <= instruction.text.size());
+        }
+    }
+}
+
+TEST_CASE("a register-relative store describes the memory it writes", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x89, 0x43, 0x08}), 0x1000);
+    CHECK(instruction.text == "MOV [RBX+0x8], EAX");
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.base == "RBX");
+    CHECK(ref.index.empty());
+    CHECK(ref.scale == 1);
+    CHECK(ref.displacement == 8);
+    CHECK(ref.width == 4);
+    CHECK_FALSE(ref.rip_relative);
+    CHECK(ref.writes);
+    CHECK(instruction.text.substr(ref.offset, ref.length) == "[RBX+0x8]");
+}
+
+TEST_CASE("a scaled index operand reports base, index, scale and displacement", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x44, 0x8B, 0x10}), 0x1000);
+    CHECK(instruction.text == "MOV RAX, [RBX+RCX*4+0x10]");
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.base == "RBX");
+    CHECK(ref.index == "RCX");
+    CHECK(ref.scale == 4);
+    CHECK(ref.displacement == 16);
+    CHECK(ref.width == 8);
+    CHECK_FALSE(ref.writes);
+    CHECK(instruction.text.substr(ref.offset, ref.length) == "[RBX+RCX*4+0x10]");
+}
+
+TEST_CASE("a rip-relative load is flagged and keeps its displacement", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0x34, 0x12, 0x00, 0x00}), 0x1000);
+    CHECK(instruction.text == "MOV RAX, [0x223B]");
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.rip_relative);
+    CHECK(ref.base == "RIP");
+    CHECK(ref.index.empty());
+    CHECK(ref.displacement == 0x1234);
+    CHECK(ref.width == 8);
+    CHECK_FALSE(ref.writes);
+}
+
+TEST_CASE("an absolute memory operand has no base or index", "[disasm]")
+{
+    const auto instruction = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}), 0x1000);
+    REQUIRE(instruction.memory.size() == 1);
+
+    const auto& ref = instruction.memory[0];
+    CHECK(ref.base.empty());
+    CHECK(ref.index.empty());
+    CHECK_FALSE(ref.rip_relative);
+    CHECK(ref.displacement == 0x402000);
+    CHECK(ref.width == 8);
+}
+
+TEST_CASE("lea and .byte rows carry no memory operand", "[disasm]")
+{
+    const auto lea = *slopkit::disasm::decode(bytes({0x48, 0x8D, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    CHECK(lea.memory.empty());
+
+    const auto dot_byte = *slopkit::disasm::decode(bytes({0x06}), 0x1000);
+    CHECK(dot_byte.memory.empty());
+}
+
+TEST_CASE("a relative branch reports where its displacement sits in the encoding", "[disasm]")
+{
+    const auto jmp = *slopkit::disasm::decode(bytes({0xE9, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(jmp.encoding_bytes.size() == 1);
+    CHECK(jmp.encoding_bytes[0].offset == 1);
+    CHECK(jmp.encoding_bytes[0].length == 4);
+    CHECK(jmp.encoding_bytes[0].relative);
+
+    const auto jcc = *slopkit::disasm::decode(bytes({0x74, 0x15}), 0x2000);
+    REQUIRE(jcc.encoding_bytes.size() == 1);
+    CHECK(jcc.encoding_bytes[0].offset == 1);
+    CHECK(jcc.encoding_bytes[0].length == 1);
+    CHECK(jcc.encoding_bytes[0].relative);
+}
+
+TEST_CASE("absolute immediates report their encoded range", "[disasm]")
+{
+    const auto mov =
+        *slopkit::disasm::decode(bytes({0x48, 0xB8, 0x00, 0x20, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00}), 0x1000);
+    REQUIRE(mov.encoding_bytes.size() == 1);
+    CHECK(mov.encoding_bytes[0].offset == 2);
+    CHECK(mov.encoding_bytes[0].length == 8);
+    CHECK_FALSE(mov.encoding_bytes[0].relative);
+
+    const auto mov32 = *slopkit::disasm::decode(bytes({0xB8, 0x78, 0x56, 0x34, 0x12}), 0x1000);
+    REQUIRE(mov32.encoding_bytes.size() == 1);
+    CHECK(mov32.encoding_bytes[0].offset == 1);
+    CHECK(mov32.encoding_bytes[0].length == 4);
+    CHECK_FALSE(mov32.encoding_bytes[0].relative);
+}
+
+TEST_CASE("memory displacement address fields are flagged relative or absolute", "[disasm]")
+{
+    const auto rip = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00}), 0x1000);
+    REQUIRE(rip.encoding_bytes.size() == 2);
+    CHECK(rip.encoding_bytes[0].offset == 2);
+    CHECK(rip.encoding_bytes[0].length == 1);
+    CHECK_FALSE(rip.encoding_bytes[0].relative);
+    CHECK(rip.encoding_bytes[1].offset == 3);
+    CHECK(rip.encoding_bytes[1].length == 4);
+    CHECK(rip.encoding_bytes[1].relative);
+
+    const auto absolute = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00}), 0x1000);
+    REQUIRE(absolute.encoding_bytes.size() == 3);
+    CHECK(absolute.encoding_bytes[0].offset == 2);
+    CHECK(absolute.encoding_bytes[0].length == 1);
+    CHECK_FALSE(absolute.encoding_bytes[0].relative);
+    CHECK(absolute.encoding_bytes[1].offset == 3);
+    CHECK(absolute.encoding_bytes[1].length == 1);
+    CHECK_FALSE(absolute.encoding_bytes[1].relative);
+    CHECK(absolute.encoding_bytes[2].offset == 4);
+    CHECK(absolute.encoding_bytes[2].length == 4);
+    CHECK_FALSE(absolute.encoding_bytes[2].relative);
+}
+
+TEST_CASE("register and displacement bytes are reported for a pattern to wildcard", "[disasm]")
+{
+    const auto reg = *slopkit::disasm::decode(bytes({0x48, 0x89, 0xD8}), 0x1000);
+    REQUIRE(reg.encoding_bytes.size() == 1);
+    CHECK(reg.encoding_bytes[0].offset == 2);
+    CHECK(reg.encoding_bytes[0].length == 1);
+    CHECK_FALSE(reg.encoding_bytes[0].relative);
+
+    const auto inc = *slopkit::disasm::decode(bytes({0xFF, 0x43, 0x1C}), 0x1000);
+    REQUIRE(inc.encoding_bytes.size() == 2);
+    CHECK(inc.encoding_bytes[0].offset == 1);
+    CHECK_FALSE(inc.encoding_bytes[0].relative);
+    CHECK(inc.encoding_bytes[1].offset == 2);
+    CHECK(inc.encoding_bytes[1].length == 1);
+    CHECK_FALSE(inc.encoding_bytes[1].relative);
+
+    const auto base_disp = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x5D, 0xFC}), 0x1000);
+    REQUIRE(base_disp.encoding_bytes.size() == 2);
+    CHECK(base_disp.encoding_bytes[0].offset == 2);
+    CHECK(base_disp.encoding_bytes[1].offset == 3);
+    CHECK_FALSE(base_disp.encoding_bytes[1].relative);
+
+    const auto sib = *slopkit::disasm::decode(bytes({0x48, 0x8B, 0x44, 0x8B, 0x10}), 0x1000);
+    REQUIRE(sib.encoding_bytes.size() == 3);
+    CHECK(sib.encoding_bytes[0].offset == 2);
+    CHECK(sib.encoding_bytes[1].offset == 3);
+    CHECK(sib.encoding_bytes[2].offset == 4);
+    CHECK_FALSE(sib.encoding_bytes[2].relative);
+
+    const auto small_imm = *slopkit::disasm::decode(bytes({0x48, 0x83, 0xEC, 0x28}), 0x1000);
+    REQUIRE(small_imm.encoding_bytes.size() == 1);
+    CHECK(small_imm.encoding_bytes[0].offset == 2);
+}
+
+TEST_CASE("instructions with no register, offset or address byte report no encoding bytes", "[disasm]")
+{
+    CHECK(slopkit::disasm::decode(bytes({0x55}), 0x1000)->encoding_bytes.empty());
+    CHECK(slopkit::disasm::decode(bytes({0xC3}), 0x1000)->encoding_bytes.empty());
+    CHECK(slopkit::disasm::decode(bytes({0x53}), 0x1000)->encoding_bytes.empty());
+
+    const auto dot_byte = *slopkit::disasm::decode(bytes({0x06}), 0x1000);
+    CHECK(dot_byte.encoding_bytes.empty());
+}
+
+TEST_CASE("encoding bytes stay inside the instruction's own encoding", "[disasm]")
+{
+    const auto code         = bytes({0x74, 0x15, 0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0xC3});
+    const auto instructions = slopkit::disasm::decode_block(code, 0x2000, 10);
+
+    REQUIRE(instructions.size() == 3);
+    for (const auto& instruction : instructions)
+    {
+        for (const auto& field : instruction.encoding_bytes)
+        {
+            CHECK(field.length > 0);
+            CHECK(field.offset + field.length <= instruction.length);
+        }
+    }
+
+    REQUIRE(instructions[0].encoding_bytes.size() == 1);
+    CHECK(instructions[0].encoding_bytes[0].relative);
+    REQUIRE(instructions[1].encoding_bytes.size() == 2);
+    CHECK(instructions[1].encoding_bytes[0].offset == 2);
+    CHECK_FALSE(instructions[1].encoding_bytes[0].relative);
+    CHECK(instructions[1].encoding_bytes[1].offset == 3);
+    CHECK(instructions[1].encoding_bytes[1].relative);
+    CHECK(instructions[2].encoding_bytes.empty());
+}

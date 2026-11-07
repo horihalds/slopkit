@@ -1,0 +1,960 @@
+#include "ui/dialogs/memory_viewer.hpp"
+
+#include <algorithm>
+#include <cstdint>
+#include <format>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include <QApplication>
+#include <QHeaderView>
+#include <QMenu>
+#include <QShowEvent>
+#include <QSplitter>
+#include <QTableView>
+#include <QVBoxLayout>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+#include "ui/components/disassembly_view.hpp"
+#include "ui/components/input_box.hpp"
+#include "ui/components/memory_view.hpp"
+#include "ui/components/widgets.hpp"
+#include "ui/dialogs/module_chooser.hpp"
+#include "ui/fonts.hpp"
+#include "ui/panels/debug_controls.hpp"
+#include "ui/panels/debugger_panel.hpp"
+#include "ui/panels/viewer_menu.hpp"
+
+namespace slopkit::ui::dialogs
+{
+    namespace
+    {
+        widgets::StatusKind status_kind(debug::Controller::MessageKind kind)
+        {
+            switch (kind)
+            {
+            case debug::Controller::MessageKind::success:
+                return widgets::StatusKind::success;
+            case debug::Controller::MessageKind::warning:
+                return widgets::StatusKind::warning;
+            case debug::Controller::MessageKind::error:
+                return widgets::StatusKind::error;
+            case debug::Controller::MessageKind::info:
+            default:
+                return widgets::StatusKind::info;
+            }
+        }
+    }
+
+    MemoryViewerDialog::MemoryViewerDialog(process::AccessWorker&   worker,
+                                           process::AttachedTarget& target,
+                                           debug::Controller&       debug,
+                                           QWidget*                 parent,
+                                           script::SymbolTable&     symbols)
+        : QDialog(parent), worker_(worker), target_(target), debug_(debug), gate_(debug, target, *this, this),
+          document_(worker, target, this, symbols), disassembly_document_(worker, target, patches_, this, symbols)
+    {
+        setWindowTitle(tr("Memory Viewer"));
+        resize(1280, 960);
+        setMinimumSize(720, 480);
+        // Built without a parent (docs/UI_DESIGN.md#wayland) so the compositor
+        // may stack it normally. That also makes it a top-level window of its
+        // own, and a top-level window owns the process lifetime by default: it
+        // must not, or closing the shell would leave slopkit running with no way
+        // back to it.
+        setAttribute(Qt::WA_QuitOnClose, false);
+
+        build_layout();
+
+        connect(&debug_, &debug::Controller::stopped, this, &MemoryViewerDialog::follow_stop);
+
+        set_address(0);
+    }
+
+    void MemoryViewerDialog::build_layout()
+    {
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(6, 6, 6, 6);
+
+        view_       = new components::MemoryView(document_, this);
+        split_      = new QSplitter(Qt::Vertical, this);
+        code_split_ = new QSplitter(Qt::Horizontal, this);
+        split_->setObjectName(QStringLiteral("viewer_split"));
+        code_split_->setObjectName(QStringLiteral("code_split"));
+        split_->setChildrenCollapsible(false);
+        code_split_->setChildrenCollapsible(false);
+
+        auto* code_pane        = new QWidget(this);
+        auto* code_pane_layout = new QVBoxLayout(code_pane);
+        code_pane_layout->setContentsMargins(0, 0, 0, 0);
+        code_pane_layout->setSpacing(6);
+        controls_ = new panels::DebugControls(debug_, target_, code_pane);
+        controls_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        code_pane_layout->addWidget(controls_);
+        code_pane_layout->addWidget(build_code_pane(), 1);
+
+        menu_ = new panels::ViewerMenu(debug_, target_, *view_, this);
+        layout->setMenuBar(menu_);
+
+        code_split_->addWidget(code_pane);
+        code_split_->addWidget(build_stats_pane());
+        code_split_->setStretchFactor(0, 70);
+        code_split_->setStretchFactor(1, 30);
+
+        widgets::chain_tab_order(
+            {controls_->breakpoints_button(), debugger_->register_table(), debugger_->call_stack_table()});
+
+        connect(
+            controls_, &panels::DebugControls::toggleBreakpointRequested, this, &MemoryViewerDialog::toggle_breakpoint);
+        connect(disassembly_,
+                &components::DisassemblyView::selectionChanged,
+                this,
+                [this](std::optional<std::uint64_t> address)
+                {
+                    const QString text = address.has_value() ? disassembly_document_.address_text(*address) : QString();
+                    controls_->set_selected_instruction(address, text);
+                    menu_->set_selected_instruction(address, text);
+                    refresh_menu_command_state();
+                });
+
+        connect(menu_, &panels::ViewerMenu::toggleBreakpointRequested, this, &MemoryViewerDialog::toggle_breakpoint);
+        connect(
+            menu_, &panels::ViewerMenu::breakpointsRequested, controls_, &panels::DebugControls::breakpointsRequested);
+
+        connect(menu_, &panels::ViewerMenu::closeRequested, this, &MemoryViewerDialog::close);
+        connect(menu_, &panels::ViewerMenu::backRequested, this, &MemoryViewerDialog::back_focused_pane);
+        connect(menu_, &panels::ViewerMenu::followRequested, this, &MemoryViewerDialog::follow_selected_instruction);
+        connect(menu_,
+                &panels::ViewerMenu::followInMemoryViewRequested,
+                this,
+                &MemoryViewerDialog::follow_selected_in_memory_view);
+        connect(menu_,
+                &panels::ViewerMenu::nopRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        nop_instruction_row(*row);
+                    }
+                });
+        connect(menu_,
+                &panels::ViewerMenu::restoreRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        restore_instruction_row(*row);
+                    }
+                });
+        connect(menu_,
+                &panels::ViewerMenu::editRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        prompt_edit_instruction(*row);
+                    }
+                });
+        connect(menu_,
+                &panels::ViewerMenu::instructionAccessesRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        instruction_accesses(*row);
+                    }
+                });
+        connect(menu_,
+                &panels::ViewerMenu::analyzeReferencedStringsRequested,
+                this,
+                &MemoryViewerDialog::prompt_string_analysis);
+        connect(
+            menu_, &panels::ViewerMenu::referencedStringsRequested, this, &MemoryViewerDialog::show_referenced_strings);
+        connect(menu_,
+                &panels::ViewerMenu::hookRequested,
+                this,
+                [this]
+                {
+                    if (const auto row = selected_row(); row.has_value())
+                    {
+                        hook_instruction(*row);
+                    }
+                });
+        connect(menu_->view_menu(), &QMenu::aboutToShow, this, &MemoryViewerDialog::refresh_menu_command_state);
+        connect(menu_->tools_menu(), &QMenu::aboutToShow, this, &MemoryViewerDialog::refresh_menu_command_state);
+
+        split_->addWidget(code_split_);
+        split_->addWidget(view_);
+        split_->setStretchFactor(0, 70);
+        split_->setStretchFactor(1, 30);
+
+        layout->addWidget(split_, 1);
+
+        status_ = new widgets::StatusLabel(this);
+        status_->setObjectName(QStringLiteral("viewer_status"));
+        status_->setFont(mono_font());
+        layout->addWidget(status_);
+
+        connect(&debug_,
+                &debug::Controller::stateChanged,
+                this,
+                [this]
+                {
+                    status_->set_status(widgets::StatusKind::info, debug_.state_text());
+                });
+        connect(&debug_,
+                &debug::Controller::message,
+                this,
+                [this](debug::Controller::MessageKind kind, const QString& text)
+                {
+                    status_->set_status(status_kind(kind), text);
+                });
+        status_->set_status(widgets::StatusKind::info, debug_.state_text());
+
+        connect(view_,
+                &components::MemoryView::gotoRequested,
+                this,
+                [this]
+                {
+                    prompt_go_to();
+                });
+        connect(view_, &components::MemoryView::navigated, this, &MemoryViewerDialog::request_page);
+        connect(view_,
+                &components::MemoryView::editRejected,
+                this,
+                [this](const QString& reason)
+                {
+                    status_->set_status(widgets::StatusKind::warning, reason);
+                });
+        // The register table sits in this window's debugger pane, so a register
+        // the controller turns down reports on the line under it.
+        connect(debugger_,
+                &panels::DebuggerPanel::statusChanged,
+                this,
+                [this](const QString& message, bool is_error)
+                {
+                    status_->set_status(is_error ? widgets::StatusKind::error : widgets::StatusKind::info, message);
+                });
+    }
+
+    QWidget* MemoryViewerDialog::build_code_pane()
+    {
+        auto* panel  = new widgets::Panel(tr("Disassembly"), this);
+        disassembly_ = new components::DisassemblyView(disassembly_document_, panel);
+        panel->body()->addWidget(disassembly_);
+
+        connect(disassembly_,
+                &components::DisassemblyView::gotoRequested,
+                this,
+                [this]
+                {
+                    prompt_go_to(GoToTarget::disassembly);
+                });
+        connect(disassembly_, &components::DisassemblyView::navigated, this, &MemoryViewerDialog::request_page);
+        connect(disassembly_,
+                &components::DisassemblyView::followInMemoryViewRequested,
+                this,
+                [this](std::uint64_t address)
+                {
+                    view_->navigate_to(address);
+                });
+        connect(disassembly_,
+                &components::DisassemblyView::instructionAccessesRequested,
+                this,
+                &MemoryViewerDialog::instruction_accesses);
+        connect(
+            disassembly_, &components::DisassemblyView::nopRequested, this, &MemoryViewerDialog::nop_instruction_row);
+        connect(disassembly_,
+                &components::DisassemblyView::restoreRequested,
+                this,
+                &MemoryViewerDialog::restore_instruction_row);
+        connect(disassembly_,
+                &components::DisassemblyView::editRequested,
+                this,
+                &MemoryViewerDialog::prompt_edit_instruction);
+        connect(disassembly_, &components::DisassemblyView::hookRequested, this, &MemoryViewerDialog::hook_instruction);
+        return panel;
+    }
+
+    void MemoryViewerDialog::nop_instruction_row(std::size_t row)
+    {
+        if (disassembly_document_.nop_instruction(row))
+        {
+            request_page();
+        }
+    }
+
+    void MemoryViewerDialog::restore_instruction_row(std::size_t row)
+    {
+        if (const components::CodePatch* patch = disassembly_document_.patch_at(row);
+            patch != nullptr && disassembly_document_.restore_instruction(patch->begin))
+        {
+            request_page();
+        }
+    }
+
+    void MemoryViewerDialog::prompt_edit_instruction(std::size_t row)
+    {
+        const auto source = disassembly_document_.edit_source(row);
+        if (!source.has_value())
+        {
+            return;
+        }
+
+        widgets::InputBoxOptions options;
+        options.title       = tr("Edit Instruction");
+        options.label       = tr("Assembler (addresses are absolute):");
+        options.initial     = *source;
+        options.placeholder = QStringLiteral("MOV RBP, RSP");
+        options.monospace   = true;
+        options.validate    = [this, row](const QString& text)
+        {
+            return QString::fromStdString(disassembly_document_.edit_error(row, text.toStdString()));
+        };
+
+        const auto accepted = widgets::get_text(options, this);
+        if (!accepted || accepted->isEmpty())
+        {
+            return;
+        }
+        if (disassembly_document_.edit_instruction(row, accepted->toStdString()))
+        {
+            request_page();
+        }
+    }
+
+    std::optional<std::size_t> MemoryViewerDialog::selected_row() const
+    {
+        const auto address = disassembly_->selected_address();
+        if (!address.has_value())
+        {
+            return std::nullopt;
+        }
+        return disassembly_document_.row_at(*address);
+    }
+
+    std::optional<std::uint64_t> MemoryViewerDialog::selected_reference() const
+    {
+        const auto row = selected_row();
+        if (!row.has_value())
+        {
+            return std::nullopt;
+        }
+        const auto references = disassembly_document_.row_addresses(*row);
+        if (references.empty())
+        {
+            return std::nullopt;
+        }
+        return references.front().address;
+    }
+
+    void MemoryViewerDialog::back_focused_pane()
+    {
+        if (go_to_target() == GoToTarget::disassembly)
+        {
+            disassembly_->back();
+        }
+        else
+        {
+            view_->back();
+        }
+    }
+
+    void MemoryViewerDialog::follow_selected_instruction()
+    {
+        if (const auto reference = selected_reference(); reference.has_value())
+        {
+            disassembly_->navigate_to(*reference);
+        }
+    }
+
+    void MemoryViewerDialog::follow_selected_in_memory_view()
+    {
+        if (const auto reference = selected_reference(); reference.has_value())
+        {
+            view_->navigate_to(*reference);
+        }
+    }
+
+    void MemoryViewerDialog::refresh_menu_command_state()
+    {
+        panels::ViewerMenu::CommandState state;
+
+        if (const auto row = selected_row(); row.has_value())
+        {
+            state.selected_is_instruction     = disassembly_document_.editable(*row);
+            state.selected_has_memory_operand = !disassembly_document_.row_memory(*row).empty();
+            state.can_follow                  = !disassembly_document_.row_addresses(*row).empty();
+            state.can_hook                    = disassembly_document_.editable(*row);
+            if (const components::CodePatch* patch = disassembly_document_.patch_at(*row); patch != nullptr)
+            {
+                state.selected_is_patched = true;
+                state.restore_description =
+                    tr("Write the instruction this session replaced at %1 (%2) back.")
+                        .arg(disassembly_document_.address_text(patch->begin), patch->original_text);
+            }
+        }
+
+        const bool listing_focused = go_to_target() == GoToTarget::disassembly;
+        state.can_go_back          = listing_focused ? disassembly_->can_go_back() : view_->can_go_back();
+
+        state.can_analyze_strings = target_.valid() && !modules_.empty() && !strings_job_.has_value();
+        state.can_show_strings    = target_.valid() && !modules_.empty();
+
+        menu_->set_command_state(state);
+    }
+
+    QWidget* MemoryViewerDialog::build_stats_pane()
+    {
+        auto* panel = new widgets::Panel(QString(), this);
+        debugger_   = new panels::DebuggerPanel(debug_, panel);
+        panel->body()->addWidget(debugger_);
+        return panel;
+    }
+
+    void MemoryViewerDialog::apply_ratios()
+    {
+        if (ratios_applied_)
+        {
+            return;
+        }
+        const int total = split_->height();
+        if (total <= 0)
+        {
+            return;
+        }
+        ratios_applied_ = true;
+
+        const int upper = std::max(1, total * 70 / 100);
+        split_->setSizes({upper, total - upper});
+    }
+
+    void MemoryViewerDialog::showEvent(QShowEvent* event)
+    {
+        QDialog::showEvent(event);
+        document_.set_visible(true);
+        disassembly_document_.set_visible(true);
+        apply_ratios();
+        request_page();
+    }
+
+    void MemoryViewerDialog::set_address(std::uint64_t address)
+    {
+        view_->clear_history();
+        disassembly_->clear_history();
+        view_->set_first_byte(address);
+        disassembly_->set_first_address(address);
+        if (isVisible())
+        {
+            request_page();
+        }
+    }
+
+    void MemoryViewerDialog::show_disassembly_at(std::uint64_t address)
+    {
+        disassembly_->navigate_to(address);
+        disassembly_->set_selected_address(address);
+        disassembly_->setFocus(Qt::OtherFocusReason);
+        show();
+        raise();
+        activateWindow();
+    }
+
+    bool MemoryViewerDialog::go_to(const QString& text)
+    {
+        return view_->go_to(text);
+    }
+
+    bool MemoryViewerDialog::go_to_disassembly(const QString& text)
+    {
+        return disassembly_->go_to(text);
+    }
+
+    void MemoryViewerDialog::instruction_accesses(std::size_t row)
+    {
+        gate_.with_session(tr("find out what this instruction accesses"),
+                           [this, row]
+                           {
+                               resolve_instruction_accesses(row);
+                           });
+    }
+
+    void MemoryViewerDialog::hook_instruction(std::size_t row)
+    {
+        const components::DisassemblyDocument::HookAnalysis analysis = disassembly_document_.hook_analysis(row);
+        if (!analysis.target.has_value())
+        {
+            status_->set_status(widgets::StatusKind::warning, QString::fromStdString(analysis.reason));
+            return;
+        }
+
+        emit hookScriptRequested(tr("Hook %1").arg(QString::fromStdString(analysis.target->description)),
+                                 QString::fromStdString(script::render(*analysis.target)));
+    }
+
+    DebugSessionGate& MemoryViewerDialog::debug_gate() noexcept
+    {
+        return gate_;
+    }
+
+    void MemoryViewerDialog::resolve_instruction_accesses(std::size_t row)
+    {
+        if (debug_.state() == debug::Controller::State::stopped)
+        {
+            finish_instruction_accesses(row);
+            return;
+        }
+        debug_.capture_registers(
+            [this, row]
+            {
+                finish_instruction_accesses(row);
+            });
+    }
+
+    void MemoryViewerDialog::finish_instruction_accesses(std::size_t row)
+    {
+        const components::DisassemblyDocument::Row decoded  = disassembly_document_.row(row);
+        const std::span<const disasm::MemoryRef>   operands = disassembly_document_.row_memory(row);
+        if (debug_.registers().empty())
+        {
+            emit instructionAccessesProgress(tr("Could not read the registers; the operands stay unresolved."), true);
+        }
+        emit instructionAccessesResolved(
+            decoded.address,
+            decoded.length,
+            ui::resolve_accesses(operands, decoded.address, decoded.length, debug_.registers()));
+    }
+
+    MemoryViewerDialog::GoToTarget MemoryViewerDialog::go_to_target() const
+    {
+        const QWidget* focused = QApplication::focusWidget();
+        if (focused != nullptr && (focused == disassembly_ || disassembly_->isAncestorOf(focused)))
+        {
+            return GoToTarget::disassembly;
+        }
+        return GoToTarget::memory;
+    }
+
+    std::uint64_t MemoryViewerDialog::pane_address(GoToTarget target) const
+    {
+        return target == GoToTarget::disassembly ? disassembly_->first_address() : view_->first_byte();
+    }
+
+    QString MemoryViewerDialog::pane_display_text(GoToTarget target, std::uint64_t address) const
+    {
+        return target == GoToTarget::disassembly ? disassembly_document_.address_text(address)
+                                                 : document_.display_text(address);
+    }
+
+    const ui::ModuleSpans& MemoryViewerDialog::pane_module_spans(GoToTarget target) const
+    {
+        return target == GoToTarget::disassembly ? disassembly_document_.module_spans() : document_.module_spans();
+    }
+
+    bool MemoryViewerDialog::pane_go_to(const QString& text, GoToTarget target)
+    {
+        return target == GoToTarget::disassembly ? go_to_disassembly(text) : go_to(text);
+    }
+
+    void MemoryViewerDialog::apply_pane_address(std::uint64_t address, GoToTarget target)
+    {
+        if (target == GoToTarget::disassembly)
+        {
+            disassembly_->navigate_to(address);
+        }
+        else
+        {
+            view_->navigate_to(address);
+        }
+    }
+
+    void MemoryViewerDialog::prompt_go_to()
+    {
+        prompt_go_to(go_to_target());
+    }
+
+    void MemoryViewerDialog::prompt_go_to(GoToTarget target)
+    {
+        widgets::InputBoxOptions options;
+        options.title       = tr("Go To");
+        options.label       = tr("Address or expression:");
+        options.initial     = pane_display_text(target, pane_address(target));
+        options.placeholder = QStringLiteral("module, module+0x10 or [module+0x10]+0x18");
+        options.monospace   = true;
+        options.validate    = [this, target](const QString& text)
+        {
+            return QString::fromStdString(validate_go_to(text.toStdString(), target));
+        };
+
+        const auto accepted = widgets::get_text(options, this);
+        if (!accepted || accepted->isEmpty())
+        {
+            return;
+        }
+
+        const auto expression = expr::parse(accepted->toStdString());
+        if (!expression)
+        {
+            return;
+        }
+        if (expression->pointer_levels() == 0)
+        {
+            if (pane_go_to(*accepted, target))
+            {
+                log::info(log::category::ui, std::format("memory viewer go to {}", accepted->toStdString()));
+            }
+            else
+            {
+                log::warning(
+                    log::category::ui,
+                    std::format("memory viewer go to failed: {} (unparseable address)", accepted->toStdString()));
+            }
+            return;
+        }
+        resolve_go_to(accepted->toStdString(), target);
+    }
+
+    std::string MemoryViewerDialog::validate_go_to(std::string_view text, GoToTarget target) const
+    {
+        const auto expression = expr::parse(text);
+        if (!expression)
+        {
+            return expression.error().message;
+        }
+        if (ui::module_base(pane_module_spans(target), expression->base).has_value())
+        {
+            return {};
+        }
+        if (ui::symbol_value(document_.symbols().snapshot(), expression->base).has_value())
+        {
+            return {};
+        }
+        if (expr::parse_literal(expression->base).has_value())
+        {
+            return {};
+        }
+        return std::format("unknown module or literal '{}'", expression->base);
+    }
+
+    void MemoryViewerDialog::resolve_go_to(const std::string& expression, GoToTarget target)
+    {
+        const process::JobId id = worker_.next_job_id();
+        resolve_job_            = id;
+
+        const bool submitted = worker_.submit_resolve_expressions(
+            id,
+            std::vector<process::ResolveRequest> {
+                process::ResolveRequest {.key = 0, .expression = expression}
+        },
+            ui::module_refs(pane_module_spans(target)),
+            8,
+            [this, id, expression, target](process::JobResult&& result)
+            {
+                if (resolve_job_ != id)
+                {
+                    return;
+                }
+                resolve_job_.reset();
+
+                const auto& resolved = std::get<process::ResolveResult>(result);
+                if (!resolved.error.has_value() && !resolved.items.empty()
+                    && resolved.items.front().address.has_value())
+                {
+                    log::info(
+                        log::category::ui,
+                        std::format("memory viewer go to {} -> {:#x}", expression, *resolved.items.front().address));
+                    apply_pane_address(*resolved.items.front().address, target);
+                    return;
+                }
+                const std::string reason = resolved.error.has_value() || resolved.items.empty()
+                                             ? std::string("no target attached")
+                                             : resolved.items.front().error;
+                log::warning(log::category::ui, std::format("memory viewer go to failed: {} ({})", expression, reason));
+            });
+
+        if (!submitted)
+        {
+            resolve_job_.reset();
+            log::warning(log::category::ui,
+                         std::format("memory viewer go to failed: {} (could not start the resolve)", expression));
+        }
+    }
+
+    void MemoryViewerDialog::set_modules(std::vector<process::ModuleInfo> modules)
+    {
+        modules_ = std::move(modules);
+        document_.set_modules(modules_);
+        disassembly_document_.set_modules(modules_);
+
+        // Decode in the attached target's bitness; 0 means the plugin could not
+        // report it, which keeps the 64-bit default.
+        std::uint32_t pointer_size = 0;
+        if (const process::ModuleInfo* main = process::main_module(modules_))
+        {
+            pointer_size = main->pointer_size;
+        }
+        disassembly_document_.set_machine_mode(disasm::machine_mode_for(pointer_size));
+
+        debugger_->refresh();
+    }
+
+    void MemoryViewerDialog::set_address_mode(ui::AddressMode mode)
+    {
+        document_.set_address_mode(mode);
+        disassembly_document_.set_address_mode(mode);
+        debugger_->refresh();
+    }
+
+    void MemoryViewerDialog::analyze_module(const process::ModuleInfo& module)
+    {
+        if (strings_job_.has_value() || !target_.valid())
+        {
+            return;
+        }
+
+        // The decoded mode follows the analyzed module, which is what the worker
+        // then decodes the sweep in too.
+        const disasm::MachineMode mode = disasm::machine_mode_for(module.pointer_size);
+        disassembly_document_.set_machine_mode(mode);
+
+        const process::JobId id = worker_.next_job_id();
+        strings_job_            = id;
+        status_->set_status(widgets::StatusKind::info,
+                            tr("Analyzing %1 for referenced strings...").arg(QString::fromStdString(module.name)));
+        log::info(log::category::scan, std::format("referenced-string scan of {} started", module.name));
+        refresh_menu_command_state();
+
+        const bool submitted = worker_.submit_string_references(
+            id,
+            module.name,
+            module.base,
+            module.size,
+            mode,
+            [this, id](process::JobResult&& result)
+            {
+                if (strings_job_ != id)
+                {
+                    return;
+                }
+                strings_job_.reset();
+
+                const auto& scan = std::get<process::StringRefsResult>(result);
+                if (scan.error.has_value())
+                {
+                    status_->set_status(widgets::StatusKind::warning,
+                                        tr("Could not analyze %1: %2")
+                                            .arg(QString::fromStdString(scan.module),
+                                                 QString::fromStdString(std::string(describe(*scan.error)))));
+                    refresh_menu_command_state();
+                    return;
+                }
+
+                std::vector<components::ReferencedString> entries;
+                entries.reserve(scan.entries.size());
+                for (const analysis::StringReference& entry : scan.entries)
+                {
+                    entries.push_back(components::ReferencedString {.instruction    = entry.instruction,
+                                                                    .string_address = entry.string_address,
+                                                                    .text           = entry.text,
+                                                                    .wide           = entry.wide});
+                }
+
+                const std::size_t count = entries.size();
+                strings_.set_module(scan.module, std::move(entries));
+                disassembly_document_.set_referenced_strings(&strings_);
+                disassembly_->viewport()->update();
+                if (strings_dialog_ != nullptr)
+                {
+                    strings_dialog_->refresh();
+                }
+                const std::string reason = analysis::describe(scan.report);
+                if (count == 0)
+                {
+                    status_->set_status(widgets::StatusKind::info,
+                                        tr("Referenced-string scan of %1 found 0 string(s). %2")
+                                            .arg(QString::fromStdString(scan.module), QString::fromStdString(reason)));
+                }
+                else
+                {
+                    status_->set_status(widgets::StatusKind::info,
+                                        tr("Referenced-string scan of %1 found %2 string(s).")
+                                            .arg(QString::fromStdString(scan.module))
+                                            .arg(count));
+                }
+                log::info(
+                    log::category::scan,
+                    std::format("referenced-string scan of {} found {} string(s): {}", scan.module, count, reason));
+                refresh_menu_command_state();
+            });
+
+        if (!submitted)
+        {
+            strings_job_.reset();
+            status_->set_status(widgets::StatusKind::warning, tr("Could not start the referenced-string analysis."));
+            refresh_menu_command_state();
+        }
+    }
+
+    void MemoryViewerDialog::prompt_string_analysis()
+    {
+        if (modules_.empty())
+        {
+            return;
+        }
+        ModuleChooserDialog chooser(modules_, this);
+        if (chooser.exec() != QDialog::Accepted)
+        {
+            return;
+        }
+        if (const auto module = chooser.selected_module(); module.has_value())
+        {
+            analyze_module(*module);
+        }
+    }
+
+    const components::ReferencedStringTable& MemoryViewerDialog::referenced_strings() const noexcept
+    {
+        return strings_;
+    }
+
+    const std::vector<process::ModuleInfo>& MemoryViewerDialog::modules() const noexcept
+    {
+        return modules_;
+    }
+
+    ReferencedStringsDialog* MemoryViewerDialog::referenced_strings_dialog() const noexcept
+    {
+        return strings_dialog_.get();
+    }
+
+    disasm::MachineMode MemoryViewerDialog::machine_mode() const noexcept
+    {
+        return disassembly_document_.machine_mode();
+    }
+
+    void MemoryViewerDialog::show_referenced_strings()
+    {
+        if (strings_dialog_ == nullptr)
+        {
+            strings_dialog_ = std::make_unique<ReferencedStringsDialog>(strings_);
+            connect(strings_dialog_.get(),
+                    &ReferencedStringsDialog::analyzeRequested,
+                    this,
+                    &MemoryViewerDialog::prompt_string_analysis);
+            connect(strings_dialog_.get(),
+                    &ReferencedStringsDialog::instructionActivated,
+                    this,
+                    [this](std::uint64_t address)
+                    {
+                        disassembly_->navigate_to(address);
+                        disassembly_->set_selected_address(address);
+                        raise();
+                        activateWindow();
+                    });
+        }
+        strings_dialog_->refresh();
+        strings_dialog_->show();
+        strings_dialog_->raise();
+        strings_dialog_->activateWindow();
+    }
+
+    panels::DebuggerPanel* MemoryViewerDialog::debugger_panel() const noexcept
+    {
+        return debugger_;
+    }
+
+    panels::DebugControls* MemoryViewerDialog::debug_controls() const noexcept
+    {
+        return controls_;
+    }
+
+    panels::ViewerMenu* MemoryViewerDialog::viewer_menu() const noexcept
+    {
+        return menu_;
+    }
+
+    void MemoryViewerDialog::refresh_target_state()
+    {
+        controls_->refresh_target_state();
+        menu_->refresh_target_state();
+    }
+
+    QString MemoryViewerDialog::status_text() const
+    {
+        return status_->text();
+    }
+
+    void MemoryViewerDialog::follow_stop()
+    {
+        const debug::StopEvent& stop = debug_.last_stop();
+        if (stop.address == 0)
+        {
+            return;
+        }
+        disassembly_->navigate_to(stop.address);
+        disassembly_->set_selected_address(stop.address);
+        emit liveRefreshRequested();
+    }
+
+    void MemoryViewerDialog::toggle_breakpoint(std::uint64_t address, const QString& expression)
+    {
+        if (const debug::Breakpoint* entry = debug_.table().software_at(address); entry != nullptr)
+        {
+            debug_.remove_breakpoint(entry->id);
+            return;
+        }
+        if (const auto added = debug_.add_breakpoint(expression.toStdString(), debug::Kind::software, 1); !added)
+        {
+            report_error(QString::fromStdString(added.error()));
+        }
+    }
+
+    void MemoryViewerDialog::report_error(const QString& text)
+    {
+        status_->set_status(widgets::StatusKind::error, text);
+    }
+
+    void MemoryViewerDialog::request_page()
+    {
+        emit liveRefreshRequested();
+    }
+
+    std::vector<ui::LiveRequest> MemoryViewerDialog::next_live_request()
+    {
+        const std::uint64_t pid = target_.valid() ? target_.pid : 0;
+        patches_.note_target(pid);
+        if (pid != strings_pid_)
+        {
+            strings_pid_ = pid;
+            strings_job_.reset();
+            strings_.clear();
+            disassembly_->viewport()->update();
+            if (strings_dialog_ != nullptr)
+            {
+                strings_dialog_->refresh();
+            }
+        }
+        std::vector<ui::LiveRequest>       requests = document_.next_live_request();
+        const std::vector<ui::LiveRequest> code     = disassembly_document_.next_live_request();
+        requests.insert(requests.end(), code.begin(), code.end());
+        return requests;
+    }
+
+    void MemoryViewerDialog::apply_live_readings(std::span<const ui::LiveReading> readings)
+    {
+        if (readings.empty())
+        {
+            return;
+        }
+        document_.apply_live_readings(readings);
+        disassembly_document_.apply_live_readings(readings);
+    }
+
+}

@@ -1,0 +1,1003 @@
+#include "platform/linux/debug_session.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <expected>
+#include <format>
+#include <mutex>
+#include <span>
+#include <utility>
+#include <vector>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+#include "platform/linux/procfs.hpp"
+
+namespace slopkit::platform
+{
+    namespace
+    {
+        constexpr std::int32_t kHardwareExecute   = 1;
+        constexpr std::int32_t kHardwareWrite     = 2;
+        constexpr std::int32_t kHardwareReadWrite = 3;
+
+        std::uint64_t hardware_control(std::uint32_t slot, std::int32_t kind, std::size_t size)
+        {
+            std::uint64_t rw = 0;
+            if (kind == kHardwareWrite)
+            {
+                rw = 1;
+            }
+            else if (kind == kHardwareReadWrite)
+            {
+                rw = 3;
+            }
+
+            std::uint64_t length = 0;
+            if (size == 2)
+            {
+                length = 1;
+            }
+            else if (size == 4)
+            {
+                length = 3;
+            }
+            else if (size == 8)
+            {
+                length = 2;
+            }
+            return (std::uint64_t {1} << (2 * slot)) | (rw << (16 + 4 * slot)) | (length << (18 + 4 * slot));
+        }
+    }
+
+    DebugSession::DebugSession(process::ProcessId pid, MemAccess& memory, ForeignSignalPolicy policy)
+        : pid_(pid), memory_(memory), policy_(policy)
+    {
+    }
+
+    bool DebugSession::attached() const noexcept
+    {
+        const std::lock_guard lock(mutex_);
+        return attached_;
+    }
+
+    process::ProcessId DebugSession::leader() const noexcept
+    {
+        const std::lock_guard lock(mutex_);
+        return leader_;
+    }
+
+    std::expected<process::ProcessId, process::AccessError>
+    DebugSession::attach(std::span<const process::ProcessId> excluded)
+    {
+        const std::lock_guard lock(mutex_);
+        if (attached_)
+        {
+            if (group_window_)
+            {
+                return leader_;
+            }
+            // A single-thread window is open: the group window and the thread
+            // window never overlap.
+            return std::unexpected(process::AccessError::permission_denied);
+        }
+        if (const auto status = read_status(pid_); status && status->tracer_pid != 0)
+        {
+            return std::unexpected(process::AccessError::permission_denied);
+        }
+
+        std::vector<process::ProcessId> tids;
+        bool                            listed = false;
+        for (const auto& thread : read_threads(pid_))
+        {
+            listed = true;
+            if (std::ranges::find(excluded, thread.tid) == excluded.end())
+            {
+                tids.push_back(thread.tid);
+            }
+        }
+        if (!listed && excluded.empty())
+        {
+            tids.push_back(pid_);
+        }
+        if (tids.empty())
+        {
+            return std::unexpected(process::AccessError::not_found);
+        }
+
+        std::size_t seized = 0;
+        for (; seized < tids.size(); ++seized)
+        {
+            const auto result = platform::seize(tids[seized]);
+            if (result)
+            {
+                continue;
+            }
+            if (result.error() == process::AccessError::not_found)
+            {
+                tids.erase(tids.begin() + static_cast<std::ptrdiff_t>(seized));
+                --seized;
+                continue;
+            }
+            for (std::size_t i = 0; i < seized; ++i)
+            {
+                (void)platform::detach(tids[i]);
+            }
+            return std::unexpected(result.error());
+        }
+        if (tids.empty())
+        {
+            return std::unexpected(process::AccessError::not_found);
+        }
+
+        for (const auto tid : tids)
+        {
+            const std::array<process::ProcessId, 1> one {tid};
+            if (const auto interrupted = platform::interrupt(tid); !interrupted)
+            {
+                for (const auto other : tids)
+                {
+                    (void)platform::detach(other);
+                }
+                return std::unexpected(interrupted.error());
+            }
+            const auto result = platform::wait(one);
+            if (!result && result.error() != process::AccessError::not_found)
+            {
+                for (const auto other : tids)
+                {
+                    (void)platform::detach(other);
+                }
+                return std::unexpected(result.error());
+            }
+        }
+
+        tids_         = std::move(tids);
+        leader_       = pid_;
+        current_      = pid_;
+        attached_     = true;
+        group_window_ = true;
+        return leader_;
+    }
+
+    std::expected<void, process::AccessError> DebugSession::detach()
+    {
+        std::vector<process::ProcessId>                     tids;
+        std::vector<std::pair<std::uint64_t, std::uint8_t>> restore;
+        process::ProcessId                                  leader {};
+        bool                                                group = false;
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return {};
+            }
+            tids   = tids_;
+            leader = leader_;
+            group  = group_window_;
+            if (group)
+            {
+                for (const auto& slot : software_)
+                {
+                    if (slot.armed && slot.size > 0)
+                    {
+                        restore.emplace_back(slot.address, static_cast<std::uint8_t>(slot.original & 0xFF));
+                    }
+                }
+            }
+            attached_     = false;
+            group_window_ = false;
+        }
+
+        for (const auto& [address, original] : restore)
+        {
+            const std::array<std::byte, 1> bytes {static_cast<std::byte>(original)};
+            (void)platform::write_bytes(leader, address, bytes);
+        }
+
+        std::expected<void, process::AccessError> result {};
+        for (const auto tid : tids)
+        {
+            // A thread that is still running can be neither cleared nor detached,
+            // and leaving one seized would keep its debug registers programmed. A
+            // thread that has already gone away cannot be handed back at all.
+            if (const auto stopped = ensure_stopped(tid);
+                !stopped && result.has_value() && stopped.error() != process::AccessError::not_found)
+            {
+                result = std::unexpected(stopped.error());
+            }
+
+            // A thread that stopped only to hand its own signal over carries it
+            // out of the session: detaching without it would cancel the signal
+            // and leave the target's handler waiting for something that never
+            // arrives.
+            int signal = 0;
+            if (const auto pending = platform::poll_stop(tid); pending && pending->has_value())
+            {
+                if (pending->value().reason == StopReason::signal_stop)
+                {
+                    signal = pending->value().signal;
+                }
+            }
+
+            // Only the group window programs DR0-DR3; the target's own debug
+            // registers are never the thread window's to zero.
+            if (group)
+            {
+                if (const auto cleared = platform::clear_debug_registers(tid); !cleared && result.has_value())
+                {
+                    result = std::unexpected(cleared.error());
+                }
+            }
+            const auto detached = platform::detach(tid, signal);
+            if (!detached && result.has_value())
+            {
+                result = std::unexpected(detached.error());
+            }
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            tids_.clear();
+            requested_stops_.clear();
+            software_ = {};
+            hardware_ = {};
+            restored_sites_.clear();
+        }
+        return result;
+    }
+
+    std::expected<void, process::AccessError> DebugSession::attach_thread(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (attached_)
+            {
+                return std::unexpected(process::AccessError::permission_denied);
+            }
+        }
+        if (const auto status = read_status(pid_); status && status->tracer_pid != 0)
+        {
+            return std::unexpected(process::AccessError::permission_denied);
+        }
+
+        if (const auto seized = platform::seize(tid); !seized)
+        {
+            return std::unexpected(seized.error());
+        }
+        if (const auto interrupted = platform::interrupt(tid); !interrupted)
+        {
+            (void)platform::detach(tid);
+            return std::unexpected(interrupted.error());
+        }
+
+        // Wait for the stop the interrupt asked for, handing the thread its own
+        // signal if it stopped for one, so no signal of the target's is
+        // swallowed before the window is even open.
+        const std::array<process::ProcessId, 1> one {tid};
+        for (;;)
+        {
+            const auto stop = platform::wait(one);
+            if (!stop)
+            {
+                (void)platform::detach(tid);
+                return std::unexpected(stop.error());
+            }
+            if (stop->reason == StopReason::signal_stop)
+            {
+                if (const auto resumed = platform::cont(tid, stop->signal); !resumed)
+                {
+                    (void)platform::detach(tid);
+                    return std::unexpected(resumed.error());
+                }
+                continue;
+            }
+            break;
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            tids_         = {tid};
+            leader_       = 0;
+            current_      = tid;
+            attached_     = true;
+            group_window_ = false;
+        }
+        return {};
+    }
+
+    std::expected<void, process::AccessError> DebugSession::detach_thread(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_ || group_window_)
+            {
+                return {};
+            }
+            const auto found = std::find(tids_.begin(), tids_.end(), tid);
+            if (found == tids_.end())
+            {
+                return {};
+            }
+            tids_.erase(found);
+            if (tids_.empty())
+            {
+                attached_     = false;
+                group_window_ = false;
+                leader_       = 0;
+                current_      = 0;
+            }
+        }
+
+        // A thread that stopped only to hand its own signal over carries it out
+        // of the window: detaching without it would cancel the signal and leave
+        // the target's handler waiting for something that never arrives. No
+        // debug register is cleared because this window never programs one.
+        int signal = 0;
+        if (const auto pending = platform::poll_stop(tid); pending && pending->has_value())
+        {
+            if (pending->value().reason == StopReason::signal_stop)
+            {
+                signal = pending->value().signal;
+            }
+        }
+        return platform::detach(tid, signal);
+    }
+
+    void DebugSession::rewind_before_continue(process::ProcessId tid, std::uint64_t address)
+    {
+        (void)platform::set_register(tid, "RIP", address);
+    }
+
+    std::vector<process::ProcessId> DebugSession::attached_threads() const
+    {
+        const std::lock_guard lock(mutex_);
+        return tids_;
+    }
+
+    std::expected<StopStatus, process::AccessError> DebugSession::resume(std::uint64_t resume_address)
+    {
+        std::vector<process::ProcessId> tids;
+        process::ProcessId              current {};
+        bool                            have_trap     = false;
+        std::uint64_t                   trap_original = 0;
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+            tids    = tids_;
+            current = current_;
+            if (resume_address != 0)
+            {
+                for (const auto& slot : software_)
+                {
+                    if (slot.armed && slot.address == resume_address)
+                    {
+                        have_trap     = true;
+                        trap_original = slot.original;
+                        break;
+                    }
+                }
+            }
+        }
+
+        std::expected<StopStatus, process::AccessError> stop = std::unexpected(process::AccessError::internal);
+
+        if (resume_address != 0 && have_trap)
+        {
+            if (const auto rewound = platform::set_register(current, "RIP", resume_address); !rewound)
+            {
+                return std::unexpected(rewound.error());
+            }
+            const std::array<std::byte, 1> original {static_cast<std::byte>(trap_original & 0xFF)};
+            if (const auto restored = platform::write_bytes(current, resume_address, original); !restored)
+            {
+                return std::unexpected(restored.error());
+            }
+            const std::array<process::ProcessId, 1> one {current};
+            int                                     pending = 0;
+            for (;;)
+            {
+                if (const auto stepped = platform::single_step(current, pending); !stepped)
+                {
+                    const std::array<std::byte, 1> trap {std::byte {0xCC}};
+                    (void)platform::write_bytes(current, resume_address, trap);
+                    return std::unexpected(stepped.error());
+                }
+                stop = platform::wait(one);
+                if (!stop)
+                {
+                    const std::array<std::byte, 1> trap {std::byte {0xCC}};
+                    (void)platform::write_bytes(current, resume_address, trap);
+                    return std::unexpected(stop.error());
+                }
+                if (policy_ == ForeignSignalPolicy::forward && stop->reason == StopReason::signal_stop)
+                {
+                    // The target's own handler must still run; re-send the signal
+                    // with the next single step so the step is not lost.
+                    pending = stop->signal;
+                    continue;
+                }
+                break;
+            }
+            const std::array<std::byte, 1> trap {std::byte {0xCC}};
+            (void)platform::write_bytes(current, resume_address, trap);
+        }
+        else
+        {
+            if (const auto hardware = apply_hardware(); !hardware)
+            {
+                return std::unexpected(hardware.error());
+            }
+            std::vector<std::uint64_t> armed_sites;
+            std::vector<std::uint64_t> restored_sites;
+            {
+                const std::lock_guard lock(mutex_);
+                for (const auto& slot : software_)
+                {
+                    if (slot.armed)
+                    {
+                        armed_sites.push_back(slot.address);
+                    }
+                }
+                for (const auto site : restored_sites_)
+                {
+                    if (std::ranges::any_of(software_,
+                                            [site](const SoftwareSlot& slot)
+                                            {
+                                                return slot.size != 0 && slot.address == site;
+                                            }))
+                    {
+                        restored_sites.push_back(site);
+                    }
+                }
+            }
+            for (const auto tid : tids)
+            {
+                // A thread parked at a trap waits one byte past it, where the
+                // tail of the patched instruction would run as garbage. When it
+                // sits at the trap this continue is consuming, or at a trap
+                // whose byte was already restored, it has to run the original
+                // instruction again. At any other live trap it stays stopped, so
+                // that stop is reported instead of being resumed away.
+                const auto registers = platform::get_registers(tid);
+                if (registers && registers->rip >= 1)
+                {
+                    const std::uint64_t site = registers->rip - 1;
+                    if (resume_address != 0 && site == resume_address)
+                    {
+                        rewind_before_continue(tid, resume_address);
+                        (void)platform::cont(tid);
+                        continue;
+                    }
+                    if (std::ranges::find(armed_sites, site) != armed_sites.end())
+                    {
+                        continue;
+                    }
+                    if (std::ranges::find(restored_sites, site) != restored_sites.end())
+                    {
+                        rewind_before_continue(tid, site);
+                        (void)platform::cont(tid);
+                        continue;
+                    }
+                }
+                (void)platform::cont(tid);
+            }
+            {
+                // Every thread has either been rewound and resumed or is stopped
+                // somewhere else, so no thread is parked at these restores any
+                // more. A site that is armed again keeps its entry: its parked
+                // threads were deliberately left stopped.
+                const std::lock_guard lock(mutex_);
+                std::erase_if(restored_sites_,
+                              [&](std::uint64_t site)
+                              {
+                                  return std::ranges::find(armed_sites, site) == armed_sites.end()
+                                      && std::ranges::find(restored_sites, site) != restored_sites.end();
+                              });
+            }
+            for (;;)
+            {
+                stop = platform::wait(tids);
+                if (!stop)
+                {
+                    return std::unexpected(stop.error());
+                }
+                if (stop->reason == StopReason::exited || stop->reason == StopReason::signalled)
+                {
+                    bool last = false;
+                    {
+                        const std::lock_guard lock(mutex_);
+                        std::erase(tids_, stop->tid);
+                        requested_stops_.erase(stop->tid);
+                        last = tids_.empty() || stop->tid == leader_;
+                        if (last && tids_.empty())
+                        {
+                            attached_     = false;
+                            group_window_ = false;
+                            leader_       = 0;
+                            current_      = 0;
+                        }
+                        else if (!last)
+                        {
+                            current_ = tids_.front();
+                        }
+                    }
+                    if (last)
+                    {
+                        break;
+                    }
+                    std::erase(tids, stop->tid);
+                    log::debug(log::category::debug,
+                               std::format("thread {} left the target; the session continues", stop->tid));
+                    continue;
+                }
+                if (policy_ != ForeignSignalPolicy::forward)
+                {
+                    break;
+                }
+                if (stop->reason == StopReason::interrupt)
+                {
+                    bool ours = false;
+                    {
+                        const std::lock_guard lock(mutex_);
+                        ours = requested_stops_.erase(stop->tid) != 0;
+                    }
+                    if (ours)
+                    {
+                        break;
+                    }
+                    if (const auto resumed = platform::cont(stop->tid, 0); !resumed)
+                    {
+                        return std::unexpected(resumed.error());
+                    }
+                    continue;
+                }
+                if (stop->reason != StopReason::signal_stop)
+                {
+                    break;
+                }
+                const auto signal = stop->signal;
+                if (const auto resumed = platform::cont(stop->tid, signal); !resumed)
+                {
+                    return std::unexpected(resumed.error());
+                }
+            }
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            current_ = stop->tid;
+        }
+        return stop;
+    }
+
+    std::expected<StopStatus, process::AccessError> DebugSession::step(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+
+        const std::array<process::ProcessId, 1>         one {tid};
+        int                                             pending = 0;
+        std::expected<StopStatus, process::AccessError> stop    = std::unexpected(process::AccessError::internal);
+        for (;;)
+        {
+            if (const auto stepped = platform::single_step(tid, pending); !stepped)
+            {
+                return std::unexpected(stepped.error());
+            }
+            stop = platform::wait(one);
+            if (!stop)
+            {
+                return std::unexpected(stop.error());
+            }
+            if (policy_ == ForeignSignalPolicy::forward && stop->reason == StopReason::signal_stop)
+            {
+                pending = stop->signal;
+                continue;
+            }
+            break;
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            current_ = stop->tid;
+        }
+        return stop;
+    }
+
+    std::expected<StopStatus, process::AccessError> DebugSession::step_syscall(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+
+        if (const auto resumed = platform::resume_syscall(tid); !resumed)
+        {
+            return std::unexpected(resumed.error());
+        }
+        const std::array<process::ProcessId, 1> one {tid};
+        const auto                              stop = platform::wait(one);
+        if (!stop)
+        {
+            return std::unexpected(stop.error());
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            current_ = stop->tid;
+        }
+        return stop;
+    }
+
+    std::expected<void, process::AccessError> DebugSession::continue_thread(process::ProcessId tid, int signal)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+        return platform::resume_syscall(tid, signal);
+    }
+
+    std::expected<std::optional<StopStatus>, process::AccessError> DebugSession::poll_stop(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+        return platform::poll_stop(tid);
+    }
+
+    std::expected<void, process::AccessError> DebugSession::interrupt(process::ProcessId tid)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+            requested_stops_.insert(tid);
+        }
+
+        // Not a ptrace call: SIGSTOP is delivered to the tracee so it can be
+        // sent from the worker's interrupt thread while the ptrace job thread is
+        // blocked inside resume()'s wait.
+        const auto stopped = platform::stop_thread(pid_, tid);
+        if (!stopped)
+        {
+            const std::lock_guard lock(mutex_);
+            requested_stops_.erase(tid);
+            if (stopped.error() != process::AccessError::not_found)
+            {
+                return std::unexpected(stopped.error());
+            }
+        }
+        return {};
+    }
+
+    std::expected<Registers, process::AccessError> DebugSession::registers(process::ProcessId tid)
+    {
+        return platform::get_registers(tid);
+    }
+
+    std::expected<void, process::AccessError>
+    DebugSession::set_register(process::ProcessId tid, std::string_view name, std::uint64_t value)
+    {
+        return platform::set_register(tid, name, value);
+    }
+
+    std::expected<void, process::AccessError>
+    DebugSession::arm_software(std::uint32_t slot, std::uint64_t address, bool insert)
+    {
+        if (slot >= kSoftwareSlotCount)
+        {
+            return std::unexpected(process::AccessError::invalid_argument);
+        }
+
+        const std::lock_guard lock(mutex_);
+        if (!attached_)
+        {
+            return std::unexpected(process::AccessError::invalid_argument);
+        }
+        auto& record = software_[slot];
+
+        // ptrace reads and writes another process's memory through a thread that
+        // is stopped, and a breakpoint hit stops only the thread that ran into
+        // it; the leader may well still be running.
+        const process::ProcessId writer = current_ != 0 ? current_ : leader_;
+        const auto read_one = [this, writer, address]() -> std::expected<std::vector<std::byte>, process::AccessError>
+        {
+            auto bytes = platform::read_bytes(writer, address, 1);
+            if (!bytes && bytes.error() == process::AccessError::not_found && writer != leader_)
+            {
+                bytes = platform::read_bytes(leader_, address, 1);
+            }
+            return bytes;
+        };
+        const auto write_one =
+            [this, writer, address](std::span<const std::byte> data) -> std::expected<void, process::AccessError>
+        {
+            auto written = platform::write_bytes(writer, address, data);
+            if (!written && written.error() == process::AccessError::not_found && writer != leader_)
+            {
+                written = platform::write_bytes(leader_, address, data);
+            }
+            return written;
+        };
+
+        if (!insert)
+        {
+            if (record.armed && record.address == address)
+            {
+                const std::array<std::byte, 1> original {static_cast<std::byte>(record.original & 0xFF)};
+                if (const auto restored = write_one(original); !restored)
+                {
+                    return std::unexpected(restored.error());
+                }
+                record.armed = false;
+                // A restored address keeps its slot record (address, size and
+                // original); a slot reused for another address invalidates the
+                // old entry.
+                std::erase_if(restored_sites_,
+                              [this](std::uint64_t site)
+                              {
+                                  return std::ranges::none_of(software_,
+                                                              [site](const SoftwareSlot& slot)
+                                                              {
+                                                                  return slot.size != 0 && slot.address == site;
+                                                              });
+                              });
+                if (std::ranges::find(restored_sites_, address) == restored_sites_.end())
+                {
+                    restored_sites_.push_back(address);
+                }
+            }
+            return {};
+        }
+
+        if (record.armed && record.address == address)
+        {
+            return {};
+        }
+        for (std::size_t i = 0; i < kSoftwareSlotCount; ++i)
+        {
+            if (i != slot && software_[i].armed && software_[i].address == address)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+        }
+
+        const auto original = read_one();
+        if (!original)
+        {
+            return std::unexpected(original.error());
+        }
+        if (original->empty())
+        {
+            return std::unexpected(process::AccessError::io_error);
+        }
+        const std::array<std::byte, 1> trap {std::byte {0xCC}};
+        if (const auto written = write_one(trap); !written)
+        {
+            return std::unexpected(written.error());
+        }
+        record.armed    = true;
+        record.address  = address;
+        record.original = std::to_integer<std::uint8_t>((*original)[0]);
+        record.size     = 1;
+        return {};
+    }
+
+    std::expected<void, process::AccessError> DebugSession::arm_hardware(
+        std::uint32_t slot, std::int32_t kind, std::uint64_t address, std::size_t size, bool insert)
+    {
+        if (slot >= kHardwareSlotCount)
+        {
+            return std::unexpected(process::AccessError::invalid_argument);
+        }
+        if (kind < kHardwareExecute || kind > kHardwareReadWrite)
+        {
+            return std::unexpected(process::AccessError::invalid_argument);
+        }
+
+        std::size_t effective = size;
+        if (kind == kHardwareExecute)
+        {
+            effective = 1;
+        }
+        else if (effective != 1 && effective != 2 && effective != 4 && effective != 8)
+        {
+            return std::unexpected(process::AccessError::invalid_argument);
+        }
+
+        {
+            const std::lock_guard lock(mutex_);
+            if (!attached_)
+            {
+                return std::unexpected(process::AccessError::invalid_argument);
+            }
+            if (insert)
+            {
+                hardware_[slot] = HardwareSlot {true, kind, address, effective};
+            }
+            else
+            {
+                hardware_[slot].armed = false;
+            }
+        }
+        return apply_hardware();
+    }
+
+    std::expected<std::vector<DebugFrame>, process::AccessError> DebugSession::backtrace(process::ProcessId tid)
+    {
+        const auto registers = platform::get_registers(tid);
+        if (!registers)
+        {
+            return std::unexpected(registers.error());
+        }
+
+        std::vector<DebugFrame> frames;
+        frames.push_back(DebugFrame {registers->rip, registers->rbp});
+
+        constexpr std::size_t     kMaxFrames = 64;
+        std::array<std::byte, 16> buffer {};
+        std::uint64_t             frame_pointer = registers->rbp;
+        while (frame_pointer != 0 && frames.size() < kMaxFrames)
+        {
+            const auto read = memory_.read(frame_pointer, buffer);
+            if (!read || read->bytes < buffer.size())
+            {
+                break;
+            }
+            std::uint64_t saved  = 0;
+            std::uint64_t caller = 0;
+            for (std::size_t i = 0; i < 8; ++i)
+            {
+                saved |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(buffer[i])) << (8 * i);
+                caller |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(buffer[8 + i])) << (8 * i);
+            }
+            if (caller == 0 || saved <= frame_pointer)
+            {
+                break;
+            }
+            frames.push_back(DebugFrame {caller, saved});
+            frame_pointer = saved;
+        }
+        return frames;
+    }
+
+    bool DebugSession::holds_int3(std::uint64_t address)
+    {
+        std::array<std::byte, 1> byte {};
+        const auto               read = memory_.read(address, byte);
+        return read && read->bytes == byte.size() && byte[0] == std::byte {0xCC};
+    }
+
+    std::expected<void, process::AccessError> DebugSession::ensure_stopped(process::ProcessId tid)
+    {
+        // The debug registers are reached through PEEKUSER/POKEUSER, which the
+        // kernel only forwards to a thread sitting in a ptrace stop. A SIGSTOP
+        // group stop reports a single thread and leaves its siblings merely
+        // job-control stopped, and a thread that never reported a stop is still
+        // running; both refuse every ptrace request. Asking such a thread to stop
+        // and reaping that stop is what leaves it reachable.
+        if (const auto readable = platform::get_debug_register(tid, 7); readable)
+        {
+            return {};
+        }
+        else
+        {
+        }
+
+        if (const auto asked = platform::interrupt(tid); !asked)
+        {
+            return std::unexpected(asked.error());
+        }
+
+        const std::array<process::ProcessId, 1> one {tid};
+        for (;;)
+        {
+            const auto stop = platform::wait(one);
+            if (!stop)
+            {
+                return std::unexpected(stop.error());
+            }
+            if (stop->reason != StopReason::signal_stop)
+            {
+                return {};
+            }
+            // The thread stopped to hand over its own signal, not to answer the
+            // interrupt: deliver the signal and wait for the stop we asked for.
+            if (const auto resumed = platform::cont(tid, stop->signal); !resumed)
+            {
+                return std::unexpected(resumed.error());
+            }
+        }
+    }
+
+    std::expected<void, process::AccessError> DebugSession::apply_hardware()
+    {
+        std::vector<process::ProcessId>              tids;
+        std::array<HardwareSlot, kHardwareSlotCount> hardware;
+        {
+            const std::lock_guard lock(mutex_);
+            tids     = tids_;
+            hardware = hardware_;
+        }
+
+        for (const auto tid : tids)
+        {
+            if (const auto stopped = ensure_stopped(tid); !stopped)
+            {
+                return std::unexpected(stopped.error());
+            }
+            // A slot's perf attributes are derived from the DR7 value present at
+            // the moment its address is written, and the kernel refuses to
+            // modify an enabled breakpoint. So: disable through DR7, rewrite
+            // every known address (which now lands disabled), publish the wanted
+            // DR7, then rewrite the armed addresses so they pick up the enable
+            // and type bits.
+            if (const auto disabled = platform::set_debug_register(tid, 7, 0); !disabled)
+            {
+                return std::unexpected(disabled.error());
+            }
+            for (std::uint32_t slot = 0; slot < kHardwareSlotCount; ++slot)
+            {
+                if (hardware[slot].address == 0)
+                {
+                    continue;
+                }
+                if (const auto written = platform::set_debug_register(tid, slot, hardware[slot].address); !written)
+                {
+                    return std::unexpected(written.error());
+                }
+            }
+
+            std::uint64_t control = 0;
+            for (std::uint32_t slot = 0; slot < kHardwareSlotCount; ++slot)
+            {
+                if (hardware[slot].armed)
+                {
+                    control |= hardware_control(slot, hardware[slot].kind, hardware[slot].size);
+                }
+            }
+            if (const auto written = platform::set_debug_register(tid, 7, control); !written)
+            {
+                return std::unexpected(written.error());
+            }
+            for (std::uint32_t slot = 0; slot < kHardwareSlotCount; ++slot)
+            {
+                if (!hardware[slot].armed)
+                {
+                    continue;
+                }
+                if (const auto written = platform::set_debug_register(tid, slot, hardware[slot].address); !written)
+                {
+                    return std::unexpected(written.error());
+                }
+            }
+        }
+        return {};
+    }
+
+}

@@ -1,0 +1,1050 @@
+#include <catch2/catch.hpp>
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <limits>
+#include <ranges>
+#include <string_view>
+#include <vector>
+
+#include "support/memory_view_helpers.hpp"
+#include "ui/components/disassembly_document.hpp"
+
+namespace
+{
+    using slopkit::ui::LiveReading;
+    using slopkit::ui::LiveRequest;
+    using slopkit::ui::components::CodePatch;
+    using slopkit::ui::components::CodePatchTable;
+    using slopkit::ui::components::CopyFormat;
+    using slopkit::ui::components::DisassemblyDocument;
+    using slopkit::ui::components::RowSegment;
+    using slopkit::ui::components::SegmentKind;
+
+    constexpr std::uint64_t kCode = 0x2000;
+
+    struct DocFixture
+    {
+        FakeAccess                       access;
+        slopkit::process::AccessWorker   worker {access};
+        slopkit::process::AttachedTarget target = attached_target();
+        CodePatchTable                   patches;
+        DisassemblyDocument              document {worker, target, patches};
+
+        explicit DocFixture(std::uint64_t first = kCode, std::size_t rows = 8)
+        {
+            attach_session(worker);
+            document.set_visible(true);
+            document.set_view(first, rows);
+        }
+
+        void put(std::uint64_t address, std::initializer_list<unsigned> values)
+        {
+            std::size_t index = 0;
+            for (const unsigned value : values)
+            {
+                access.memory->bytes[address + index] = static_cast<std::byte>(value);
+                ++index;
+            }
+        }
+
+        void pass()
+        {
+            const auto               requests = document.next_live_request();
+            std::vector<LiveReading> readings;
+            readings.reserve(requests.size());
+            for (const LiveRequest& request : requests)
+            {
+                readings.push_back(reading(request.id, *access.memory, request.address, request.size));
+            }
+            document.apply_live_readings(readings);
+        }
+    };
+
+    [[nodiscard]] bool logged(std::span<const slopkit::log::Record> records, std::string_view needle)
+    {
+        return std::ranges::any_of(records,
+                                   [needle](const slopkit::log::Record& record)
+                                   {
+                                       return record.message.find(needle) != std::string::npos;
+                                   });
+    }
+}
+
+TEST_CASE("the disassembly document requests one aligned window", "[ui]")
+{
+    DocFixture fixture;
+
+    const auto requests = fixture.document.next_live_request();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].id == DisassemblyDocument::kIdBase);
+    CHECK(requests[0].address == kCode);
+    CHECK(requests[0].size == DisassemblyDocument::kWindowSize);
+    CHECK(fixture.document.window_base() == kCode);
+
+    fixture.document.set_view(kCode + 0x1234, 8);
+    CHECK(fixture.document.window_base() == kCode);
+    const auto moved = fixture.document.next_live_request();
+    REQUIRE(moved.size() == 1);
+    CHECK(moved[0].address == kCode);
+}
+
+TEST_CASE("the disassembly document asks for nothing while hidden or detached", "[ui]")
+{
+    DocFixture fixture;
+
+    fixture.document.set_visible(false);
+    CHECK(fixture.document.next_live_request().empty());
+
+    fixture.document.set_visible(true);
+    fixture.target.session_live = false;
+    CHECK(fixture.document.next_live_request().empty());
+}
+
+TEST_CASE("the disassembly document decodes rows from the window base", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    REQUIRE(fixture.document.row_count() >= 3);
+    const auto push = fixture.document.row(0);
+    CHECK(push.address == kCode);
+    CHECK(push.readable);
+    CHECK(push.bytes == QStringLiteral("55"));
+    CHECK(push.text == QStringLiteral("PUSH RBP"));
+
+    const auto mov = fixture.document.row(1);
+    CHECK(mov.address == kCode + 1);
+    CHECK(mov.bytes == QStringLiteral("48 89 E5"));
+    CHECK(mov.text == QStringLiteral("MOV RBP, RSP"));
+
+    const auto ret = fixture.document.row(2);
+    CHECK(ret.address == kCode + 4);
+    CHECK(ret.text == QStringLiteral("RET"));
+
+    CHECK(fixture.document.bytes_width() == 8);
+}
+
+TEST_CASE("the disassembly document wraps a row's bytes into lines", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x66, 0x66, 0x66, 0x66, 0x66, 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+
+    REQUIRE(fixture.document.row_count() == 1);
+    const auto    row   = fixture.document.row(0);
+    const QString bytes = row.bytes;
+    REQUIRE(row.length == 15);
+    CHECK(bytes == QStringLiteral("66 66 66 66 66 48 B8 88 77 66 55 44 33 22 11"));
+
+    CHECK(fixture.document.line_count(0, 1) == 15);
+    CHECK(fixture.document.byte_line(0, 0, 1) == QStringLiteral("66"));
+    CHECK(fixture.document.byte_line(0, 14, 1) == QStringLiteral("11"));
+    CHECK(fixture.document.byte_line(0, 15, 1).isEmpty());
+
+    CHECK(fixture.document.line_count(0, 8) == 2);
+    CHECK(fixture.document.byte_line(0, 0, 8) == QStringLiteral("66 66 66 66 66 48 B8 88"));
+    CHECK(fixture.document.byte_line(0, 1, 8) == QStringLiteral("77 66 55 44 33 22 11"));
+
+    CHECK(fixture.document.line_count(0, 4) == 4);
+    CHECK(fixture.document.byte_line(0, 0, 4) == QStringLiteral("66 66 66 66"));
+    CHECK(fixture.document.byte_line(0, 3, 4) == QStringLiteral("33 22 11"));
+    CHECK(fixture.document.byte_line(0, 4, 4).isEmpty());
+
+    CHECK(fixture.document.line_count(0, 15) == 1);
+    CHECK(fixture.document.byte_line(0, 0, 15) == bytes);
+
+    CHECK(fixture.document.line_count(0, 0) == 15);
+    CHECK(fixture.document.byte_line(0, 0, 0) == QStringLiteral("66"));
+
+    CHECK(fixture.document.line_count(1, 4) == 0);
+    CHECK(fixture.document.byte_line(1, 0, 4).isEmpty());
+}
+
+TEST_CASE("the disassembly document wraps a `??` and a `.byte` row on one line", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0xC3, 0x06});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    REQUIRE(fixture.document.row_count() == 2);
+    CHECK(fixture.document.row(1).text == QStringLiteral(".byte 0x06"));
+    CHECK(fixture.document.line_count(1, 1) == 1);
+    CHECK(fixture.document.line_count(1, 15) == 1);
+    CHECK(fixture.document.byte_line(1, 0, 1) == QStringLiteral("06"));
+    CHECK(fixture.document.byte_line(1, 1, 1).isEmpty());
+
+    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
+    LiveReading                 failed;
+    failed.id       = DisassemblyDocument::kIdBase;
+    failed.readable = false;
+    fixture.document.apply_live_readings(std::vector<LiveReading> {failed});
+    REQUIRE(fixture.document.row_count() == 2);
+    CHECK(fixture.document.line_count(0, 1) == 1);
+    CHECK(fixture.document.line_count(0, 15) == 1);
+    CHECK(fixture.document.byte_line(0, 0, 1) == QStringLiteral("??"));
+    CHECK(fixture.document.byte_line(0, 1, 1).isEmpty());
+}
+
+TEST_CASE("the disassembly document steps its window by aligned pages", "[ui]")
+{
+    DocFixture fixture;
+    fill(*fixture.access.memory, kCode, DisassemblyDocument::kWindowSize, std::byte {0x90});
+    fill(*fixture.access.memory,
+         kCode + DisassemblyDocument::kWindowSize,
+         DisassemblyDocument::kWindowSize,
+         std::byte {0x90});
+
+    const auto requests = fixture.document.next_live_request();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].address == kCode);
+    CHECK(requests[0].address % 4096 == 0);
+    CHECK(fixture.document.window_base() == kCode);
+
+    fixture.pass();
+    fixture.document.ensure_rows(std::numeric_limits<std::size_t>::max());
+    CHECK(fixture.document.row_count() == DisassemblyDocument::kWindowSize);
+    CHECK(fixture.document.window_exhausted());
+
+    const std::uint64_t next    = kCode + DisassemblyDocument::kWindowSize;
+    int                 changes = 0;
+    QObject::connect(&fixture.document,
+                     &DisassemblyDocument::rowsChanged,
+                     [&changes]
+                     {
+                         ++changes;
+                     });
+
+    fixture.document.set_view(next, 8);
+    CHECK(fixture.document.window_base() == next);
+    CHECK(fixture.document.window_base() % 4096 == 0);
+    CHECK(fixture.document.window_exhausted() == false);
+
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    CHECK(changes == 1);
+    CHECK(fixture.document.row(0).address == next);
+
+    fixture.document.set_view(kCode, 8);
+    CHECK(fixture.document.window_base() == kCode);
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    CHECK(changes == 2);
+    CHECK(fixture.document.row(0).address == kCode);
+}
+
+TEST_CASE("the disassembly document invalidates the decode only when the bytes change", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+    REQUIRE(fixture.document.row_count() == 2);
+
+    int changes = 0;
+    QObject::connect(&fixture.document,
+                     &DisassemblyDocument::rowsChanged,
+                     [&]
+                     {
+                         ++changes;
+                     });
+
+    fixture.pass();
+    CHECK(changes == 0);
+    CHECK(fixture.document.row_count() == 2);
+
+    fixture.access.memory->bytes[kCode] = std::byte {0x90};
+    fixture.pass();
+    CHECK(changes == 1);
+    fixture.document.ensure_rows(1);
+    CHECK(fixture.document.row(0).text == QStringLiteral("NOP"));
+}
+
+TEST_CASE("the disassembly document drops stale and foreign readings", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55});
+
+    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
+    fixture.document.set_view(kCode + DisassemblyDocument::kWindowSize, 8);
+    fixture.document.apply_live_readings(
+        std::vector<LiveReading> {reading(DisassemblyDocument::kIdBase, *fixture.access.memory, kCode, 16)});
+    CHECK(fixture.document.row_count() == 0);
+
+    fixture.document.set_view(kCode, 8);
+    [[maybe_unused]] const auto second = fixture.document.next_live_request();
+    fixture.target.pid                 = 7;
+    fixture.document.apply_live_readings(
+        std::vector<LiveReading> {reading(DisassemblyDocument::kIdBase, *fixture.access.memory, kCode, 16)});
+    CHECK(fixture.document.row_count() == 0);
+    fixture.target.pid = 42;
+
+    [[maybe_unused]] const auto third = fixture.document.next_live_request();
+    fixture.document.apply_live_readings(std::vector<LiveReading> {reading(0, *fixture.access.memory, kCode, 16)});
+    CHECK(fixture.document.row_count() == 0);
+}
+
+TEST_CASE("the disassembly document masks a refused window as ??", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+    REQUIRE(fixture.document.row_count() == 2);
+    CHECK(fixture.document.row(0).readable);
+
+    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
+    LiveReading                 failed;
+    failed.id       = DisassemblyDocument::kIdBase;
+    failed.readable = false;
+    fixture.document.apply_live_readings(std::vector<LiveReading> {failed});
+    REQUIRE(fixture.document.row_count() == 2);
+    CHECK_FALSE(fixture.document.row(0).readable);
+    CHECK(fixture.document.row(0).bytes == QStringLiteral("??"));
+    CHECK(fixture.document.row(0).text.isEmpty());
+    CHECK(fixture.document.row(0).segments.empty());
+
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+    CHECK(fixture.document.row(0).readable);
+    CHECK(fixture.document.row(0).text == QStringLiteral("PUSH RBP"));
+    CHECK(fixture.document.row(0).bytes == QStringLiteral("55"));
+}
+
+TEST_CASE("the disassembly document renders an undecodable byte as .byte", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0xC3, 0x06, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    REQUIRE(fixture.document.row_count() >= 3);
+    CHECK(fixture.document.row(0).text == QStringLiteral("RET"));
+    CHECK(fixture.document.row(1).bytes == QStringLiteral("06"));
+    CHECK(fixture.document.row(1).text == QStringLiteral(".byte 0x06"));
+    CHECK(fixture.document.row(2).text == QStringLiteral("RET"));
+}
+
+TEST_CASE("the disassembly document finds the row covering an address", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x89, 0xE5});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+
+    const auto inside = fixture.document.row_at(kCode + 2);
+    REQUIRE(inside.has_value());
+    CHECK(*inside == 0);
+    CHECK(fixture.document.row_at(kCode).has_value());
+    CHECK_FALSE(fixture.document.row_at(kCode - 1).has_value());
+    CHECK_FALSE(fixture.document.row_at(kCode + 3).has_value());
+}
+
+TEST_CASE("the disassembly document clears the decode when the machine mode changes", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    CHECK(fixture.document.row(0).length == 7);
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, 0x1"));
+
+    fixture.document.set_machine_mode(slopkit::disasm::MachineMode::legacy_32);
+    fixture.document.ensure_rows(1);
+    CHECK(fixture.document.row(0).length == 1);
+    CHECK(fixture.document.row(0).text == QStringLiteral("DEC EAX"));
+}
+
+TEST_CASE("the disassembly document clamps the cursor at the user-space ceiling", "[ui]")
+{
+    DocFixture fixture;
+    fixture.document.set_view(slopkit::scan::kMaxUserAddress, 4);
+
+    CHECK(fixture.document.first_address() <= slopkit::scan::kMaxUserAddress);
+    CHECK(fixture.document.window_base() <= slopkit::scan::kMaxUserAddress);
+
+    const auto requests = fixture.document.next_live_request();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].address <= slopkit::scan::kMaxUserAddress);
+    CHECK(requests[0].address + requests[0].size - 1 <= slopkit::scan::kMaxUserAddress);
+}
+
+TEST_CASE("the disassembly document renders addresses through the module map", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("0x2010"));
+
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+    CHECK(fixture.document.address_text(kCode) == QStringLiteral("app+0x0"));
+    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("app+0x10"));
+
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(fixture.document.address_text(kCode + 0x10) == QStringLiteral("0x2010"));
+}
+
+TEST_CASE("the disassembly document renders every copy form of a row", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const DisassemblyDocument& document = fixture.document;
+
+    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0x0"));
+    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("0x2000"));
+    CHECK(document.copy_text(0, CopyFormat::bytes) == QStringLiteral("55"));
+    CHECK(document.copy_text(0, CopyFormat::instruction) == QStringLiteral("PUSH RBP"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("app+0x0: 55"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0x0: PUSH RBP"));
+    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction) == QStringLiteral("app+0x0: 55  PUSH RBP"));
+
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(document.copy_text(0, CopyFormat::address_and_bytes) == QStringLiteral("0x2000: 55"));
+
+    CHECK(document.copy_text(fixture.document.row_count(), CopyFormat::bytes).isEmpty());
+}
+
+TEST_CASE("the disassembly document renders a branch target through the module map", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0x2017"));
+
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+    const auto jump = fixture.document.row(0);
+    CHECK(jump.text == QStringLiteral("JZ app+0x17"));
+    CHECK(jump.length == 2);
+    CHECK(jump.bytes == QStringLiteral("74 15"));
+
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ 0x2017"));
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::module_relative);
+    CHECK(fixture.document.row(0).text == QStringLiteral("JZ app+0x17"));
+}
+
+TEST_CASE("the disassembly document splits a module-relative line into coloured runs", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const auto jump = fixture.document.row(0);
+    REQUIRE(jump.segments.size() == 4);
+    CHECK(jump.segments[0].text == QStringLiteral("JZ "));
+    CHECK(jump.segments[0].kind == SegmentKind::plain);
+    CHECK(jump.segments[1].text == QStringLiteral("app"));
+    CHECK(jump.segments[1].kind == SegmentKind::module);
+    CHECK(jump.segments[2].text == QStringLiteral("+"));
+    CHECK(jump.segments[2].kind == SegmentKind::plain);
+    CHECK(jump.segments[3].text == QStringLiteral("0x17"));
+    CHECK(jump.segments[3].kind == SegmentKind::immediate);
+    CHECK(jump.segments[1].full.isEmpty());
+
+    QString joined;
+    for (const RowSegment& segment : jump.segments)
+    {
+        joined += segment.text;
+    }
+    CHECK(joined == jump.text);
+}
+
+TEST_CASE("the disassembly document attaches the full address to a shortened module run", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("DyingLightGame_TheBeast_x64_rwdi.exe", kCode, 0x1000)});
+
+    const auto jump = fixture.document.row(0);
+    REQUIRE(jump.segments.size() == 4);
+    CHECK(jump.segments[1].text == QStringLiteral("DyingL..._rwdi.exe"));
+    CHECK(jump.segments[1].kind == SegmentKind::module);
+    CHECK(jump.segments[1].full == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x17"));
+    CHECK(jump.segments[2].full.isEmpty());
+    CHECK(jump.segments[3].full.isEmpty());
+    CHECK(jump.text == QStringLiteral("JZ DyingL..._rwdi.exe+0x17"));
+    CHECK(fixture.document.copy_text(0, CopyFormat::module_relative)
+          == QStringLiteral("DyingLightGame_TheBeast_x64_rwdi.exe+0x0"));
+}
+
+TEST_CASE("the disassembly document colours a decoded address as an immediate", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+
+    const auto decoded = fixture.document.row(0);
+    REQUIRE(decoded.segments.size() == 2);
+    CHECK(decoded.segments[0].text == QStringLiteral("JZ "));
+    CHECK(decoded.segments[0].kind == SegmentKind::plain);
+    CHECK(decoded.segments[1].text == QStringLiteral("0x2017"));
+    CHECK(decoded.segments[1].kind == SegmentKind::immediate);
+
+    fixture.document.set_modules({module_image("app", kCode + 0x8000, 0x1000)});
+    const auto outside = fixture.document.row(0);
+    REQUIRE(outside.segments.size() == 2);
+    CHECK(outside.segments[1].kind == SegmentKind::immediate);
+
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    const auto absolute = fixture.document.row(0);
+    REQUIRE(absolute.segments.size() == 2);
+    CHECK(absolute.segments[0].text == QStringLiteral("JZ "));
+    CHECK(absolute.segments[1].text == QStringLiteral("0x2017"));
+    CHECK(absolute.segments[1].kind == SegmentKind::immediate);
+}
+
+TEST_CASE("the disassembly document classifies registers and displacements", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x89, 0x43, 0x08});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto push = fixture.document.row(0);
+    REQUIRE(push.segments.size() == 2);
+    CHECK(push.segments[0].text == QStringLiteral("PUSH "));
+    CHECK(push.segments[0].kind == SegmentKind::plain);
+    CHECK(push.segments[1].text == QStringLiteral("RBP"));
+    CHECK(push.segments[1].kind == SegmentKind::cpu_register);
+
+    const auto store = fixture.document.row(1);
+    REQUIRE(store.segments.size() == 6);
+    CHECK(store.segments[0].text == QStringLiteral("MOV ["));
+    CHECK(store.segments[0].kind == SegmentKind::plain);
+    CHECK(store.segments[1].text == QStringLiteral("RBX"));
+    CHECK(store.segments[1].kind == SegmentKind::cpu_register);
+    CHECK(store.segments[2].text == QStringLiteral("+"));
+    CHECK(store.segments[2].kind == SegmentKind::plain);
+    CHECK(store.segments[3].text == QStringLiteral("0x8"));
+    CHECK(store.segments[3].kind == SegmentKind::immediate);
+    CHECK(store.segments[4].text == QStringLiteral("], "));
+    CHECK(store.segments[4].kind == SegmentKind::plain);
+    CHECK(store.segments[5].text == QStringLiteral("EAX"));
+    CHECK(store.segments[5].kind == SegmentKind::cpu_register);
+}
+
+TEST_CASE("a row with nothing to classify is one plain run", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0xC3, 0x06});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto ret = fixture.document.row(0);
+    REQUIRE(ret.segments.size() == 1);
+    CHECK(ret.segments[0].text == QStringLiteral("RET"));
+    CHECK(ret.segments[0].kind == SegmentKind::plain);
+
+    const auto dot_byte = fixture.document.row(1);
+    REQUIRE(dot_byte.segments.size() == 1);
+    CHECK(dot_byte.segments[0].text == QStringLiteral(".byte 0x06"));
+    CHECK(dot_byte.segments[0].kind == SegmentKind::plain);
+}
+
+TEST_CASE("the disassembly document renders a memory operand's address through the module map", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const auto load = fixture.document.row(0);
+    CHECK(load.text == QStringLiteral("MOV RAX, [app+0x2FE]"));
+    REQUIRE(load.segments.size() == 7);
+    CHECK(load.segments[0].text == QStringLiteral("MOV "));
+    CHECK(load.segments[0].kind == SegmentKind::plain);
+    CHECK(load.segments[1].text == QStringLiteral("RAX"));
+    CHECK(load.segments[1].kind == SegmentKind::cpu_register);
+    CHECK(load.segments[2].text == QStringLiteral(", ["));
+    CHECK(load.segments[2].kind == SegmentKind::plain);
+    CHECK(load.segments[3].text == QStringLiteral("app"));
+    CHECK(load.segments[3].kind == SegmentKind::module);
+    CHECK(load.segments[4].text == QStringLiteral("+"));
+    CHECK(load.segments[4].kind == SegmentKind::plain);
+    CHECK(load.segments[5].text == QStringLiteral("0x2FE"));
+    CHECK(load.segments[5].kind == SegmentKind::immediate);
+    CHECK(load.segments[6].text == QStringLiteral("]"));
+    CHECK(load.segments[6].kind == SegmentKind::plain);
+
+    fixture.document.set_address_mode(slopkit::ui::AddressMode::absolute);
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [0x22FE]"));
+}
+
+TEST_CASE("the disassembly document keeps an out-of-module address decoded", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x40, 0x00});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    CHECK(fixture.document.row(0).text == QStringLiteral("MOV RAX, [0x402000]"));
+}
+
+TEST_CASE("the disassembly document copies the rendered instruction text", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15});
+    fixture.pass();
+    fixture.document.ensure_rows(1);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const DisassemblyDocument& document = fixture.document;
+    CHECK(document.copy_text(0, CopyFormat::module_relative) == QStringLiteral("app+0x0"));
+    CHECK(document.copy_text(0, CopyFormat::absolute) == QStringLiteral("0x2000"));
+    CHECK(document.copy_text(0, CopyFormat::bytes) == QStringLiteral("74 15"));
+    CHECK(document.copy_text(0, CopyFormat::instruction) == QStringLiteral("JZ app+0x17"));
+    CHECK(document.copy_text(0, CopyFormat::address_and_instruction) == QStringLiteral("app+0x0: JZ app+0x17"));
+    CHECK(document.copy_text(0, CopyFormat::address_bytes_instruction)
+          == QStringLiteral("app+0x0: 74 15  JZ app+0x17"));
+}
+
+TEST_CASE("the disassembly document exposes a row's referenced addresses", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x74, 0x15, 0x06, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    const auto jump = fixture.document.row_addresses(0);
+    REQUIRE(jump.size() == 1);
+    CHECK(jump.front().address == kCode + 0x17);
+    CHECK(fixture.document.row_addresses(1).empty());
+    CHECK(fixture.document.row_addresses(2).empty());
+
+    CHECK(fixture.document.row_addresses(fixture.document.row_count()).empty());
+
+    [[maybe_unused]] const auto submitted = fixture.document.next_live_request();
+    LiveReading                 failed;
+    failed.id       = DisassemblyDocument::kIdBase;
+    failed.readable = false;
+    fixture.document.apply_live_readings(std::vector<LiveReading> {failed});
+    CHECK(fixture.document.row_addresses(0).empty());
+}
+
+TEST_CASE("the disassembly document NOPs a whole instruction and restores it", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    CHECK(fixture.document.patch_at(1) == nullptr);
+    CHECK(fixture.document.row_annotation(1).isEmpty());
+
+    CHECK(fixture.document.nop_instruction(1));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 3) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 4) == std::byte {0xC3});
+    REQUIRE(fixture.patches.size() == 1);
+
+    fixture.document.ensure_rows(5);
+
+    const CodePatch* patch = fixture.document.patch_at(1);
+    REQUIRE(patch != nullptr);
+    CHECK(patch->begin == kCode + 1);
+    CHECK(patch->length == 3);
+    CHECK(patch->original_text == QStringLiteral("MOV RBP, RSP"));
+    CHECK(patch->original_bytes == std::vector<std::byte> {std::byte {0x48}, std::byte {0x89}, std::byte {0xE5}});
+
+    CHECK(fixture.document.patch_at(2) == patch);
+    CHECK(fixture.document.patch_at(3) == patch);
+    CHECK(fixture.document.patch_at(0) == nullptr);
+    CHECK(fixture.document.patch_at(4) == nullptr);
+    CHECK(fixture.document.row_annotation(1) == QStringLiteral("NOPed: MOV RBP, RSP"));
+    CHECK(fixture.document.row_annotation(2).isEmpty());
+
+    CHECK(fixture.document.row(0).text == QStringLiteral("PUSH RBP"));
+    CHECK(fixture.document.row(1).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(1).bytes == QStringLiteral("90"));
+    CHECK(fixture.document.row(2).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(3).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(4).text == QStringLiteral("RET"));
+
+    CHECK(logged(records, "disassembly nop: 3 byte(s) at 0x2001 replaced with NOP"));
+
+    records.clear();
+    CHECK(fixture.document.restore_instruction(kCode + 2));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x48});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0x89});
+    CHECK(fixture.access.memory->bytes.at(kCode + 3) == std::byte {0xE5});
+    CHECK(fixture.document.patch_at(1) == nullptr);
+    CHECK(fixture.document.row_annotation(1).isEmpty());
+    CHECK(logged(records, "disassembly restore: 3 byte(s) at 0x2001 written back"));
+
+    fixture.document.ensure_rows(3);
+    CHECK(fixture.document.row(1).text == QStringLiteral("MOV RBP, RSP"));
+}
+
+TEST_CASE("the disassembly document restores a one-byte instruction", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    CHECK(fixture.document.nop_instruction(0));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x90});
+    REQUIRE(fixture.patches.size() == 1);
+    fixture.document.ensure_rows(2);
+
+    const CodePatch* patch = fixture.document.patch_at(0);
+    REQUIRE(patch != nullptr);
+    CHECK(patch->length == 1);
+    CHECK(patch->original_bytes.size() == 1);
+    CHECK(fixture.document.row_annotation(0) == QStringLiteral("NOPed: PUSH RBP"));
+
+    CHECK(fixture.document.restore_instruction(kCode));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+    CHECK(fixture.document.patch_at(0) == nullptr);
+
+    fixture.document.ensure_rows(2);
+    CHECK(fixture.document.row(0).text == QStringLiteral("PUSH RBP"));
+    CHECK(fixture.document.row(1).text == QStringLiteral("RET"));
+}
+
+TEST_CASE("the disassembly document refuses a NOP it cannot apply", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x06, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    CHECK_FALSE(fixture.document.nop_instruction(1));
+    CHECK(logged(records, "disassembly nop refused"));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x06});
+
+    records.clear();
+    fixture.target.session_live = false;
+    CHECK_FALSE(fixture.document.nop_instruction(0));
+    CHECK(logged(records, "disassembly nop refused: no target attached"));
+    fixture.target.session_live = true;
+
+    records.clear();
+    CHECK(fixture.document.nop_instruction(0));
+    CHECK_FALSE(fixture.document.nop_instruction(2));
+    CHECK(logged(records, "disassembly nop refused: a code patch write is already in flight"));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0xC3});
+}
+
+TEST_CASE("the disassembly document edits an instruction and records the original", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    const auto source = fixture.document.edit_source(1);
+    REQUIRE(source.has_value());
+    CHECK(*source == QStringLiteral("MOV RBP, RSP"));
+    CHECK(fixture.document.edit_error(1, "XOR EAX, EAX").empty());
+
+    CHECK(fixture.document.edit_instruction(1, "XOR EAX, EAX"));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x31});
+    CHECK(fixture.access.memory->bytes.at(kCode + 2) == std::byte {0xC0});
+    CHECK(fixture.access.memory->bytes.at(kCode + 3) == std::byte {0x90});
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+    CHECK(fixture.access.memory->bytes.at(kCode + 4) == std::byte {0xC3});
+
+    REQUIRE(fixture.patches.size() == 1);
+    fixture.document.ensure_rows(4);
+    const CodePatch* patch = fixture.document.patch_at(1);
+    REQUIRE(patch != nullptr);
+    CHECK(patch->begin == kCode + 1);
+    CHECK(patch->nop == false);
+    CHECK(patch->length == 3);
+    CHECK(patch->original_text == QStringLiteral("MOV RBP, RSP"));
+    CHECK(fixture.document.row_annotation(1) == QStringLiteral("Edited: MOV RBP, RSP"));
+    CHECK(logged(records, "disassembly edit: 2 byte(s) at 0x2001 replace a 3 byte instruction"));
+
+    CHECK(fixture.document.row(1).text == QStringLiteral("XOR EAX, EAX"));
+    CHECK(fixture.document.row(2).text == QStringLiteral("NOP"));
+    CHECK(fixture.document.row(3).text == QStringLiteral("RET"));
+
+    CHECK_FALSE(fixture.document.edit_source(1).has_value());
+    CHECK_FALSE(fixture.document.edit_source(2).has_value());
+
+    CHECK(fixture.document.restore_instruction(kCode + 1));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return fixture.patches.empty();
+                        }));
+    CHECK(fixture.access.memory->bytes.at(kCode + 1) == std::byte {0x48});
+    CHECK(fixture.document.patch_at(1) == nullptr);
+}
+
+TEST_CASE("the disassembly document refuses an edit that does not fit", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    std::vector<slopkit::log::Record> records;
+    SinkGuard                         sink {[&records](const slopkit::log::Record& record)
+                                            {
+                        records.push_back(record);
+                                            }};
+
+    CHECK_FALSE(fixture.document.edit_error(0, "MOV RAX, 0x1122334455667788").empty());
+    CHECK_FALSE(fixture.document.edit_instruction(0, "MOV RAX, 0x1122334455667788"));
+    CHECK(logged(records, "disassembly edit refused"));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x55});
+
+    records.clear();
+    CHECK_FALSE(fixture.document.edit_error(0, "FROBNICATE").empty());
+    CHECK_FALSE(fixture.document.edit_instruction(0, "FROBNICATE"));
+    CHECK(fixture.patches.empty());
+}
+
+TEST_CASE("a `.byte` row is not editable", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x06, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    CHECK_FALSE(fixture.document.edit_source(0).has_value());
+    CHECK_FALSE(fixture.document.edit_error(0, "RET").empty());
+    CHECK_FALSE(fixture.document.edit_instruction(0, "RET"));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x06});
+}
+
+TEST_CASE("re-accepting the unchanged source is not an edit", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto source = fixture.document.edit_source(0);
+    REQUIRE(source.has_value());
+    CHECK(fixture.document.edit_error(0, source->toStdString()).empty());
+    CHECK(fixture.document.edit_instruction(0, source->toStdString()));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode) == std::byte {0x48});
+}
+
+TEST_CASE("the disassembly document edits a rip-relative instruction in place", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x8B, 0x05, 0xF7, 0x02, 0x00, 0x00, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const auto source = fixture.document.edit_source(0);
+    REQUIRE(source.has_value());
+    CHECK(*source == QStringLiteral("MOV RAX, [0x22FE]"));
+    CHECK(fixture.document.edit_error(0, source->toStdString()).empty());
+    CHECK(fixture.document.edit_instruction(0, source->toStdString()));
+    CHECK(fixture.patches.empty());
+    CHECK(fixture.access.memory->bytes.at(kCode + 5) == std::byte {0x00});
+}
+
+TEST_CASE("the disassembly document plans a hook from the cached window", "[ui]")
+{
+    application();
+
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x83, 0xEC, 0x28, 0x48, 0x89, 0xD8, 0x48, 0x83, 0xC4, 0x28, 0xC3});
+    for (std::uint64_t offset = 0xC; offset < 0x40; ++offset)
+    {
+        fixture.put(kCode + offset, {0x90});
+    }
+    fixture.pass();
+    fixture.document.ensure_rows(6);
+    fixture.document.set_modules({module_image("app", kCode, 0x1000)});
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    REQUIRE(analysis.target.has_value());
+    CHECK(analysis.reason.empty());
+
+    const slopkit::script::HookTarget& target = *analysis.target;
+    CHECK(target.address == kCode);
+    CHECK(target.description == "app+0x0");
+    CHECK(target.module_name == "app");
+    CHECK(target.original.size() == 7);
+    CHECK(target.covered.size() == 2);
+    CHECK(target.pattern.rfind("48 83 ?? 28 48 89 ?? 48 83 ?? 28 C3", 0) == 0);
+    CHECK(target.pattern_offset == 0);
+}
+
+TEST_CASE("a `.byte` row cannot be hooked", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x06, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("not a fully decoded instruction") != std::string::npos);
+}
+
+TEST_CASE("a row covered by a session patch cannot be hooked", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    CHECK(fixture.document.nop_instruction(0));
+    REQUIRE(pump_worker(fixture.worker,
+                        [&]
+                        {
+                            return !fixture.patches.empty();
+                        }));
+    fixture.document.ensure_rows(3);
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("already patched") != std::string::npos);
+}
+
+TEST_CASE("a detached target cannot be hooked", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+    fixture.target.session_live = false;
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("no target is attached") != std::string::npos);
+}
+
+TEST_CASE("a hook window that leaves the decoded bytes is refused", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x48, 0x83, 0xEC, 0x28, 0x06});
+    fixture.pass();
+    fixture.document.ensure_rows(2);
+
+    const DisassemblyDocument::HookAnalysis analysis = fixture.document.hook_analysis(0);
+    CHECK_FALSE(analysis.target.has_value());
+    CHECK(analysis.reason.find("runs past") != std::string::npos);
+}
+
+TEST_CASE("the disassembly document renders referenced-string comments", "[ui]")
+{
+    DocFixture fixture;
+    fixture.put(kCode, {0x55, 0x48, 0x89, 0xE5, 0xC3});
+    fixture.pass();
+    fixture.document.ensure_rows(3);
+
+    slopkit::ui::components::ReferencedStringTable strings;
+
+    CHECK(fixture.document.row_comment(0).isEmpty());
+
+    fixture.document.set_referenced_strings(&strings);
+    CHECK(fixture.document.row_comment(0).isEmpty());
+
+    strings.set_module("mod",
+                       {
+                           {.instruction = kCode, .string_address = 0x3000, .text = "hello", .wide = false}
+    });
+    CHECK(fixture.document.row_comment(0) == QStringLiteral("; \"hello\""));
+    CHECK(fixture.document.row_comment(1).isEmpty());
+    CHECK(fixture.document.row_comment(99).isEmpty());
+
+    strings.set_module("mod",
+                       {
+                           {.instruction = kCode + 1, .string_address = 0x3004, .text = "wide", .wide = true}
+    });
+    CHECK(fixture.document.row_comment(0).isEmpty());
+    CHECK(fixture.document.row_comment(1) == QStringLiteral("; L\"wide\""));
+}

@@ -1,0 +1,1490 @@
+#include "process/access_worker.hpp"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <expected>
+#include <filesystem>
+#include <format>
+#include <span>
+#include <stop_token>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
+#include "platform/linux/desktop_entry.hpp"
+
+namespace slopkit::process
+{
+    namespace
+    {
+        std::optional<AccessError> check_memory_access(Session& session, std::span<const ModuleInfo> modules)
+        {
+            std::uint64_t address = 0;
+
+            const ModuleInfo* main = main_module(modules);
+            if (main != nullptr && main->base != 0)
+            {
+                address = main->base;
+            }
+            else if (const auto regions = session.regions(); regions.has_value())
+            {
+                const auto readable = std::ranges::find_if(*regions,
+                                                           [](const RegionInfo& region)
+                                                           {
+                                                               return region.readable;
+                                                           });
+                if (readable != regions->end())
+                {
+                    address = readable->start;
+                }
+            }
+
+            if (address == 0)
+            {
+                return std::nullopt;
+            }
+
+            if (const auto read = session.read(address, 1); !read)
+            {
+                return read.error();
+            }
+            return std::nullopt;
+        }
+
+        std::string module_name_for(const RegionInfo& region, std::span<const ModuleInfo> modules)
+        {
+            if (const std::string owner = owning_module_name(region.start, modules); !owner.empty())
+            {
+                return owner;
+            }
+            if (!region.path.empty())
+            {
+                return std::filesystem::path(region.path).filename().string();
+            }
+            return {};
+        }
+
+        std::uint64_t decode_pointer(std::span<const std::byte> bytes)
+        {
+            std::uint64_t value = 0;
+            for (std::size_t i = 0; i < bytes.size() && i < sizeof(value); ++i)
+            {
+                value |= static_cast<std::uint64_t>(std::to_integer<unsigned char>(bytes[i])) << (8 * i);
+            }
+            return value;
+        }
+
+        std::string one_line(std::string_view text)
+        {
+            std::string line {text};
+            std::ranges::replace(line, '\n', ' ');
+            std::ranges::replace(line, '\r', ' ');
+            return line;
+        }
+
+        std::string error_message(std::string_view text)
+        {
+            return one_line(text.substr(0, text.find('\n')));
+        }
+    }
+
+    AccessWorker::AccessWorker(ProcessAccess& access, script::SymbolTable& symbols) : access_(access), symbols_(symbols)
+    {
+        worker_ = std::jthread {[this](std::stop_token token)
+                                {
+                                    run(token);
+                                }};
+        log::debug(log::category::process, "access worker started");
+    }
+
+    AccessWorker::~AccessWorker()
+    {
+        worker_.request_stop();
+        {
+            const std::lock_guard lock(mutex_);
+            stopping_ = true;
+            cv_.notify_all();
+        }
+        if (worker_.joinable())
+        {
+            worker_.join();
+        }
+
+        const std::lock_guard lock(mutex_);
+        completions_.clear();
+        requests_.clear();
+        completion_hook_ = nullptr;
+        // The abandoned requests will never be drained; drop their count so the
+        // accounting stays balanced rather than latching idle() false.
+        pending_.store(0);
+
+        log::debug(log::category::process, "access worker stopped");
+    }
+
+    void AccessWorker::run(std::stop_token token)
+    {
+        while (!token.stop_requested())
+        {
+            Request request;
+            {
+                std::unique_lock lock(mutex_);
+                cv_.wait(lock,
+                         [&]
+                         {
+                             return stopping_ || !requests_.empty();
+                         });
+                if (stopping_)
+                {
+                    break;
+                }
+                request = std::move(requests_.front());
+                requests_.pop_front();
+            }
+
+            log::debug(log::category::process,
+                       std::format("executing job {} ({})", request.id, job_kind_name(request.kind)));
+
+            JobResult result = execute(request);
+
+            log::debug(log::category::process,
+                       std::format("completed job {} ({})", request.id, job_kind_name(request.kind)));
+
+            if (token.stop_requested())
+            {
+                pending_.fetch_sub(1);
+                break;
+            }
+
+            const std::lock_guard lock(mutex_);
+            completions_.push_back(Completion {std::move(request.on_done), std::move(result)});
+            if (completion_hook_)
+            {
+                completion_hook_();
+            }
+        }
+
+        deactivate_active_scripts();
+    }
+
+    bool AccessWorker::submit(Request request)
+    {
+        {
+            const std::lock_guard lock(mutex_);
+            if (stopping_)
+            {
+                return false;
+            }
+            requests_.push_back(std::move(request));
+            pending_.fetch_add(1);
+        }
+        log::debug(log::category::process, std::format("queued job {} ({})", request.id, job_kind_name(request.kind)));
+        cv_.notify_one();
+        return true;
+    }
+
+    std::size_t AccessWorker::drain(std::size_t max_jobs)
+    {
+        std::size_t drained = 0;
+        while (drained < max_jobs)
+        {
+            Completion completion;
+            {
+                const std::lock_guard lock(mutex_);
+                if (completions_.empty())
+                {
+                    break;
+                }
+                completion = std::move(completions_.front());
+                completions_.pop_front();
+            }
+
+            if (completion.on_done)
+            {
+                completion.on_done(std::move(completion.result));
+            }
+            pending_.fetch_sub(1);
+            ++drained;
+        }
+        if (drained > 0)
+        {
+            log::debug(log::category::process, std::format("drained {} completion(s)", drained));
+        }
+        return drained;
+    }
+
+    void AccessWorker::set_completion_hook(CompletionHook hook)
+    {
+        const std::lock_guard lock(mutex_);
+        completion_hook_ = std::move(hook);
+    }
+
+    bool AccessWorker::idle() const noexcept
+    {
+        return pending_.load() == 0;
+    }
+
+    bool AccessWorker::attached() const noexcept
+    {
+        return attached_.load();
+    }
+
+    std::size_t AccessWorker::active_scripts() const noexcept
+    {
+        return active_script_count_.load();
+    }
+
+    JobId AccessWorker::next_job_id() noexcept
+    {
+        return next_id_.fetch_add(1);
+    }
+
+    bool AccessWorker::submit_list(JobId id, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::list;
+        request.id      = id;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_probe(JobId id, ProcessId pid, std::string plugin_id, JobCallback on_done)
+    {
+        Request request;
+        request.kind      = JobKind::probe;
+        request.id        = id;
+        request.pid       = pid;
+        request.plugin_id = std::move(plugin_id);
+        request.on_done   = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_attach_app(JobId id, ProcessId pid, std::string plugin_id, JobCallback on_done)
+    {
+        Request request;
+        request.kind      = JobKind::attach_app;
+        request.id        = id;
+        request.pid       = pid;
+        request.plugin_id = std::move(plugin_id);
+        request.on_done   = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_attach_handoff(JobId id, ProcessId pid, std::string plugin_id, JobCallback on_done)
+    {
+        Request request;
+        request.kind      = JobKind::attach_handoff;
+        request.id        = id;
+        request.pid       = pid;
+        request.plugin_id = std::move(plugin_id);
+        request.on_done   = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_application_index(JobId id, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::application_index;
+        request.id      = id;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_memory_map(JobId id, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::memory_map;
+        request.id      = id;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_read(JobId id, std::uint64_t address, std::size_t size, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::read;
+        request.id      = id;
+        request.address = address;
+        request.size    = size;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_read_many(JobId id, std::vector<ReadManyItem> items, JobCallback on_done)
+    {
+        constexpr std::size_t kMaxItems = 1024;
+        if (items.size() > kMaxItems)
+        {
+            log::warning(log::category::process,
+                         std::format("batched read of {} item(s) rejected (limit {})", items.size(), kMaxItems));
+            return false;
+        }
+
+        Request request;
+        request.kind       = JobKind::read_many;
+        request.id         = id;
+        request.read_items = std::move(items);
+        request.on_done    = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_resolve_expressions(JobId                        id,
+                                                  std::vector<ResolveRequest>  requests,
+                                                  std::vector<expr::ModuleRef> modules,
+                                                  std::size_t                  pointer_size,
+                                                  JobCallback                  on_done)
+    {
+        constexpr std::size_t kMaxItems = 1024;
+        if (requests.size() > kMaxItems)
+        {
+            log::warning(log::category::process,
+                         std::format("batched resolve of {} item(s) rejected (limit {})", requests.size(), kMaxItems));
+            return false;
+        }
+
+        Request request;
+        request.kind          = JobKind::resolve_expressions;
+        request.id            = id;
+        request.resolve_items = std::move(requests);
+        request.module_refs   = std::move(modules);
+        request.pointer_size  = pointer_size;
+        request.on_done       = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_string_references(JobId               id,
+                                                std::string         module,
+                                                std::uint64_t       base,
+                                                std::uint64_t       size,
+                                                disasm::MachineMode mode,
+                                                JobCallback         on_done)
+    {
+        Request request;
+        request.kind         = JobKind::string_references;
+        request.id           = id;
+        request.module_name  = std::move(module);
+        request.address      = base;
+        request.size         = static_cast<std::size_t>(size);
+        request.machine_mode = mode;
+        request.on_done      = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_code_targets(JobId                     id,
+                                           std::string               module,
+                                           std::uint64_t             base,
+                                           std::uint64_t             size,
+                                           disasm::MachineMode       mode,
+                                           analysis::CodeTargetKinds kinds,
+                                           JobCallback               on_done)
+    {
+        Request request;
+        request.kind              = JobKind::code_targets;
+        request.id                = id;
+        request.module_name       = std::move(module);
+        request.address           = base;
+        request.size              = static_cast<std::size_t>(size);
+        request.machine_mode      = mode;
+        request.code_target_kinds = kinds;
+        request.on_done           = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_write(
+        JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done)
+    {
+        Request request;
+        request.kind     = JobKind::write;
+        request.id       = id;
+        request.address  = address;
+        request.entry_id = entry_id;
+        request.bytes    = std::move(bytes);
+        request.on_done  = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::freeze;
+        request.id      = id;
+        request.items   = std::move(items);
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_script(JobId                                     id,
+                                     std::string                               description,
+                                     std::string                               chunk,
+                                     std::string                               function,
+                                     std::size_t                               pointer_size,
+                                     std::shared_ptr<const script::ClassIndex> classes,
+                                     JobCallback                               on_done)
+    {
+        Request request;
+        request.kind         = JobKind::script;
+        request.id           = id;
+        request.pointer_size = pointer_size;
+        request.description  = std::move(description);
+        request.chunk        = std::move(chunk);
+        request.function     = std::move(function);
+        request.classes      = std::move(classes);
+        request.on_done      = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_script_updates(JobId                                     id,
+                                             std::shared_ptr<const script::ClassIndex> classes,
+                                             JobCallback                               on_done)
+    {
+        Request request;
+        request.kind    = JobKind::script_update;
+        request.id      = id;
+        request.classes = std::move(classes);
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_suspend(JobId id, ProcessId pid, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::suspend;
+        request.id      = id;
+        request.pid     = pid;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_resume(JobId id, ProcessId pid, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::resume;
+        request.id      = id;
+        request.pid     = pid;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_detach(JobId id, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::detach;
+        request.id      = id;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    bool AccessWorker::submit_target_liveness(JobId id, ProcessId pid, JobCallback on_done)
+    {
+        Request request;
+        request.kind    = JobKind::target_liveness;
+        request.id      = id;
+        request.pid     = pid;
+        request.on_done = std::move(on_done);
+        return submit(std::move(request));
+    }
+
+    std::string_view AccessWorker::job_kind_name(JobKind kind) noexcept
+    {
+        switch (kind)
+        {
+        case JobKind::list:
+            return "list";
+        case JobKind::probe:
+            return "probe";
+        case JobKind::attach_app:
+            return "attach";
+        case JobKind::attach_handoff:
+            return "attach-handoff";
+        case JobKind::application_index:
+            return "application-index";
+        case JobKind::memory_map:
+            return "memory-map";
+        case JobKind::read:
+            return "read";
+        case JobKind::read_many:
+            return "read-many";
+        case JobKind::write:
+            return "write";
+        case JobKind::freeze:
+            return "freeze";
+        case JobKind::script:
+            return "script";
+        case JobKind::script_update:
+            return "script-update";
+        case JobKind::suspend:
+            return "suspend";
+        case JobKind::resume:
+            return "resume";
+        case JobKind::detach:
+            return "detach";
+        case JobKind::target_liveness:
+            return "target-liveness";
+        case JobKind::resolve_expressions:
+            return "resolve-expressions";
+        case JobKind::string_references:
+            return "string-references";
+        case JobKind::code_targets:
+            return "code-targets";
+        }
+        return "unknown";
+    }
+
+    JobResult AccessWorker::execute(Request& request)
+    {
+        switch (request.kind)
+        {
+        case JobKind::list:
+            return do_list();
+        case JobKind::probe:
+            return do_probe(request);
+        case JobKind::attach_app:
+            return do_attach(request, false);
+        case JobKind::attach_handoff:
+            return do_attach(request, true);
+        case JobKind::application_index:
+            return do_application_index();
+        case JobKind::memory_map:
+            return do_memory_map();
+        case JobKind::read:
+            return do_read(request);
+        case JobKind::read_many:
+            return do_read_many(request);
+        case JobKind::write:
+            return do_write(request);
+        case JobKind::freeze:
+            return do_freeze(request);
+        case JobKind::script:
+            return do_script(request);
+        case JobKind::script_update:
+            return do_script_updates(request);
+        case JobKind::suspend:
+            return do_suspend(request);
+        case JobKind::resume:
+            return do_resume(request);
+        case JobKind::detach:
+            return do_detach();
+        case JobKind::target_liveness:
+            return do_target_liveness(request);
+        case JobKind::resolve_expressions:
+            return do_resolve(request);
+        case JobKind::string_references:
+            return do_string_references(request);
+        case JobKind::code_targets:
+            return do_code_targets(request);
+        }
+        return ListResult {};
+    }
+
+    ListResult AccessWorker::do_list()
+    {
+        ListResult result;
+        if (auto listed = access_.list_processes())
+        {
+            result.processes = std::move(*listed);
+        }
+        else
+        {
+            result.error = listed.error();
+            log::warning(log::category::process, std::format("listing processes failed: {}", describe(*result.error)));
+        }
+        return result;
+    }
+
+    ProbeResult AccessWorker::do_probe(const Request& request)
+    {
+        ProbeResult result;
+
+        auto probe = access_.attach(request.pid, request.plugin_id);
+        if (!probe)
+        {
+            result.error = probe.error();
+            log::warning(
+                log::category::process,
+                std::format(
+                    "probe of pid {} via {} failed: {}", request.pid, request.plugin_id, describe(*result.error)));
+            return result;
+        }
+
+        result.method = probe->advertised_methods();
+
+        if (auto modules = probe->modules())
+        {
+            result.modules = modules->size();
+
+            if (const auto read_error = check_memory_access(*probe, *modules))
+            {
+                result.read_error = read_error;
+                log::warning(log::category::process,
+                             std::format("probe of pid {} cannot read memory via {}: {}",
+                                         request.pid,
+                                         describe(result.method),
+                                         describe(*read_error)));
+            }
+        }
+        else
+        {
+            result.modules_error = modules.error();
+            log::warning(log::category::process,
+                         std::format("probe of pid {} could not list modules: {}",
+                                     request.pid,
+                                     describe(*result.modules_error)));
+        }
+
+        if (auto threads = probe->threads())
+        {
+            result.threads = threads->size();
+        }
+
+        return result;
+    }
+
+    AttachResult AccessWorker::do_attach(const Request& request, bool handoff)
+    {
+        AttachResult result;
+
+        auto attached = access_.attach(request.pid, request.plugin_id);
+        if (!attached)
+        {
+            result.error = attached.error();
+            log::warning(
+                log::category::process,
+                std::format(
+                    "attach to pid {} via {} failed: {}", request.pid, request.plugin_id, describe(*result.error)));
+            if (!handoff)
+            {
+                session_.reset();
+                engine_.reset();
+                clear_active_scripts();
+                attached_ = false;
+            }
+            return result;
+        }
+
+        AttachInfo info {.pid         = request.pid,
+                         .plugin_id   = std::string(attached->plugin_id()),
+                         .method      = attached->advertised_methods(),
+                         .can_debug   = attached->supports_debug(),
+                         .can_suspend = attached->supports_suspend(),
+                         .read_error  = std::nullopt};
+
+        if (handoff)
+        {
+            result.info           = std::move(info);
+            result.handed_session = std::move(*attached);
+            return result;
+        }
+
+        if (const auto modules = attached->modules(); modules.has_value())
+        {
+            if (const auto read_error = check_memory_access(*attached, *modules))
+            {
+                info.read_error = read_error;
+                log::warning(log::category::process,
+                             std::format("attach to pid {} via {} cannot read memory: {}",
+                                         request.pid,
+                                         info.plugin_id,
+                                         describe(*read_error)));
+            }
+        }
+
+        result.info          = std::move(info);
+        session_             = std::move(*attached);
+        script_pointer_size_ = 8;
+        engine_.emplace(memory_api(), symbol_api());
+        clear_active_scripts();
+        attached_ = true;
+        return result;
+    }
+
+    AppIndexResult AccessWorker::do_application_index()
+    {
+        AppIndexResult result;
+        result.executables = platform::scan_desktop_executables(platform::default_application_dirs());
+        return result;
+    }
+
+    ReadResult AccessWorker::do_read(const Request& request)
+    {
+        ReadResult result;
+        result.id      = request.id;
+        result.address = request.address;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::process,
+                         std::format("read at {:X} requested without an attached target", request.address));
+            return result;
+        }
+
+        if (auto bytes = session_->read(request.address, request.size))
+        {
+            result.bytes = std::move(*bytes);
+        }
+        else
+        {
+            result.error = bytes.error();
+            log::debug(
+                log::category::process,
+                std::format(
+                    "read of {} byte(s) at {:X} failed: {}", request.size, request.address, describe(*result.error)));
+        }
+        return result;
+    }
+
+    ReadManyResult AccessWorker::do_read_many(const Request& request)
+    {
+        ReadManyResult result;
+        result.items.reserve(request.read_items.size());
+
+        if (!session_)
+        {
+            result.items.assign(request.read_items.size(), std::unexpected(AccessError::internal));
+            log::warning(log::category::process,
+                         std::format("batched read of {} address(es) requested without an attached target",
+                                     request.read_items.size()));
+            return result;
+        }
+
+        std::size_t failed = 0;
+        for (const auto& item : request.read_items)
+        {
+            std::vector<std::byte> bytes(item.size);
+            if (auto read = session_->read_into(item.address, bytes))
+            {
+                if (*read < bytes.size())
+                {
+                    bytes.resize(*read);
+                }
+                result.items.emplace_back(std::move(bytes));
+            }
+            else
+            {
+                ++failed;
+                result.items.emplace_back(std::unexpected(read.error()));
+                log::debug(
+                    log::category::process,
+                    std::format(
+                        "live read of {} byte(s) at {:X} failed: {}", item.size, item.address, describe(read.error())));
+            }
+        }
+
+        log::debug(
+            log::category::process,
+            std::format("batched read of {} address(es) completed, {} failed", request.read_items.size(), failed));
+        return result;
+    }
+
+    MemoryMapResult AccessWorker::do_memory_map()
+    {
+        MemoryMapResult result;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::process, "memory map requested without an attached target");
+            return result;
+        }
+
+        if (auto modules = session_->modules())
+        {
+            result.modules = std::move(*modules);
+        }
+        else
+        {
+            result.error = modules.error();
+            log::warning(log::category::process, std::format("could not list modules: {}", describe(*result.error)));
+        }
+
+        if (auto regions = session_->regions())
+        {
+            result.regions = std::move(*regions);
+        }
+        else if (!result.error)
+        {
+            result.error = regions.error();
+            log::warning(log::category::process, std::format("could not list regions: {}", describe(*result.error)));
+        }
+
+        return result;
+    }
+
+    WriteResult AccessWorker::do_write(const Request& request)
+    {
+        WriteResult result;
+        result.id       = request.id;
+        result.entry_id = request.entry_id;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::process, "write requested without an attached target");
+            return result;
+        }
+
+        if (auto written = session_->write(request.address, request.bytes); !written)
+        {
+            result.error = written.error();
+            log::warning(log::category::process,
+                         std::format("write of {} byte(s) at {:X} failed: {}",
+                                     request.bytes.size(),
+                                     request.address,
+                                     describe(*result.error)));
+        }
+        return result;
+    }
+
+    FreezeResult AccessWorker::do_freeze(const Request& request)
+    {
+        FreezeResult result;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::process, "freeze pass requested without an attached target");
+            return result;
+        }
+
+        for (const auto& item : request.items)
+        {
+            if (auto written = session_->write(item.address, item.bytes); !written)
+            {
+                result.error = written.error();
+                log::warning(log::category::process,
+                             std::format("freeze pass failed writing {} byte(s) at {:X}: {}",
+                                         item.bytes.size(),
+                                         item.address,
+                                         describe(*result.error)));
+                return result;
+            }
+            ++result.written;
+        }
+
+        log::debug(log::category::process,
+                   std::format("freeze pass wrote {} of {} value(s)", result.written, request.items.size()));
+        return result;
+    }
+
+    script::MemoryApi AccessWorker::memory_api()
+    {
+        script::MemoryApi api;
+        api.pointer_size = [this]()
+        {
+            return script_pointer_size_ == 0 ? sizeof(void*) : script_pointer_size_;
+        };
+        api.read = [this](std::uint64_t address, std::size_t size) -> std::expected<std::vector<std::byte>, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            auto bytes = session_->read(address, size);
+            if (!bytes)
+            {
+                return std::unexpected(std::string {describe(bytes.error())});
+            }
+            return std::move(*bytes);
+        };
+        api.write = [this](std::uint64_t address, std::span<const std::byte> data) -> std::expected<void, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            if (auto written = session_->write(address, data); !written)
+            {
+                return std::unexpected(std::string {describe(written.error())});
+            }
+            return {};
+        };
+        api.regions = [this]() -> std::expected<std::vector<script::MemoryRegion>, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            const std::expected<std::vector<RegionInfo>, AccessError> listed = session_->regions();
+            if (!listed)
+            {
+                return std::unexpected(std::string {describe(listed.error())});
+            }
+
+            std::vector<ModuleInfo> modules;
+            if (const std::expected<std::vector<ModuleInfo>, AccessError> found = session_->modules())
+            {
+                modules = *found;
+                std::ranges::sort(modules, {}, &ModuleInfo::base);
+            }
+
+            std::vector<script::MemoryRegion> regions;
+            regions.reserve(listed->size());
+            for (const RegionInfo& region : *listed)
+            {
+                script::MemoryRegion entry;
+                entry.base     = region.start;
+                entry.size     = region.end > region.start ? region.end - region.start : 0;
+                entry.readable = region.readable;
+                entry.module   = module_name_for(region, modules);
+                regions.push_back(std::move(entry));
+            }
+            return regions;
+        };
+        api.allocate = [this](std::size_t size, std::uint64_t near) -> std::expected<std::uint64_t, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            auto address = session_->allocate(size, near);
+            if (!address)
+            {
+                if (address.error() == AccessError::unsupported)
+                {
+                    return std::unexpected(std::string {"the target's plugin cannot allocate memory"});
+                }
+                return std::unexpected(std::string {describe(address.error())});
+            }
+            log::debug(log::category::script,
+                       std::format("allocated {} byte(s) at {:#x} (near {:#x})", size, *address, near));
+            return *address;
+        };
+        api.deallocate = [this](std::uint64_t address) -> std::expected<void, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            if (auto freed = session_->free(address); !freed)
+            {
+                if (freed.error() == AccessError::unsupported)
+                {
+                    return std::unexpected(std::string {"the target's plugin cannot allocate memory"});
+                }
+                if (freed.error() == AccessError::not_found)
+                {
+                    return std::unexpected(std::string {"not this session's allocation"});
+                }
+                return std::unexpected(std::string {describe(freed.error())});
+            }
+            log::debug(log::category::script, std::format("freed allocation at {:#x}", address));
+            return {};
+        };
+        api.validate = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            auto valid = session_->validate(address, size);
+            if (!valid)
+            {
+                return std::unexpected(std::string {describe(valid.error())});
+            }
+            return *valid;
+        };
+        api.modules = [this]() -> std::expected<std::vector<expr::ModuleRef>, std::string>
+        {
+            if (!session_)
+            {
+                return std::unexpected(std::string {"no target is attached"});
+            }
+            const std::expected<std::vector<ModuleInfo>, AccessError> found = session_->modules();
+            if (!found)
+            {
+                return std::unexpected(std::string {describe(found.error())});
+            }
+            std::vector<expr::ModuleRef> modules;
+            modules.reserve(found->size());
+            for (const ModuleInfo& module : *found)
+            {
+                modules.push_back(expr::ModuleRef {module.name, module.base});
+            }
+            return modules;
+        };
+        return api;
+    }
+
+    script::SymbolApi AccessWorker::symbol_api()
+    {
+        script::SymbolApi api = symbols_.api();
+        script::SymbolApi logging;
+        logging.set = [inner = api.set](std::string_view name, std::uint64_t value) -> std::expected<void, std::string>
+        {
+            auto result = inner(name, value);
+            if (result)
+            {
+                log::debug(log::category::script, std::format("symbol '{}' = {:#x}", name, value));
+            }
+            return result;
+        };
+        logging.remove = [inner = api.remove](std::string_view name) -> std::expected<void, std::string>
+        {
+            auto result = inner(name);
+            if (result)
+            {
+                log::debug(log::category::script, std::format("symbol '{}' removed", name));
+            }
+            return result;
+        };
+        logging.lookup = [inner = api.lookup](std::string_view name) -> std::optional<std::uint64_t>
+        {
+            return inner(name);
+        };
+        return logging;
+    }
+
+    ScriptResult AccessWorker::do_script(const Request& request)
+    {
+        ScriptResult result;
+        result.id          = request.id;
+        result.description = request.description;
+
+        if (!session_ || !engine_)
+        {
+            if (request.function.empty())
+            {
+                result.run.error = "no target is attached";
+            }
+            else
+            {
+                result.lifecycle.emplace();
+                result.lifecycle->error = "no target is attached";
+            }
+            log::debug(log::category::process,
+                       std::format("script '{}' refused: no attached target", request.description));
+            return result;
+        }
+
+        script_pointer_size_ = request.pointer_size == 0 ? sizeof(void*) : request.pointer_size;
+        engine_->set_classes(request.classes);
+
+        if (request.function.empty())
+        {
+            log::debug(log::category::process,
+                       std::format("running script '{}' ({} byte(s))", request.description, request.chunk.size()));
+            result.run = engine_->run(request.chunk);
+            log::debug(
+                log::category::process,
+                std::format("script '{}' finished: {}", request.description, result.run.ok ? "ok" : result.run.error));
+            return result;
+        }
+
+        log::debug(log::category::process,
+                   std::format("running script '{}' hook '{}' ({} byte(s))",
+                               request.description,
+                               request.function,
+                               request.chunk.size()));
+        result.lifecycle = engine_->run_lifecycle(request.chunk, request.function);
+        remember_lifecycle(request, result);
+        log::debug(log::category::process,
+                   std::format("script '{}' hook '{}' finished: {}",
+                               request.description,
+                               request.function,
+                               result.lifecycle->ok ? "ok" : result.lifecycle->error));
+        return result;
+    }
+
+    void AccessWorker::remember_lifecycle(const Request& request, const ScriptResult& result)
+    {
+        if (!result.lifecycle.has_value() || !result.lifecycle->ok)
+        {
+            return;
+        }
+
+        if (request.function == script::kActivateHook)
+        {
+            active_scripts_.push_back(ActiveScript {.description = request.description,
+                                                    .chunk       = request.chunk,
+                                                    .interval_ms = result.lifecycle->interval_ms,
+                                                    .last_tick   = std::nullopt});
+        }
+        else if (request.function == script::kDeactivateHook)
+        {
+            std::erase_if(active_scripts_,
+                          [&](const ActiveScript& script)
+                          {
+                              return script.description == request.description;
+                          });
+        }
+        active_script_count_ = active_scripts_.size();
+    }
+
+    void AccessWorker::note_script_tick(std::string_view                      description,
+                                        const std::optional<std::uint64_t>&   interval_ms,
+                                        std::chrono::steady_clock::time_point now)
+    {
+        const auto found = std::ranges::find(active_scripts_, description, &ActiveScript::description);
+        if (found == active_scripts_.end())
+        {
+            return;
+        }
+        found->last_tick = now;
+        if (interval_ms)
+        {
+            found->interval_ms = interval_ms;
+        }
+    }
+
+    void AccessWorker::deactivate_active_scripts()
+    {
+        if (!engine_ || active_scripts_.empty())
+        {
+            return;
+        }
+
+        std::vector<ActiveScript> pending = std::move(active_scripts_);
+        clear_active_scripts();
+
+        for (const ActiveScript& script : pending)
+        {
+            deactivate_and_report(script, "before shutdown");
+        }
+    }
+
+    void AccessWorker::deactivate_and_report(const ActiveScript& script, std::string_view why)
+    {
+        log::debug(log::category::process, std::format("deactivating script '{}' {}", script.description, why));
+        const script::LifecycleResult outcome =
+            engine_->run_lifecycle(script.chunk, std::string {script::kDeactivateHook});
+        for (const std::string& line : outcome.output)
+        {
+            log::info(log::category::script, one_line(line));
+        }
+        if (outcome.ok)
+        {
+            log::info(log::category::script,
+                      std::format("script '{}' deactivated: {}",
+                                  script.description,
+                                  outcome.message.empty() ? "ok" : outcome.message));
+            return;
+        }
+        std::string reason = outcome.message;
+        if (reason.empty())
+        {
+            reason = error_message(outcome.error);
+        }
+        if (reason.empty())
+        {
+            log::warning(log::category::script, std::format("script '{}' deactivate failed", script.description));
+        }
+        else
+        {
+            log::warning(log::category::script,
+                         std::format("script '{}' deactivate failed: {}", script.description, reason));
+        }
+    }
+
+    void AccessWorker::clear_active_scripts()
+    {
+        active_scripts_.clear();
+        active_script_count_ = 0;
+    }
+
+    ScriptUpdatesResult AccessWorker::do_script_updates(const Request& request)
+    {
+        ScriptUpdatesResult result;
+
+        if (!session_ || !engine_)
+        {
+            return result;
+        }
+
+        engine_->set_classes(request.classes);
+
+        const std::vector<ActiveScript> pending = active_scripts_;
+        const auto                      now     = std::chrono::steady_clock::now();
+        for (const ActiveScript& script : pending)
+        {
+            if (script.last_tick && script.interval_ms)
+            {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - *script.last_tick);
+                if (elapsed.count() >= 0 && static_cast<std::uint64_t>(elapsed.count()) < *script.interval_ms)
+                {
+                    continue;
+                }
+            }
+
+            const script::UpdateResult outcome = engine_->run_update(script.chunk);
+
+            if (outcome.ok)
+            {
+                if (outcome.ran)
+                {
+                    ++result.updated;
+                }
+                note_script_tick(script.description, outcome.interval_ms, now);
+                continue;
+            }
+
+            deactivate_and_report(script, "after a failed update");
+            std::erase_if(active_scripts_,
+                          [&](const ActiveScript& tracked)
+                          {
+                              return tracked.description == script.description;
+                          });
+            active_script_count_ = active_scripts_.size();
+
+            std::string reason = outcome.message;
+            if (reason.empty())
+            {
+                reason = error_message(outcome.error);
+            }
+            result.failed.push_back(
+                ScriptUpdateFailure {.description = script.description, .reason = std::move(reason)});
+        }
+
+        return result;
+    }
+
+    SuspendResult AccessWorker::do_suspend(const Request& request)
+    {
+        SuspendResult result;
+
+        if (!session_)
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "suspend requested without an attached target");
+            return result;
+        }
+        if (session_->pid() != request.pid)
+        {
+            result.error = AccessError::not_found;
+            log::debug(
+                log::category::process,
+                std::format("suspend refused: the attached target is pid {}, not {}", session_->pid(), request.pid));
+            return result;
+        }
+        if (!session_->supports_suspend())
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "suspend refused: the plugin cannot suspend its target");
+            return result;
+        }
+
+        if (auto suspended = session_->suspend(); !suspended)
+        {
+            result.error = suspended.error();
+            log::debug(log::category::process,
+                       std::format("suspend of pid {} failed: {}", request.pid, describe(*result.error)));
+        }
+        return result;
+    }
+
+    SuspendResult AccessWorker::do_resume(const Request& request)
+    {
+        SuspendResult result;
+
+        if (!session_)
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "resume requested without an attached target");
+            return result;
+        }
+        if (session_->pid() != request.pid)
+        {
+            result.error = AccessError::not_found;
+            log::debug(
+                log::category::process,
+                std::format("resume refused: the attached target is pid {}, not {}", session_->pid(), request.pid));
+            return result;
+        }
+        if (!session_->supports_suspend())
+        {
+            result.error = AccessError::unsupported;
+            log::debug(log::category::process, "resume refused: the plugin cannot resume its target");
+            return result;
+        }
+
+        if (auto resumed = session_->resume(); !resumed)
+        {
+            result.error = resumed.error();
+            log::debug(log::category::process,
+                       std::format("resume of pid {} failed: {}", request.pid, describe(*result.error)));
+        }
+        return result;
+    }
+
+    AttachResult AccessWorker::do_detach()
+    {
+        session_.reset();
+        engine_.reset();
+        clear_active_scripts();
+        attached_ = false;
+        return AttachResult {};
+    }
+
+    TargetLivenessResult AccessWorker::do_target_liveness(const Request& request)
+    {
+        TargetLivenessResult result {.alive = true};
+
+        // A failed listing says nothing about the target, so only a listing that
+        // succeeded without the pid proves the process is gone.
+        if (const auto listed = access_.list_processes(); listed.has_value())
+        {
+            const auto found = std::ranges::find(*listed, request.pid, &ProcessInfo::pid);
+            result.alive     = found != listed->end();
+        }
+        return result;
+    }
+
+    ResolveResult AccessWorker::do_resolve(const Request& request)
+    {
+        ResolveResult result;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::process,
+                         std::format("resolve of {} expression(s) requested without an attached target",
+                                     request.resolve_items.size()));
+            return result;
+        }
+
+        const std::size_t pointer_size = request.pointer_size == 0 ? 8 : request.pointer_size;
+        const auto reader = [this, pointer_size](std::uint64_t address) -> std::expected<std::uint64_t, std::string>
+        {
+            const auto bytes = session_->read(address, pointer_size);
+            if (!bytes)
+            {
+                return std::unexpected(std::string {describe(bytes.error())});
+            }
+            return decode_pointer(*bytes);
+        };
+        const auto validator = [this](std::uint64_t address, std::size_t size) -> std::expected<bool, std::string>
+        {
+            const auto valid = session_->validate(address, size);
+            if (!valid)
+            {
+                return std::unexpected(std::string {describe(valid.error())});
+            }
+            return *valid;
+        };
+
+        result.items.reserve(request.resolve_items.size());
+        std::size_t                        failed  = 0;
+        const std::vector<expr::SymbolRef> symbols = symbols_.snapshot();
+        for (const auto& item : request.resolve_items)
+        {
+            ResolveItemResult entry;
+            entry.key = item.key;
+
+            const auto expression = expr::parse(item.expression);
+            if (!expression)
+            {
+                entry.error = expression.error().message;
+                ++failed;
+                result.items.push_back(std::move(entry));
+                continue;
+            }
+
+            const auto resolved = expr::evaluate(*expression,
+                                                 request.module_refs,
+                                                 symbols,
+                                                 reader,
+                                                 expr::Options {.pointer_size = pointer_size},
+                                                 validator);
+            if (resolved)
+            {
+                entry.address = *resolved;
+            }
+            else
+            {
+                entry.error = resolved.error().message;
+                ++failed;
+            }
+            result.items.push_back(std::move(entry));
+        }
+
+        log::debug(log::category::process,
+                   std::format("resolved {} expression(s), {} failed", request.resolve_items.size(), failed));
+        return result;
+    }
+
+    StringRefsResult AccessWorker::do_string_references(const Request& request)
+    {
+        StringRefsResult result;
+        result.module = request.module_name;
+        result.base   = request.address;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::scan,
+                         std::format("referenced-string analysis of {} requested without an attached target",
+                                     request.module_name));
+            return result;
+        }
+
+        const auto regions = session_->regions();
+        if (!regions)
+        {
+            result.error = regions.error();
+            log::warning(log::category::scan,
+                         std::format("region list for the referenced-string analysis of {} is unavailable: {}",
+                                     request.module_name,
+                                     describe(regions.error())));
+            return result;
+        }
+
+        const analysis::ReadIntoFn read = [this](std::uint64_t address, std::span<std::byte> buffer)
+        {
+            return session_->read_into(address, buffer);
+        };
+        const analysis::ModuleRange module {
+            .name = request.module_name, .base = request.address, .end = request.address + request.size};
+
+        analysis::StringScanResult scan =
+            analysis::find_string_references(read, module, *regions, request.machine_mode);
+        result.entries = std::move(scan.references);
+        result.report  = std::move(scan.report);
+        log::debug(
+            log::category::scan,
+            std::format("referenced-string scan of {}: {}", request.module_name, analysis::describe(result.report)));
+        return result;
+    }
+
+    CodeTargetsResult AccessWorker::do_code_targets(const Request& request)
+    {
+        CodeTargetsResult result;
+        result.module = request.module_name;
+        result.base   = request.address;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(
+                log::category::scan,
+                std::format("code-target analysis of {} requested without an attached target", request.module_name));
+            return result;
+        }
+
+        const auto regions = session_->regions();
+        if (!regions)
+        {
+            result.error = regions.error();
+            log::warning(log::category::scan,
+                         std::format("region list for the code-target analysis of {} is unavailable: {}",
+                                     request.module_name,
+                                     describe(regions.error())));
+            return result;
+        }
+
+        const analysis::ReadIntoFn read = [this](std::uint64_t address, std::span<std::byte> buffer)
+        {
+            return session_->read_into(address, buffer);
+        };
+        const analysis::ModuleRange module {
+            .name = request.module_name, .base = request.address, .end = request.address + request.size};
+
+        analysis::CodeTargetScanResult scan =
+            analysis::find_code_targets(read, module, *regions, request.machine_mode, request.code_target_kinds);
+        result.targets = std::move(scan.targets);
+        result.report  = std::move(scan.report);
+        log::debug(log::category::scan,
+                   std::format("code-target scan of {}: {}", request.module_name, analysis::describe(result.report)));
+        return result;
+    }
+}
