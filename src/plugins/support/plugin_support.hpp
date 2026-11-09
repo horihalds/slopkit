@@ -4,6 +4,7 @@
 #include <expected>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "platform/linux/debug_session.hpp"
@@ -15,6 +16,35 @@
 
 namespace slopkit::plugins::support
 {
+    struct DebugHooks
+    {
+        std::expected<process::ProcessId, process::AccessError> (*attach)(Session&                            session,
+                                                                          std::span<const process::ProcessId> excluded);
+        std::expected<void, process::AccessError> (*detach)(Session& session);
+        std::expected<platform::StopStatus, process::AccessError> (*resume)(Session&      session,
+                                                                            std::uint64_t resume_address,
+                                                                            std::size_t   resume_step_size);
+        std::expected<platform::StopStatus, process::AccessError> (*step)(Session& session, std::uint32_t tid);
+        std::expected<void, process::AccessError> (*interrupt)(Session& session, std::uint32_t tid);
+        std::expected<platform::Registers, process::AccessError> (*registers)(Session& session, std::uint32_t tid);
+        std::expected<void, process::AccessError> (*set_register)(Session&         session,
+                                                                  std::uint32_t    tid,
+                                                                  std::string_view name,
+                                                                  std::uint64_t    value);
+        std::expected<void, process::AccessError> (*arm_software)(Session&      session,
+                                                                  std::uint32_t slot,
+                                                                  std::uint64_t address,
+                                                                  bool          insert);
+        std::expected<void, process::AccessError> (*arm_hardware)(Session&      session,
+                                                                  std::uint32_t slot,
+                                                                  std::int32_t  kind,
+                                                                  std::uint64_t address,
+                                                                  std::size_t   size,
+                                                                  bool          insert);
+        std::expected<std::vector<platform::DebugFrame>, process::AccessError> (*backtrace)(Session&      session,
+                                                                                            std::uint32_t tid);
+    };
+
     struct PluginProfile
     {
         const slopkit_plugin_info* (*info)() noexcept;
@@ -46,6 +76,10 @@ namespace slopkit::plugins::support
         bool debug_supported {true};
         bool suspend_supported {true};
         bool allocation_supported {true};
+
+        const DebugHooks* debug_hooks {nullptr};
+        std::expected<void, process::AccessError> (*suspend)(Session& session);
+        std::expected<void, process::AccessError> (*resume_target)(Session& session);
     };
 
     [[nodiscard]] const slopkit_plugin_vtable* install(const slopkit_host_services* host,

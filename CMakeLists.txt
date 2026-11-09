@@ -403,14 +403,22 @@ target_link_libraries(slopkit-wine_proton PRIVATE slopkit_plugin_support ${CMAKE
 # host still builds the application and the other plugins.
 set(SLOPKIT_MPFSHOST_HELPER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_helpers.cpp)
+set(SLOPKIT_MPFSHOST_TEST_SOURCES)
+set(SLOPKIT_MPFSHOST_TEST_DEFINITIONS)
 pkg_check_modules(MPFSHOST IMPORTED_TARGET mpfshost)
 if(MPFSHOST_FOUND)
     add_slopkit_plugin(slopkit-mpfshost
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_plugin.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_client.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_debug.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_debug_client.cpp
         ${SLOPKIT_MPFSHOST_HELPER_SOURCES})
     target_include_directories(slopkit-mpfshost PRIVATE ${MPFSHOST_INCLUDE_DIRS})
     target_link_libraries(slopkit-mpfshost PRIVATE slopkit_plugin_support)
+    set(SLOPKIT_MPFSHOST_TEST_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_client.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_debug_client.cpp)
+    set(SLOPKIT_MPFSHOST_TEST_DEFINITIONS SLOPKIT_HAVE_MPFSHOST=1)
 else()
     message(WARNING "mpfshost client headers not found; the mpfshost plugin will not be built")
 endif()
@@ -513,6 +521,7 @@ add_executable(slopkit_tests
     ${SLOPKIT_TEST_SANDBOX_SOURCES}
     ${SLOPKIT_TEST_TRAINER_SOURCES}
     ${SLOPKIT_MPFSHOST_HELPER_SOURCES}
+    ${SLOPKIT_MPFSHOST_TEST_SOURCES}
     ${SLOPKIT_WINE_PROTON_SOURCES})
 # The tests load the bundled plugins the same way the app does, so they need the
 # same exported symbols for the platform library's diagnostics.
@@ -521,8 +530,9 @@ add_dependencies(slopkit_tests slopkit-linux_proc slopkit-wine_proton slopkit-ag
 if(MPFSHOST_FOUND)
     add_dependencies(slopkit_tests slopkit-mpfshost)
 endif()
-target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tests)
+target_include_directories(slopkit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tests ${MPFSHOST_INCLUDE_DIRS})
 target_compile_definitions(slopkit_tests PRIVATE
+    ${SLOPKIT_MPFSHOST_TEST_DEFINITIONS}
     SLOPKIT_PLUGIN_DIR="${SLOPKIT_PLUGIN_OUTPUT_DIR}"
     SLOPKIT_PLUGIN_RELATIVE_DIR="${SLOPKIT_PLUGIN_RELATIVE_DIR}"
     SLOPKIT_TRAINER_DIR="${SLOPKIT_TRAINER_DIR}"

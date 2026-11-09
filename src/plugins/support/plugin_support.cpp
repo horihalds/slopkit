@@ -609,7 +609,10 @@ namespace slopkit::plugins::support
             }
         }
 
-        void fill_stop(platform::DebugSession& debug, const platform::StopStatus& status, slopkit_stop_info& out)
+        void fill_stop(platform::DebugSession&     debug,
+                       const platform::StopStatus& status,
+                       slopkit_stop_info&          out,
+                       bool                        trust_status = false)
         {
             out.reason          = SLOPKIT_STOP_INTERRUPT;
             out.tid             = status.tid;
@@ -638,6 +641,11 @@ namespace slopkit::plugins::support
                 break;
             case platform::StopReason::breakpoint:
                 if (status.debug_slot)
+                {
+                    out.reason       = SLOPKIT_STOP_BREAKPOINT;
+                    out.trap_address = status.watch_address != 0 ? status.watch_address : status.address;
+                }
+                else if (trust_status)
                 {
                     out.reason       = SLOPKIT_STOP_BREAKPOINT;
                     out.trap_address = status.watch_address != 0 ? status.watch_address : status.address;
@@ -682,7 +690,9 @@ namespace slopkit::plugins::support
                     excluded = g_profile->debug_excluded_threads(*session);
                 }
 
-                const auto leader = session->debug.attach(excluded);
+                const auto leader = g_profile->debug_hooks != nullptr
+                                      ? g_profile->debug_hooks->attach(*session, excluded)
+                                      : session->debug.attach(excluded);
                 if (!leader)
                 {
                     return fail(status_for(leader.error()), "cannot attach the debugger");
@@ -707,7 +717,9 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
-                if (const auto detached = session->debug.detach(); !detached)
+                const auto detached = g_profile->debug_hooks != nullptr ? g_profile->debug_hooks->detach(*session)
+                                                                        : session->debug.detach();
+                if (!detached)
                 {
                     return fail(status_for(detached.error()), "cannot detach the target");
                 }
@@ -720,8 +732,10 @@ namespace slopkit::plugins::support
             }
         }
 
-        slopkit_result
-        plugin_debug_continue(void* handle, uint64_t resume_address, std::size_t, slopkit_stop_info* out_stop) noexcept
+        slopkit_result plugin_debug_continue(void*              handle,
+                                             uint64_t           resume_address,
+                                             std::size_t        resume_step_size,
+                                             slopkit_stop_info* out_stop) noexcept
         {
             try
             {
@@ -735,12 +749,14 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
-                const auto stop = session->debug.resume(resume_address);
+                const auto stop = g_profile->debug_hooks != nullptr
+                                    ? g_profile->debug_hooks->resume(*session, resume_address, resume_step_size)
+                                    : session->debug.resume(resume_address);
                 if (!stop)
                 {
                     return fail(status_for(stop.error()), "the target did not report a stop");
                 }
-                fill_stop(session->debug, *stop, *out_stop);
+                fill_stop(session->debug, *stop, *out_stop, g_profile->debug_hooks != nullptr);
                 return ok();
             }
             catch (...)
@@ -762,12 +778,13 @@ namespace slopkit::plugins::support
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
-                const auto stop = session->debug.step(tid);
+                const auto stop = g_profile->debug_hooks != nullptr ? g_profile->debug_hooks->step(*session, tid)
+                                                                    : session->debug.step(tid);
                 if (!stop)
                 {
                     return fail(status_for(stop.error()), "the target did not report a stop");
                 }
-                fill_stop(session->debug, *stop, *out_stop);
+                fill_stop(session->debug, *stop, *out_stop, g_profile->debug_hooks != nullptr);
                 return ok();
             }
             catch (...)
@@ -785,7 +802,10 @@ namespace slopkit::plugins::support
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
-                if (const auto interrupted = session->debug.interrupt(tid); !interrupted)
+                const auto interrupted = g_profile->debug_hooks != nullptr
+                                           ? g_profile->debug_hooks->interrupt(*session, tid)
+                                           : session->debug.interrupt(tid);
+                if (!interrupted)
                 {
                     return fail(status_for(interrupted.error()), "cannot interrupt the target");
                 }
@@ -816,7 +836,9 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
-                const auto registers = session->debug.registers(tid);
+                const auto registers = g_profile->debug_hooks != nullptr
+                                         ? g_profile->debug_hooks->registers(*session, tid)
+                                         : session->debug.registers(tid);
                 if (!registers)
                 {
                     return fail(status_for(registers.error()), "cannot read the registers");
@@ -879,7 +901,9 @@ namespace slopkit::plugins::support
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
-                const auto written = session->debug.set_register(tid, name, value);
+                const auto written = g_profile->debug_hooks != nullptr
+                                       ? g_profile->debug_hooks->set_register(*session, tid, name, value)
+                                       : session->debug.set_register(tid, name, value);
                 if (!written)
                 {
                     return fail(status_for(written.error()), "cannot write the register");
@@ -903,7 +927,10 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
-                if (const auto armed = session->debug.arm_software(slot, address, insert != 0); !armed)
+                const auto armed = g_profile->debug_hooks != nullptr
+                                     ? g_profile->debug_hooks->arm_software(*session, slot, address, insert != 0)
+                                     : session->debug.arm_software(slot, address, insert != 0);
+                if (!armed)
                 {
                     return fail(status_for(armed.error()), "cannot arm the breakpoint");
                 }
@@ -926,7 +953,11 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
-                if (const auto armed = session->debug.arm_hardware(slot, kind, address, size, insert != 0); !armed)
+                const auto armed =
+                    g_profile->debug_hooks != nullptr
+                        ? g_profile->debug_hooks->arm_hardware(*session, slot, kind, address, size, insert != 0)
+                        : session->debug.arm_hardware(slot, kind, address, size, insert != 0);
+                if (!armed)
                 {
                     return fail(status_for(armed.error()), "cannot arm the hardware breakpoint");
                 }
@@ -955,7 +986,8 @@ namespace slopkit::plugins::support
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
 
-                const auto frames = session->debug.backtrace(tid);
+                const auto frames = g_profile->debug_hooks != nullptr ? g_profile->debug_hooks->backtrace(*session, tid)
+                                                                      : session->debug.backtrace(tid);
                 if (!frames)
                 {
                     return fail(status_for(frames.error()), "cannot read the registers");
@@ -989,10 +1021,20 @@ namespace slopkit::plugins::support
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
-                const auto result = platform::suspend_process(session->pid);
-                if (!result)
+                if (g_profile->suspend != nullptr)
                 {
-                    return fail(status_for(result.error()), message_for(result.error()));
+                    if (const auto result = g_profile->suspend(*session); !result)
+                    {
+                        return fail(status_for(result.error()), "cannot suspend the target");
+                    }
+                }
+                else
+                {
+                    const auto result = platform::suspend_process(session->pid);
+                    if (!result)
+                    {
+                        return fail(status_for(result.error()), message_for(result.error()));
+                    }
                 }
                 session->suspended = true;
                 return ok();
@@ -1012,10 +1054,20 @@ namespace slopkit::plugins::support
                 {
                     return fail(SLOPKIT_ERR_INVALID_ARGUMENT, "unknown session");
                 }
-                const auto result = platform::resume_process(session->pid);
-                if (!result)
+                if (g_profile->resume_target != nullptr)
                 {
-                    return fail(status_for(result.error()), message_for(result.error()));
+                    if (const auto result = g_profile->resume_target(*session); !result)
+                    {
+                        return fail(status_for(result.error()), "cannot resume the target");
+                    }
+                }
+                else
+                {
+                    const auto result = platform::resume_process(session->pid);
+                    if (!result)
+                    {
+                        return fail(status_for(result.error()), message_for(result.error()));
+                    }
                 }
                 session->suspended = false;
                 return ok();

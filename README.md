@@ -58,8 +58,9 @@ client headers come from the `mpfshost` install (found with `pkg-config`); when
 they are missing the build still succeeds and only that plugin is left out. The
 user running slopkit must be in the host's access group (usually `mpfshost`) and
 the daemon must be running. The plugin reads, writes, lists modules, threads and
-regions, and validates memory; the debugger, suspend/resume and target
-allocation are unavailable because the host exposes no such operations.
+regions, validates memory, and drives the daemon's x86-64 QMP debugger. Suspend
+and resume pause or continue the whole guest, and target allocation is
+unavailable because the host exposes no such operation.
 
 ```sh
 ./tools/configure.sh

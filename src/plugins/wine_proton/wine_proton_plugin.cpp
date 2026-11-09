@@ -141,7 +141,10 @@ namespace
                                       nullptr,
                                       true,
                                       true,
-                                      true};
+                                      true,
+                                      nullptr,
+                                      nullptr,
+                                      nullptr};
 }
 
 extern "C" SLOPKIT_PLUGIN_EXPORT const slopkit_plugin_vtable* slopkit_plugin_entry(const slopkit_host_services* host)

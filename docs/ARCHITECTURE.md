@@ -26,7 +26,7 @@ an out-of-process transport, with no UI change.
 | --- | --- | --- | --- |
 | `linux-proc` | Any normal Linux process | 100 | `process_vm_*`, procfs, ptrace (debugger only) |
 | `wine-proton` | Wine/Proton game processes | 10 | resident agent (allocation and introspection), `process_vm_*`, procfs, ptrace (debugger only) |
-| `mpfshost` | Processes inside QEMU/KVM guests | 20 | the system `mpfshost` daemon over its Unix socket |
+| `mpfshost` | Processes inside QEMU/KVM guests | 20 | the system `mpfshost` daemon over its Unix socket (reads, introspection, QMP debugging) |
 
 Lower precedence wins, so `wine-proton` is the default target for a Wine process
 that `linux-proc` also claims; the process picker still shows the alternatives.
@@ -42,9 +42,12 @@ lands in all of them. Each plugin still keeps its own state because the host
 `dlopen`s plugins with `RTLD_LOCAL`.
 
 The profile also carries optional hooks — `allocate`, `free`, `close_session`,
-`regions`, `range_is_readable`, `read`, `write`, `threads`, `list_processes` and
-`resolve_session` — plus the `debug_supported`, `suspend_supported` and
-`allocation_supported` flags that leave the corresponding vtable slots null.
+`regions`, `range_is_readable`, `read`, `write`, `threads`, `list_processes`,
+`resolve_session`, a `DebugHooks` table and suspend/resume — plus the
+`debug_supported`, `suspend_supported` and `allocation_supported` flags that
+leave the corresponding vtable slots null. A plugin that supplies `DebugHooks`
+owns its debugger instead of the shared `platform::DebugSession` path; a plugin
+with its own suspend/resume hooks owns the target's pause policy.
 `linux-proc` leaves the hooks all null, so the shared support layer serves every
 one of them from `session.mem` and the chunked readability probe. `wine-proton`
 fills only `allocate`, `free`, `regions` and `close_session`, so allocation and
@@ -58,10 +61,15 @@ waits on the agent. That mechanism is described in
 
 `mpfshost` is a privileged daemon that holds MemProcFS handles to QEMU/KVM
 guests and serves them to unprivileged clients over `/run/mpfshost.sock`
-(`SLOPKIT_MPFSHOST_SOCKET` overrides the path). The plugin links no part of the
-daemon; `mpfshost_client.cpp` implements the small client subset it needs
-directly from the installed wire headers, because the installed client archive
-is not position-independent and cannot be loaded into a plugin.
+(`SLOPKIT_MPFSHOST_SOCKET` overrides the path). Its client library is the
+primary interface, but the installed `libmpfshost_client.a` is not
+position-independent and cannot be linked into a plugin, so
+`mpfshost_client.cpp` implements the same `Client`/`ClientSession` usage model
+locally from the installed wire headers. A `ClientSession` owns one bound
+connection; data calls open a short-lived session per request, while a debug
+attachment keeps one session for its lifetime because the daemon ties the GDB
+stub and its resources to the owning connection. `capabilities()` is available
+for feature checks.
 
 `list_processes` walks every target the daemon reports and maps each
 `(target, guest pid)` pair to a stable synthetic pid, starting at `0x80000000`.
@@ -79,11 +87,19 @@ non-executable bit is the top bit, so every entry is readable and the size is
 `pages * 4 KiB`. Modules are the guest's PE loader list, marked `PE` with the
 process's pointer width; threads come from the guest thread list.
 
-The daemon exposes no debugger, suspend or allocation operation, so the profile
-sets `debug_supported`, `suspend_supported` and `allocation_supported` false.
-Reads, writes, modules, threads, regions and validation work, and the script
-`mem` APIs keep working; `alloc`/`dealloc` and the debugger report `unsupported`
-exactly as they do for any plugin that leaves those slots null.
+The daemon's QMP debugger is exposed through the optional `DebugHooks` seam in
+the plugin profile. Attach, detach, continue, single-step, registers, software
+and hardware breakpoints, read/write watchpoints and backtraces run over the
+attachment's session; software breakpoints and watchpoints are persistent
+daemon resources, so the plugin maps its slot numbers onto the daemon's resource
+ids and removes or replaces the previous resource on re-arm. A stop is reported
+from a `debug-wait` hit, a single-step record, or a QMP pause. The daemon has no
+register write, so `debug_set_register` reports `unsupported`; debug is
+available for x86-64 guests only. `suspend_target`/`resume_target` use the
+daemon's QMP stop/continue and therefore pause or resume the whole guest, not
+just one process. Allocation is still unavailable, so `allocate_memory`,
+`free_memory` and the script `alloc`/`dealloc` pair report `unsupported`;
+reads, writes, modules, threads, regions and validation work.
 
 ## Discovery
 
