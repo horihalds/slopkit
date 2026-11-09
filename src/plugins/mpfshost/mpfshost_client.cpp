@@ -159,6 +159,8 @@ namespace slopkit::plugins::mpfshost
         case ErrorCode::UnknownVm:
         case ErrorCode::InvalidState:
             return SLOPKIT_ERR_INVALID_ARGUMENT;
+        case ErrorCode::UnsupportedVersion:
+            return SLOPKIT_ERR_INVALID_ABI;
         case ErrorCode::ConnectionFailed:
             return SLOPKIT_ERR_NOT_FOUND;
         case ErrorCode::InvalidArgument:
