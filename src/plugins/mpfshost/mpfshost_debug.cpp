@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "plugin/plugin_api.h"
 #include "plugins/mpfshost/mpfshost_client.hpp"
 
@@ -17,8 +18,12 @@ namespace slopkit::plugins::mpfshost
 {
     namespace
     {
-        process::AccessError access_error(const ::mpfshost::Error& error) noexcept
+        process::AccessError access_error(const ::mpfshost::Error& error)
         {
+            slopkit::log::warning(slopkit::log::category::debug,
+                                  std::format("mpfshost debug request failed: {}: {}",
+                                              ::mpfshost::errorCodeName(error.code),
+                                              message_for_error(error)));
             switch (error.code)
             {
             case ::mpfshost::ErrorCode::AccessDenied:
