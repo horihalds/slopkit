@@ -264,6 +264,10 @@ namespace slopkit::debug
             {
                 result.error = attached.error();
             }
+            else
+            {
+                result.leader = *attached;
+            }
             return result;
         }
         case JobKind::detach:

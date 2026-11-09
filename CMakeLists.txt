@@ -411,13 +411,11 @@ if(MPFSHOST_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_plugin.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_client.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_debug.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_debug_client.cpp
         ${SLOPKIT_MPFSHOST_HELPER_SOURCES})
     target_include_directories(slopkit-mpfshost PRIVATE ${MPFSHOST_INCLUDE_DIRS})
-    target_link_libraries(slopkit-mpfshost PRIVATE slopkit_plugin_support)
+    target_link_libraries(slopkit-mpfshost PRIVATE slopkit_plugin_support PkgConfig::MPFSHOST)
     set(SLOPKIT_MPFSHOST_TEST_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_client.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_debug_client.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins/mpfshost/mpfshost_client.cpp)
     set(SLOPKIT_MPFSHOST_TEST_DEFINITIONS SLOPKIT_HAVE_MPFSHOST=1)
 else()
     message(WARNING "mpfshost client headers not found; the mpfshost plugin will not be built")
@@ -543,6 +541,9 @@ target_compile_definitions(slopkit_tests PRIVATE
     SLOPKIT_AGENT_PROBE_DIR="${SLOPKIT_AGENT_PROBE_DIR}"
     SLOPKIT_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
     SLOPKIT_TMP_DIR="${CMAKE_SOURCE_DIR}/tmp")
+if(MPFSHOST_FOUND)
+    target_link_libraries(slopkit_tests PRIVATE PkgConfig::MPFSHOST)
+endif()
 target_link_libraries(slopkit_tests PRIVATE
     Catch2::Catch2
     slopkit_ui_common

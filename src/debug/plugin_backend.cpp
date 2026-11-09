@@ -104,7 +104,8 @@ namespace slopkit::debug
         return open();
     }
 
-    std::expected<void, process::AccessError> PluginBackend::attach(process::ProcessId pid, std::string_view plugin_id)
+    std::expected<std::uint32_t, process::AccessError> PluginBackend::attach(process::ProcessId pid,
+                                                                             std::string_view   plugin_id)
     {
         session_.reset();
 
@@ -135,7 +136,7 @@ namespace slopkit::debug
             session_.reset();
             return std::unexpected(error);
         }
-        return {};
+        return leader;
     }
 
     std::expected<void, process::AccessError> PluginBackend::detach()

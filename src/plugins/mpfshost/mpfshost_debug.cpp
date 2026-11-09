@@ -1,37 +1,44 @@
 #include "plugins/mpfshost/mpfshost_debug.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <format>
 #include <optional>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "core/log.hpp"
 #include "plugin/plugin_api.h"
+#include "plugins/mpfshost/mpfshost_client.hpp"
 
 namespace slopkit::plugins::mpfshost
 {
     namespace
     {
-        process::AccessError access_error(std::int32_t status) noexcept
+        process::AccessError access_error(const ::mpfshost::Error& error) noexcept
         {
-            switch (status)
+            switch (error.code)
             {
-            case SLOPKIT_ERR_PERMISSION_DENIED:
+            case ::mpfshost::ErrorCode::AccessDenied:
                 return process::AccessError::permission_denied;
-            case SLOPKIT_ERR_NOT_FOUND:
+            case ::mpfshost::ErrorCode::TargetNotFound:
+            case ::mpfshost::ErrorCode::TargetUnavailable:
+            case ::mpfshost::ErrorCode::NotFound:
                 return process::AccessError::not_found;
-            case SLOPKIT_ERR_UNSUPPORTED:
+            case ::mpfshost::ErrorCode::CapabilityUnavailable:
                 return process::AccessError::unsupported;
-            case SLOPKIT_ERR_INVALID_ARGUMENT:
+            case ::mpfshost::ErrorCode::MalformedPayload:
+            case ::mpfshost::ErrorCode::UnknownMessage:
+            case ::mpfshost::ErrorCode::InvalidRange:
+            case ::mpfshost::ErrorCode::InvalidState:
+            case ::mpfshost::ErrorCode::InvalidArgument:
                 return process::AccessError::invalid_argument;
-            case SLOPKIT_ERR_INVALID_ABI:
+            case ::mpfshost::ErrorCode::ProtocolError:
                 return process::AccessError::invalid_abi;
-            case SLOPKIT_ERR_IO:
-                return process::AccessError::io_error;
             default:
-                return process::AccessError::internal;
+                return process::AccessError::io_error;
             }
         }
 
@@ -42,20 +49,25 @@ namespace slopkit::plugins::mpfshost
             std::uint32_t tid {};
         };
 
-        std::expected<bool, process::AccessError> ensure_paused(ClientSession& session)
+        std::uint64_t resource_key(bool hardware, std::uint32_t slot) noexcept
         {
-            const auto status = session.debug_state();
+            return (static_cast<std::uint64_t>(hardware ? 1 : 0) << 32) | slot;
+        }
+
+        std::expected<bool, process::AccessError> ensure_paused(::mpfshost::ClientSession& session)
+        {
+            const auto status = session.debugState();
             if (!status)
             {
-                return std::unexpected(access_error(status.error().code));
+                return std::unexpected(access_error(status.error()));
             }
             if (status->runState != ::mpfshost::DebugRunState::Running)
             {
                 return false;
             }
-            if (const auto stopped = session.debug_control(::mpfshost::DebugControlAction::Stop); !stopped)
+            if (const auto stopped = session.debugControl(::mpfshost::DebugControlAction::Stop); !stopped)
             {
-                return std::unexpected(access_error(stopped.error().code));
+                return std::unexpected(access_error(stopped.error()));
             }
             return true;
         }
@@ -63,7 +75,7 @@ namespace slopkit::plugins::mpfshost
         class ResumeAfterPause
         {
         public:
-            ResumeAfterPause(ClientSession& session, bool paused) : session_(session), paused_(paused) {}
+            ResumeAfterPause(::mpfshost::ClientSession& session, bool paused) : session_(session), paused_(paused) {}
 
             ResumeAfterPause(const ResumeAfterPause&)            = delete;
             ResumeAfterPause& operator=(const ResumeAfterPause&) = delete;
@@ -72,18 +84,18 @@ namespace slopkit::plugins::mpfshost
             {
                 if (paused_)
                 {
-                    (void)session_.debug_continue_armed();
+                    (void)session_.debugContinueArmed();
                 }
             }
 
         private:
-            ClientSession& session_;
-            bool           paused_ {};
+            ::mpfshost::ClientSession& session_;
+            bool                       paused_ {};
         };
 
-        std::optional<SelectedThread> select_thread(ClientSession& session, std::uint32_t tid)
+        std::optional<SelectedThread> select_thread(::mpfshost::ClientSession& session, std::uint32_t tid)
         {
-            const auto threads = session.debug_threads();
+            const auto threads = session.debugThreads();
             if (!threads || threads->empty())
             {
                 return std::nullopt;
@@ -124,13 +136,13 @@ namespace slopkit::plugins::mpfshost
             }
         }
 
-        platform::StopStatus interrupt_stop(ClientSession& session, std::uint32_t leader)
+        platform::StopStatus interrupt_stop(::mpfshost::ClientSession& session, std::uint32_t leader)
         {
             platform::StopStatus stop;
             stop.reason = platform::StopReason::interrupt;
             stop.tid    = leader;
 
-            if (const auto records = session.debug_registers(::mpfshost::kDebugAllVcpus); records)
+            if (const auto records = session.debugRegisters(::mpfshost::kDebugAllVcpus); records)
             {
                 const ::mpfshost::DebugRegisterRecord* selected = nullptr;
                 for (const auto& record : *records)
@@ -158,34 +170,58 @@ namespace slopkit::plugins::mpfshost
         }
 
         std::expected<platform::StopStatus, process::AccessError>
-        wait_for_stop(ClientSession& session, std::uint32_t leader, bool has_resources)
+        wait_for_stop(::mpfshost::ClientSession& session, std::uint32_t leader, const auto& resources)
         {
             for (;;)
             {
-                if (has_resources)
+                if (!resources.empty())
                 {
-                    const auto waited = session.debug_wait(1000, 1);
-                    if (waited)
+                    std::vector<::mpfshost::DebugWaitHit> hits;
+                    const auto waited = session.debugWait(1000,
+                                                          1,
+                                                          [&](const ::mpfshost::DebugWaitHit& hit)
+                                                          {
+                                                              hits.push_back(hit);
+                                                              return true;
+                                                          });
+                    if (!waited)
                     {
-                        if (!waited->hits.empty())
+                        return std::unexpected(access_error(waited.error()));
+                    }
+                    if (!hits.empty())
+                    {
+                        const auto&          hit = hits.back();
+                        platform::StopStatus stop;
+                        stop.reason       = platform::StopReason::breakpoint;
+                        stop.tid          = hit.record.threadFound ? hit.record.guestTid : leader;
+                        stop.address      = hit.record.rip;
+                        stop.trap_address = hit.address;
+
+                        for (const auto& [key, resource] : resources)
                         {
-                            const auto&          hit = waited->hits.back();
-                            platform::StopStatus stop;
-                            stop.reason       = platform::StopReason::breakpoint;
-                            stop.tid          = hit.record.threadFound ? hit.record.guestTid : leader;
-                            stop.address      = hit.record.rip;
-                            stop.trap_address = hit.address;
-                            stop.watch_address =
-                                hit.kind == ::mpfshost::DebugResourceKind::Watchpoint ? hit.address : 0;
-                            return stop;
+                            if (resource.id == hit.id)
+                            {
+                                // Only hardware resources carry a slot in slopkit; a software breakpoint is
+                                // identified by its trap address alone.
+                                if ((key >> 32) != 0)
+                                {
+                                    stop.debug_slot = static_cast<std::uint32_t>(key & 0xFFFFFFFFu);
+                                }
+                                break;
+                            }
                         }
+                        if (hit.kind == ::mpfshost::DebugResourceKind::Watchpoint)
+                        {
+                            stop.watch_address = hit.address;
+                        }
+                        return stop;
                     }
                 }
 
-                const auto status = session.debug_state();
+                const auto status = session.debugState();
                 if (!status)
                 {
-                    return std::unexpected(access_error(status.error().code));
+                    return std::unexpected(access_error(status.error()));
                 }
                 if (status->runState == ::mpfshost::DebugRunState::Shutdown)
                 {
@@ -198,7 +234,7 @@ namespace slopkit::plugins::mpfshost
                 {
                     return interrupt_stop(session, leader);
                 }
-                if (!has_resources)
+                if (resources.empty())
                 {
                     std::this_thread::sleep_for(std::chrono::milliseconds {50});
                 }
@@ -215,23 +251,23 @@ namespace slopkit::plugins::mpfshost
             return std::unexpected(process::AccessError::internal);
         }
 
-        const Client client {socket_path()};
-        auto         bound = client.bind(guest.target);
+        const ::mpfshost::Client client {socket_path()};
+        auto                     bound = client.bind(guest.target);
         if (!bound)
         {
-            return std::unexpected(access_error(bound.error().code));
+            return std::unexpected(access_error(bound.error()));
         }
 
-        if (const auto attached = bound->debug_attach(); !attached)
+        if (const auto attached = bound->debugAttach(); !attached)
         {
-            return std::unexpected(access_error(attached.error().code));
+            return std::unexpected(access_error(attached.error()));
         }
 
         auto stored       = std::make_shared<State>();
         stored->guest_pid = guest.pid;
         if (const auto threads = bound->threads(guest.pid); threads && !threads->empty())
         {
-            stored->leader_tid = threads->front().tid;
+            stored->leader_tid = (*threads)[0].tid;
         }
         stored->session   = std::move(*bound);
         const auto leader = stored->leader_tid;
@@ -258,10 +294,10 @@ namespace slopkit::plugins::mpfshost
         }
 
         const std::lock_guard lock(state->mutex);
-        const auto            detached = state->session->debug_detach();
+        const auto            detached = state->session->debugDetach();
         if (!detached)
         {
-            return std::unexpected(access_error(detached.error().code));
+            return std::unexpected(access_error(detached.error()));
         }
         return {};
     }
@@ -288,18 +324,18 @@ namespace slopkit::plugins::mpfshost
             const auto selected = select_thread(*state->session, state->leader_tid);
             const auto vcpu     = selected ? selected->vcpu : 0;
             const auto thread   = selected ? selected->thread_id : std::string {};
-            if (const auto stepped = state->session->debug_step(vcpu, thread); !stepped)
+            if (const auto stepped = state->session->debugStep(vcpu, thread); !stepped)
             {
-                return std::unexpected(access_error(stepped.error().code));
+                return std::unexpected(access_error(stepped.error()));
             }
         }
 
-        if (const auto continued = state->session->debug_continue_armed(); !continued)
+        if (const auto continued = state->session->debugContinueArmed(); !continued)
         {
-            return std::unexpected(access_error(continued.error().code));
+            return std::unexpected(access_error(continued.error()));
         }
 
-        return wait_for_stop(*state->session, state->leader_tid, !state->resources.empty());
+        return wait_for_stop(*state->session, state->leader_tid, state->resources);
     }
 
     std::expected<platform::StopStatus, process::AccessError> DebugManager::step(std::uint32_t synthetic_pid,
@@ -315,10 +351,10 @@ namespace slopkit::plugins::mpfshost
         const auto selected = select_thread(*state->session, tid == 0 ? state->leader_tid : tid);
         const auto vcpu     = selected ? selected->vcpu : 0;
         const auto thread   = selected ? selected->thread_id : std::string {};
-        const auto stepped  = state->session->debug_step(vcpu, thread);
+        const auto stepped  = state->session->debugStep(vcpu, thread);
         if (!stepped)
         {
-            return std::unexpected(access_error(stepped.error().code));
+            return std::unexpected(access_error(stepped.error()));
         }
 
         platform::StopStatus stop;
@@ -330,15 +366,15 @@ namespace slopkit::plugins::mpfshost
 
     std::expected<void, process::AccessError> DebugManager::interrupt(const GuestTarget& guest)
     {
-        const Client client {socket_path()};
-        auto         bound = client.bind(guest.target);
+        const ::mpfshost::Client client {socket_path()};
+        auto                     bound = client.bind(guest.target);
         if (!bound)
         {
-            return std::unexpected(access_error(bound.error().code));
+            return std::unexpected(access_error(bound.error()));
         }
-        if (const auto stopped = bound->debug_control(::mpfshost::DebugControlAction::Stop); !stopped)
+        if (const auto stopped = bound->debugControl(::mpfshost::DebugControlAction::Stop); !stopped)
         {
-            return std::unexpected(access_error(stopped.error().code));
+            return std::unexpected(access_error(stopped.error()));
         }
         return {};
     }
@@ -353,10 +389,10 @@ namespace slopkit::plugins::mpfshost
         }
         const std::lock_guard lock(state->mutex);
 
-        const auto records = state->session->debug_registers(::mpfshost::kDebugAllVcpus);
+        const auto records = state->session->debugRegisters(::mpfshost::kDebugAllVcpus);
         if (!records)
         {
-            return std::unexpected(access_error(records.error().code));
+            return std::unexpected(access_error(records.error()));
         }
 
         const ::mpfshost::DebugRegisterRecord* selected = nullptr;
@@ -399,10 +435,29 @@ namespace slopkit::plugins::mpfshost
         return result;
     }
 
-    std::expected<void, process::AccessError>
-    DebugManager::set_register(std::uint32_t, std::uint32_t, std::string_view, std::uint64_t)
+    std::expected<void, process::AccessError> DebugManager::set_register(std::uint32_t    synthetic_pid,
+                                                                         std::uint32_t    tid,
+                                                                         std::string_view name,
+                                                                         std::uint64_t    value)
     {
-        return std::unexpected(process::AccessError::unsupported);
+        auto state = state_for(synthetic_pid);
+        if (!state)
+        {
+            return std::unexpected(process::AccessError::not_found);
+        }
+        const std::lock_guard lock(state->mutex);
+
+        const auto selected = select_thread(*state->session, tid == 0 ? state->leader_tid : tid);
+        if (!selected)
+        {
+            return std::unexpected(process::AccessError::not_found);
+        }
+        if (const auto written = state->session->debugSetRegister(selected->vcpu, selected->thread_id, name, value);
+            !written)
+        {
+            return std::unexpected(access_error(written.error()));
+        }
+        return {};
     }
 
     std::expected<void, process::AccessError>
@@ -414,6 +469,7 @@ namespace slopkit::plugins::mpfshost
             return std::unexpected(process::AccessError::not_found);
         }
         const std::lock_guard lock(state->mutex);
+        const auto            key = resource_key(false, slot);
 
         [[maybe_unused]] std::optional<ResumeAfterPause> resume;
         if (insert)
@@ -426,14 +482,14 @@ namespace slopkit::plugins::mpfshost
             resume.emplace(*state->session, *paused);
         }
 
-        if (const auto existing = state->resources.find(slot); existing != state->resources.end())
+        if (const auto existing = state->resources.find(key); existing != state->resources.end())
         {
             const auto& resource = existing->second;
-            const auto  removed  = resource.watchpoint ? state->session->debug_remove_watch(resource.id)
-                                                       : state->session->debug_remove_breakpoint(resource.id);
+            const auto  removed  = resource.watchpoint ? state->session->debugRemoveWatch(resource.id)
+                                                       : state->session->debugRemoveBreakpoint(resource.id);
             if (!removed)
             {
-                return std::unexpected(access_error(removed.error().code));
+                return std::unexpected(access_error(removed.error()));
             }
             state->resources.erase(existing);
         }
@@ -442,13 +498,13 @@ namespace slopkit::plugins::mpfshost
             return {};
         }
 
-        const auto armed =
-            state->session->debug_arm_breakpoint(state->guest_pid, address, ::mpfshost::DebugBreakpointKind::Software);
+        const auto armed = state->session->debugArmBreakpoint(
+            {state->guest_pid, address, ::mpfshost::DebugBreakpointKind::Software, 30000, {}, {}});
         if (!armed)
         {
-            return std::unexpected(access_error(armed.error().code));
+            return std::unexpected(access_error(armed.error()));
         }
-        state->resources.emplace(slot, Resource {armed->id, false});
+        state->resources.emplace(key, Resource {armed->id, false});
         return {};
     }
 
@@ -465,6 +521,7 @@ namespace slopkit::plugins::mpfshost
             return std::unexpected(process::AccessError::not_found);
         }
         const std::lock_guard lock(state->mutex);
+        const auto            key = resource_key(true, slot);
 
         [[maybe_unused]] std::optional<ResumeAfterPause> resume;
         if (insert)
@@ -477,14 +534,14 @@ namespace slopkit::plugins::mpfshost
             resume.emplace(*state->session, *paused);
         }
 
-        if (const auto existing = state->resources.find(slot); existing != state->resources.end())
+        if (const auto existing = state->resources.find(key); existing != state->resources.end())
         {
             const auto& resource = existing->second;
-            const auto  removed  = resource.watchpoint ? state->session->debug_remove_watch(resource.id)
-                                                       : state->session->debug_remove_breakpoint(resource.id);
+            const auto  removed  = resource.watchpoint ? state->session->debugRemoveWatch(resource.id)
+                                                       : state->session->debugRemoveBreakpoint(resource.id);
             if (!removed)
             {
-                return std::unexpected(access_error(removed.error().code));
+                return std::unexpected(access_error(removed.error()));
             }
             state->resources.erase(existing);
         }
@@ -495,24 +552,25 @@ namespace slopkit::plugins::mpfshost
 
         if (kind == SLOPKIT_BP_HW_EXECUTE)
         {
-            const auto armed = state->session->debug_arm_breakpoint(
-                state->guest_pid, address, ::mpfshost::DebugBreakpointKind::Hardware);
+            const auto armed = state->session->debugArmBreakpoint(
+                {state->guest_pid, address, ::mpfshost::DebugBreakpointKind::Hardware, 30000, {}, {}});
             if (!armed)
             {
-                return std::unexpected(access_error(armed.error().code));
+                return std::unexpected(access_error(armed.error()));
             }
-            state->resources.emplace(slot, Resource {armed->id, false});
+            state->resources.emplace(key, Resource {armed->id, false});
             return {};
         }
 
         const auto access =
             kind == SLOPKIT_BP_HW_WRITE ? ::mpfshost::DebugWatchAccess::Write : ::mpfshost::DebugWatchAccess::Access;
-        const auto armed = state->session->debug_arm_watch(state->guest_pid, address, watch_width(size), access);
+        const auto armed =
+            state->session->debugArmWatch({state->guest_pid, address, watch_width(size), access, 1, 30000, {}, {}});
         if (!armed)
         {
-            return std::unexpected(access_error(armed.error().code));
+            return std::unexpected(access_error(armed.error()));
         }
-        state->resources.emplace(slot, Resource {armed->id, true});
+        state->resources.emplace(key, Resource {armed->id, true});
         return {};
     }
 
@@ -529,10 +587,10 @@ namespace slopkit::plugins::mpfshost
         const auto selected = select_thread(*state->session, tid == 0 ? state->leader_tid : tid);
         const auto vcpu     = selected ? selected->vcpu : 0;
         const auto thread   = selected ? selected->thread_id : std::string {};
-        const auto trace    = state->session->debug_backtrace(state->guest_pid, vcpu, thread, 32);
+        const auto trace    = state->session->debugBacktrace(state->guest_pid, vcpu, thread, 32);
         if (!trace)
         {
-            return std::unexpected(access_error(trace.error().code));
+            return std::unexpected(access_error(trace.error()));
         }
 
         std::vector<platform::DebugFrame> frames;
@@ -546,30 +604,30 @@ namespace slopkit::plugins::mpfshost
 
     std::expected<void, process::AccessError> DebugManager::suspend(const GuestTarget& guest)
     {
-        const Client client {socket_path()};
-        auto         bound = client.bind(guest.target);
+        const ::mpfshost::Client client {socket_path()};
+        auto                     bound = client.bind(guest.target);
         if (!bound)
         {
-            return std::unexpected(access_error(bound.error().code));
+            return std::unexpected(access_error(bound.error()));
         }
-        if (const auto stopped = bound->debug_control(::mpfshost::DebugControlAction::Stop); !stopped)
+        if (const auto stopped = bound->debugControl(::mpfshost::DebugControlAction::Stop); !stopped)
         {
-            return std::unexpected(access_error(stopped.error().code));
+            return std::unexpected(access_error(stopped.error()));
         }
         return {};
     }
 
     std::expected<void, process::AccessError> DebugManager::resume_target(const GuestTarget& guest)
     {
-        const Client client {socket_path()};
-        auto         bound = client.bind(guest.target);
+        const ::mpfshost::Client client {socket_path()};
+        auto                     bound = client.bind(guest.target);
         if (!bound)
         {
-            return std::unexpected(access_error(bound.error().code));
+            return std::unexpected(access_error(bound.error()));
         }
-        if (const auto continued = bound->debug_control(::mpfshost::DebugControlAction::Continue); !continued)
+        if (const auto continued = bound->debugControl(::mpfshost::DebugControlAction::Continue); !continued)
         {
-            return std::unexpected(access_error(continued.error().code));
+            return std::unexpected(access_error(continued.error()));
         }
         return {};
     }

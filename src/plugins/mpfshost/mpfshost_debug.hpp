@@ -6,10 +6,14 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
+#include <vector>
+
+#include <mpfshost/client.hpp>
 
 #include "platform/linux/debug_session.hpp"
-#include "plugins/mpfshost/mpfshost_client.hpp"
 #include "plugins/mpfshost/mpfshost_helpers.hpp"
 #include "process/types.hpp"
 
@@ -58,10 +62,10 @@ namespace slopkit::plugins::mpfshost
         struct State
         {
             std::mutex                                  mutex;
-            std::optional<ClientSession>                session;
+            std::optional<::mpfshost::ClientSession>    session;
             std::uint32_t                               guest_pid {};
             std::uint32_t                               leader_tid {};
-            std::unordered_map<std::uint32_t, Resource> resources;
+            std::unordered_map<std::uint64_t, Resource> resources;
         };
 
         [[nodiscard]] std::shared_ptr<State> state_for(std::uint32_t synthetic_pid);

@@ -617,7 +617,7 @@ namespace slopkit::plugins::support
             out.reason          = SLOPKIT_STOP_INTERRUPT;
             out.tid             = status.tid;
             out.address         = status.address;
-            out.trap_address    = status.address;
+            out.trap_address    = status.trap_address != 0 ? status.trap_address : status.address;
             out.breakpoint_slot = status.debug_slot ? static_cast<std::int32_t>(*status.debug_slot) : -1;
             out.signal          = status.signal;
 
@@ -643,12 +643,16 @@ namespace slopkit::plugins::support
                 if (status.debug_slot)
                 {
                     out.reason       = SLOPKIT_STOP_BREAKPOINT;
-                    out.trap_address = status.watch_address != 0 ? status.watch_address : status.address;
+                    out.trap_address = status.watch_address != 0
+                                         ? status.watch_address
+                                         : (status.trap_address != 0 ? status.trap_address : status.address);
                 }
                 else if (trust_status)
                 {
                     out.reason       = SLOPKIT_STOP_BREAKPOINT;
-                    out.trap_address = status.watch_address != 0 ? status.watch_address : status.address;
+                    out.trap_address = status.watch_address != 0
+                                         ? status.watch_address
+                                         : (status.trap_address != 0 ? status.trap_address : status.address);
                 }
                 else if (status.address >= 1 && debug.holds_int3(status.address - 1))
                 {

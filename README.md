@@ -53,14 +53,16 @@ succeeds and only the Windows trainer target becomes unavailable. The template
 needs no Qt kit, because its window is drawn with the Win32 API.
 
 The optional `mpfshost` plugin attaches to processes inside QEMU/KVM guests
-through a running [`mpfshost`](https://github.com/ufrisk/MemProcFS) daemon. Its
-client headers come from the `mpfshost` install (found with `pkg-config`); when
-they are missing the build still succeeds and only that plugin is left out. The
-user running slopkit must be in the host's access group (usually `mpfshost`) and
-the daemon must be running. The plugin reads, writes, lists modules, threads and
-regions, validates memory, and drives the daemon's x86-64 QMP debugger. Suspend
-and resume pause or continue the whole guest, and target allocation is
-unavailable because the host exposes no such operation.
+through a running [`mpfshost`](https://github.com/ufrisk/MemProcFS) daemon. It
+links the `mpfshost` client library and headers from the install found with
+`pkg-config`; when they are missing the build still succeeds and only that
+plugin is left out. The user running slopkit must be in the host's access group
+(usually `mpfshost`) and the daemon must be running. The plugin reads, writes,
+lists modules, threads and regions, validates memory, and drives the daemon's
+x86-64 QMP debugger, including register writes. It keeps a small pool of bound
+sessions per guest rather than reconnecting per operation. Suspend and resume
+pause or continue the whole guest, and target allocation is unavailable because
+the host exposes no such operation.
 
 ```sh
 ./tools/configure.sh

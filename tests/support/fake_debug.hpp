@@ -211,7 +211,7 @@ namespace slopkit::tests
             return register_file_;
         }
 
-        std::expected<void, AccessError> attach(ProcessId pid, std::string_view plugin_id) override
+        std::expected<std::uint32_t, AccessError> attach(ProcessId pid, std::string_view plugin_id) override
         {
             std::optional<AccessError> failure;
             {
@@ -225,7 +225,7 @@ namespace slopkit::tests
             {
                 return std::unexpected(*failure);
             }
-            return {};
+            return static_cast<std::uint32_t>(pid);
         }
 
         std::expected<void, AccessError> detach() override

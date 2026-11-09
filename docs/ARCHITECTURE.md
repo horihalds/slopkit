@@ -61,25 +61,26 @@ waits on the agent. That mechanism is described in
 
 `mpfshost` is a privileged daemon that holds MemProcFS handles to QEMU/KVM
 guests and serves them to unprivileged clients over `/run/mpfshost.sock`
-(`SLOPKIT_MPFSHOST_SOCKET` overrides the path). Its client library is the
-primary interface, but the installed `libmpfshost_client.a` is not
-position-independent and cannot be linked into a plugin, so
-`mpfshost_client.cpp` implements the same `Client`/`ClientSession` usage model
-locally from the installed wire headers. A `ClientSession` owns one bound
-connection; data calls open a short-lived session per request, while a debug
-attachment keeps one session for its lifetime because the daemon ties the GDB
-stub and its resources to the owning connection. `capabilities()` is available
-for feature checks.
+(`SLOPKIT_MPFSHOST_SOCKET` overrides the path). The plugin links the installed
+`mpfshost` client library directly. `mpfshost_client.{hpp,cpp}` is a small
+session pool, not a wire implementation: a `ClientSession` owns one bound
+connection and is not thread-safe, while the host assigns one worker thread per
+connection, so the pool keeps at most four bound sessions per VM target. A debug
+attachment keeps its own session for its lifetime because the daemon ties the
+GDB stub and its resources to the owning connection.
 
 `list_processes` walks every target the daemon reports and maps each
 `(target, guest pid)` pair to a stable synthetic pid, starting at `0x80000000`.
 The table lives for the plugin's lifetime, so a pid from an earlier listing still
 resolves after the picker refreshes; `resolve_session` is what lets the shared
-open path skip its `/proc/<pid>` check. The process picker shows the guest name,
-and the `exe_path` is `mpfshost://<target>/<name>` so its basename matches the
-name for the application filter while the target stays searchable.
+open path skip its `/proc/<pid>` check. The process picker shows the guest name
+and uses the guest image path when the daemon reports one, falling back to
+`mpfshost://<target>/<name>`.
 
-Regions come from the daemon's per-page PTE map rather than its VAD map: a VAD
+Reads use the client's partial-read form, so a range that crosses an unreadable
+page returns its readable prefix instead of failing whole. `range_is_readable`
+uses the daemon's virtual query rather than reading the range. Regions come from
+the daemon's per-page PTE map rather than its VAD map: a VAD
 can span a huge reserved range whose protection bits do not mean committed
 memory, and a scanner told to walk it would never finish. A PTE entry is one
 contiguous run of committed pages; the writable bit is `0x2` and the
@@ -92,10 +93,13 @@ the plugin profile. Attach, detach, continue, single-step, registers, software
 and hardware breakpoints, read/write watchpoints and backtraces run over the
 attachment's session; software breakpoints and watchpoints are persistent
 daemon resources, so the plugin maps its slot numbers onto the daemon's resource
-ids and removes or replaces the previous resource on re-arm. A stop is reported
-from a `debug-wait` hit, a single-step record, or a QMP pause. The daemon has no
-register write, so `debug_set_register` reports `unsupported`; debug is
-available for x86-64 guests only. `suspend_target`/`resume_target` use the
+ids and removes or replaces the previous resource on re-arm. Software and
+hardware slots are namespaced separately in the plugin. A stop is reported from
+a `debug-wait` hit, a single-step record, or a QMP pause; hits carry the plugin's
+slot back through `debug_slot`, and watch hits carry their watched address.
+Register writes use the daemon's `debug-set-register` request, so the Debugger's
+edited registers work for guest targets. Debug is available for x86-64 guests
+only. `suspend_target`/`resume_target` use the
 daemon's QMP stop/continue and therefore pause or resume the whole guest, not
 just one process. Allocation is still unavailable, so `allocate_memory`,
 `free_memory` and the script `alloc`/`dealloc` pair report `unsupported`;

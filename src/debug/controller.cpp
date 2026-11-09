@@ -153,11 +153,16 @@ namespace slopkit::debug
             return;
         }
 
+        if (attach->leader != 0)
+        {
+            leader_ = attach->leader;
+        }
         last_stop_        = StopEvent {};
         last_stop_.tid    = leader_;
         last_stop_.reason = StopReason::interrupt;
         notify(MessageKind::success, QStringLiteral("Debug session open for pid %1.").arg(pid_));
-        slopkit::log::info(slopkit::log::category::debug, std::format("debug session started for pid {}", pid_));
+        slopkit::log::info(slopkit::log::category::debug,
+                           std::format("debug session started for pid {} (leader tid {})", pid_, leader_));
         begin_run(leader_);
     }
 

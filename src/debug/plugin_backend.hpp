@@ -24,12 +24,13 @@ namespace slopkit::debug
         PluginBackend(const PluginBackend&)            = delete;
         PluginBackend& operator=(const PluginBackend&) = delete;
 
-        std::expected<void, process::AccessError> attach(process::ProcessId pid, std::string_view plugin_id) override;
-        std::expected<void, process::AccessError> detach() override;
-        std::expected<StopEvent, process::AccessError> cont(std::uint64_t resume_address,
-                                                            std::size_t   resume_step_size) override;
-        std::expected<StopEvent, process::AccessError> step(std::uint32_t tid) override;
-        std::expected<void, process::AccessError>      interrupt(std::uint32_t tid) override;
+        std::expected<std::uint32_t, process::AccessError> attach(process::ProcessId pid,
+                                                                  std::string_view   plugin_id) override;
+        std::expected<void, process::AccessError>          detach() override;
+        std::expected<StopEvent, process::AccessError>     cont(std::uint64_t resume_address,
+                                                                std::size_t   resume_step_size) override;
+        std::expected<StopEvent, process::AccessError>     step(std::uint32_t tid) override;
+        std::expected<void, process::AccessError>          interrupt(std::uint32_t tid) override;
 
         std::expected<std::vector<RegisterValue>, process::AccessError> registers(std::uint32_t tid) override;
         std::expected<void, process::AccessError>

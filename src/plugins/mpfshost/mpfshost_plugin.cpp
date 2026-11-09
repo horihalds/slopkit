@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/log.hpp"
+#include "core/log_categories.hpp"
 #include "platform/linux/procfs.hpp"
 #include "plugins/mpfshost/mpfshost_client.hpp"
 #include "plugins/mpfshost/mpfshost_debug.hpp"
@@ -16,14 +18,14 @@
 #include "plugins/support/plugin_support.hpp"
 #include "plugins/support/session.hpp"
 
+#include <mpfshost/client.hpp>
+
 namespace
 {
-    using slopkit::plugins::mpfshost::Client;
-    using slopkit::plugins::mpfshost::ClientSession;
     using slopkit::plugins::mpfshost::DebugManager;
+    using slopkit::plugins::mpfshost::GuestSessions;
     using slopkit::plugins::mpfshost::GuestTarget;
     using slopkit::plugins::mpfshost::TargetTable;
-    using slopkit::plugins::mpfshost::TransportError;
     using slopkit::plugins::support::AccessFault;
     using slopkit::plugins::support::DebugHooks;
     using slopkit::plugins::support::MemoryResult;
@@ -39,12 +41,10 @@ namespace
     using slopkit::process::ProcessInfo;
     using slopkit::process::ThreadInfo;
 
-    constexpr std::size_t kChunkSize = 64u << 20;
-
     const slopkit_plugin_info kInfo {
         "mpfshost",
         "MemProcFS guest access",
-        "0.2.0",
+        "0.3.0",
         "Attaches to processes inside QEMU/KVM guests through the system mpfshost daemon; reads, writes, modules, "
         "threads, regions, validation and x86-64 guest debugging work, suspend/resume pauses the whole guest, and "
         "target allocation does not."};
@@ -72,20 +72,10 @@ namespace
         return AccessFault {code, std::move(message)};
     }
 
-    AccessFault client_fault(const TransportError& error)
+    AccessFault client_fault(const ::mpfshost::Error& error)
     {
-        return fault(error.code, error.message);
-    }
-
-    std::expected<ClientSession, AccessFault> bind_guest(const GuestTarget& guest)
-    {
-        const Client client {slopkit::plugins::mpfshost::socket_path()};
-        auto         session = client.bind(guest.target);
-        if (!session)
-        {
-            return std::unexpected(client_fault(session.error()));
-        }
-        return std::move(*session);
+        return fault(slopkit::plugins::mpfshost::status_for_error(error),
+                     slopkit::plugins::mpfshost::message_for_error(error));
     }
 
     std::optional<GuestTarget> guest_for(Session& session)
@@ -95,31 +85,40 @@ namespace
 
     std::string target_label(const GuestTarget& guest)
     {
-        return std::format("/mpfshost/{}/{}", guest.target, guest.name);
+        return std::format("mpfshost://{}/{}", guest.target, guest.name);
     }
 
     std::expected<std::vector<ProcessInfo>, AccessFault> list_processes()
     {
-        const Client client {slopkit::plugins::mpfshost::socket_path()};
-
-        const auto targets = client.targets();
+        const ::mpfshost::Client client {slopkit::plugins::mpfshost::socket_path()};
+        const auto               targets = client.targets();
         if (!targets)
         {
+            slopkit::log::warning(slopkit::log::category::process,
+                                  std::format("mpfshost target listing failed: {}",
+                                              slopkit::plugins::mpfshost::message_for_error(targets.error())));
             return std::vector<ProcessInfo> {};
         }
 
         std::vector<ProcessInfo> result;
         for (const auto& target : *targets)
         {
-            auto session = client.bind(target.name);
-            if (!session)
+            auto pool  = slopkit::plugins::mpfshost::sessions_for(target.name);
+            auto lease = pool->acquire();
+            if (!lease)
             {
+                slopkit::log::warning(slopkit::log::category::process,
+                                      std::format("mpfshost could not bind {}: {}", target.name, lease.error()));
                 continue;
             }
 
-            const auto processes = session->processes();
+            const auto processes = lease->session().processes();
             if (!processes)
             {
+                slopkit::log::warning(slopkit::log::category::process,
+                                      std::format("mpfshost could not list processes in {}: {}",
+                                                  target.name,
+                                                  slopkit::plugins::mpfshost::message_for_error(processes.error())));
                 continue;
             }
 
@@ -128,11 +127,11 @@ namespace
                 GuestTarget guest {target.name, process.pid, process.name, process.wow64};
                 const auto  synthetic = g_targets.remember(guest);
 
-                ProcessInfo info;
-                info.pid      = synthetic;
-                info.name     = process.name;
-                info.exe_path = target_label(guest);
-                result.push_back(std::move(info));
+                ProcessInfo process_info;
+                process_info.pid      = synthetic;
+                process_info.name     = process.name;
+                process_info.exe_path = process.imagePath.empty() ? target_label(guest) : process.imagePath;
+                result.push_back(std::move(process_info));
             }
         }
         return result;
@@ -157,38 +156,19 @@ namespace
             return std::unexpected(fault(SLOPKIT_ERR_NOT_FOUND, "the guest process is not known"));
         }
 
-        auto session_or_error = bind_guest(*guest);
-        if (!session_or_error)
+        auto pool  = slopkit::plugins::mpfshost::sessions_for(guest->target);
+        auto lease = pool->acquire();
+        if (!lease)
         {
-            return std::unexpected(session_or_error.error());
+            return std::unexpected(fault(SLOPKIT_ERR_IO, lease.error()));
         }
-        auto& session_client = *session_or_error;
 
-        std::size_t offset = 0;
-        while (offset < buffer.size())
+        auto filled = lease->session().readMemoryPartial(guest->pid, address, buffer);
+        if (!filled)
         {
-            const auto wanted = std::min(kChunkSize, buffer.size() - offset);
-
-            const auto data =
-                session_client.read_memory(guest->pid, address + offset, static_cast<std::uint32_t>(wanted));
-            if (!data)
-            {
-                if (offset > 0)
-                {
-                    return MemoryResult {offset, SLOPKIT_ACCESS_MPFSHOST};
-                }
-                return std::unexpected(client_fault(data.error()));
-            }
-
-            const auto copied = std::min<std::size_t>(data->size(), wanted);
-            std::copy_n(data->begin(), static_cast<std::ptrdiff_t>(copied), buffer.begin() + offset);
-            offset += copied;
-            if (copied < wanted)
-            {
-                break;
-            }
+            return std::unexpected(client_fault(filled.error()));
         }
-        return MemoryResult {offset, SLOPKIT_ACCESS_MPFSHOST};
+        return MemoryResult {*filled, SLOPKIT_ACCESS_MPFSHOST};
     }
 
     std::expected<MemoryResult, AccessFault>
@@ -200,31 +180,19 @@ namespace
             return std::unexpected(fault(SLOPKIT_ERR_NOT_FOUND, "the guest process is not known"));
         }
 
-        auto session_or_error = bind_guest(*guest);
-        if (!session_or_error)
+        auto pool  = slopkit::plugins::mpfshost::sessions_for(guest->target);
+        auto lease = pool->acquire();
+        if (!lease)
         {
-            return std::unexpected(session_or_error.error());
+            return std::unexpected(fault(SLOPKIT_ERR_IO, lease.error()));
         }
-        auto& session_client = *session_or_error;
 
-        std::size_t offset = 0;
-        while (offset < data.size())
+        auto written = lease->session().writeMemory(guest->pid, address, data);
+        if (!written)
         {
-            const auto chunk = std::min(kChunkSize, data.size() - offset);
-            const auto span  = data.subspan(offset, chunk);
-
-            const auto written = session_client.write_memory(guest->pid, address + offset, span);
-            if (!written)
-            {
-                return std::unexpected(client_fault(written.error()));
-            }
-            if (*written == 0)
-            {
-                return std::unexpected(fault(SLOPKIT_ERR_IO, "the host wrote no bytes"));
-            }
-            offset += static_cast<std::size_t>(*written);
+            return std::unexpected(client_fault(written.error()));
         }
-        return MemoryResult {offset, SLOPKIT_ACCESS_MPFSHOST};
+        return MemoryResult {static_cast<std::size_t>(*written), SLOPKIT_ACCESS_MPFSHOST};
     }
 
     std::expected<std::vector<ModuleInfo>, AccessFault> modules(Session& session)
@@ -235,14 +203,14 @@ namespace
             return std::unexpected(fault(SLOPKIT_ERR_NOT_FOUND, "the guest process is not known"));
         }
 
-        auto session_or_error = bind_guest(*guest);
-        if (!session_or_error)
+        auto pool  = slopkit::plugins::mpfshost::sessions_for(guest->target);
+        auto lease = pool->acquire();
+        if (!lease)
         {
-            return std::unexpected(session_or_error.error());
+            return std::unexpected(fault(SLOPKIT_ERR_IO, lease.error()));
         }
-        auto& session_client = *session_or_error;
 
-        const auto descriptors = session_client.modules(guest->pid);
+        const auto descriptors = lease->session().modules(guest->pid);
         if (!descriptors)
         {
             return std::unexpected(client_fault(descriptors.error()));
@@ -254,7 +222,7 @@ namespace
         {
             ModuleInfo module;
             module.base         = descriptor.base;
-            module.size         = descriptor.imageSize;
+            module.size         = descriptor.imageSize != 0 ? descriptor.imageSize : descriptor.rawFileSize;
             module.entry        = descriptor.entry;
             module.kind         = ModuleKind::pe;
             module.name         = descriptor.name.empty() ? descriptor.fullName : descriptor.name;
@@ -263,10 +231,17 @@ namespace
             module.pointer_size = guest->wow64 ? 4u : 8u;
             result.push_back(std::move(module));
         }
+        if (descriptors->truncated)
+        {
+            slopkit::log::warning(slopkit::log::category::process,
+                                  std::format("mpfshost truncated the module list of {} at {} entries",
+                                              guest->name,
+                                              descriptors->size()));
+        }
         return result;
     }
 
-    std::expected<std::vector<slopkit::platform::MappedRegion>, AccessFault> regions(Session& session)
+    std::expected<std::vector<platform::MappedRegion>, AccessFault> regions(Session& session)
     {
         const auto guest = guest_for(session);
         if (!guest)
@@ -274,22 +249,22 @@ namespace
             return std::unexpected(fault(SLOPKIT_ERR_NOT_FOUND, "the guest process is not known"));
         }
 
-        auto session_or_error = bind_guest(*guest);
-        if (!session_or_error)
+        auto pool  = slopkit::plugins::mpfshost::sessions_for(guest->target);
+        auto lease = pool->acquire();
+        if (!lease)
         {
-            return std::unexpected(session_or_error.error());
-        }
-        auto& session_client = *session_or_error;
-
-        const auto descriptors = session_client.pte(guest->pid);
-        if (!descriptors)
-        {
-            return std::unexpected(client_fault(descriptors.error()));
+            return std::unexpected(fault(SLOPKIT_ERR_IO, lease.error()));
         }
 
-        std::vector<slopkit::platform::MappedRegion> result;
-        result.reserve(descriptors->size());
-        for (const auto& descriptor : *descriptors)
+        const auto mapped = lease->session().pte(guest->pid, true);
+        if (!mapped)
+        {
+            return std::unexpected(client_fault(mapped.error()));
+        }
+
+        std::vector<platform::MappedRegion> result;
+        result.reserve(mapped->regions.size());
+        for (const auto& descriptor : mapped->regions)
         {
             if (descriptor.pages == 0)
             {
@@ -297,13 +272,13 @@ namespace
             }
 
             const auto protection = slopkit::plugins::mpfshost::classify_pte_flags(descriptor.pageFlags);
-            const auto size       = descriptor.pages * ::mpfshost::kPageSize;
+            const auto size       = descriptor.pages * 0x1000;
             if (size == 0 || descriptor.vaBase + size < descriptor.vaBase)
             {
                 continue;
             }
 
-            slopkit::platform::MappedRegion region;
+            platform::MappedRegion region;
             region.start      = descriptor.vaBase;
             region.end        = descriptor.vaBase + size;
             region.readable   = protection.readable;
@@ -311,6 +286,13 @@ namespace
             region.executable = protection.executable;
             region.path       = descriptor.text;
             result.push_back(std::move(region));
+        }
+        if (mapped->regions.truncated)
+        {
+            slopkit::log::warning(slopkit::log::category::process,
+                                  std::format("mpfshost truncated the page table of {} at {} entries",
+                                              guest->name,
+                                              mapped->regions.size()));
         }
         return result;
     }
@@ -323,14 +305,14 @@ namespace
             return std::unexpected(fault(SLOPKIT_ERR_NOT_FOUND, "the guest process is not known"));
         }
 
-        auto session_or_error = bind_guest(*guest);
-        if (!session_or_error)
+        auto pool  = slopkit::plugins::mpfshost::sessions_for(guest->target);
+        auto lease = pool->acquire();
+        if (!lease)
         {
-            return std::unexpected(session_or_error.error());
+            return std::unexpected(fault(SLOPKIT_ERR_IO, lease.error()));
         }
-        auto& session_client = *session_or_error;
 
-        const auto descriptors = session_client.threads(guest->pid);
+        const auto descriptors = lease->session().threads(guest->pid);
         if (!descriptors)
         {
             return std::unexpected(client_fault(descriptors.error()));
@@ -342,7 +324,21 @@ namespace
         {
             result.push_back(ThreadInfo {descriptor.tid, {}});
         }
+        if (descriptors->truncated)
+        {
+            slopkit::log::warning(slopkit::log::category::process,
+                                  std::format("mpfshost truncated the thread list of {} at {} entries",
+                                              guest->name,
+                                              descriptors->size()));
+        }
         return result;
+    }
+
+    bool region_readable(const ::mpfshost::VirtualRegion& region) noexcept
+    {
+        constexpr std::uint32_t kMemCommit    = 0x1000;
+        constexpr std::uint32_t kPageNoAccess = 0x01;
+        return (region.state & kMemCommit) != 0 && (region.protect & kPageNoAccess) == 0 && region.regionSize != 0;
     }
 
     std::expected<bool, AccessFault> range_is_readable(Session& session, std::uint64_t address, std::size_t size)
@@ -353,25 +349,60 @@ namespace
             return std::unexpected(fault(SLOPKIT_ERR_NOT_FOUND, "the guest process is not known"));
         }
 
-        constexpr std::size_t kProbeSize       = 64 * 1024;
-        auto                  session_or_error = bind_guest(*guest);
-        if (!session_or_error)
+        if (size == 0)
         {
-            return std::unexpected(session_or_error.error());
+            return true;
         }
-        auto& session_client = *session_or_error;
-
-        std::size_t offset = 0;
-        while (offset < size)
+        if (address > UINT64_MAX - size)
         {
-            const auto wanted = std::min(kProbeSize, size - offset);
-            const auto data =
-                session_client.read_memory(guest->pid, address + offset, static_cast<std::uint32_t>(wanted));
-            if (!data || data->size() < wanted)
+            return false;
+        }
+
+        auto pool  = slopkit::plugins::mpfshost::sessions_for(guest->target);
+        auto lease = pool->acquire();
+        if (!lease)
+        {
+            return std::unexpected(fault(SLOPKIT_ERR_IO, lease.error()));
+        }
+
+        const std::uint64_t end    = address + size;
+        std::uint64_t       cursor = address;
+        while (cursor < end)
+        {
+            const auto region = lease->session().queryVirtual(guest->pid, cursor);
+            if (!region)
+            {
+                if (region.error().code == ::mpfshost::ErrorCode::CapabilityUnavailable
+                    || region.error().code == ::mpfshost::ErrorCode::UnknownMessage)
+                {
+                    // Older hosts do not answer virtual queries; fall back to a direct read probe.
+                    constexpr std::size_t  kProbeSize = 64 * 1024;
+                    std::vector<std::byte> buffer(std::min<std::size_t>(kProbeSize, end - cursor));
+                    const auto             filled = lease->session().readMemoryPartial(guest->pid, cursor, buffer);
+                    if (!filled)
+                    {
+                        return false;
+                    }
+                    if (*filled < buffer.size())
+                    {
+                        return false;
+                    }
+                    cursor += *filled;
+                    continue;
+                }
+                return false;
+            }
+            if (!region_readable(*region))
             {
                 return false;
             }
-            offset += wanted;
+
+            const std::uint64_t region_end = region->baseAddress + region->regionSize;
+            if (region_end <= cursor)
+            {
+                return false;
+            }
+            cursor = std::min(end, region_end);
         }
         return true;
     }

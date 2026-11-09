@@ -24,6 +24,7 @@ namespace slopkit::debug
 
     struct AttachResult
     {
+        std::uint32_t                       leader {};
         std::optional<process::AccessError> error;
     };
 
