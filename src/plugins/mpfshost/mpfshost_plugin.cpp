@@ -441,7 +441,7 @@ namespace
         {
             return std::unexpected(process::AccessError::not_found);
         }
-        return g_debug.interrupt(*guest);
+        return g_debug.interrupt(*guest, session.pid);
     }
 
     std::expected<platform::Registers, process::AccessError> debug_registers(Session& session, std::uint32_t tid)

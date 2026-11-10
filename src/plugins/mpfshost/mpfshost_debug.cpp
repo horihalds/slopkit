@@ -354,9 +354,12 @@ namespace slopkit::plugins::mpfshost
             }
         }
 
-        if (const auto continued = state->session->debugContinueArmed(); !continued)
         {
-            return std::unexpected(access_error(continued.error()));
+            const std::lock_guard continue_lock(state->continue_mutex);
+            if (const auto continued = state->session->debugContinueArmed(); !continued)
+            {
+                return std::unexpected(access_error(continued.error()));
+            }
         }
 
         return wait_for_stop(*state->session, state->leader_tid, state->resources);
@@ -388,8 +391,18 @@ namespace slopkit::plugins::mpfshost
         return stop;
     }
 
-    std::expected<void, process::AccessError> DebugManager::interrupt(const GuestTarget& guest)
+    std::expected<void, process::AccessError> DebugManager::interrupt(const GuestTarget& guest,
+                                                                      std::uint32_t      synthetic_pid)
     {
+        const auto                   state = state_for(synthetic_pid);
+        // A continue that is already in flight must finish before the stop, or its QMP cont resumes the guest
+        // immediately after the pause.
+        std::unique_lock<std::mutex> continue_lock;
+        if (state)
+        {
+            continue_lock = std::unique_lock<std::mutex> {state->continue_mutex};
+        }
+
         const ::mpfshost::Client client {socket_path()};
         auto                     bound = client.bind(guest.target);
         if (!bound)

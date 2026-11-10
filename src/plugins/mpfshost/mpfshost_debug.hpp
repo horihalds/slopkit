@@ -30,7 +30,8 @@ namespace slopkit::plugins::mpfshost
         resume(std::uint32_t synthetic_pid, std::uint64_t resume_address, std::size_t resume_step_size);
         [[nodiscard]] std::expected<platform::StopStatus, process::AccessError> step(std::uint32_t synthetic_pid,
                                                                                      std::uint32_t tid);
-        [[nodiscard]] std::expected<void, process::AccessError>                 interrupt(const GuestTarget& guest);
+        [[nodiscard]] std::expected<void, process::AccessError>                 interrupt(const GuestTarget& guest,
+                                                                                          std::uint32_t      synthetic_pid);
 
         [[nodiscard]] std::expected<platform::Registers, process::AccessError> registers(std::uint32_t synthetic_pid,
                                                                                          std::uint32_t tid);
@@ -62,6 +63,8 @@ namespace slopkit::plugins::mpfshost
         struct State
         {
             std::mutex                                  mutex;
+            // Serializes a maintenance stop with the continue packet it must follow.
+            std::mutex                                  continue_mutex;
             std::optional<::mpfshost::ClientSession>    session;
             std::uint32_t                               guest_pid {};
             std::uint32_t                               leader_tid {};
