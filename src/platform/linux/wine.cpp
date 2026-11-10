@@ -205,7 +205,7 @@ namespace slopkit::platform
 
         if (result.claimed())
         {
-            log::info(log::category::process, std::format("pid {} classified as {}", pid, flavor_name(result.flavor)));
+            log::debug(log::category::process, std::format("pid {} classified as {}", pid, flavor_name(result.flavor)));
             for (const auto& detail : result.evidence.details)
             {
                 log::debug(log::category::process, std::format("pid {} wine signal: {}", pid, detail));

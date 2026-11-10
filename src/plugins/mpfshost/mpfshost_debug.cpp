@@ -393,11 +393,23 @@ namespace slopkit::plugins::mpfshost
         {
             return std::unexpected(access_error(bound.error()));
         }
-        if (const auto stopped = bound->debugControl(::mpfshost::DebugControlAction::Stop); !stopped)
+
+        // The attached session polls debugState while it waits for a stop. Both requests take the host's
+        // state lock, so a control request can briefly answer Busy; retry instead of dropping the interrupt.
+        for (int attempt = 0; attempt < 50; ++attempt)
         {
-            return std::unexpected(access_error(stopped.error()));
+            const auto stopped = bound->debugControl(::mpfshost::DebugControlAction::Stop);
+            if (stopped)
+            {
+                return {};
+            }
+            if (stopped.error().code != ::mpfshost::ErrorCode::Busy)
+            {
+                return std::unexpected(access_error(stopped.error()));
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds {10});
         }
-        return {};
+        return std::unexpected(process::AccessError::io_error);
     }
 
     std::expected<platform::Registers, process::AccessError> DebugManager::registers(std::uint32_t synthetic_pid,
