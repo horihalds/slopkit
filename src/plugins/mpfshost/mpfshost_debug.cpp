@@ -179,6 +179,8 @@ namespace slopkit::plugins::mpfshost
         {
             slopkit::log::info(slopkit::log::category::debug,
                                std::format("mpfshost wait for stop with {} armed resource(s)", resources.size()));
+            auto lastState  = ::mpfshost::DebugRunState::Unknown;
+            bool lastPaused = false;
             for (;;)
             {
                 if (!resources.empty())
@@ -232,6 +234,15 @@ namespace slopkit::plugins::mpfshost
                 if (!status)
                 {
                     return std::unexpected(access_error(status.error()));
+                }
+                if (status->runState != lastState || status->hostPaused != lastPaused)
+                {
+                    slopkit::log::info(slopkit::log::category::debug,
+                                       std::format("mpfshost wait sees state={} hostPaused={}",
+                                                   ::mpfshost::debugRunStateName(status->runState),
+                                                   status->hostPaused));
+                    lastState  = status->runState;
+                    lastPaused = status->hostPaused;
                 }
                 if (status->runState == ::mpfshost::DebugRunState::Shutdown)
                 {
@@ -393,6 +404,7 @@ namespace slopkit::plugins::mpfshost
         {
             return std::unexpected(access_error(bound.error()));
         }
+        slopkit::log::info(slopkit::log::category::debug, "mpfshost interrupt requested");
 
         // The attached session polls debugState while it waits for a stop. Both requests take the host's
         // state lock, so a control request can briefly answer Busy; retry instead of dropping the interrupt.
@@ -401,14 +413,19 @@ namespace slopkit::plugins::mpfshost
             const auto stopped = bound->debugControl(::mpfshost::DebugControlAction::Stop);
             if (stopped)
             {
+                slopkit::log::info(slopkit::log::category::debug,
+                                   std::format("mpfshost interrupt paused the guest after {} attempt(s)", attempt + 1));
                 return {};
             }
             if (stopped.error().code != ::mpfshost::ErrorCode::Busy)
             {
+                slopkit::log::warning(slopkit::log::category::debug,
+                                      std::format("mpfshost interrupt failed: {}", message_for_error(stopped.error())));
                 return std::unexpected(access_error(stopped.error()));
             }
             std::this_thread::sleep_for(std::chrono::milliseconds {10});
         }
+        slopkit::log::warning(slopkit::log::category::debug, "mpfshost interrupt kept returning Busy");
         return std::unexpected(process::AccessError::io_error);
     }
 
