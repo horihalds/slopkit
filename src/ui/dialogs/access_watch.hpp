@@ -87,6 +87,7 @@ namespace slopkit::ui::dialogs
         void                  apply_texts(process::JobResult&& result, std::vector<int> rows);
         void                  follow_selected();
         void                  watch_selected(bool writes);
+        void                  stop_watch_or_session();
         void                  update_instruction_buttons();
         [[nodiscard]] QString display_address(std::uint64_t address) const;
 

@@ -142,7 +142,6 @@ namespace slopkit::ui::dialogs
         recorded_table_->setShowGrid(false);
         recorded_table_->verticalHeader()->setVisible(false);
         recorded_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-        recorded_table_->horizontalHeader()->setStretchLastSection(true);
         layout->addWidget(recorded_table_, 1);
 
         auto* recorded_buttons = new QHBoxLayout();
@@ -169,7 +168,6 @@ namespace slopkit::ui::dialogs
         instruction_table_->setShowGrid(false);
         instruction_table_->verticalHeader()->setVisible(false);
         instruction_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-        instruction_table_->horizontalHeader()->setStretchLastSection(true);
         layout->addWidget(instruction_table_, 1);
 
         auto* instruction_buttons = new QHBoxLayout();
@@ -186,7 +184,7 @@ namespace slopkit::ui::dialogs
         layout->addWidget(hint_);
 
         connect(follow_, &QPushButton::clicked, this, &AccessWatchDialog::follow_selected);
-        connect(stop_, &QPushButton::clicked, &controller_, &debug::Controller::stop_watch);
+        connect(stop_, &QPushButton::clicked, this, &AccessWatchDialog::stop_watch_or_session);
         connect(clear_, &QPushButton::clicked, &controller_, &debug::Controller::clear_watch_hits);
         connect(close_, &QPushButton::clicked, this, &QDialog::close);
         connect(watch_writes_,
@@ -449,6 +447,25 @@ namespace slopkit::ui::dialogs
         start_watch(instruction_model_->address_at(row),
                     writes ? debug::Kind::hardware_write : debug::Kind::hardware_read_write,
                     ui::watch_size(instruction_model_->width_at(row)));
+    }
+
+    void AccessWatchDialog::stop_watch_or_session()
+    {
+        bool other_breakpoint = false;
+        for (const debug::Breakpoint& entry : controller_.breakpoints())
+        {
+            if (!entry.hidden)
+            {
+                other_breakpoint = true;
+                break;
+            }
+        }
+
+        controller_.stop_watch();
+        if (!other_breakpoint)
+        {
+            controller_.stop();
+        }
     }
 
     void AccessWatchDialog::update_instruction_buttons()

@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include <QHeaderView>
+
 #include "support/ui_helpers.hpp"
 #include "ui/dialogs/access_watch.hpp"
 #include "ui/fonts.hpp"
@@ -53,6 +55,16 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
     slopkit::process::AttachedTarget target = fake_target();
     AccessWatchDialog                dialog {controller, worker, target};
     CHECK(dialog.header_text() == QStringLiteral("No watch running."));
+
+    for (auto* table : {dialog.recorded_table(), dialog.instruction_table()})
+    {
+        QHeaderView* header = table->horizontalHeader();
+        CHECK_FALSE(header->stretchLastSection());
+        for (int column = 0; column < table->model()->columnCount(); ++column)
+        {
+            CHECK(header->sectionResizeMode(column) == QHeaderView::ResizeToContents);
+        }
+    }
 
     dialog.start_watch(0x4000, Kind::hardware_write, 4);
     REQUIRE(pump_until(controller,
@@ -111,16 +123,65 @@ TEST_CASE("the access watch window renders the watch and its coalesced hits", "[
     dialog.follow_button()->click();
     CHECK(followed == rip - 3);
 
+    dialog.clear_button()->click();
+    CHECK(dialog.recorded_row_count() == 0);
+    CHECK(dialog.header_text().contains(QStringLiteral("0 accesses")));
+
+    dialog.stop_button()->click();
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::idle;
+                       }));
+    CHECK(controller.watch().state() == WatchState::idle);
+    CHECK(dialog.recorded_row_count() == 0);
+    CHECK(dialog.header_text() == QStringLiteral("No watch running."));
+}
+
+TEST_CASE("the access watch keeps the session when a user breakpoint is set", "[ui][access_watch]")
+{
+    application();
+
+    FakeAccess                     access;
+    slopkit::process::AccessWorker worker {access};
+    attach_app_session(worker);
+    slopkit::tests::FakeDebugBackend backend;
+    Controller                       controller {backend};
+    backend.block_continue = true;
+    controller.start(42, "fake");
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           return controller.state() == Controller::State::running;
+                       }));
+
+    const auto breakpoint = controller.add_breakpoint("0x7000", Kind::software, 1);
+    REQUIRE(breakpoint.has_value());
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const slopkit::debug::Breakpoint* entry = controller.table().find(*breakpoint);
+                           return entry != nullptr && entry->armed;
+                       }));
+
+    slopkit::process::AttachedTarget target = fake_target();
+    AccessWatchDialog                dialog {controller, worker, target};
+    dialog.start_watch(0x4000, Kind::hardware_write, 4);
+    REQUIRE(pump_until(controller,
+                       [&]
+                       {
+                           const auto* entry = watch_entry(controller);
+                           return entry != nullptr && entry->armed;
+                       }));
+
     dialog.stop_button()->click();
     REQUIRE(pump_until(controller,
                        [&]
                        {
                            return controller.watch().state() == WatchState::stopped;
                        }));
-    CHECK(dialog.recorded_row_count() == 1);
-    dialog.clear_button()->click();
-    CHECK(dialog.recorded_row_count() == 0);
-    CHECK(dialog.header_text().contains(QStringLiteral("0 accesses")));
+    CHECK(controller.state() != Controller::State::idle);
+    CHECK(controller.table().find(*breakpoint) != nullptr);
 }
 
 TEST_CASE("the access watch window shows the resolved instruction operands", "[ui]")

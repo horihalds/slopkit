@@ -341,8 +341,10 @@ beside the normal access path rather than in it, so the read/write path stays
   stops inside `apply_stop()`: it records the hit against the accessing
   instruction (`debug::AccessWatch`, coalesced per instruction with a 1024-row
   cap), marks the `watchChanged()` signal dirty and resumes immediately, so the
-  target keeps running. A new watch replaces the running one; `Stop` disarms it
-  without dropping the recorded rows.
+  target keeps running. A new watch replaces the running one. `Stop` disarms it;
+  when no other user-defined breakpoint remains set, the controller also ends the
+  debug session and drops the recorded rows, while any other user breakpoint
+  keeps the session up and the rows stay.
 - The **code filter** reuses the table too. Collection is a target-free
   `analysis::find_code_targets` sweep of the module's executable regions on the
   access worker: only directly encoded `call`/`jmp`/`jcc` targets are kept,
