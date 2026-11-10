@@ -177,6 +177,8 @@ namespace slopkit::plugins::mpfshost
         std::expected<platform::StopStatus, process::AccessError>
         wait_for_stop(::mpfshost::ClientSession& session, std::uint32_t leader, const auto& resources)
         {
+            slopkit::log::info(slopkit::log::category::debug,
+                               std::format("mpfshost wait for stop with {} armed resource(s)", resources.size()));
             for (;;)
             {
                 if (!resources.empty())
@@ -326,6 +328,9 @@ namespace slopkit::plugins::mpfshost
             return std::unexpected(process::AccessError::not_found);
         }
         const std::lock_guard lock(state->mutex);
+        slopkit::log::info(
+            slopkit::log::category::debug,
+            std::format("mpfshost resume pid={} with {} armed resource(s)", synthetic_pid, state->resources.size()));
 
         if (resume_address != 0 && resume_step_size != 0)
         {
@@ -594,6 +599,8 @@ namespace slopkit::plugins::mpfshost
             return std::unexpected(access_error(armed.error()));
         }
         state->resources.emplace(key, Resource {armed->id, true});
+        slopkit::log::info(slopkit::log::category::debug,
+                           std::format("mpfshost armed watch slot {} resource {} at {:X}", slot, armed->id, address));
         return {};
     }
 
