@@ -340,6 +340,14 @@ namespace slopkit::plugins::mpfshost
             return std::unexpected(access_error(continued.error()));
         }
 
+        // QEMU can report the stub continued while the VM is still QMP-paused. Force the VM to run before
+        // waiting, or an armed watch would never see the guest execute.
+        if (const auto status = state->session->debugState();
+            status && status->runState != ::mpfshost::DebugRunState::Running)
+        {
+            (void)state->session->debugControl(::mpfshost::DebugControlAction::Continue);
+        }
+
         return wait_for_stop(*state->session, state->leader_tid, state->resources);
     }
 
