@@ -394,6 +394,13 @@ namespace slopkit::plugins::mpfshost
         }
         const std::lock_guard lock(state->mutex);
 
+        // The controller captures registers after a stop, but a late resume can leave the guest running.
+        // Pausing here keeps the read valid and leaves the debugger in the stopped state it is about to display.
+        if (const auto paused = ensure_paused(*state->session); !paused)
+        {
+            return std::unexpected(paused.error());
+        }
+
         const auto records = state->session->debugRegisters(::mpfshost::kDebugAllVcpus);
         if (!records)
         {
@@ -588,6 +595,11 @@ namespace slopkit::plugins::mpfshost
             return std::unexpected(process::AccessError::not_found);
         }
         const std::lock_guard lock(state->mutex);
+
+        if (const auto paused = ensure_paused(*state->session); !paused)
+        {
+            return std::unexpected(paused.error());
+        }
 
         const auto selected = select_thread(*state->session, tid == 0 ? state->leader_tid : tid);
         const auto vcpu     = selected ? selected->vcpu : 0;
