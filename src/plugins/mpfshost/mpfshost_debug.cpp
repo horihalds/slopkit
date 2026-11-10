@@ -195,6 +195,9 @@ namespace slopkit::plugins::mpfshost
                     }
                     if (!hits.empty())
                     {
+                        slopkit::log::info(
+                            slopkit::log::category::debug,
+                            std::format("mpfshost watch hit id={} at {:X}", hits.back().id, hits.back().address));
                         const auto&          hit = hits.back();
                         platform::StopStatus stop;
                         stop.reason       = platform::StopReason::breakpoint;
