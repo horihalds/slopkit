@@ -111,6 +111,11 @@ namespace slopkit::ui::panels
         void add_script();
         void add_hook_script(const QString& description, const QString& source);
 
+        // The row menu's `Re-resolve Pointer`: resolves the row's stored address
+        // expression now, without waiting for the periodic pass, and reports the
+        // outcome in the status line.
+        void re_resolve_pointer(std::size_t row);
+
         void edit_script(std::size_t row);
 
         void run_script(std::size_t row);
@@ -166,6 +171,7 @@ namespace slopkit::ui::panels
         dialogs::AddScriptDialog*             script_dialog_ {};
         bool                                  resolving_ {false};
         bool                                  force_resolve_ {true};
+        std::optional<std::uint64_t>          resolve_focus_;
         std::chrono::steady_clock::time_point last_resolve_ {};
         std::string                           expression_signature_;
 

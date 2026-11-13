@@ -265,6 +265,28 @@ namespace slopkit::ui::panels
         force_resolve_ = true;
     }
 
+    void AddressListPanel::re_resolve_pointer(std::size_t row)
+    {
+        if (!table_.valid_index(row))
+        {
+            return;
+        }
+        const table::AddressEntry& entry = table_.entries()[row];
+        if (entry.expression.empty())
+        {
+            set_status(tr("This entry has no address expression to resolve."), true);
+            return;
+        }
+        if (!target_.valid())
+        {
+            set_status(tr("Not attached; cannot resolve."), true);
+            return;
+        }
+        resolve_focus_ = entry.id;
+        force_resolve_ = true;
+        maybe_resolve_expressions();
+    }
+
     void AddressListPanel::maybe_resolve_expressions()
     {
         if (resolving_ || !target_.valid())
@@ -325,6 +347,12 @@ namespace slopkit::ui::panels
                 const auto& resolved = std::get<process::ResolveResult>(result);
                 if (resolved.error.has_value())
                 {
+                    if (resolve_focus_.has_value())
+                    {
+                        set_status(tr("Pointer not resolved: %1").arg(to_qstring(process::describe(*resolved.error))),
+                                   true);
+                        resolve_focus_.reset();
+                    }
                     return;
                 }
 
@@ -332,6 +360,7 @@ namespace slopkit::ui::panels
                 bool changed = false;
                 for (const process::ResolveItemResult& item : resolved.items)
                 {
+                    const bool focused = resolve_focus_.has_value() && *resolve_focus_ == item.key;
                     const auto request = std::find_if(submitted_requests.begin(),
                                                       submitted_requests.end(),
                                                       [&](const process::ResolveRequest& candidate)
@@ -350,12 +379,29 @@ namespace slopkit::ui::panels
                                                     });
                     if (entry == entries.end() || entry->expression != request->expression)
                     {
+                        if (focused)
+                        {
+                            resolve_focus_.reset();
+                        }
                         continue;
                     }
-                    if (item.address.has_value() && entry->address != *item.address)
+                    if (item.address.has_value())
                     {
-                        entry->address = *item.address;
-                        changed        = true;
+                        if (entry->address != *item.address)
+                        {
+                            entry->address = *item.address;
+                            changed        = true;
+                        }
+                        if (focused)
+                        {
+                            set_status(tr("Pointer resolved to %1.").arg(ui::format_absolute(*item.address)), false);
+                            resolve_focus_.reset();
+                        }
+                    }
+                    else if (focused)
+                    {
+                        set_status(tr("Pointer not resolved: %1").arg(to_qstring(item.error)), true);
+                        resolve_focus_.reset();
                     }
                 }
 
@@ -1083,6 +1129,24 @@ namespace slopkit::ui::panels
                     {
                         emit editEntryRequested(row);
                     });
+
+            if (!entry.expression.empty())
+            {
+                QAction* resolve =
+                    target_.valid()
+                        ? widgets::described_action(
+                              menu,
+                              tr("Re-resolve Pointer"),
+                              tr("Resolve this entry's pointer chain again now and update the address it names."))
+                        : widgets::disabled_action(menu, tr("Re-resolve Pointer"), tr("Attach to a target first."));
+                connect(resolve,
+                        &QAction::triggered,
+                        this,
+                        [this, row]
+                        {
+                            re_resolve_pointer(row);
+                        });
+            }
 
             QAction* change_value = menu.addAction(tr("Change value…"));
             connect(change_value, &QAction::triggered, this, &AddressListPanel::change_value);

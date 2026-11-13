@@ -195,6 +195,118 @@ TEST_CASE("the address list re-resolves stored expressions on a slower cadence",
     CHECK(table.entries()[0].address == 0x300004);
 }
 
+TEST_CASE("the address list re-resolves a pointer from its row menu", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target      = fake_target();
+    constexpr std::uint64_t          module_base = 0x100000;
+
+    const auto store_pointer = [&](std::uint64_t value)
+    {
+        std::vector<std::byte> bytes(8);
+        for (std::size_t index = 0; index < bytes.size(); ++index)
+        {
+            bytes[index] = static_cast<std::byte>((value >> (8 * index)) & 0xFF);
+        }
+        (*access.memory)[module_base] = std::move(bytes);
+    };
+    store_pointer(0x200000);
+
+    slopkit::table::AddressTable table;
+    slopkit::table::AddressEntry chained;
+    chained.expression = "app+0+8";
+    chained.type       = slopkit::scan::ValueType::int32;
+    chained.bytes      = {std::byte {1}, std::byte {0}, std::byte {0}, std::byte {0}};
+    table.add(chained);
+    add_int32(table, 0x1040);
+
+    slopkit::process::AttachedTarget      none;
+    slopkit::ui::panels::AddressListPanel detached {table, worker, none};
+    QMenu                                 detached_menu;
+    detached.populate_row_menu(detached_menu, 0);
+    QAction* detached_resolve = nullptr;
+    for (QAction* action : detached_menu.actions())
+    {
+        if (action->text() == QStringLiteral("Re-resolve Pointer"))
+        {
+            detached_resolve = action;
+        }
+    }
+    REQUIRE(detached_resolve != nullptr);
+    CHECK_FALSE(detached_resolve->isEnabled());
+    CHECK(detached_resolve->toolTip() == QStringLiteral("Attach to a target first."));
+
+    slopkit::ui::panels::AddressListPanel panel {table, worker, target};
+    QString                               status;
+    QObject::connect(&panel,
+                     &slopkit::ui::panels::AddressListPanel::statusChanged,
+                     [&](const QString& message, bool)
+                     {
+                         status = message;
+                     });
+
+    attach_app_session(worker);
+    panel.set_modules({module_image("app", module_base, 0x1000)});
+    panel.refresh();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table.entries()[0].address == 0x200008;
+                    }));
+
+    const auto menu_action = [](QMenu& menu, const QString& text) -> QAction*
+    {
+        for (QAction* action : menu.actions())
+        {
+            if (action->text() == text)
+            {
+                return action;
+            }
+        }
+        return nullptr;
+    };
+
+    // Moving the pointer leaves the row alone until the periodic pass; the row
+    // command resolves it now.
+    store_pointer(0x300000);
+    QMenu menu;
+    panel.populate_row_menu(menu, 0);
+    QAction* resolve = menu_action(menu, QStringLiteral("Re-resolve Pointer"));
+    REQUIRE(resolve != nullptr);
+    CHECK(resolve->isEnabled());
+    CHECK(resolve->toolTip()
+          == QStringLiteral("Resolve this entry's pointer chain again now and update the address it names."));
+    status.clear();
+    resolve->trigger();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return table.entries()[0].address == 0x300008;
+                    }));
+    CHECK(status == QStringLiteral("Pointer resolved to 0x300008."));
+
+    // A row without an address expression has nothing to resolve.
+    QMenu plain_menu;
+    panel.populate_row_menu(plain_menu, 1);
+    CHECK(menu_action(plain_menu, QStringLiteral("Re-resolve Pointer")) == nullptr);
+
+    // A failed resolution reports why and keeps the last good address.
+    access.unreadable->insert(module_base);
+    status.clear();
+    resolve->trigger();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return !status.isEmpty();
+                    }));
+    CHECK(status.startsWith(QStringLiteral("Pointer not resolved:")));
+    CHECK(status.contains(QStringLiteral("not readable")));
+    CHECK(table.entries()[0].address == 0x300008);
+}
+
 TEST_CASE("an unreadable address shows a question mark", "[ui]")
 {
     application();
