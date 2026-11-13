@@ -76,18 +76,26 @@ namespace slopkit::expr
             for (std::size_t step = 0; step < offset.dereferences; ++step)
             {
                 ++level;
+                // The validator is only a hint: a plugin's readability probe can
+                // be stale or stricter than its own read path, so a false answer
+                // is reported only when the read agrees with it.
+                bool validated_readable = true;
                 if (validate)
                 {
                     const auto valid = validate(address, options.pointer_size);
                     if (valid && !*valid)
                     {
-                        return std::unexpected(ResolveError {
-                            std::format("the address {:X} at level {} is not readable", address, level), level});
+                        validated_readable = false;
                     }
                 }
                 const auto pointer = reader(address);
                 if (!pointer)
                 {
+                    if (!validated_readable)
+                    {
+                        return std::unexpected(ResolveError {
+                            std::format("the address {:X} at level {} is not readable", address, level), level});
+                    }
                     return std::unexpected(ResolveError {
                         std::format("cannot read pointer at level {}: {}", level, pointer.error()), level});
                 }

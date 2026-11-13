@@ -692,13 +692,15 @@ target.
   expression keeps the legacy rule of one read between consecutive offsets, so
   saved `.skt` rows, the UI's deref-free parsers (they accept only
   `pointer_levels() == 0`) and the existing error texts are unchanged. `evaluate`
-  validates **every** read before performing it through an injected
-  `expr::AddressValidator` the caller supplies (the worker builds one from
-  `Session::validate`, the script engine from the same `MemoryApi` seam); a `false`
-  answer fails that level with `the address <HEX> at level N is not readable` and
-  sets `ResolveError::failed_level`, a validator that itself errors is ignored so
-  the reader's own text stands, and an empty validator reproduces the old
-  behaviour exactly. `expr` stays a leaf module —
+  asks an injected `expr::AddressValidator` about **every** read before performing
+  it (the worker builds one from `Session::validate`, the script engine from the
+  same `MemoryApi` seam). A `false` answer is a hint, not a verdict: the read is
+  attempted anyway, because a plugin's readability probe can be stale or stricter
+  than its own read path, and only a level whose read also fails reports
+  `the address <HEX> at level N is not readable` with
+  `ResolveError::failed_level`. A validator that itself errors is ignored so the
+  reader's own text stands, a readable level resolves regardless of the validator,
+  and an empty validator reproduces the old behaviour exactly. `expr` stays a leaf module —
   `script` includes `expr/resolver.hpp`, not the other way round.
 - Besides `run(chunk)`, the engine exposes `run_lifecycle(chunk, function)`, which
   runs the chunk and then calls its named global (`activate` / `deactivate`),

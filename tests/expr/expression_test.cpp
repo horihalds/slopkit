@@ -497,25 +497,39 @@ TEST_CASE("evaluate validates every dereference", "[expr]")
         CHECK(*bracket == 0x1024);
     }
 
-    SECTION("a failing level names the level and the address and skips the read")
+    SECTION("a failing level names the level and the address")
     {
         std::size_t         reads  = 0;
         const PointerReader reader = [&reads](std::uint64_t) -> std::expected<std::uint64_t, std::string>
         {
             ++reads;
-            return 0x1000;
+            return std::unexpected(std::string {"read failed"});
         };
         const AddressValidator validator = [](std::uint64_t address, std::size_t) -> std::expected<bool, std::string>
         {
-            return address != 0x1018;
+            return address != 0x400010;
         };
 
         const auto resolved = evaluate(parse_ok("a+10+18+24"), modules, empty_symbols, reader, {}, validator);
         REQUIRE_FALSE(resolved.has_value());
-        CHECK(resolved.error().failed_level == 2);
-        CHECK(resolved.error().message.find("at level 2") != std::string::npos);
-        CHECK(resolved.error().message.find("1018") != std::string::npos);
+        CHECK(resolved.error().failed_level == 1);
+        CHECK(resolved.error().message.find("at level 1") != std::string::npos);
+        CHECK(resolved.error().message.find("400010") != std::string::npos);
+        CHECK(resolved.error().message.find("not readable") != std::string::npos);
         CHECK(reads == 1);
+    }
+
+    SECTION("a validator that rejects a level the reader can read is only a hint")
+    {
+        const auto             reader    = pointer_reader();
+        const AddressValidator validator = [](std::uint64_t, std::size_t) -> std::expected<bool, std::string>
+        {
+            return false;
+        };
+
+        const auto resolved = evaluate(parse_ok("[[a+10]+18]+24"), modules, empty_symbols, reader, {}, validator);
+        REQUIRE(resolved.has_value());
+        CHECK(*resolved == 0x1024);
     }
 
     SECTION("an erroring validator is ignored and the reader text stands")
