@@ -407,8 +407,8 @@ namespace slopkit::analysis
 
         const auto matching = [&](std::uint64_t current)
         {
-            const std::uint64_t high = add_saturated(current, span);
-            const std::uint64_t low  = config.allow_negative ? subtract_saturated(current, span) : current;
+            const std::uint64_t high = config.allow_negative ? add_saturated(current, span) : current;
+            const std::uint64_t low  = subtract_saturated(current, span);
             return std::pair {std::ranges::lower_bound(index, low, {}, &IndexedPointer::value),
                               std::ranges::upper_bound(index, high, {}, &IndexedPointer::value)};
         };

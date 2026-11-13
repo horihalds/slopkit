@@ -292,9 +292,9 @@ binary-search range rather than a rescan; zero and unreachable values are
 dropped before the sort. Chunk reads and decoding are sharded across up to eight
 threads, matching the value scanner's concurrency model. Starting from the
 target address the walk expands the reverse tree level by level: a slot matches
-a level when its stored value lands within `max_offset` above the level address
-(and, when negative offsets are enabled, below it), and that slot's own address
-becomes the next level. Each distinct slot address is expanded once and its
+a level when its stored value lands within `max_offset` at or below the level
+address — which yields a non-negative offset — and above it only when negative
+offsets are enabled. The slot's own address becomes the next level. Each distinct slot address is expanded once and its
 parent edges are shared by every path through it. The configured level count is
 an upper bound: a chain is kept whenever its static slot lies in a readable,
 writable, non-executable region overlapping the selected module, so a one-level

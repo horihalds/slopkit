@@ -121,10 +121,10 @@ TEST_CASE("a one-level pointer scan keeps only module data bases", "[analysis]")
         find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 1});
 
     CHECK(has_path(scan, 0x3010, std::vector<std::int64_t> {0}));
-    CHECK(has_path(scan, 0x3030, std::vector<std::int64_t> {-0x10}));
+    CHECK(has_path(scan, 0x3020, std::vector<std::int64_t> {0x20}));
+    CHECK_FALSE(has_path(scan, 0x3030, std::vector<std::int64_t> {-0x10}));
     CHECK_FALSE(has_path(scan, 0x5000, std::vector<std::int64_t> {0}));
     CHECK_FALSE(has_path(scan, 0x1100, std::vector<std::int64_t> {0}));
-    CHECK_FALSE(has_path(scan, 0x3020, std::vector<std::int64_t> {0x20}));
     CHECK(scan.report.paths == 2);
     CHECK(scan.report.data_regions == 1);
     CHECK(scan.report.regions_scanned == 2);
@@ -135,7 +135,7 @@ TEST_CASE("negative offsets are opt-in", "[analysis]")
 {
     Memory memory;
     memory.put(0x3010, kTarget);
-    memory.put(0x3020, kTarget - 0x20);
+    memory.put(0x3020, kTarget + 0x20);
 
     const PointerScanResult positive =
         find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 1});
@@ -151,19 +151,19 @@ TEST_CASE("negative offsets are opt-in", "[analysis]")
                                                          .allow_negative = true,
                                                      });
     CHECK(negative.report.paths == 2);
-    CHECK(has_path(negative, 0x3020, std::vector<std::int64_t> {0x20}));
+    CHECK(has_path(negative, 0x3020, std::vector<std::int64_t> {-0x20}));
 }
 
 TEST_CASE("a multi-level pointer scan follows the chain back to a static base", "[analysis]")
 {
     Memory memory;
     memory.put(0x3000, 0x5008);
-    memory.put(0x5008, kTarget + 0x30);
+    memory.put(0x5008, kTarget - 0x30);
 
     const PointerScanResult scan =
         find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 2});
 
-    CHECK(has_path(scan, 0x3000, std::vector<std::int64_t> {0, -0x30}));
+    CHECK(has_path(scan, 0x3000, std::vector<std::int64_t> {0, 0x30}));
     CHECK(scan.report.paths >= 1);
 }
 
@@ -241,7 +241,7 @@ TEST_CASE("the thread count does not change the result", "[analysis]")
 {
     Memory memory;
     memory.put(0x3000, 0x5008);
-    memory.put(0x5008, kTarget + 0x30);
+    memory.put(0x5008, kTarget - 0x30);
     memory.put(0x3020, kTarget);
     memory.put(0x5010, kTarget - 0x10);
 
