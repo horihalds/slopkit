@@ -302,7 +302,9 @@ pointer is reported beside a longer chain. Results are capped by `max_results`
 and the node and edge budgets, and the report says which budget truncated the
 sweep. `PointerScanDialog` asks the access worker for the live region map and
 renders the paths as a static base plus its base-to-target offsets; activating a
-row writes the path's bracketed address expression into the address table, and
+row writes the path's bracketed address expression into the address table, with
+the static base spelled relative to the scanned module so the chain survives a
+reload, and
 the address list's and found list's `Pointer Scan…` rows open it seeded with
 their address. All target reads happen on the worker thread.
 

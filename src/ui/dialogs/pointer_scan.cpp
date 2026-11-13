@@ -172,7 +172,12 @@ namespace slopkit::ui::dialogs
                     }
                     const std::uint64_t base = model_->base_at(index.row());
                     QString             expression;
-                    if (const ui::ModuleSpan* span = spans_.containing(base); span != nullptr)
+                    if (!result_module_.empty() && base >= result_module_base_)
+                    {
+                        expression = ui::to_qstring(result_module_) + QStringLiteral("+0x")
+                                   + QString::number(base - result_module_base_, 16).toUpper();
+                    }
+                    else if (const ui::ModuleSpan* span = spans_.containing(base); span != nullptr)
                     {
                         expression = ui::format_module_relative_full(*span, base);
                     }
@@ -433,7 +438,9 @@ namespace slopkit::ui::dialogs
             return;
         }
 
-        result_target_ = scan.target;
+        result_target_      = scan.target;
+        result_module_      = scan.module;
+        result_module_base_ = scan.base;
         std::vector<models::PointerScanRow> rows;
         rows.reserve(scan.paths.size());
         for (const analysis::PointerPath& path : scan.paths)

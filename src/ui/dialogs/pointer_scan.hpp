@@ -88,6 +88,8 @@ namespace slopkit::ui::dialogs
         std::optional<process::JobId>    resolve_job_;
         std::optional<process::JobId>    scan_job_;
         std::uint64_t                    result_target_ {};
+        std::string                      result_module_;
+        std::uint64_t                    result_module_base_ {};
 
         QLineEdit*            target_edit_ {};
         QComboBox*            module_combo_ {};

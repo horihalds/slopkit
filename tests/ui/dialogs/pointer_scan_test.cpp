@@ -131,3 +131,56 @@ TEST_CASE("the pointer scan window scans the selected module", "[ui]")
 
     dialog.hide();
 }
+
+TEST_CASE("a multi-level pointer scan result becomes a module-relative expression", "[ui]")
+{
+    application();
+
+    FakeAccess                       access;
+    slopkit::process::AccessWorker   worker {access};
+    slopkit::process::AttachedTarget target = fake_target();
+    slopkit::script::SymbolTable     symbols;
+
+    access.modules                      = {slopkit::test::module_image("game.so", 0x3000, 0x1000)};
+    access.modules.front().pointer_size = 8;
+    access.modules.front().is_main      = true;
+    access.regions                      = {slopkit::test::region_of(0x3000, 0x1000, "game.so", false, true),
+                                           slopkit::test::region_of(0x5000, 0x1000, "[heap]", false, true)};
+    access.memory->base                 = 0x1000;
+    access.memory->flat.assign(0x8000, std::byte {0});
+    store_pointer(access.memory, 0x3010, 0x5008);
+    store_pointer(access.memory, 0x5010, 0x5018);
+    store_pointer(access.memory, 0x5020, 0x6FF0);
+
+    attach_session(worker);
+
+    PointerScanDialog dialog {worker, target, symbols};
+    dialog.set_modules(access.modules);
+    dialog.set_target(0x7000);
+    dialog.levels_spin()->setValue(3);
+
+    dialog.scan_button()->click();
+    REQUIRE(pump_ui(worker,
+                    [&]
+                    {
+                        return dialog.row_count() >= 2;
+                    }));
+    // The shorter chain through the same base is valid too; the three-level
+    // chain sorts first because its first offset is smaller.
+    REQUIRE(dialog.cell_text(0, slopkit::ui::models::PointerScanModel::base) == QStringLiteral("game.so+0x10"));
+    CHECK(dialog.cell_text(0, slopkit::ui::models::PointerScanModel::offsets) == QStringLiteral("+0x8 → +0x8 → +0x10"));
+    CHECK(dialog.cell_text(1, slopkit::ui::models::PointerScanModel::offsets) == QStringLiteral("+0x18 → +0x10"));
+
+    QString activated_expression;
+    QObject::connect(&dialog,
+                     &PointerScanDialog::pathActivated,
+                     &dialog,
+                     [&](const QString& expression, quint64)
+                     {
+                         activated_expression = expression;
+                     });
+    dialog.table()->doubleClicked(dialog.table()->model()->index(0, 0));
+    CHECK(activated_expression == QStringLiteral("[[[game.so+0x10]+0x8]+0x8]+0x10"));
+
+    dialog.hide();
+}
