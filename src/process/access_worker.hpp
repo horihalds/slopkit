@@ -335,6 +335,7 @@ namespace slopkit::process
             std::size_t                               levels {};
             std::int64_t                              max_offset {};
             std::size_t                               max_results {};
+            std::size_t                               threads {};
             bool                                      allow_negative {};
             std::string                               description;
             std::string                               chunk;

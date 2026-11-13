@@ -191,3 +191,69 @@ TEST_CASE("an unreadable region is skipped and counted", "[analysis]")
     CHECK(has_path(scan, 0x3010, std::vector<std::int64_t> {0}));
     CHECK(scan.report.regions_scanned == 1);
 }
+
+TEST_CASE("values that cannot reach the target or a writable slot are not indexed", "[analysis]")
+{
+    Memory memory;
+    memory.put(0x3010, 0x9000);
+
+    const PointerScanResult scan =
+        find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 1});
+
+    CHECK(scan.paths.empty());
+    CHECK(scan.report.pointer_slots > 0);
+    CHECK(scan.report.candidate_slots == 0);
+}
+
+TEST_CASE("overlapping writable regions are indexed once", "[analysis]")
+{
+    Memory memory;
+    memory.put(0x3010, kTarget);
+
+    std::vector<RegionInfo> duplicated = regions();
+    duplicated.push_back(duplicated[1]);
+
+    const PointerScanResult scan =
+        find_pointers(memory.reader(), module(), duplicated, kTarget, PointerScanConfig {.levels = 1});
+
+    REQUIRE(scan.paths.size() == 1);
+    CHECK(scan.paths.front().base == 0x3010);
+}
+
+TEST_CASE("shared intermediate slots keep one path per base", "[analysis]")
+{
+    Memory memory;
+    memory.put(0x3000, 0x5000);
+    memory.put(0x3008, 0x5000);
+    memory.put(0x5000, kTarget);
+
+    const PointerScanResult scan =
+        find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 2});
+
+    REQUIRE(scan.paths.size() == 2);
+    CHECK(scan.paths[0].base == 0x3000);
+    CHECK(scan.paths[1].base == 0x3008);
+    CHECK(scan.paths[0].offsets == std::vector<std::int64_t> {0, 0});
+    CHECK(scan.paths[1].offsets == std::vector<std::int64_t> {0, 0});
+}
+
+TEST_CASE("the thread count does not change the result", "[analysis]")
+{
+    Memory memory;
+    memory.put(0x3000, 0x5008);
+    memory.put(0x5008, kTarget + 0x30);
+    memory.put(0x3020, kTarget);
+    memory.put(0x5010, kTarget - 0x10);
+
+    const PointerScanResult single =
+        find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 2, .threads = 1});
+    const PointerScanResult parallel =
+        find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 2, .threads = 4});
+
+    REQUIRE(single.paths.size() == parallel.paths.size());
+    for (std::size_t index = 0; index < single.paths.size(); ++index)
+    {
+        CHECK(single.paths[index].base == parallel.paths[index].base);
+        CHECK(single.paths[index].offsets == parallel.paths[index].offsets);
+    }
+}

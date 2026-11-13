@@ -283,22 +283,27 @@ performs no reads on the UI thread.
 ## Pointer scan
 
 `analysis::find_pointers` (`src/analysis/pointer_scan.cpp`) is a target-free
-reverse pointer-chain sweep. It first indexes every aligned pointer-sized word of
-the target's readable, writable regions — module data and heap alike — as a
-`value -> slot` list sorted by value, so a level lookup costs one binary-search
-range rather than a rescan. Starting from the target address it walks backwards:
-a slot matches a level when its stored value lands within `max_offset` above the
-level address (and, when negative offsets are enabled, below it), and that slot's
-own address becomes the next level. The walk stops at the configured level count;
-a chain is kept only when its final static slot lies in a readable, writable,
-non-executable region overlapping the selected module, which is what makes it a
-static base in the module's data section. Every pointer-sized slot is indexed, a
-zero value is ignored, and the result is capped by `max_results` and by a node
-budget; the report says which budget truncated the sweep. `PointerScanDialog`
-asks the access worker for the live region map, renders the paths as a static
-base plus its base-to-target offsets, and the address list's and found list's
-`Pointer Scan…` rows open it seeded with their address. All target reads happen
-on the worker thread.
+reverse pointer-chain sweep. Writable regions are merged first so no address is
+read twice, and the sweep indexes only pointer-sized words that can matter: a
+value must land within `max_offset` of the target or of a writable slot address,
+which is the only way it can finish or continue a chain. The surviving
+`value -> slot` entries are radix-sorted by value, so a level lookup is one
+binary-search range rather than a rescan; zero and unreachable values are
+dropped before the sort. Chunk reads and decoding are sharded across up to eight
+threads, matching the value scanner's concurrency model. Starting from the
+target address the walk expands the reverse tree level by level: a slot matches
+a level when its stored value lands within `max_offset` above the level address
+(and, when negative offsets are enabled, below it), and that slot's own address
+becomes the next level. Each distinct slot address is expanded once and its
+parent edges are shared by every path through it. The walk stops at the configured
+level count; a chain is kept only when its final static slot lies in a readable,
+writable, non-executable region overlapping the selected module, which is what
+makes it a static base in the module's data section. Results are capped by
+`max_results` and the node and edge budgets, and the report says which budget
+truncated the sweep. `PointerScanDialog` asks the access worker for the live
+region map, renders the paths as a static base plus its base-to-target offsets,
+and the address list's and found list's `Pointer Scan…` rows open it seeded with
+their address. All target reads happen on the worker thread.
 
 ## The debugger
 

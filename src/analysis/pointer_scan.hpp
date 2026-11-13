@@ -28,8 +28,12 @@ namespace slopkit::analysis
         bool         allow_negative {false};
         std::size_t  max_results {500};
         std::size_t  max_nodes {1'000'000};
-        std::size_t  chunk_size {64 * 1024};
+        std::size_t  max_edges {2'000'000};
+        std::size_t  chunk_size {1024 * 1024};
         std::size_t  pointer_size {8};
+        // 0 selects the automatic thread count; the scan never uses more than
+        // the value scanner's eight.
+        std::size_t  threads {0};
     };
 
     // Why a sweep stopped where it did: the counters of every stage plus the
@@ -42,6 +46,7 @@ namespace slopkit::analysis
         std::size_t                 bytes_read {};
         std::size_t                 read_failures {};
         std::size_t                 pointer_slots {};
+        std::size_t                 candidate_slots {};
         std::size_t                 matched_slots {};
         std::size_t                 visited_nodes {};
         std::size_t                 paths {};

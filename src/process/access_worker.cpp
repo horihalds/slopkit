@@ -411,6 +411,7 @@ namespace slopkit::process
         request.levels         = config.levels;
         request.max_offset     = config.max_offset;
         request.max_results    = config.max_results;
+        request.threads        = config.threads;
         request.allow_negative = config.allow_negative;
         request.on_done        = std::move(on_done);
         return submit(std::move(request));
@@ -1559,6 +1560,7 @@ namespace slopkit::process
                                                                        .allow_negative = request.allow_negative,
                                                                        .max_results    = request.max_results,
                                                                        .pointer_size   = request.pointer_size,
+                                                                       .threads        = request.threads,
                                                                    });
         result.paths                     = std::move(scan.paths);
         result.report                    = std::move(scan.report);
