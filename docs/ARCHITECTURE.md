@@ -295,14 +295,15 @@ target address the walk expands the reverse tree level by level: a slot matches
 a level when its stored value lands within `max_offset` above the level address
 (and, when negative offsets are enabled, below it), and that slot's own address
 becomes the next level. Each distinct slot address is expanded once and its
-parent edges are shared by every path through it. The walk stops at the configured
-level count; a chain is kept only when its final static slot lies in a readable,
-writable, non-executable region overlapping the selected module, which is what
-makes it a static base in the module's data section. Results are capped by
-`max_results` and the node and edge budgets, and the report says which budget
-truncated the sweep. `PointerScanDialog` asks the access worker for the live
-region map, renders the paths as a static base plus its base-to-target offsets,
-and the address list's and found list's `Pointer Scan…` rows open it seeded with
+parent edges are shared by every path through it. The configured level count is
+an upper bound: a chain is kept whenever its static slot lies in a readable,
+writable, non-executable region overlapping the selected module, so a one-level
+pointer is reported beside a longer chain. Results are capped by `max_results`
+and the node and edge budgets, and the report says which budget truncated the
+sweep. `PointerScanDialog` asks the access worker for the live region map and
+renders the paths as a static base plus its base-to-target offsets; activating a
+row writes the path's bracketed address expression into the address table, and
+the address list's and found list's `Pointer Scan…` rows open it seeded with
 their address. All target reads happen on the worker thread.
 
 ## The debugger

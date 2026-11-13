@@ -115,16 +115,19 @@ TEST_CASE("the pointer scan window scans the selected module", "[ui]")
     CHECK(dialog.cell_text(0, slopkit::ui::models::PointerScanModel::offsets) == QStringLiteral("+0x0"));
     CHECK(dialog.status_text().contains(QStringLiteral("found 1 path")));
 
-    std::uint64_t activated = 0;
+    QString activated_expression;
+    quint64 activated_target = 0;
     QObject::connect(&dialog,
-                     &PointerScanDialog::addressActivated,
+                     &PointerScanDialog::pathActivated,
                      &dialog,
-                     [&](std::uint64_t address)
+                     [&](const QString& expression, quint64 target)
                      {
-                         activated = address;
+                         activated_expression = expression;
+                         activated_target     = target;
                      });
     dialog.table()->doubleClicked(dialog.table()->model()->index(0, 0));
-    CHECK(activated == 0x3010);
+    CHECK(activated_expression == QStringLiteral("[game.so+0x10]+0x0"));
+    CHECK(activated_target == 0x7000);
 
     dialog.hide();
 }

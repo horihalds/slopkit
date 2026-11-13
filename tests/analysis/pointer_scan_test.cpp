@@ -257,3 +257,18 @@ TEST_CASE("the thread count does not change the result", "[analysis]")
         CHECK(single.paths[index].offsets == parallel.paths[index].offsets);
     }
 }
+
+TEST_CASE("the level count is an upper bound", "[analysis]")
+{
+    Memory memory;
+    memory.put(0x3010, kTarget);
+    memory.put(0x3020, 0x5000);
+    memory.put(0x5000, kTarget);
+
+    const PointerScanResult scan =
+        find_pointers(memory.reader(), module(), regions(), kTarget, PointerScanConfig {.levels = 3});
+
+    CHECK(has_path(scan, 0x3010, std::vector<std::int64_t> {0}));
+    CHECK(has_path(scan, 0x3020, std::vector<std::int64_t> {0, 0}));
+    CHECK(scan.paths.size() == 2);
+}

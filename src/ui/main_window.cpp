@@ -26,6 +26,7 @@
 #include "core/log_categories.hpp"
 #include "debug/controller.hpp"
 #include "trainer/generate.hpp"
+#include "ui/address_format.hpp"
 #include "ui/components/message_box.hpp"
 #include "ui/components/widgets.hpp"
 #include "ui/components/window_centerer.hpp"
@@ -541,10 +542,8 @@ namespace slopkit::ui
 
         pointer_scan_ = std::make_unique<dialogs::PointerScanDialog>(worker_, target_, symbols_);
         new WindowGeometryKeeper(*pointer_scan_, settings_, WindowId::pointer_scan, pointer_scan_.get());
-        connect(pointer_scan_.get(),
-                &dialogs::PointerScanDialog::addressActivated,
-                this,
-                &MainWindow::on_memory_view_requested);
+        connect(
+            pointer_scan_.get(), &dialogs::PointerScanDialog::pathActivated, this, &MainWindow::add_pointer_scan_path);
 
         reclass_ = std::make_unique<dialogs::ReClassDialog>(address_table_.structures(), worker_, target_);
         new WindowGeometryKeeper(*reclass_, settings_, WindowId::reclass, reclass_.get());
@@ -1035,6 +1034,20 @@ namespace slopkit::ui
     void MainWindow::on_add_address_requested()
     {
         show_add_address();
+    }
+
+    void MainWindow::add_pointer_scan_path(const QString& expression, quint64 target)
+    {
+        table::AddressEntry entry;
+        entry.description =
+            tr("Pointer scan for %1").arg(ui::format_absolute(static_cast<std::uint64_t>(target))).toStdString();
+        entry.address    = target;
+        entry.expression = expression.toStdString();
+        entry.type       = scan::ValueType::int32;
+        entry.bytes.assign(scan::value_size(entry.type), std::byte {0});
+        address_table_.add(std::move(entry));
+        address_list_->report_status(tr("Added the pointer chain to the address list.").toStdString(), false);
+        log::info(log::category::ui, std::format("pointer scan path added: {}", entry.expression));
     }
 
     void MainWindow::on_edit_entry_requested(std::size_t row)

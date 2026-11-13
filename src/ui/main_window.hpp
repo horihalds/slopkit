@@ -147,6 +147,7 @@ namespace slopkit::ui
 
         void on_memory_view_requested(quint64 address);
         void on_code_filter_target_activated(quint64 address);
+        void add_pointer_scan_path(const QString& expression, quint64 target);
 
         void on_found_values_requested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
         void on_add_address_requested();

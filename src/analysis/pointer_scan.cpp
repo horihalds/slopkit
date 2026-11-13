@@ -418,11 +418,11 @@ namespace slopkit::analysis
         // path through it.
         std::vector<Node>        nodes;
         std::vector<std::size_t> frontier;
+        std::vector<std::size_t> base_nodes;
         nodes.push_back(Node {.address = target, .parents = {}});
         frontier.push_back(0);
-        std::size_t edges         = 0;
-        bool        stop          = false;
-        bool        final_reached = false;
+        std::size_t edges = 0;
+        bool        stop  = false;
 
         for (std::size_t depth = 0; depth < levels && !stop; ++depth)
         {
@@ -451,7 +451,8 @@ namespace slopkit::analysis
                         stop             = true;
                         break;
                     }
-                    if (final_level && !in_ranges(base_ranges, entry.slot))
+                    const bool is_base = in_ranges(base_ranges, entry.slot);
+                    if (final_level && !is_base)
                     {
                         continue;
                     }
@@ -471,6 +472,10 @@ namespace slopkit::analysis
                         nodes.push_back(Node {.address = entry.slot, .parents = {}});
                         found = next_index.find(entry.slot);
                         next.push_back(index_of_node);
+                        if (is_base)
+                        {
+                            base_nodes.push_back(index_of_node);
+                        }
                     }
                     nodes[found->second].parents.push_back(Edge {.parent = parent, .offset = offset});
                     ++edges;
@@ -485,11 +490,6 @@ namespace slopkit::analysis
                 break;
             }
 
-            if (final_level)
-            {
-                final_reached = true;
-            }
-
             std::ranges::sort(next,
                               [&](std::size_t lhs, std::size_t rhs)
                               {
@@ -502,7 +502,6 @@ namespace slopkit::analysis
             }
         }
 
-        if (final_reached)
         {
             std::vector<std::int64_t> offsets;
             bool                      enough = false;
@@ -535,7 +534,7 @@ namespace slopkit::analysis
                 }
             };
 
-            for (const std::size_t node : frontier)
+            for (const std::size_t node : base_nodes)
             {
                 reconstruct(reconstruct, node, nodes[node].address);
                 if (enough)

@@ -63,7 +63,9 @@ namespace slopkit::ui::dialogs
         [[nodiscard]] QString       cell_text(int row, int column) const;
 
     signals:
-        void addressActivated(std::uint64_t address);
+        // The activated path's address expression, ready for the address table,
+        // and the address it resolves to.
+        void pathActivated(const QString& expression, quint64 target);
 
     private:
         void build_layout();
@@ -85,6 +87,7 @@ namespace slopkit::ui::dialogs
         std::vector<process::ModuleInfo> modules_;
         std::optional<process::JobId>    resolve_job_;
         std::optional<process::JobId>    scan_job_;
+        std::uint64_t                    result_target_ {};
 
         QLineEdit*            target_edit_ {};
         QComboBox*            module_combo_ {};

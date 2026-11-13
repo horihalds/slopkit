@@ -36,6 +36,12 @@ namespace slopkit::ui::dialogs
     {
         constexpr std::size_t kDefaultMaxResults = 500;
 
+        [[nodiscard]] QString format_offset(std::int64_t offset)
+        {
+            return offset < 0 ? QStringLiteral("-0x") + QString::number(static_cast<qulonglong>(-offset), 16).toUpper()
+                              : QStringLiteral("+0x") + QString::number(static_cast<qulonglong>(offset), 16).toUpper();
+        }
+
         [[nodiscard]] QString format_offsets(std::span<const std::int64_t> offsets)
         {
             QString text;
@@ -45,9 +51,7 @@ namespace slopkit::ui::dialogs
                 {
                     text += QStringLiteral(" → ");
                 }
-                text += offset < 0
-                          ? QStringLiteral("-0x") + QString::number(static_cast<qulonglong>(-offset), 16).toUpper()
-                          : QStringLiteral("+0x") + QString::number(static_cast<qulonglong>(offset), 16).toUpper();
+                text += format_offset(offset);
             }
             return text;
         }
@@ -95,7 +99,7 @@ namespace slopkit::ui::dialogs
         module_combo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
         options_row->addWidget(module_combo_, 1);
 
-        options_row->addWidget(new QLabel(tr("Levels"), this));
+        options_row->addWidget(new QLabel(tr("Max levels"), this));
         levels_spin_ = new QSpinBox(this);
         levels_spin_->setObjectName(QStringLiteral("pointer_scan_levels"));
         levels_spin_->setRange(1, 8);
@@ -162,10 +166,25 @@ namespace slopkit::ui::dialogs
                 this,
                 [this](const QModelIndex& index)
                 {
-                    if (index.isValid())
+                    if (!index.isValid())
                     {
-                        emit addressActivated(model_->base_at(index.row()));
+                        return;
                     }
+                    const std::uint64_t base = model_->base_at(index.row());
+                    QString             expression;
+                    if (const ui::ModuleSpan* span = spans_.containing(base); span != nullptr)
+                    {
+                        expression = ui::format_module_relative_full(*span, base);
+                    }
+                    else
+                    {
+                        expression = ui::format_absolute(base);
+                    }
+                    for (const std::int64_t offset : model_->offsets_at(index.row()))
+                    {
+                        expression = QLatin1Char('[') + expression + QLatin1Char(']') + format_offset(offset);
+                    }
+                    emit pathActivated(expression, result_target_);
                 });
 
         widgets::chain_tab_order(
@@ -414,11 +433,13 @@ namespace slopkit::ui::dialogs
             return;
         }
 
+        result_target_ = scan.target;
         std::vector<models::PointerScanRow> rows;
         rows.reserve(scan.paths.size());
         for (const analysis::PointerPath& path : scan.paths)
         {
-            rows.push_back(models::PointerScanRow {.base = path.base, .offsets = format_offsets(path.offsets)});
+            rows.push_back(models::PointerScanRow {
+                .base = path.base, .offsets = path.offsets, .offsets_text = format_offsets(path.offsets)});
         }
         const std::size_t count = rows.size();
         model_->set_rows(std::move(rows));

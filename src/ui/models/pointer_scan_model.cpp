@@ -29,6 +29,15 @@ namespace slopkit::ui::models
         return row >= 0 && static_cast<std::size_t>(row) < rows_.size() ? rows_[static_cast<std::size_t>(row)].base : 0;
     }
 
+    std::span<const std::int64_t> PointerScanModel::offsets_at(int row) const
+    {
+        if (row < 0 || static_cast<std::size_t>(row) >= rows_.size())
+        {
+            return {};
+        }
+        return rows_[static_cast<std::size_t>(row)].offsets;
+    }
+
     int PointerScanModel::rowCount(const QModelIndex& parent) const
     {
         return parent.isValid() ? 0 : static_cast<int>(rows_.size());
@@ -49,7 +58,7 @@ namespace slopkit::ui::models
 
         if (role == Qt::ToolTipRole || role == widgets::kFullTextRole)
         {
-            return index.column() == base ? address_text_(row.base) : row.offsets;
+            return index.column() == base ? address_text_(row.base) : row.offsets_text;
         }
         if (role == Qt::FontRole)
         {
@@ -65,7 +74,7 @@ namespace slopkit::ui::models
         case base:
             return address_text_(row.base);
         case offsets:
-            return row.offsets;
+            return row.offsets_text;
         default:
             return {};
         }

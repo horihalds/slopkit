@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "ui/address_format.hpp"
@@ -12,8 +13,9 @@ namespace slopkit::ui::models
 {
     struct PointerScanRow
     {
-        std::uint64_t base {};
-        QString       offsets;
+        std::uint64_t             base {};
+        std::vector<std::int64_t> offsets;
+        QString                   offsets_text;
     };
 
     class PointerScanModel : public QAbstractTableModel
@@ -30,8 +32,9 @@ namespace slopkit::ui::models
 
         void set_rows(std::vector<PointerScanRow> rows);
 
-        [[nodiscard]] int           row_count() const;
-        [[nodiscard]] std::uint64_t base_at(int row) const;
+        [[nodiscard]] int                           row_count() const;
+        [[nodiscard]] std::uint64_t                 base_at(int row) const;
+        [[nodiscard]] std::span<const std::int64_t> offsets_at(int row) const;
 
         int      rowCount(const QModelIndex& parent = QModelIndex()) const override;
         int      columnCount(const QModelIndex& parent = QModelIndex()) const override;
