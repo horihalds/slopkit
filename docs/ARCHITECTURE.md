@@ -280,6 +280,26 @@ which stage gave up. The Memory Viewer paints the references as per-instruction
 comments and lists them in its Referenced strings window; the sweep itself
 performs no reads on the UI thread.
 
+## Pointer scan
+
+`analysis::find_pointers` (`src/analysis/pointer_scan.cpp`) is a target-free
+reverse pointer-chain sweep. It first indexes every aligned pointer-sized word of
+the target's readable, writable regions — module data and heap alike — as a
+`value -> slot` list sorted by value, so a level lookup costs one binary-search
+range rather than a rescan. Starting from the target address it walks backwards:
+a slot matches a level when its stored value lands within `max_offset` above the
+level address (and, when negative offsets are enabled, below it), and that slot's
+own address becomes the next level. The walk stops at the configured level count;
+a chain is kept only when its final static slot lies in a readable, writable,
+non-executable region overlapping the selected module, which is what makes it a
+static base in the module's data section. Every pointer-sized slot is indexed, a
+zero value is ignored, and the result is capped by `max_results` and by a node
+budget; the report says which budget truncated the sweep. `PointerScanDialog`
+asks the access worker for the live region map, renders the paths as a static
+base plus its base-to-target offsets, and the address list's and found list's
+`Pointer Scan…` rows open it seeded with their address. All target reads happen
+on the worker thread.
+
 ## The debugger
 
 The debugger is opt-in and is the only `ptrace` user in the project. It sits

@@ -54,6 +54,8 @@ namespace slopkit::ui::panels
 
         void browseRequested(quint64 address);
 
+        void pointerScanRequested(quint64 address);
+
         void changeValuesRequested(std::vector<std::uint64_t> addresses, std::vector<std::byte> bytes);
 
     private:

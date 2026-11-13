@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "analysis/code_targets.hpp"
+#include "analysis/pointer_scan.hpp"
 #include "analysis/string_references.hpp"
 #include "disasm/decoder.hpp"
 #include "expr/resolver.hpp"
@@ -185,6 +186,16 @@ namespace slopkit::process
         std::optional<AccessError>        error;
     };
 
+    struct PointerScanResult
+    {
+        std::string                        module;
+        std::uint64_t                      base {};
+        std::uint64_t                      target {};
+        std::vector<analysis::PointerPath> paths;
+        analysis::PointerScanReport        report;
+        std::optional<AccessError>         error;
+    };
+
     using JobResult = std::variant<ListResult,
                                    ProbeResult,
                                    AttachResult,
@@ -200,7 +211,8 @@ namespace slopkit::process
                                    MemoryMapResult,
                                    ResolveResult,
                                    StringRefsResult,
-                                   CodeTargetsResult>;
+                                   CodeTargetsResult,
+                                   PointerScanResult>;
 
     using JobCallback = std::move_only_function<void(JobResult&&)>;
 
@@ -241,6 +253,13 @@ namespace slopkit::process
                                  disasm::MachineMode       mode,
                                  analysis::CodeTargetKinds kinds,
                                  JobCallback               on_done);
+        bool submit_pointer_scan(JobId                              id,
+                                 std::string                        module,
+                                 std::uint64_t                      base,
+                                 std::uint64_t                      size,
+                                 std::uint64_t                      target,
+                                 const analysis::PointerScanConfig& config,
+                                 JobCallback                        on_done);
         bool submit_write(
             JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done);
         bool submit_freeze(JobId id, std::vector<WriteItem> items, JobCallback on_done);
@@ -294,6 +313,7 @@ namespace slopkit::process
             resolve_expressions,
             string_references,
             code_targets,
+            pointer_scan,
         };
 
         struct Request
@@ -311,6 +331,11 @@ namespace slopkit::process
             std::vector<ResolveRequest>               resolve_items;
             std::vector<expr::ModuleRef>              module_refs;
             std::size_t                               pointer_size {};
+            std::uint64_t                             target_address {};
+            std::size_t                               levels {};
+            std::int64_t                              max_offset {};
+            std::size_t                               max_results {};
+            bool                                      allow_negative {};
             std::string                               description;
             std::string                               chunk;
             std::string                               function;
@@ -370,6 +395,7 @@ namespace slopkit::process
         ResolveResult           do_resolve(const Request& request);
         StringRefsResult        do_string_references(const Request& request);
         CodeTargetsResult       do_code_targets(const Request& request);
+        PointerScanResult       do_pointer_scan(const Request& request);
 
         ProcessAccess&                access_;
         script::SymbolTable&          symbols_;

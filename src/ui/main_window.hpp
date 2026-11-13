@@ -36,6 +36,7 @@ namespace slopkit::ui::dialogs
     class CodeFilterDialog;
     class LogDialog;
     class MemoryViewerDialog;
+    class PointerScanDialog;
     class ProcessListDialog;
     class ReClassDialog;
     class SettingsDialog;
@@ -117,6 +118,9 @@ namespace slopkit::ui
         [[nodiscard]] dialogs::AccessWatchDialog* access_watch() const noexcept;
         [[nodiscard]] dialogs::CodeFilterDialog*  code_filter() const noexcept;
 
+        // The detached Pointer Scan window, or nullptr before build_dialogs().
+        [[nodiscard]] dialogs::PointerScanDialog* pointer_scan() const noexcept;
+
         // The detached ReClass window, or nullptr before build_dialogs().
         [[nodiscard]] dialogs::ReClassDialog* reclass() const noexcept;
 
@@ -167,6 +171,8 @@ namespace slopkit::ui
         void show_access_watch();
         void show_code_filter();
         void show_reclass();
+        void show_pointer_scan();
+        void show_pointer_scan_at(quint64 address);
         void show_settings();
         void show_about();
         void show_generate_trainer();
@@ -225,6 +231,7 @@ namespace slopkit::ui
         std::unique_ptr<dialogs::BreakpointsDialog>  breakpoints_;
         std::unique_ptr<dialogs::AccessWatchDialog>  access_watch_;
         std::unique_ptr<dialogs::CodeFilterDialog>   code_filter_;
+        std::unique_ptr<dialogs::PointerScanDialog>  pointer_scan_;
         std::unique_ptr<dialogs::ReClassDialog>      reclass_;
         dialogs::SettingsDialog*                     settings_dialog_ {};
 
@@ -244,6 +251,7 @@ namespace slopkit::ui
         QAction* breakpoints_action_ {};
         QAction* access_watch_action_ {};
         QAction* code_filter_action_ {};
+        QAction* pointer_scan_action_ {};
         QAction* reclass_action_ {};
         QAction* launch_sandbox_action_ {};
         QAction* about_action_ {};

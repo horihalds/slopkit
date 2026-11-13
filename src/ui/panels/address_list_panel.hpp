@@ -118,6 +118,8 @@ namespace slopkit::ui::panels
     signals:
         void browseRequested(quint64 address);
 
+        void pointerScanRequested(quint64 address);
+
         void tableLoaded();
 
         void tablePathChanged(const QString& path);

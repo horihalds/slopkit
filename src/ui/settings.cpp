@@ -30,7 +30,7 @@ namespace slopkit::ui
 
         // The INI key of each rememberable window's geometry; the Memory Viewer
         // keeps its historical key so an installed config still finds it.
-        constexpr std::array<std::pair<WindowId, std::string_view>, 7> kWindowKeys {
+        constexpr std::array<std::pair<WindowId, std::string_view>, 8> kWindowKeys {
             {
              {WindowId::main, "windows/main_geometry"},
              {WindowId::log, "windows/log_geometry"},
@@ -38,6 +38,7 @@ namespace slopkit::ui
              {WindowId::access_watch, "windows/access_watch_geometry"},
              {WindowId::code_filter, "windows/code_filter_geometry"},
              {WindowId::memory_viewer, "windows/memory_view_geometry"},
+             {WindowId::pointer_scan, "windows/pointer_scan_geometry"},
              {WindowId::reclass, "windows/reclass_geometry"},
              }
         };

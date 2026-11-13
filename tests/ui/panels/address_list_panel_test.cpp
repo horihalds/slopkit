@@ -1090,6 +1090,7 @@ TEST_CASE("the address list offers the script commands only on a script row", "[
                              QStringLiteral("Show as hex"),
                              QStringLiteral("Copy"),
                              QStringLiteral("Browse this memory region"),
+                             QStringLiteral("Pointer Scan…"),
                              QStringLiteral("Watch accesses"),
                              QStringLiteral("Delete"),
                              QStringLiteral("Add Address Manually…"),

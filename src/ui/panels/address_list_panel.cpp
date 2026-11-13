@@ -1157,6 +1157,18 @@ namespace slopkit::ui::panels
                         }
                     });
 
+            QAction* pointer_scan = menu.addAction(tr("Pointer Scan…"));
+            connect(pointer_scan,
+                    &QAction::triggered,
+                    this,
+                    [this, row]
+                    {
+                        if (table_.valid_index(row))
+                        {
+                            emit pointerScanRequested(table_.entries()[row].address);
+                        }
+                    });
+
             const std::size_t width =
                 entry.bytes.empty() ? scan::value_size(entry.type) : static_cast<std::size_t>(entry.bytes.size());
             widgets::add_watch_commands(

@@ -9,6 +9,7 @@
 #include "ui/dialogs/add_script.hpp"
 #include "ui/dialogs/code_filter.hpp"
 #include "ui/dialogs/generate_trainer.hpp"
+#include "ui/dialogs/pointer_scan.hpp"
 #include "ui/dialogs/reclass.hpp"
 #include "ui/panels/debug_controls.hpp"
 
@@ -47,6 +48,7 @@ TEST_CASE("the main window shell is built", "[ui]")
                              QStringLiteral("Breakpoints"),
                              QStringLiteral("Access Watch"),
                              QStringLiteral("Code Filter"),
+                             QStringLiteral("Pointer Scan"),
                              QStringLiteral("ReClass")});
     CHECK(action_texts(menus[2]->menu()->actions())
           == QList<QString> {QStringLiteral("Launch Practice Target"), QStringLiteral("About slopkit")});
@@ -153,7 +155,19 @@ TEST_CASE("the main window shell is built", "[ui]")
     CHECK(window.code_filter() == code_filter_dialog);
     CHECK(window.findChildren<slopkit::ui::dialogs::CodeFilterDialog*>().isEmpty());
 
-    QAction* reclass_action = menus[1]->menu()->actions().at(5);
+    QAction* pointer_scan_action = menus[1]->menu()->actions().at(5);
+    CHECK(pointer_scan_action->text() == QStringLiteral("Pointer Scan"));
+    pointer_scan_action->trigger();
+    auto* pointer_scan_dialog = window.pointer_scan();
+    REQUIRE(pointer_scan_dialog != nullptr);
+    CHECK(pointer_scan_dialog->isVisible());
+    CHECK(pointer_scan_dialog->levels_spin()->value() == 3);
+    CHECK_FALSE(pointer_scan_dialog->negative_check()->isChecked());
+    pointer_scan_action->trigger();
+    CHECK(window.pointer_scan() == pointer_scan_dialog);
+    CHECK(window.findChildren<slopkit::ui::dialogs::PointerScanDialog*>().isEmpty());
+
+    QAction* reclass_action = menus[1]->menu()->actions().at(6);
     CHECK(reclass_action->text() == QStringLiteral("ReClass"));
     reclass_action->trigger();
     auto* reclass_dialog = window.reclass();
@@ -840,7 +854,7 @@ TEST_CASE("the main window disables debugger entries for a plugin without debug 
     slopkit::ui::MainWindow         window {worker, target, host, settings, shared_debug_controller()};
 
     const QList<QAction*> view_actions = window.menuBar()->actions().at(1)->menu()->actions();
-    REQUIRE(view_actions.size() == 6);
+    REQUIRE(view_actions.size() == 7);
     CHECK_FALSE(view_actions.at(2)->isEnabled());
     CHECK_FALSE(view_actions.at(3)->isEnabled());
     CHECK_FALSE(view_actions.at(4)->isEnabled());

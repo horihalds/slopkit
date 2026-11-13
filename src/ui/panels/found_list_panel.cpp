@@ -361,6 +361,19 @@ namespace slopkit::ui::panels
                     browse_region(row);
                 });
 
+        QAction* pointer_scan = widgets::described_action(
+            menu, tr("Pointer Scan…"), tr("Finds static pointer chains that reach this hit."));
+        connect(pointer_scan,
+                &QAction::triggered,
+                this,
+                [this, row]
+                {
+                    if (const scan::ScanHit* hit = model_->hit_at(row); hit != nullptr)
+                    {
+                        emit pointerScanRequested(hit->address);
+                    }
+                });
+
         const std::size_t width = scan::value_size(engine_.config().value_type);
         widgets::add_watch_commands(
             menu,

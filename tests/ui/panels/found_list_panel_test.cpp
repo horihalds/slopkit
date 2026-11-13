@@ -224,6 +224,7 @@ TEST_CASE("the found list row menu carries the copy submenu", "[ui]")
                              QStringLiteral("Change value…"),
                              QStringLiteral("Copy"),
                              QStringLiteral("Browse this memory region"),
+                             QStringLiteral("Pointer Scan…"),
                              QStringLiteral("Watch accesses")});
 
     QMenu* copy = submenu_of(menu, QStringLiteral("Copy"));

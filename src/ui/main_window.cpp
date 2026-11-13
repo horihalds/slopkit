@@ -37,6 +37,7 @@
 #include "ui/dialogs/generate_trainer.hpp"
 #include "ui/dialogs/log.hpp"
 #include "ui/dialogs/memory_viewer.hpp"
+#include "ui/dialogs/pointer_scan.hpp"
 #include "ui/dialogs/process_list.hpp"
 #include "ui/dialogs/reclass.hpp"
 #include "ui/dialogs/settings.hpp"
@@ -199,6 +200,11 @@ namespace slopkit::ui
         return code_filter_.get();
     }
 
+    dialogs::PointerScanDialog* MainWindow::pointer_scan() const noexcept
+    {
+        return pointer_scan_.get();
+    }
+
     dialogs::ReClassDialog* MainWindow::reclass() const noexcept
     {
         return reclass_.get();
@@ -265,6 +271,8 @@ namespace slopkit::ui
 
         code_filter_action_ = new QAction(tr("Code Filter"), this);
 
+        pointer_scan_action_ = new QAction(tr("Pointer Scan"), this);
+
         reclass_action_ = new QAction(tr("ReClass"), this);
 
         launch_sandbox_action_ = new QAction(tr("Launch Practice Target"), this);
@@ -300,6 +308,7 @@ namespace slopkit::ui
         view_menu->addAction(breakpoints_action_);
         view_menu->addAction(access_watch_action_);
         view_menu->addAction(code_filter_action_);
+        view_menu->addAction(pointer_scan_action_);
         view_menu->addAction(reclass_action_);
 
         QMenu* help_menu = menuBar()->addMenu(tr("Help"));
@@ -340,6 +349,7 @@ namespace slopkit::ui
             companion_bar_, &panels::CompanionBar::accessWatchWindowRequested, this, &MainWindow::show_access_watch);
         connect(companion_bar_, &panels::CompanionBar::reclassRequested, this, &MainWindow::show_reclass);
         connect(found_list_, &panels::FoundListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
+        connect(found_list_, &panels::FoundListPanel::pointerScanRequested, this, &MainWindow::show_pointer_scan_at);
         connect(
             found_list_, &panels::FoundListPanel::changeValuesRequested, this, &MainWindow::on_found_values_requested);
         connect(scanner_,
@@ -359,6 +369,10 @@ namespace slopkit::ui
                     {
                         code_filter_->set_modules(modules);
                     }
+                    if (pointer_scan_ != nullptr)
+                    {
+                        pointer_scan_->set_modules(modules);
+                    }
                     reclass_->set_modules(modules, std::move(regions));
                     memory_view_->set_modules(std::move(modules));
                 });
@@ -374,6 +388,8 @@ namespace slopkit::ui
         address_list_ = new panels::AddressListPanel(address_table_, worker_, target_, this);
         connect(address_list_, &panels::AddressListPanel::browseRequested, this, &MainWindow::on_memory_view_requested);
         connect(address_list_, &panels::AddressListPanel::accessWatchRequested, this, &MainWindow::start_access_watch);
+        connect(
+            address_list_, &panels::AddressListPanel::pointerScanRequested, this, &MainWindow::show_pointer_scan_at);
         connect(
             address_list_, &panels::AddressListPanel::addAddressRequested, this, &MainWindow::on_add_address_requested);
         connect(
@@ -523,6 +539,13 @@ namespace slopkit::ui
                     address_list_->report_status(text.toStdString(), error);
                 });
 
+        pointer_scan_ = std::make_unique<dialogs::PointerScanDialog>(worker_, target_, symbols_);
+        new WindowGeometryKeeper(*pointer_scan_, settings_, WindowId::pointer_scan, pointer_scan_.get());
+        connect(pointer_scan_.get(),
+                &dialogs::PointerScanDialog::addressActivated,
+                this,
+                &MainWindow::on_memory_view_requested);
+
         reclass_ = std::make_unique<dialogs::ReClassDialog>(address_table_.structures(), worker_, target_);
         new WindowGeometryKeeper(*reclass_, settings_, WindowId::reclass, reclass_.get());
         live_values_->add_surface(reclass_.get());
@@ -607,6 +630,7 @@ namespace slopkit::ui
         connect(breakpoints_action_, &QAction::triggered, this, &MainWindow::show_breakpoints);
         connect(access_watch_action_, &QAction::triggered, this, &MainWindow::show_access_watch);
         connect(code_filter_action_, &QAction::triggered, this, &MainWindow::show_code_filter);
+        connect(pointer_scan_action_, &QAction::triggered, this, &MainWindow::show_pointer_scan);
         connect(reclass_action_, &QAction::triggered, this, &MainWindow::show_reclass);
         connect(settings_action_, &QAction::triggered, this, &MainWindow::show_settings);
         connect(about_action_, &QAction::triggered, this, &MainWindow::show_about);
@@ -740,6 +764,31 @@ namespace slopkit::ui
         code_filter_->show();
         code_filter_->raise();
         code_filter_->activateWindow();
+    }
+
+    void MainWindow::show_pointer_scan()
+    {
+        if (pointer_scan_ == nullptr)
+        {
+            return;
+        }
+        pointer_scan_->refresh();
+        pointer_scan_->show();
+        pointer_scan_->raise();
+        pointer_scan_->activateWindow();
+    }
+
+    void MainWindow::show_pointer_scan_at(quint64 address)
+    {
+        if (pointer_scan_ == nullptr)
+        {
+            return;
+        }
+        pointer_scan_->set_target(address);
+        pointer_scan_->refresh();
+        pointer_scan_->show();
+        pointer_scan_->raise();
+        pointer_scan_->activateWindow();
     }
 
     void MainWindow::show_reclass()
@@ -1358,6 +1407,10 @@ namespace slopkit::ui
 
         table_settings_->refresh_target();
         memory_view_->refresh_target_state();
+        if (pointer_scan_ != nullptr)
+        {
+            pointer_scan_->refresh();
+        }
     }
 
     void MainWindow::run_freeze_pass()

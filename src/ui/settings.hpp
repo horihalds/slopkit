@@ -20,6 +20,7 @@ namespace slopkit::ui
         access_watch,
         code_filter,
         memory_viewer,
+        pointer_scan,
         reclass
     };
 

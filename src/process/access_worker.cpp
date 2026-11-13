@@ -392,6 +392,30 @@ namespace slopkit::process
         return submit(std::move(request));
     }
 
+    bool AccessWorker::submit_pointer_scan(JobId                              id,
+                                           std::string                        module,
+                                           std::uint64_t                      base,
+                                           std::uint64_t                      size,
+                                           std::uint64_t                      target,
+                                           const analysis::PointerScanConfig& config,
+                                           JobCallback                        on_done)
+    {
+        Request request;
+        request.kind           = JobKind::pointer_scan;
+        request.id             = id;
+        request.module_name    = std::move(module);
+        request.address        = base;
+        request.size           = static_cast<std::size_t>(size);
+        request.target_address = target;
+        request.pointer_size   = config.pointer_size;
+        request.levels         = config.levels;
+        request.max_offset     = config.max_offset;
+        request.max_results    = config.max_results;
+        request.allow_negative = config.allow_negative;
+        request.on_done        = std::move(on_done);
+        return submit(std::move(request));
+    }
+
     bool AccessWorker::submit_write(
         JobId id, std::uint64_t entry_id, std::uint64_t address, std::vector<std::byte> bytes, JobCallback on_done)
     {
@@ -528,6 +552,8 @@ namespace slopkit::process
             return "string-references";
         case JobKind::code_targets:
             return "code-targets";
+        case JobKind::pointer_scan:
+            return "pointer-scan";
         }
         return "unknown";
     }
@@ -574,6 +600,8 @@ namespace slopkit::process
             return do_string_references(request);
         case JobKind::code_targets:
             return do_code_targets(request);
+        case JobKind::pointer_scan:
+            return do_pointer_scan(request);
         }
         return ListResult {};
     }
@@ -1485,6 +1513,60 @@ namespace slopkit::process
         result.report  = std::move(scan.report);
         log::debug(log::category::scan,
                    std::format("code-target scan of {}: {}", request.module_name, analysis::describe(result.report)));
+        return result;
+    }
+
+    PointerScanResult AccessWorker::do_pointer_scan(const Request& request)
+    {
+        PointerScanResult result;
+        result.module = request.module_name;
+        result.base   = request.address;
+        result.target = request.target_address;
+
+        if (!session_)
+        {
+            result.error = AccessError::internal;
+            log::warning(log::category::scan,
+                         std::format("pointer scan of {} requested without an attached target", request.module_name));
+            return result;
+        }
+
+        const auto regions = session_->regions();
+        if (!regions)
+        {
+            result.error = regions.error();
+            log::warning(log::category::scan,
+                         std::format("region list for the pointer scan of {} is unavailable: {}",
+                                     request.module_name,
+                                     describe(regions.error())));
+            return result;
+        }
+
+        const analysis::ReadIntoFn read = [this](std::uint64_t address, std::span<std::byte> buffer)
+        {
+            return session_->read_into(address, buffer);
+        };
+        const analysis::ModuleRange module {
+            .name = request.module_name, .base = request.address, .end = request.address + request.size};
+
+        analysis::PointerScanResult scan = analysis::find_pointers(read,
+                                                                   module,
+                                                                   *regions,
+                                                                   request.target_address,
+                                                                   analysis::PointerScanConfig {
+                                                                       .levels         = request.levels,
+                                                                       .max_offset     = request.max_offset,
+                                                                       .allow_negative = request.allow_negative,
+                                                                       .max_results    = request.max_results,
+                                                                       .pointer_size   = request.pointer_size,
+                                                                   });
+        result.paths                     = std::move(scan.paths);
+        result.report                    = std::move(scan.report);
+        log::debug(log::category::scan,
+                   std::format("pointer scan of {} for {:#x}: {}",
+                               request.module_name,
+                               request.target_address,
+                               analysis::describe(result.report)));
         return result;
     }
 }
